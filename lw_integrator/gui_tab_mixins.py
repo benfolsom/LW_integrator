@@ -231,8 +231,9 @@ class IntegratorGUITabMixin:
         )
         Tooltip(
             self.magnetic_dipole_source_backend_combo,
-            "Numba compiles only serial light-cone roots; Hertz tensors and "
-            "finite differences keep the Python reference arithmetic.",
+            "Roots-exact compiles only light-cone roots. Full strict also "
+            "compiles spin, moment, Hodge, and Hertz arithmetic. Both are "
+            "serial and keep deterministic source/stencil reduction order.",
         )
 
         self.magnetic_dipole_source_cutoff_label = ttk.Label(

@@ -576,6 +576,7 @@ def test_numba_backend_preserves_first_displaced_history_failure() -> None:
     )
     assert capture_failure("python") == expected
     assert capture_failure("numba_roots_exact_serial") == expected
+    assert capture_failure("numba_full_strict_serial") == expected
 
 
 def test_numba_roots_backend_is_bitwise_invariant_to_numba_thread_count() -> None:
@@ -657,19 +658,32 @@ def test_explicit_numba_backend_fails_when_capability_is_unavailable(
 
     monkeypatch.setattr(compiled_roots, "NUMBA_AVAILABLE", False)
 
-    with pytest.raises(
-        RetardedDipoleBackendUnavailableError,
-        match="explicitly selected, but Numba is not available",
-    ):
-        evaluate_retarded_dipole_field_gradient_native(
-            _dipole_history(),
-            ObserverEvent(0.0, (1.0, 0.0, 0.0)),
-            backend="numba_roots_exact_serial",
-        )
+    for backend in ("numba_roots_exact_serial", "numba_full_strict_serial"):
+        with pytest.raises(
+            RetardedDipoleBackendUnavailableError,
+            match="explicitly selected, but Numba is not available",
+        ):
+            evaluate_retarded_dipole_field_gradient_native(
+                _dipole_history(),
+                ObserverEvent(0.0, (1.0, 0.0, 0.0)),
+                backend=backend,
+            )
 
 
+@pytest.mark.parametrize(
+    ("kernel_name", "backend"),
+    (
+        ("evaluate_source_roots_exact_serial", "numba_roots_exact_serial"),
+        (
+            "evaluate_source_events_full_strict_serial",
+            "numba_full_strict_serial",
+        ),
+    ),
+)
 def test_initial_numba_compilation_failure_has_named_capability_error(
     monkeypatch,
+    kernel_name: str,
+    backend: str,
 ) -> None:
     numba = pytest.importorskip("numba")
     import core.retarded_dipole_numba_roots as compiled_roots
@@ -681,7 +695,7 @@ def test_initial_numba_compilation_failure_has_named_capability_error(
     failed_compilation.signatures = ()
     monkeypatch.setattr(
         compiled_roots,
-        "evaluate_source_roots_exact_serial",
+        kernel_name,
         failed_compilation,
     )
 
@@ -692,11 +706,25 @@ def test_initial_numba_compilation_failure_has_named_capability_error(
         evaluate_retarded_dipole_field_gradient_native(
             _dipole_history(),
             ObserverEvent(0.0, (1.0, 0.0, 0.0)),
-            backend="numba_roots_exact_serial",
+            backend=backend,
         )
 
 
-def test_numba_dispatch_does_not_wrap_non_compilation_failures(monkeypatch) -> None:
+@pytest.mark.parametrize(
+    ("kernel_name", "backend"),
+    (
+        ("evaluate_source_roots_exact_serial", "numba_roots_exact_serial"),
+        (
+            "evaluate_source_events_full_strict_serial",
+            "numba_full_strict_serial",
+        ),
+    ),
+)
+def test_numba_dispatch_does_not_wrap_non_compilation_failures(
+    monkeypatch,
+    kernel_name: str,
+    backend: str,
+) -> None:
     pytest.importorskip("numba")
     import core.retarded_dipole_numba_roots as compiled_roots
 
@@ -707,7 +735,7 @@ def test_numba_dispatch_does_not_wrap_non_compilation_failures(monkeypatch) -> N
     runtime_failure.signatures = (object(),)
     monkeypatch.setattr(
         compiled_roots,
-        "evaluate_source_roots_exact_serial",
+        kernel_name,
         runtime_failure,
     )
 
@@ -715,7 +743,7 @@ def test_numba_dispatch_does_not_wrap_non_compilation_failures(monkeypatch) -> N
         evaluate_retarded_dipole_field_gradient_native(
             _dipole_history(),
             ObserverEvent(0.0, (1.0, 0.0, 0.0)),
-            backend="numba_roots_exact_serial",
+            backend=backend,
         )
 
 

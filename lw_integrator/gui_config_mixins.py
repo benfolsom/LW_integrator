@@ -259,8 +259,8 @@ class IntegratorGUIConfigMixin:
         )
         if source_backend not in _DIPOLE_SOURCE_LABEL_BY_BACKEND:
             raise ValueError(
-                "Select Python reference or Numba roots-exact CPU for the "
-                "dipole source backend."
+                "Select Python reference, Numba roots-exact CPU, or Numba full "
+                "strict CPU for the dipole source backend."
             )
         source_minimum_separation = _parse_gui_float(
             self.magnetic_dipole_source_minimum_separation_var.get(),

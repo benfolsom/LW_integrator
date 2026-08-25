@@ -304,6 +304,13 @@ class TestCliConfigParsing:
         assert args.stern_gerlach_force_enabled is False
         assert args.spin_precession_enabled is False
 
+    def test_parse_args_accepts_full_strict_dipole_backend(self):
+        args = cli.parse_args(
+            ["--dipole-source-backend", "numba_full_strict_serial"]
+        )
+
+        assert args.dipole_source_backend == "numba_full_strict_serial"
+
     def test_magnetic_dipole_help_names_rfs_defaults(self, capsys):
         with pytest.raises(SystemExit) as exc_info:
             cli.parse_args(["--help"])
@@ -918,6 +925,13 @@ class TestCliBuildRequest:
         assert magnetic.source.minimum_stencil_step_mm == pytest.approx(3.0e-15)
         assert magnetic.source.root_tolerance_mm == pytest.approx(4.0e-21)
         assert magnetic.source.max_root_iterations == 80
+
+    def test_direct_config_accepts_full_strict_dipole_backend(self):
+        magnetic = cli._build_magnetic_dipole_config(
+            {"source": {"backend": "numba_full_strict_serial"}}
+        )
+
+        assert magnetic.source.backend == "numba_full_strict_serial"
 
     def test_direct_config_rejects_non_object_dipole_source(self):
         with pytest.raises(

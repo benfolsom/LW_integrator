@@ -140,3 +140,60 @@ Reproduce the same comparison with an ordinary testbed configuration::
       --quiet
 
 Use a fresh ``NUMBA_CACHE_DIR`` when the cold-compilation number matters.
+
+Tolerance-validated full strict backend
+---------------------------------------
+
+The explicit ``numba_full_strict_serial`` alternative extends compilation
+through the final quintic sample, spin interpolation, moment boost, Hodge dual,
+and per-source Hertz tensor.  It remains a strict serial binary64 kernel with
+``fastmath=False``.  It does not use ``prange``, automatic dispatch, OS
+detection, or a worker-count option.  Python still evaluates the center event,
+adds sources, and constructs the first, second, and third finite differences
+in the reference request and reduction order.
+
+This mode deliberately has a physical tolerance contract instead of the
+roots-only backend's bitwise promise.  The audited event kernel stays within
+one binary64 ULP of the Python Hertz event, but nested subtraction can amplify
+that last-bit change.  In a paired same-history probe, 48 of 600 complete
+gradient calls had at least one bitwise difference.  Maximum raw absolute
+differences included ``2.99e-6`` in ``partial_a`` and ``1.96e4`` in
+``partial_f`` native units.  Those raw values depend strongly on field and
+stencil scale; they are not a force or energy error estimate by themselves.
+This is why finite-difference assembly was not compiled in this slice.
+
+The fresh-cache 300-sample Medina-on electron--proton check used the same input
+SHA-256 as the roots-only benchmark and produced:
+
+====================== ===========
+Run                    Wall time
+====================== ===========
+Python reference       10.755539 s
+Numba, cold compile      6.164007 s
+Numba, warm              3.537125 s
+Warm speedup                  3.041x
+====================== ===========
+
+The cold surcharge was about 2.627 s and maximum resident memory was
+321.97 MiB.  Run status, side channels, the full rider state, and 58 of 59
+driver arrays were bitwise identical.  Two driver
+``mass_shell_projection_energy`` samples differed.  Their maximum absolute
+difference was ``9.3058e-25`` native energy, or ``9.6448e-18 meV``; cumulative
+absolute disagreement was ``1.0181e-17 meV``.  This is about
+``2.5e15`` times below the ``0.025 meV`` calibration budget.  Both cold and
+warm comparisons therefore passed the recorded tolerance contract.
+
+The report is ``/tmp/lw-numba-full-strict-300-final.json`` with SHA-256
+``990f669f3b2de5bcfa07be9707377a71c87d4e2c1a86562f43ca32e80178c7ac``.
+Reproduce it with::
+
+   python scripts/benchmark_dipole_source_backends.py CONFIG.json \
+      --backend numba_full_strict_serial \
+      --steps 300 \
+      --output /tmp/lw-numba-full-strict-300.json \
+      --quiet
+
+This trajectory check does not by itself authorize a production merge.  The
+remaining independent gate compares applied force, spin right-hand side,
+stencil convergence, and trajectory observables before the backend is used for
+the capture study.

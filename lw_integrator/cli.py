@@ -709,11 +709,16 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--dipole-source-backend",
         dest="dipole_source_backend",
-        choices=("python", "numba_roots_exact_serial"),
+        choices=(
+            "python",
+            "numba_roots_exact_serial",
+            "numba_full_strict_serial",
+        ),
         help=(
             "Full-gradient source evaluator: the Python reference (default) "
-            "or strict serial Numba light-cone roots with exact Python Hertz "
-            "assembly. Explicit Numba selection fails if Numba is unavailable."
+            "or a strict serial Numba roots-only/full-Hertz kernel. Source and "
+            "finite-difference reductions remain deterministic. Explicit Numba "
+            "selection fails if Numba is unavailable."
         ),
     )
     parser.add_argument(

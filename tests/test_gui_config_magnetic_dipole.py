@@ -139,6 +139,21 @@ def test_current_magnetic_dipole_config_round_trips_through_gui_fields() -> None
     assert rebuilt.to_dict()["magnetic_dipole"] == source.to_dict()["magnetic_dipole"]
 
 
+def test_full_strict_backend_round_trips_through_gui_label() -> None:
+    source = SimulationOptions(
+        magnetic_dipole_source_backend="numba_full_strict_serial"
+    )
+    harness = _MagneticHarness()
+
+    harness.apply(source)
+    rebuilt = SimulationOptions(**harness.build())
+
+    assert harness.magnetic_dipole_source_backend_var.get() == (
+        "Numba full strict CPU"
+    )
+    assert rebuilt.magnetic_dipole_source_backend == "numba_full_strict_serial"
+
+
 def test_old_config_defaults_round_trip_with_magnetic_dipoles_off() -> None:
     old_config = SimulationOptions.from_dict({"steps": 12})
     harness = _MagneticHarness()
@@ -344,6 +359,7 @@ def test_gui_labels_present_compact_rfs_controls() -> None:
         assert tuple(app.magnetic_dipole_source_backend_combo.cget("values")) == (
             "Python reference",
             "Numba roots-exact CPU",
+            "Numba full strict CPU",
         )
         assert app.magnetic_dipole_source_cutoff_label.cget("text") == (
             "Minimum separation abort (mm):"

@@ -6,7 +6,9 @@ import numpy as np
 import pytest
 
 from core.constants import C_MMNS, ELEMENTARY_CHARGE
+from core.external_fields import ELEMENTARY_CHARGE_COULOMB
 from core.integration_runner import retarded_integrator
+from core.magnetic_dipole import NATIVE_ENERGY_UNIT_J
 from core.self_consistency import SelfConsistencyConfig
 from core.species import get_species
 from core.types import (
@@ -65,6 +67,7 @@ def _source_config(
     driver_polarization: float,
     coupled_moment_force: bool,
     source_model: str = "covariant_retarded_point",
+    source_backend: str = "python",
 ) -> MagneticDipoleConfig:
     return MagneticDipoleConfig(
         enabled=True,
@@ -72,6 +75,7 @@ def _source_config(
         stern_gerlach_force_enabled=coupled_moment_force,
         source=DipoleSourceConfig(
             model=source_model,
+            backend=source_backend,
             minimum_separation_mm=2.0e-9,
             relative_stencil_step=5.0e-4,
         ),
@@ -146,6 +150,72 @@ def test_charge_only_observer_feels_neutral_dipole_source() -> None:
     assert float(rider_soa.Py[-1, 0]) > 0.0
     assert float(rider_soa.by[-1, 0]) > 0.0
     assert np.count_nonzero(rider_soa.Py[:, 0]) > 0
+
+
+def test_full_strict_backend_matches_short_python_trajectory_within_budget() -> None:
+    pytest.importorskip("numba")
+
+    def run_backend(backend: str):
+        rider = _particle_state(
+            "electron",
+            position_mm=(1.0e-4, 0.0, 0.0),
+            beta=(0.01, 0.0, 0.0),
+        )
+        driver = _particle_state("neutron", position_mm=(0.0, 0.0, 0.0))
+        magnetic = _source_config(
+            rider_species="electron",
+            driver_species="neutron",
+            rider_polarization=0.0,
+            driver_polarization=1.0,
+            coupled_moment_force=False,
+            source_backend=backend,
+        )
+        return _run(rider, driver, magnetic, steps=12, h_step=1.0e-7)
+
+    python_result = run_backend("python")
+    strict_result = run_backend("numba_full_strict_serial")
+    for role_index in (2, 3):
+        reference = python_result[role_index]
+        candidate = strict_result[role_index]
+        assert reference is not None
+        assert candidate is not None
+        for name in (
+            "x",
+            "y",
+            "z",
+            "Px",
+            "Py",
+            "Pz",
+            "Pt",
+            "gamma",
+            "bx",
+            "by",
+            "bz",
+            "spin_x",
+            "spin_y",
+            "spin_z",
+        ):
+            np.testing.assert_allclose(
+                getattr(candidate, name),
+                getattr(reference, name),
+                rtol=2.0e-12,
+                atol=1.0e-30,
+            )
+        projection_delta_native = float(
+            np.max(
+                np.abs(
+                    candidate.mass_shell_projection_energy
+                    - reference.mass_shell_projection_energy
+                )
+            )
+        )
+        projection_delta_mev = (
+            projection_delta_native
+            * NATIVE_ENERGY_UNIT_J
+            / ELEMENTARY_CHARGE_COULOMB
+            * 1.0e3
+        )
+        assert projection_delta_mev < 0.025
 
 
 def test_source_off_does_not_enter_provider_or_change_kinematics(

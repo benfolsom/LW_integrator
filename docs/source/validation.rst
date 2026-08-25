@@ -34,6 +34,7 @@ Run the deterministic magnetic helper and integration tests with:
       tests/unit/test_retarded_fields.py \
       tests/unit/test_charge_source_interactions.py \
       tests/unit/test_retarded_dipole_fields.py \
+      tests/unit/test_retarded_dipole_numba_full_strict.py \
       tests/unit/test_dipole_source_backend_benchmark.py \
       tests/unit/test_dipole_source_interactions.py \
       tests/unit/test_inertial_prehistory.py \
@@ -74,6 +75,24 @@ configuration::
 The report compares every public trajectory array and side channel for rider
 and driver, records cold and warm timings separately, and leaves the input
 configuration unchanged.
+
+The explicit ``numba_full_strict_serial`` backend uses a physical tolerance
+contract because nested finite differences amplify event-level last-bit
+changes.  Its unit suite requires deterministic strict-serial execution,
+at-most-one-ULP Hertz events in the audited probe, reference event/source
+ordering, bounded provider differences, and a short trajectory below the
+``0.025 meV`` cumulative projection-energy budget.  Run the full 300-sample
+comparison with::
+
+   python scripts/benchmark_dipole_source_backends.py CONFIG.json \
+      --backend numba_full_strict_serial \
+      --steps 300 --output /tmp/dipole-source-full-strict.json --quiet
+
+The JSON records both bitwise equality and ``tolerance_passed``.  A full
+backend result is acceptable only when both cold and warm comparisons pass the
+tolerance contract and run status is unchanged.  Provider-level derivative
+differences should additionally be checked across force, spin, and stencil
+convergence before merging or using the backend for a production study.
 
 The first coupled RFS implementation has intentionally narrow integration
 guards: fixed-step ``COLD_START`` or ``INERTIAL_PREHISTORY``

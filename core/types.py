@@ -572,10 +572,14 @@ class DipoleSourceConfig:
                 "dipole source model must be one of: off, " "covariant_retarded_point"
             )
         self.backend = str(self.backend).strip().lower()
-        if self.backend not in {"python", "numba_roots_exact_serial"}:
+        if self.backend not in {
+            "python",
+            "numba_roots_exact_serial",
+            "numba_full_strict_serial",
+        }:
             raise ValueError(
                 "dipole source backend must be one of: python, "
-                "numba_roots_exact_serial"
+                "numba_roots_exact_serial, numba_full_strict_serial"
             )
 
         for name in (

@@ -147,10 +147,12 @@ simulation, and confirm that the regression tooling works on your machine.
    boundary, not softening.  ``--dipole-source-backend
    numba_roots_exact_serial`` opts into a cross-platform serial CPU root
    kernel while preserving Python source and stencil assembly; ``python`` is
-   the default and there is no automatic platform dispatch.  Neutral
+   the default.  ``numba_full_strict_serial`` additionally compiles the full
+   per-source Hertz event path.  It is faster but tolerance-validated rather
+   than bitwise-identical.  There is no automatic platform dispatch.  Neutral
    particles and prescribed gradients are best configured in a saved JSON.
-   See :doc:`magnetic_dipole_moments` for all hard scope guards, the diagnostic
-   legacy models, and the retarded source limitations.
+   See :doc:`magnetic_dipole_moments` for the numerical contract, all hard
+   scope guards, the diagnostic legacy models, and retarded-source limits.
 
    ``inertial-prehistory`` is the appropriate boundary model for an incoming
    particle that existed before active time zero.  It constructs eight sparse

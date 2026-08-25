@@ -95,7 +95,11 @@ _DEFAULT_STENCIL_RELATIVE_STEP = 1.0e-3
 _DEFAULT_STENCIL_MINIMUM_STEP_MM = 1.0e-15
 _DEFAULT_MINIMUM_SEPARATION_MM = 1.0e-15
 _CONTRAVARIANT_DERIVATIVE_SIGNS = np.array((1.0, -1.0, -1.0, -1.0))
-RETARDED_DIPOLE_BACKENDS = ("python", "numba_roots_exact_serial")
+RETARDED_DIPOLE_BACKENDS = (
+    "python",
+    "numba_roots_exact_serial",
+    "numba_full_strict_serial",
+)
 
 
 class DipoleSourceSingularityError(ValueError):
@@ -261,9 +265,9 @@ def _require_retarded_dipole_backend(backend: str) -> str:
 
     if not NUMBA_AVAILABLE:
         raise RetardedDipoleBackendUnavailableError(
-            "retarded dipole backend 'numba_roots_exact_serial' was explicitly "
-            "selected, but Numba is not available; install the optional Numba "
-            "runtime or select backend 'python'"
+            f"retarded dipole backend {selected!r} was explicitly selected, but "
+            "Numba is not available; install the optional Numba runtime or select "
+            "backend 'python'"
         )
     return selected
 
@@ -960,6 +964,151 @@ def _evaluate_prepared_hertz_batch_numba_roots_exact_serial(
     return tuple(results)
 
 
+def _evaluate_prepared_hertz_batch_numba_full_strict_serial(
+    prepared: _PreparedDipoleHistory,
+    observer_events: Sequence[ObserverEvent],
+    *,
+    require_complete_history: bool,
+    minimum_separation_mm: float,
+    root_tolerance_mm: float,
+    max_root_iterations: int,
+) -> tuple[RetardedDipoleHertzResult, ...]:
+    """Compile complete source events while retaining reference reductions."""
+
+    from .retarded_dipole_numba_roots import (
+        NUMBA_COMPILATION_ERRORS,
+        _STATUS_MINIMUM_SEPARATION,
+        _STATUS_MISSING_HISTORY,
+        _STATUS_SINGULAR_KAPPA,
+        _STATUS_SPIN_INTERPOLATION_ZERO,
+        _STATUS_SUPERLUMINAL_SOURCE,
+        _STATUS_TERMINATED_SOURCE,
+        _STATUS_VALID,
+        evaluate_source_events_full_strict_serial,
+    )
+
+    event_count = len(observer_events)
+    event_time_ns = np.asarray(
+        [float(event.time_ns) for event in observer_events], dtype=float
+    )
+    event_position_mm = np.asarray(
+        [
+            tuple(float(value) for value in event.position_mm)
+            for event in observer_events
+        ],
+        dtype=float,
+    )
+    if event_position_mm.shape != (event_count, 3):
+        raise ValueError("retarded dipole observer events must have shape [events, 3]")
+
+    source_batches: dict[int, tuple[np.ndarray, ...]] = {}
+    for source_index, source in prepared.sources.items():
+        worldline = source.worldline
+        preserved = source.preserved_rest_spin_magnitude
+        compiling_initial_signature = not bool(
+            getattr(evaluate_source_events_full_strict_serial, "signatures", ())
+        )
+        try:
+            source_batches[source_index] = cast(
+                tuple[np.ndarray, ...],
+                evaluate_source_events_full_strict_serial(
+                    worldline.time_ns,
+                    worldline.position_mm,
+                    worldline.segment_duration_ns,
+                    worldline.position_coefficients_mm,
+                    source.rest_spin,
+                    source.rest_spin_derivative_per_ns,
+                    preserved is not None,
+                    0.0 if preserved is None else float(preserved),
+                    float(source.magnetic_moment_native),
+                    bool(worldline.ended_by_loss),
+                    event_time_ns,
+                    event_position_mm,
+                    float(minimum_separation_mm),
+                    float(root_tolerance_mm),
+                    int(max_root_iterations),
+                ),
+            )
+        except NUMBA_COMPILATION_ERRORS as exc:
+            if compiling_initial_signature:
+                raise RetardedDipoleBackendUnavailableError(
+                    "retarded dipole backend 'numba_full_strict_serial' failed "
+                    "during initial JIT compilation; select backend 'python' or "
+                    "inspect the chained Numba error"
+                ) from exc
+            raise
+
+    results: list[RetardedDipoleHertzResult] = []
+    arrays = prepared.arrays
+    for event_index in range(event_count):
+        hertz_total = np.zeros((4, 4), dtype=float)
+        retarded_time_ns = np.full(arrays.n_sources, np.nan, dtype=float)
+        residual_mm = np.full(arrays.n_sources, np.nan, dtype=float)
+        separation_mm = np.full(arrays.n_sources, np.nan, dtype=float)
+        valid_sources = np.zeros(arrays.n_sources, dtype=bool)
+        missing_sources: list[int] = []
+
+        for source_index, source in prepared.sources.items():
+            batch = source_batches[source_index]
+            status = int(batch[0][event_index])
+            if status == _STATUS_TERMINATED_SOURCE:
+                continue
+            if status == _STATUS_MISSING_HISTORY:
+                missing_sources.append(source_index)
+                continue
+
+            source_hertz = batch[1][event_index]
+            source_retarded_time_ns = float(batch[2][event_index])
+            source_residual_mm = float(batch[3][event_index])
+            source_separation_mm = float(batch[4][event_index])
+            if status == _STATUS_MINIMUM_SEPARATION:
+                raise DipoleSourceSingularityError(
+                    "observer/stencil event is within minimum_separation_mm of "
+                    f"dipole source identity {source.identity!r}: "
+                    f"{source_separation_mm:.17g} <= "
+                    f"{minimum_separation_mm:.17g} mm"
+                )
+            if status == _STATUS_SUPERLUMINAL_SOURCE:
+                raise ValueError("source beta magnitude must be less than one")
+            if status == _STATUS_SINGULAR_KAPPA:
+                raise DipoleSourceSingularityError(
+                    "retarded dipole field is singular because 1 - n.beta is too small"
+                )
+            if status == _STATUS_SPIN_INTERPOLATION_ZERO:
+                raise RetardedHistoryError(
+                    "constant-magnitude source-spin interpolation crossed zero; "
+                    "reduce the source-history timestep"
+                )
+            if status != _STATUS_VALID:
+                raise RuntimeError(f"unknown strict Hertz event status {status}")
+
+            hertz_total += source_hertz
+            retarded_time_ns[source_index] = source_retarded_time_ns
+            residual_mm[source_index] = source_residual_mm
+            separation_mm[source_index] = source_separation_mm
+            valid_sources[source_index] = True
+
+        if require_complete_history and missing_sources:
+            missing_identities = [
+                prepared.source_identities[index] for index in missing_sources
+            ]
+            raise RetardedHistoryError(
+                "source history does not bracket the observer light cone for dipole "
+                f"source identities {missing_identities!r}"
+            )
+        results.append(
+            RetardedDipoleHertzResult(
+                hertz_tensor=hertz_total,
+                source_identities=prepared.source_identities,
+                retarded_time_ns=retarded_time_ns,
+                light_cone_residual_mm=residual_mm,
+                separation_mm=separation_mm,
+                valid_sources=valid_sources,
+            )
+        )
+    return tuple(results)
+
+
 def _validated_oracle_options(
     *,
     relative_step: float,
@@ -1195,8 +1344,12 @@ def evaluate_retarded_dipole_field_gradient_native(
 
     ``backend='numba_roots_exact_serial'`` compiles only the independent
     light-cone roots. The Python reference arithmetic remains authoritative for
-    every Hertz tensor, source sum, and finite difference. ``python`` is the
-    cross-platform default and no automatic backend selection is performed.
+    every Hertz tensor, source sum, and finite difference.
+    ``backend='numba_full_strict_serial'`` additionally compiles worldline,
+    spin, moment, Hodge-dual, and per-source Hertz arithmetic with
+    ``fastmath=False``; source and finite-difference reductions retain their
+    reference order. ``python`` is the cross-platform default and no automatic
+    backend selection is performed.
     """
 
     selected_backend = _require_retarded_dipole_backend(backend)
@@ -1244,7 +1397,7 @@ def evaluate_retarded_dipole_field_gradient_native(
     center_position = np.asarray(observer_event.position_mm, dtype=float)
 
     precomputed_hertz: dict[tuple[int, int, int, int], RetardedDipoleHertzResult] = {}
-    if selected_backend == "numba_roots_exact_serial":
+    if selected_backend != "python":
         batch_offsets = tuple(
             offset
             for offset in _full_gradient_stencil_offsets()
@@ -1264,14 +1417,24 @@ def evaluate_retarded_dipole_field_gradient_native(
                     ),
                 )
             )
-        batch_results = _evaluate_prepared_hertz_batch_numba_roots_exact_serial(
-            prepared,
-            batch_events,
-            require_complete_history=require_complete_history,
-            minimum_separation_mm=minimum_separation,
-            root_tolerance_mm=tolerance,
-            max_root_iterations=iterations,
-        )
+        if selected_backend == "numba_roots_exact_serial":
+            batch_results = _evaluate_prepared_hertz_batch_numba_roots_exact_serial(
+                prepared,
+                batch_events,
+                require_complete_history=require_complete_history,
+                minimum_separation_mm=minimum_separation,
+                root_tolerance_mm=tolerance,
+                max_root_iterations=iterations,
+            )
+        else:
+            batch_results = _evaluate_prepared_hertz_batch_numba_full_strict_serial(
+                prepared,
+                batch_events,
+                require_complete_history=require_complete_history,
+                minimum_separation_mm=minimum_separation,
+                root_tolerance_mm=tolerance,
+                max_root_iterations=iterations,
+            )
         precomputed_hertz = dict(zip(batch_offsets, batch_results))
 
     used_offsets: set[tuple[int, int, int, int]] = set()

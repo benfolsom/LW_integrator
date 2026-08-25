@@ -90,6 +90,12 @@ def test_retarded_dipole_source_normalizes_alias_and_nested_mapping() -> None:
     assert config.source.relative_stencil_step == 5.0e-4
 
 
+def test_retarded_dipole_source_accepts_full_strict_backend() -> None:
+    config = DipoleSourceConfig(backend="numba_full_strict_serial")
+
+    assert config.backend == "numba_full_strict_serial"
+
+
 @pytest.mark.parametrize(
     ("overrides", "message"),
     (

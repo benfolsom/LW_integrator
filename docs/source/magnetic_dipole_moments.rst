@@ -235,21 +235,35 @@ is active only when magnetic-dipole dynamics are enabled.  The advanced
 ``--dipole-source-cutoff-mm`` option sets the strict minimum separation abort
 boundary.  It does not soften the point field.
 
-The source evaluator has two explicit backend choices.  ``python`` is the
+The source evaluator has three explicit backend choices.  ``python`` is the
 default and remains the reference on every platform.
 ``numba_roots_exact_serial`` is a cross-platform CPU opt-in, selected in JSON
 with ``magnetic_dipole.source.backend`` or on the direct CLI with
 ``--dipole-source-backend numba_roots_exact_serial``.  It compiles only the
 independent light-cone root searches.  The final quintic worldline sample,
 light-cone residual, Hertz tensor, source accumulation, and finite-difference
-assembly retain the Python reference arithmetic and order.  Displaced events
-are also consumed in the oracle's lazy first-use order, preserving which
-history or singularity error is raised first.  The kernel is serial: it does
-not select a worker count or consume multiple cores, and there is no automatic
-or operating-system-specific dispatch.  Explicit selection raises a
-capability error if Numba is unavailable or its initial compilation fails; it
-never silently changes the recorded backend.  The dedicated nine-event
-accepted-endpoint potential remains on the Python path in this first slice.
+assembly retain the Python reference arithmetic and order, giving bitwise
+complete-provider parity in the maintained tests.
+
+``numba_full_strict_serial`` is the faster, tolerance-validated opt-in.  It
+also compiles the final worldline sample, spin interpolation, moment boost,
+Hodge dual, and per-source Hertz tensor with strict binary64 arithmetic and
+``fastmath=False``.  It is not a bitwise-parity mode: an event-level change of
+one binary64 ULP can be magnified by the nested first, second, and third finite
+differences.  Source accumulation and finite-difference construction therefore
+remain in Python and preserve the reference reduction order in this first
+production slice.  Acceptance requires matching run status, tightly matching
+physical trajectory arrays, and cumulative projection-energy disagreement
+below ``0.025 meV``.  Raw derivative differences must be reported with their
+field scale and propagated force/spin effect rather than interpreted alone.
+
+Both Numba kernels consume displaced events in the oracle's lazy first-use
+order, preserving which history or singularity error is raised first.  They
+are serial: neither selects a worker count nor consumes multiple cores, and
+there is no automatic or operating-system-specific dispatch.  Explicit
+selection raises a capability error if Numba is unavailable or initial
+compilation fails; it never silently changes the recorded backend.  The
+dedicated nine-event accepted-endpoint potential remains on the Python path.
 
 ``null`` selects the cited species value.  A custom species must provide both a
 signed moment in J/T and its spin quantum number.  ``rest_spin`` is normalized

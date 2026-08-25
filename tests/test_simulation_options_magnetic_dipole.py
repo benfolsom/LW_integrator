@@ -91,6 +91,24 @@ def test_old_config_defaults_magnetic_dipoles_off() -> None:
     assert build_magnetic_dipole_config(options).source.active is False
 
 
+def test_full_strict_backend_round_trips_through_testbed_config() -> None:
+    options = SimulationOptions.from_dict(
+        {
+            "magnetic_dipole": {
+                "source": {"backend": "numba_full_strict_serial"}
+            }
+        }
+    )
+
+    assert options.magnetic_dipole_source_backend == "numba_full_strict_serial"
+    assert build_magnetic_dipole_config(options).source.backend == (
+        "numba_full_strict_serial"
+    )
+    assert options.to_dict()["magnetic_dipole"]["source"]["backend"] == (
+        "numba_full_strict_serial"
+    )
+
+
 def test_flat_testbed_source_fields_are_preserved_for_legacy_serializers() -> None:
     options = SimulationOptions.from_dict(
         {

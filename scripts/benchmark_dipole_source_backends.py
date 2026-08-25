@@ -1,12 +1,12 @@
-"""Compare the reference and roots-exact dipole-source backends end to end.
+"""Compare the Python and one explicit dipole-source backend end to end.
 
 The input is an ordinary testbed/GUI JSON configuration.  The script changes
 only the stored-sample count and source backend in memory, disables every
 plot/file export, and runs three trajectories in one process:
 
 1. the authoritative Python backend;
-2. the first (cold) Numba roots-exact run; and
-3. a warm Numba roots-exact run.
+2. the first (cold) selected Numba run; and
+3. a warm selected Numba run.
 
 Every public array and side channel in both returned ``TrajectoryArrays``
 objects is compared.  The report stores hashes and mismatch names rather than
@@ -31,6 +31,8 @@ if str(REPOSITORY_ROOT) not in sys.path:
     sys.path.insert(0, str(REPOSITORY_ROOT))
 
 from core.types import TrajectoryArrays  # noqa: E402
+from core.external_fields import ELEMENTARY_CHARGE_COULOMB  # noqa: E402
+from core.magnetic_dipole import NATIVE_ENERGY_UNIT_J  # noqa: E402
 from scripts.benchmark_rfs_integration import (  # noqa: E402
     _benchmark_options,
     _run_once,
@@ -40,7 +42,17 @@ from scripts.benchmark_rfs_retarded_fields import (  # noqa: E402
     _maximum_resident_mebibytes,
 )
 
-_BACKENDS = ("python", "numba_roots_exact_serial")
+_NUMBA_BACKENDS = (
+    "numba_roots_exact_serial",
+    "numba_full_strict_serial",
+)
+_PROJECTION_ENERGY_BUDGET_MEV = 0.025
+_STATE_RELATIVE_TOLERANCE = 2.0e-12
+_STATE_ABSOLUTE_TOLERANCE = 1.0e-24
+
+
+def _native_energy_to_mev(value: float) -> float:
+    return value * NATIVE_ENERGY_UNIT_J / ELEMENTARY_CHARGE_COULOMB * 1.0e3
 
 
 def _array_bytes(value: np.ndarray) -> bytes:
@@ -114,6 +126,7 @@ def _compare_trajectories(
     array_mismatch_details: dict[str, Any] = {}
     side_channel_mismatches: list[str] = []
     compared_array_fields = 0
+    tolerance_passed = True
     for descriptor in fields(reference):
         name = descriptor.name
         if name in {"_storage_state", "_storage_array_revision"}:
@@ -155,21 +168,79 @@ def _compare_trajectories(
                         if np.any(finite)
                         else None
                     )
+                    absolute_difference = np.abs(left[finite] - right[finite])
+                    reference_scale = (
+                        float(np.max(np.abs(left[finite]))) if np.any(finite) else 0.0
+                    )
+                    maximum_relative_to_reference_scale = (
+                        maximum_absolute / reference_scale
+                        if maximum_absolute is not None and reference_scale > 0.0
+                        else maximum_absolute
+                    )
+                    state_tolerance_passed = bool(
+                        np.allclose(
+                            left,
+                            right,
+                            rtol=_STATE_RELATIVE_TOLERANCE,
+                            atol=_STATE_ABSOLUTE_TOLERANCE,
+                            equal_nan=True,
+                        )
+                    )
                     detail.update(
                         bitwise_mismatch_elements=int(np.count_nonzero(bit_mismatch)),
                         numeric_mismatch_elements=int(
                             np.count_nonzero(numeric_mismatch)
                         ),
                         maximum_absolute_difference=maximum_absolute,
+                        maximum_relative_to_reference_scale=(
+                            maximum_relative_to_reference_scale
+                        ),
                         first_mismatch_index=[int(index) for index in first_index],
                         first_reference_hex=first_left.hex(),
                         first_candidate_hex=first_right.hex(),
                     )
+                    if name == "mass_shell_projection_energy":
+                        nonfinite_pattern_matches = bool(
+                            np.array_equal(np.isnan(left), np.isnan(right))
+                            and np.array_equal(np.isposinf(left), np.isposinf(right))
+                            and np.array_equal(np.isneginf(left), np.isneginf(right))
+                        )
+                        cumulative_absolute_native = float(
+                            np.sum(absolute_difference)
+                        )
+                        maximum_absolute_mev = _native_energy_to_mev(
+                            0.0 if maximum_absolute is None else maximum_absolute
+                        )
+                        cumulative_absolute_mev = _native_energy_to_mev(
+                            cumulative_absolute_native
+                        )
+                        state_tolerance_passed = nonfinite_pattern_matches and (
+                            cumulative_absolute_mev
+                            <= _PROJECTION_ENERGY_BUDGET_MEV
+                        )
+                        detail.update(
+                            maximum_absolute_difference_mev=maximum_absolute_mev,
+                            cumulative_absolute_difference_native=(
+                                cumulative_absolute_native
+                            ),
+                            cumulative_absolute_difference_mev=(
+                                cumulative_absolute_mev
+                            ),
+                            projection_energy_budget_mev=(
+                                _PROJECTION_ENERGY_BUDGET_MEV
+                            ),
+                        )
+                    detail["tolerance_passed"] = state_tolerance_passed
+                    tolerance_passed = tolerance_passed and state_tolerance_passed
+                else:
+                    tolerance_passed = False
                 array_mismatch_details[name] = detail
         elif _side_channel_value(left) != _side_channel_value(right):
             side_channel_mismatches.append(name)
+            tolerance_passed = False
     return {
         "bitwise_equal": not array_mismatches and not side_channel_mismatches,
+        "tolerance_passed": tolerance_passed and not side_channel_mismatches,
         "compared_array_fields": compared_array_fields,
         "array_mismatches": array_mismatches,
         "array_mismatch_details": array_mismatch_details,
@@ -215,17 +286,25 @@ def _public_run_payload(run: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def run_benchmark(config_path: Path, *, steps: int) -> dict[str, Any]:
+def run_benchmark(
+    config_path: Path,
+    *,
+    steps: int,
+    backend: str = "numba_roots_exact_serial",
+) -> dict[str, Any]:
     config_bytes = config_path.read_bytes()
     options = _benchmark_options(config_path, steps_override=steps)
     if not options.magnetic_dipole_enabled:
         raise ValueError("benchmark configuration must enable magnetic dipoles")
     if options.magnetic_dipole_source_model == "off":
         raise ValueError("benchmark configuration must enable the dipole source")
+    if backend not in _NUMBA_BACKENDS:
+        choices = ", ".join(_NUMBA_BACKENDS)
+        raise ValueError(f"benchmark backend must be one of: {choices}")
 
-    python_run = _run_backend(options, _BACKENDS[0])
-    numba_cold_run = _run_backend(options, _BACKENDS[1])
-    numba_warm_run = _run_backend(options, _BACKENDS[1])
+    python_run = _run_backend(options, "python")
+    numba_cold_run = _run_backend(options, backend)
+    numba_warm_run = _run_backend(options, backend)
     if config_path.read_bytes() != config_bytes:
         raise RuntimeError("benchmark modified its input configuration")
 
@@ -243,6 +322,11 @@ def run_benchmark(config_path: Path, *, steps: int) -> dict[str, Any]:
                 comparison["bitwise_equal"] for comparison in role_parity.values()
             )
             and candidate["run_status"] == python_run["run_status"],
+            "tolerance_passed": all(
+                comparison["tolerance_passed"]
+                for comparison in role_parity.values()
+            )
+            and candidate["run_status"] == python_run["run_status"],
             "run_status_equal": candidate["run_status"] == python_run["run_status"],
             "roles": role_parity,
         }
@@ -251,14 +335,21 @@ def run_benchmark(config_path: Path, *, steps: int) -> dict[str, Any]:
     cold_seconds = float(numba_cold_run["wall_seconds"])
     warm_seconds = float(numba_warm_run["wall_seconds"])
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "config_path": str(config_path.resolve()),
         "config_sha256": hashlib.sha256(config_bytes).hexdigest(),
         "parameters": {
             "steps": int(steps),
-            "backends": list(_BACKENDS),
+            "backends": ["python", backend],
             "python_is_default": True,
             "numba_parallel_kernel": False,
+            "tolerance_contract": {
+                "ordinary_state_rtol": _STATE_RELATIVE_TOLERANCE,
+                "ordinary_state_atol": _STATE_ABSOLUTE_TOLERANCE,
+                "projection_energy_cumulative_budget_mev": (
+                    _PROJECTION_ENERGY_BUDGET_MEV
+                ),
+            },
         },
         "hardware": _hardware_metadata(),
         "timing": {
@@ -289,6 +380,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("config", type=Path)
     parser.add_argument("--steps", type=_positive_integer, default=300)
+    parser.add_argument(
+        "--backend",
+        choices=_NUMBA_BACKENDS,
+        default="numba_roots_exact_serial",
+    )
     parser.add_argument("--output", type=Path)
     parser.add_argument(
         "--quiet",
@@ -303,7 +399,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
-    report = run_benchmark(args.config, steps=args.steps)
+    report = run_benchmark(args.config, steps=args.steps, backend=args.backend)
     rendered = json.dumps(report, indent=2, sort_keys=True)
     if args.output is not None:
         args.output.parent.mkdir(parents=True, exist_ok=True)

@@ -6,6 +6,17 @@ All notable changes and updates to the LW Integrator project are documented in t
 
 ### Experimental Magnetic Dipole Moments (August 2026)
 
+- Added ``numba_full_strict_serial`` as a third explicit full-retarded source
+  backend. It compiles the serial light-cone, worldline, spin-interpolation,
+  moment, Hodge-dual, and per-source Hertz path with ``fastmath=False`` and no
+  ``prange``. Python remains the default; source accumulation and nested
+  finite differences keep the reference request and reduction order. This
+  backend has a tolerance contract rather than a bitwise-parity promise:
+  tested Hertz events differ by at most one binary64 ULP, while subtraction in
+  the nested derivative stencil can amplify that last-bit difference. Full
+  trajectories must preserve physical state within strict numerical tolerance
+  and keep cumulative projection-energy disagreement below ``0.025 meV``.
+
 - Added the explicit full-retarded source backend
   ``numba_roots_exact_serial`` as a cross-platform CPU opt-in. ``python``
   remains the reference/default and no automatic, platform-specific, parallel,
