@@ -528,6 +528,56 @@ def test_python_backend_is_default_and_never_dispatches_numba(monkeypatch) -> No
     assert result.stencil_offsets.shape == (129, 4)
 
 
+def test_numba_backend_preserves_first_displaced_history_failure() -> None:
+    pytest.importorskip("numba")
+    history = []
+    for time_ns in np.linspace(-0.01, 0.002, 121):
+        zeros = np.zeros(2)
+        history.append(
+            {
+                "t": np.array((time_ns, time_ns)),
+                "x": np.array((C_MMNS * 0.0092, C_MMNS * 0.0098)),
+                "y": zeros.copy(),
+                "z": zeros.copy(),
+                "bx": zeros.copy(),
+                "by": zeros.copy(),
+                "bz": zeros.copy(),
+                "bdotx": zeros.copy(),
+                "bdoty": zeros.copy(),
+                "bdotz": zeros.copy(),
+                "q": zeros.copy(),
+                "q_source": zeros.copy(),
+                "spin_x": np.array((1.0, 0.0)),
+                "spin_y": np.array((0.0, 1.0)),
+                "spin_z": zeros.copy(),
+                "magnetic_moment_native": np.ones(2),
+                "magnetic_dipole_active": np.ones(2),
+                "_dead_particles": np.zeros(2, dtype=bool),
+            }
+        )
+
+    def capture_failure(backend: str) -> tuple[type[Exception], str]:
+        try:
+            evaluate_retarded_dipole_field_gradient_native(
+                history,
+                ObserverEvent(0.0, (0.0, 0.0, 0.0)),
+                source_identities=("a", "b"),
+                stencil_step_mm=0.1,
+                backend=backend,
+            )
+        except Exception as exc:
+            return type(exc), str(exc)
+        raise AssertionError("incomplete displaced history unexpectedly succeeded")
+
+    expected = (
+        RetardedHistoryError,
+        "source history does not bracket the observer light cone for dipole "
+        "source identities ['b']",
+    )
+    assert capture_failure("python") == expected
+    assert capture_failure("numba_roots_exact_serial") == expected
+
+
 def test_numba_roots_backend_is_bitwise_invariant_to_numba_thread_count() -> None:
     numba = pytest.importorskip("numba")
 
@@ -611,6 +661,57 @@ def test_explicit_numba_backend_fails_when_capability_is_unavailable(
         RetardedDipoleBackendUnavailableError,
         match="explicitly selected, but Numba is not available",
     ):
+        evaluate_retarded_dipole_field_gradient_native(
+            _dipole_history(),
+            ObserverEvent(0.0, (1.0, 0.0, 0.0)),
+            backend="numba_roots_exact_serial",
+        )
+
+
+def test_initial_numba_compilation_failure_has_named_capability_error(
+    monkeypatch,
+) -> None:
+    numba = pytest.importorskip("numba")
+    import core.retarded_dipole_numba_roots as compiled_roots
+
+    def failed_compilation(*args, **kwargs):
+        del args, kwargs
+        raise numba.core.errors.TypingError("synthetic compilation failure")
+
+    failed_compilation.signatures = ()
+    monkeypatch.setattr(
+        compiled_roots,
+        "evaluate_source_roots_exact_serial",
+        failed_compilation,
+    )
+
+    with pytest.raises(
+        RetardedDipoleBackendUnavailableError,
+        match="failed during initial JIT compilation",
+    ):
+        evaluate_retarded_dipole_field_gradient_native(
+            _dipole_history(),
+            ObserverEvent(0.0, (1.0, 0.0, 0.0)),
+            backend="numba_roots_exact_serial",
+        )
+
+
+def test_numba_dispatch_does_not_wrap_non_compilation_failures(monkeypatch) -> None:
+    pytest.importorskip("numba")
+    import core.retarded_dipole_numba_roots as compiled_roots
+
+    def runtime_failure(*args, **kwargs):
+        del args, kwargs
+        raise ValueError("synthetic runtime failure")
+
+    runtime_failure.signatures = (object(),)
+    monkeypatch.setattr(
+        compiled_roots,
+        "evaluate_source_roots_exact_serial",
+        runtime_failure,
+    )
+
+    with pytest.raises(ValueError, match="synthetic runtime failure"):
         evaluate_retarded_dipole_field_gradient_native(
             _dipole_history(),
             ObserverEvent(0.0, (1.0, 0.0, 0.0)),

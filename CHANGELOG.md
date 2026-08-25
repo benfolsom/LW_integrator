@@ -11,11 +11,14 @@ All notable changes and updates to the LW Integrator project are documented in t
   remains the reference/default and no automatic, platform-specific, parallel,
   or Metal dispatch is exposed. The compiled seam solves only independent
   light-cone roots; Python recomputes final worldline samples, residuals, Hertz
-  tensors, source sums, and finite differences in the established order.
-  Explicit selection fails clearly when Numba is unavailable. A maintained
-  300-sample electron--proton benchmark compares every public state array and
-  side channel; on the M5 Pro validation run it was bitwise identical and
-  reduced wall time from 10.711 s to 6.827 s after compilation (1.569x).
+  tensors, source sums, and finite differences in the established order. The
+  root batch also preserves the oracle's displaced-event first-use order, so
+  the earliest history or singularity failure is unchanged.
+  Explicit selection fails clearly when Numba is unavailable or initial JIT
+  compilation fails. A maintained 300-sample electron--proton benchmark
+  compares every public state array and side channel; on the M5 Pro validation
+  run it was bitwise identical and reduced wall time from 10.653 s to 6.775 s
+  after compilation (1.572x).
 
 - Corrected exact ``INERTIAL_PREHISTORY`` charge and dipole-source momentum
   bookkeeping. The accepted step now advances the gauge-invariant mechanical

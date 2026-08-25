@@ -18,10 +18,13 @@ from .constants import C_MMNS
 
 try:  # pragma: no cover - availability is tested through the provider seam.
     from numba import jit
+    from numba.core.errors import NumbaError
 
     NUMBA_AVAILABLE = True
+    NUMBA_COMPILATION_ERRORS: tuple[type[BaseException], ...] = (NumbaError,)
 except ImportError:  # pragma: no cover
     NUMBA_AVAILABLE = False
+    NUMBA_COMPILATION_ERRORS = ()
 
     def jit(
         *args: object, **kwargs: object

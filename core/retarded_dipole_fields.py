@@ -193,29 +193,50 @@ _DIPOLE_PREPARED_HISTORY_CACHE: AppendAwarePreparedHistoryCache[
 
 @lru_cache(maxsize=1)
 def _full_gradient_stencil_offsets() -> tuple[tuple[int, int, int, int], ...]:
-    """Return the deterministic 129-event third-derivative Hertz stencil."""
+    """Return the 129 events in the Python oracle's exact first-use order.
+
+    The reference provider evaluates derivatives lazily.  This order is
+    observable when a displaced event raises a history or singularity error,
+    so the eager compiled-root batch must not sort its events independently.
+    """
 
     derivative_tuples: set[tuple[int, ...]] = set()
-    for nu in range(4):
-        derivative_tuples.add((nu,))
-    for derivative_index in range(4):
-        for nu in range(4):
-            derivative_tuples.add(tuple(sorted((derivative_index, nu))))
-    for derivative_index in range(4):
-        for mu in range(4):
-            for nu in range(4):
-                for rho in range(4):
-                    derivative_tuples.add(tuple(sorted((derivative_index, mu, rho))))
-                    derivative_tuples.add(tuple(sorted((derivative_index, nu, rho))))
+    center_offset = (0, 0, 0, 0)
+    offsets: list[tuple[int, int, int, int]] = [center_offset]
+    seen_offsets: set[tuple[int, int, int, int]] = {center_offset}
 
-    offsets = {(0, 0, 0, 0)}
-    for derivative_indices in derivative_tuples:
-        for signs in product((-1, 1), repeat=len(derivative_indices)):
+    def record_derivative(derivative_indices: tuple[int, ...]) -> None:
+        canonical = tuple(sorted(derivative_indices))
+        if canonical in derivative_tuples:
+            return
+        derivative_tuples.add(canonical)
+        for signs in product((-1, 1), repeat=len(canonical)):
             offset = [0, 0, 0, 0]
-            for coordinate, sign in zip(derivative_indices, signs):
+            for coordinate, sign in zip(canonical, signs):
                 offset[coordinate] += sign
-            offsets.add(cast(tuple[int, int, int, int], tuple(offset)))
-    result = tuple(sorted(offsets))
+            event_offset = cast(tuple[int, int, int, int], tuple(offset))
+            if event_offset not in seen_offsets:
+                seen_offsets.add(event_offset)
+                offsets.append(event_offset)
+
+    # Mirror the loop and generator order below.  Repeated requests are
+    # skipped just as _hertz_derivative's lru_cache skips them at runtime.
+    for _mu in range(4):
+        for nu in range(4):
+            record_derivative((nu,))
+    for derivative_index in range(4):
+        for _mu in range(4):
+            for nu in range(4):
+                record_derivative((derivative_index, nu))
+    for mu in range(4):
+        for nu in range(4):
+            for derivative_index in range(4):
+                for rho in range(4):
+                    record_derivative((derivative_index, mu, rho))
+                for rho in range(4):
+                    record_derivative((derivative_index, nu, rho))
+
+    result = tuple(offsets)
     if len(result) != 129:
         raise RuntimeError(
             f"internal full-gradient stencil must contain 129 events, got {len(result)}"
@@ -789,6 +810,7 @@ def _evaluate_prepared_hertz_batch_numba_roots_exact_serial(
     """Compile roots while preserving the Python Hertz and addition order."""
 
     from .retarded_dipole_numba_roots import (
+        NUMBA_COMPILATION_ERRORS,
         _STATUS_MISSING_HISTORY,
         _STATUS_TERMINATED_SOURCE,
         _STATUS_VALID,
@@ -812,20 +834,32 @@ def _evaluate_prepared_hertz_batch_numba_roots_exact_serial(
     source_batches: dict[int, tuple[np.ndarray, ...]] = {}
     for source_index, source in prepared.sources.items():
         worldline = source.worldline
-        source_batches[source_index] = cast(
-            tuple[np.ndarray, ...],
-            evaluate_source_roots_exact_serial(
-                worldline.time_ns,
-                worldline.position_mm,
-                worldline.segment_duration_ns,
-                worldline.position_coefficients_mm,
-                bool(worldline.ended_by_loss),
-                event_time_ns,
-                event_position_mm,
-                float(root_tolerance_mm),
-                int(max_root_iterations),
-            ),
+        compiling_initial_signature = not bool(
+            getattr(evaluate_source_roots_exact_serial, "signatures", ())
         )
+        try:
+            source_batches[source_index] = cast(
+                tuple[np.ndarray, ...],
+                evaluate_source_roots_exact_serial(
+                    worldline.time_ns,
+                    worldline.position_mm,
+                    worldline.segment_duration_ns,
+                    worldline.position_coefficients_mm,
+                    bool(worldline.ended_by_loss),
+                    event_time_ns,
+                    event_position_mm,
+                    float(root_tolerance_mm),
+                    int(max_root_iterations),
+                ),
+            )
+        except NUMBA_COMPILATION_ERRORS as exc:
+            if compiling_initial_signature:
+                raise RetardedDipoleBackendUnavailableError(
+                    "retarded dipole backend 'numba_roots_exact_serial' failed "
+                    "during initial JIT compilation; select backend 'python' or "
+                    "inspect the chained Numba error"
+                ) from exc
+            raise
 
     results: list[RetardedDipoleHertzResult] = []
     arrays = prepared.arrays

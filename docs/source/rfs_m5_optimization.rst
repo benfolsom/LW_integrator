@@ -118,19 +118,19 @@ result was:
 ====================== ===========
 Run                    Wall time
 ====================== ===========
-Python reference       10.711141 s
-Numba, cold compile      7.576499 s
-Numba, warm              6.827008 s
-Warm speedup                  1.569x
+Python reference       10.653248 s
+Numba, cold compile      7.526724 s
+Numba, warm              6.775106 s
+Warm speedup                  1.572x
 ====================== ===========
 
-The cold surcharge was about 0.749 s and maximum resident memory was
-225.69 MiB.  Both the cold and warm Numba trajectories matched all 59 public
+The cold surcharge was about 0.752 s and maximum resident memory was
+225.94 MiB.  Both the cold and warm Numba trajectories matched all 59 public
 arrays and every non-storage side channel bit-for-bit for both particles.  A
 separate paired audit compared all 600 complete dipole-gradient calls in the
 run and also found exact identity.  The benchmark report is
-``/tmp/lw-numba-roots-backend-300-final.json`` with SHA-256
-``e692d3f1ca0ae9f0789a05b350ac30e81a4ab9ba616437def5e9e1bd191e6951``.
+``/tmp/lw-numba-roots-backend-300-order-fix.json`` with SHA-256
+``fce8950ebb4fcd578d94837b2352d2d372e3aba387553698f806a58338809bc8``.
 
 Reproduce the same comparison with an ordinary testbed configuration::
 
