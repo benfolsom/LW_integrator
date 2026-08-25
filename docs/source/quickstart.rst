@@ -144,10 +144,13 @@ simulation, and confirm that the regression tooling works on your machine.
    complete RFS evolution.  To add the ordinary non-self field of each moment,
    also select ``--dipole-source full-retarded-point``.  The optional
    ``--dipole-source-cutoff-mm`` value is a strict point-singularity abort
-   boundary, not softening.  Neutral particles and prescribed gradients are
-   best configured in a saved JSON.  See :doc:`magnetic_dipole_moments` for all
-   hard scope guards, the diagnostic legacy models, and the retarded source
-   limitations.
+   boundary, not softening.  ``--dipole-source-backend
+   numba_roots_exact_serial`` opts into a cross-platform serial CPU root
+   kernel while preserving Python source and stencil assembly; ``python`` is
+   the default and there is no automatic platform dispatch.  Neutral
+   particles and prescribed gradients are best configured in a saved JSON.
+   See :doc:`magnetic_dipole_moments` for all hard scope guards, the diagnostic
+   legacy models, and the retarded source limitations.
 
    ``inertial-prehistory`` is the appropriate boundary model for an incoming
    particle that existed before active time zero.  It constructs eight sparse

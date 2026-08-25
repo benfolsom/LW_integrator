@@ -551,6 +551,7 @@ class DipoleSourceConfig:
     """
 
     model: str = "off"
+    backend: str = "python"
     minimum_separation_mm: float = 2.0e-9
     relative_stencil_step: float = 1.0e-3
     minimum_stencil_step_mm: float = 1.0e-15
@@ -569,6 +570,12 @@ class DipoleSourceConfig:
         if self.model not in {"off", "covariant_retarded_point"}:
             raise ValueError(
                 "dipole source model must be one of: off, " "covariant_retarded_point"
+            )
+        self.backend = str(self.backend).strip().lower()
+        if self.backend not in {"python", "numba_roots_exact_serial"}:
+            raise ValueError(
+                "dipole source backend must be one of: python, "
+                "numba_roots_exact_serial"
             )
 
         for name in (

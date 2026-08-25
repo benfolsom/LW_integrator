@@ -3015,6 +3015,7 @@ def retarded_equations_of_motion(
                                 max_root_iterations=(
                                     magnetic_dipole.source.max_root_iterations
                                 ),
+                                backend=magnetic_dipole.source.backend,
                             )
                         )
                         if sc_convergence_mode == "fixed_geometry":

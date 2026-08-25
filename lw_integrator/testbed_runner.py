@@ -77,6 +77,11 @@ DIPOLE_SOURCE_MODEL_OPTIONS: Tuple[Tuple[str, str], ...] = (
     ("Full retarded point (experimental)", "covariant_retarded_point"),
 )
 
+DIPOLE_SOURCE_BACKEND_OPTIONS: Tuple[Tuple[str, str], ...] = (
+    ("Python reference", "python"),
+    ("Numba roots-exact CPU", "numba_roots_exact_serial"),
+)
+
 PARAM_LABELS: Dict[str, str] = {
     "starting_distance": "Start z (mm)",
     "transv_mom": "Transverse momentum spread (amu*mm/ns, ±)",
@@ -408,6 +413,7 @@ class SimulationOptions:
     magnetic_dipole_spin_model: str = "rfs_minimal_2021"
     magnetic_dipole_stern_gerlach_model: str = "rfs_full_g"
     magnetic_dipole_source_model: str = "off"
+    magnetic_dipole_source_backend: str = "python"
     magnetic_dipole_source_minimum_separation_mm: float = 2.0e-9
     magnetic_dipole_source_relative_stencil_step: float = 1.0e-3
     magnetic_dipole_source_minimum_stencil_step_mm: float = 1.0e-15
@@ -653,6 +659,7 @@ class SimulationOptions:
                 "stern_gerlach_model": (self.magnetic_dipole_stern_gerlach_model),
                 "source": {
                     "model": self.magnetic_dipole_source_model,
+                    "backend": self.magnetic_dipole_source_backend,
                     "minimum_separation_mm": (
                         self.magnetic_dipole_source_minimum_separation_mm
                     ),
@@ -1372,6 +1379,9 @@ class SimulationOptions:
                 _magnetic_value("stern_gerlach_model", "rfs_full_g")
             ),
             magnetic_dipole_source_model=str(_magnetic_source_value("model", "off")),
+            magnetic_dipole_source_backend=str(
+                _magnetic_source_value("backend", "python")
+            ),
             magnetic_dipole_source_minimum_separation_mm=float(
                 _magnetic_source_value("minimum_separation_mm", 2.0e-9)
             ),
@@ -2721,6 +2731,7 @@ def build_magnetic_dipole_config(options: SimulationOptions) -> object:
         stern_gerlach_model=options.magnetic_dipole_stern_gerlach_model,
         source=DipoleSourceConfig(
             model=options.magnetic_dipole_source_model,
+            backend=options.magnetic_dipole_source_backend,
             minimum_separation_mm=(
                 options.magnetic_dipole_source_minimum_separation_mm
             ),
@@ -2909,6 +2920,11 @@ def run_testbed(
         f"  Adaptive timestep: {options.adaptive_timestep_enabled} (threshold={options.adaptive_timestep_threshold * 100:.0f}%, reduction={options.adaptive_timestep_reduction_factor}x)"
     )
     _log(f"  Radiation reaction: {options.radiation_reaction_mode}")
+    _log(
+        "  Magnetic dipole source: "
+        f"{options.magnetic_dipole_source_model} "
+        f"(backend={options.magnetic_dipole_source_backend})"
+    )
     if options.driver_train_enabled and sim_type == SimulationType.BUNCH_TO_BUNCH:
         _log(
             "  Driver train: enabled "
@@ -5006,6 +5022,7 @@ __all__ = [
     "PARAM_LABELS",
     "PARTICLE_PARAM_FIELDS",
     "RADIATION_REACTION_MODE_CHOICES",
+    "DIPOLE_SOURCE_BACKEND_OPTIONS",
     "DIPOLE_SOURCE_MODEL_OPTIONS",
     "SimulationOptions",
     "InitialSummary",

@@ -8,6 +8,7 @@ from tkinter import ttk
 from .testbed_runner import (
     AVAILABLE_DPI_CHOICES,
     CORE_PARAM_LABELS,
+    DIPOLE_SOURCE_BACKEND_OPTIONS,
     DIPOLE_SOURCE_MODEL_OPTIONS,
     PARAM_LABELS,
     PARTICLE_PARAM_FIELDS,
@@ -212,11 +213,33 @@ class IntegratorGUITabMixin:
             "Full retarded point includes near, induction, and radiation fields.",
         )
 
+        self.magnetic_dipole_source_backend_label = ttk.Label(
+            magnetic_frame, text="Evaluation backend:"
+        )
+        self.magnetic_dipole_source_backend_label.grid(
+            row=4, column=0, sticky="w", padx=(20, 8), pady=2
+        )
+        self.magnetic_dipole_source_backend_combo = ttk.Combobox(
+            magnetic_frame,
+            textvariable=self.magnetic_dipole_source_backend_var,
+            values=[label for label, _backend in DIPOLE_SOURCE_BACKEND_OPTIONS],
+            state="readonly",
+            width=34,
+        )
+        self.magnetic_dipole_source_backend_combo.grid(
+            row=4, column=1, columnspan=2, sticky="ew", pady=2
+        )
+        Tooltip(
+            self.magnetic_dipole_source_backend_combo,
+            "Numba compiles only serial light-cone roots; Hertz tensors and "
+            "finite differences keep the Python reference arithmetic.",
+        )
+
         self.magnetic_dipole_source_cutoff_label = ttk.Label(
             magnetic_frame, text="Minimum separation abort (mm):"
         )
         self.magnetic_dipole_source_cutoff_label.grid(
-            row=4, column=0, sticky="w", padx=(20, 8), pady=2
+            row=5, column=0, sticky="w", padx=(20, 8), pady=2
         )
         self.magnetic_dipole_source_cutoff_entry = ttk.Entry(
             magnetic_frame,
@@ -224,7 +247,7 @@ class IntegratorGUITabMixin:
             width=16,
         )
         self.magnetic_dipole_source_cutoff_entry.grid(
-            row=4, column=1, sticky="ew", padx=(0, 8), pady=2
+            row=5, column=1, sticky="ew", padx=(0, 8), pady=2
         )
         Tooltip(
             self.magnetic_dipole_source_cutoff_entry,
@@ -234,15 +257,15 @@ class IntegratorGUITabMixin:
         self.magnetic_rider_heading_label = ttk.Label(
             magnetic_frame, text="Rider", font=("TkDefaultFont", 8, "bold")
         )
-        self.magnetic_rider_heading_label.grid(row=5, column=1, sticky="w")
+        self.magnetic_rider_heading_label.grid(row=6, column=1, sticky="w")
         self.magnetic_driver_heading_label = ttk.Label(
             magnetic_frame, text="Driver", font=("TkDefaultFont", 8, "bold")
         )
-        self.magnetic_driver_heading_label.grid(row=5, column=2, sticky="w")
+        self.magnetic_driver_heading_label.grid(row=6, column=2, sticky="w")
 
         self.magnetic_species_label = ttk.Label(magnetic_frame, text="Species preset:")
         self.magnetic_species_label.grid(
-            row=6, column=0, sticky="w", padx=(20, 8), pady=2
+            row=7, column=0, sticky="w", padx=(20, 8), pady=2
         )
         magnetic_species_labels = list(self._magnetic_species_by_label)
         self.rider_magnetic_species_combo = ttk.Combobox(
@@ -253,7 +276,7 @@ class IntegratorGUITabMixin:
             width=24,
         )
         self.rider_magnetic_species_combo.grid(
-            row=6, column=1, sticky="ew", padx=(0, 8), pady=2
+            row=7, column=1, sticky="ew", padx=(0, 8), pady=2
         )
         self.driver_magnetic_species_combo = ttk.Combobox(
             magnetic_frame,
@@ -262,19 +285,19 @@ class IntegratorGUITabMixin:
             state="readonly",
             width=24,
         )
-        self.driver_magnetic_species_combo.grid(row=6, column=2, sticky="ew", pady=2)
+        self.driver_magnetic_species_combo.grid(row=7, column=2, sticky="ew", pady=2)
 
         self.magnetic_spin_labels = []
         self.rider_rest_spin_entries = []
         self.driver_rest_spin_entries = []
-        for row_offset, axis in enumerate(("x", "y", "z"), start=7):
+        for row_offset, axis in enumerate(("x", "y", "z"), start=8):
             label = ttk.Label(magnetic_frame, text=f"Rest spin {axis}:")
             label.grid(row=row_offset, column=0, sticky="w", padx=(20, 8), pady=2)
             self.magnetic_spin_labels.append(label)
 
             rider_entry = ttk.Entry(
                 magnetic_frame,
-                textvariable=self.rider_rest_spin_vars[row_offset - 7],
+                textvariable=self.rider_rest_spin_vars[row_offset - 8],
                 width=12,
             )
             rider_entry.grid(row=row_offset, column=1, sticky="ew", padx=(0, 8), pady=2)
@@ -282,7 +305,7 @@ class IntegratorGUITabMixin:
 
             driver_entry = ttk.Entry(
                 magnetic_frame,
-                textvariable=self.driver_rest_spin_vars[row_offset - 7],
+                textvariable=self.driver_rest_spin_vars[row_offset - 8],
                 width=12,
             )
             driver_entry.grid(row=row_offset, column=2, sticky="ew", pady=2)
@@ -294,6 +317,7 @@ class IntegratorGUITabMixin:
             (self.magnetic_dipole_source_model_combo, "readonly"),
         ]
         self._magnetic_dipole_source_controls = [
+            (self.magnetic_dipole_source_backend_combo, "readonly"),
             (self.magnetic_dipole_source_cutoff_entry, "normal"),
         ]
         self._magnetic_dipole_rider_controls = [
@@ -310,6 +334,7 @@ class IntegratorGUITabMixin:
             self.magnetic_dipole_source_model_label,
         ]
         self._magnetic_dipole_source_labels = [
+            self.magnetic_dipole_source_backend_label,
             self.magnetic_dipole_source_cutoff_label,
         ]
         self._magnetic_dipole_rider_labels = [self.magnetic_rider_heading_label]

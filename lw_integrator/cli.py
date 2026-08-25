@@ -162,6 +162,7 @@ DEFAULT_MAGNETIC_DIPOLE: Dict[str, Any] = {
     "stern_gerlach_model": "rfs_full_g",
     "source": {
         "model": "off",
+        "backend": "python",
         "minimum_separation_mm": 2.0e-9,
         "relative_stencil_step": 1.0e-3,
         "minimum_stencil_step_mm": 1.0e-15,
@@ -703,6 +704,16 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         help=(
             "Strict minimum observer/source separation in mm for the point "
             "dipole field. Crossing it aborts the run; it is not softening."
+        ),
+    )
+    parser.add_argument(
+        "--dipole-source-backend",
+        dest="dipole_source_backend",
+        choices=("python", "numba_roots_exact_serial"),
+        help=(
+            "Full-gradient source evaluator: the Python reference (default) "
+            "or strict serial Numba light-cone roots with exact Python Hertz "
+            "assembly. Explicit Numba selection fails if Numba is unavailable."
         ),
     )
     parser.add_argument(
@@ -1253,9 +1264,11 @@ def _json_default(value: Any) -> Any:
     raise TypeError(f"Cannot JSON-serialize {type(value).__name__}")
 
 
-def _build_testbed_report(result: Any, config_path: Path) -> dict[str, Any]:
+def _build_testbed_report(
+    result: Any, config_path: Path, options: Any | None = None
+) -> dict[str, Any]:
     """Return a compact serializable report for a testbed-config run."""
-    return {
+    report = {
         "run_mode": "testbed_config",
         "config_path": str(config_path),
         "duration_s": float(result.duration_s),
@@ -1271,6 +1284,12 @@ def _build_testbed_report(result: Any, config_path: Path) -> dict[str, Any]:
         "energy_ledger_metrics": result.energy_ledger_metrics or {},
         "saved_paths": {name: str(path) for name, path in result.saved_paths.items()},
     }
+    if options is not None:
+        report["magnetic_dipole_source"] = {
+            "model": str(options.magnetic_dipole_source_model),
+            "backend": str(options.magnetic_dipole_source_backend),
+        }
+    return report
 
 
 def _print_testbed_summary(report: Mapping[str, Any]) -> None:
@@ -1289,6 +1308,12 @@ def _print_testbed_summary(report: Mapping[str, Any]) -> None:
             lines.append(f"  {label}: {value}")
     if report.get("halt_reason"):
         lines.append(f"  Halt Reason: {report['halt_reason']}")
+    magnetic_source = report.get("magnetic_dipole_source")
+    if isinstance(magnetic_source, Mapping):
+        lines.append(
+            "  Magnetic Dipole Source: "
+            f"{magnetic_source.get('model')} / {magnetic_source.get('backend')}"
+        )
     saved_paths = report.get("saved_paths")
     if isinstance(saved_paths, Mapping) and saved_paths:
         lines.append(f"  Saved Artifacts: {len(saved_paths)}")
@@ -1322,7 +1347,7 @@ def run_testbed_config(args: argparse.Namespace) -> int:
         print(f"Error running testbed config {config_path}: {exc}", file=sys.stderr)
         return 2
 
-    report = _build_testbed_report(result, config_path)
+    report = _build_testbed_report(result, config_path, options)
     if args.output is not None:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(
@@ -1707,6 +1732,8 @@ def _merge_simulation_payload(
     dipole_source = magnetic_dipole["source"]
     if getattr(args, "dipole_source_model", None) is not None:
         dipole_source["model"] = args.dipole_source_model
+    if getattr(args, "dipole_source_backend", None) is not None:
+        dipole_source["backend"] = args.dipole_source_backend
     if getattr(args, "dipole_source_minimum_separation_mm", None) is not None:
         dipole_source["minimum_separation_mm"] = (
             args.dipole_source_minimum_separation_mm
@@ -2905,6 +2932,12 @@ def print_summary(summary: Mapping[str, Any]) -> None:
             lines.append(
                 f"  {key.replace('_', ' ').title()}: {_format_value(summary[key])}"
             )
+    magnetic_source = summary.get("magnetic_dipole_source")
+    if isinstance(magnetic_source, Mapping):
+        lines.append(
+            "  Magnetic Dipole Source: "
+            f"{magnetic_source.get('model')} / {magnetic_source.get('backend')}"
+        )
     print("\n".join(lines))
 
 
@@ -2915,12 +2948,19 @@ def _format_value(value: Any) -> Any:
 
 
 def build_report(
-    trajectory: Trajectory, driver: Optional[Trajectory] = None
+    trajectory: Trajectory,
+    driver: Optional[Trajectory] = None,
+    magnetic_dipole: MagneticDipoleConfig | None = None,
 ) -> Dict[str, Any]:
     """Build the CLI report payload for rider and optional driver trajectories."""
     report = dict(summarise_trajectory(trajectory))
     if driver is not None:
         report["driver_summary"] = summarise_trajectory(driver)
+    if magnetic_dipole is not None:
+        report["magnetic_dipole_source"] = {
+            "model": magnetic_dipole.source.model,
+            "backend": magnetic_dipole.source.backend,
+        }
     return report
 
 
@@ -3019,7 +3059,9 @@ def main(argv: Optional[list[str]] = None) -> int:
         return 2
 
     trajectory, driver, *_soa_out = run_simulation(request)
-    report = build_report(trajectory, driver)
+    request_config = getattr(request, "config", None)
+    magnetic_dipole = getattr(request_config, "magnetic_dipole", None)
+    report = build_report(trajectory, driver, magnetic_dipole)
 
     if args.output is not None:
         args.output.parent.mkdir(parents=True, exist_ok=True)

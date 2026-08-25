@@ -8,6 +8,7 @@ import pytest
 from core.constants import C_MMNS
 from core.retarded_dipole_fields import (
     DipoleSourceSingularityError,
+    RetardedDipoleBackendUnavailableError,
     _interpolate_rest_spin_c1,
     _prepare_dipole_history,
     evaluate_retarded_dipole_field_gradient_native,
@@ -472,3 +473,155 @@ def test_c1_spin_interpolation_preserves_a_constant_physical_moment() -> None:
     )
 
     np.testing.assert_allclose(np.linalg.norm(interpolated, axis=1), 1.0, atol=2e-16)
+
+
+def _assert_complete_gradient_result_bitwise_equal(reference, candidate) -> None:
+    for name in (
+        "four_potential",
+        "partial_a",
+        "electric_field_native",
+        "magnetic_field_native",
+        "field_tensor",
+        "partial_f",
+        "stencil_offsets",
+        "stencil_retarded_time_ns",
+        "stencil_light_cone_residual_mm",
+    ):
+        np.testing.assert_array_equal(
+            getattr(candidate, name), getattr(reference, name)
+        )
+    assert candidate.stencil_step_mm == reference.stencil_step_mm
+    assert (
+        candidate.lorenz_gauge_residual_per_mm == reference.lorenz_gauge_residual_per_mm
+    )
+    assert candidate.hertz.source_identities == reference.hertz.source_identities
+    for name in (
+        "hertz_tensor",
+        "retarded_time_ns",
+        "light_cone_residual_mm",
+        "separation_mm",
+        "valid_sources",
+    ):
+        np.testing.assert_array_equal(
+            getattr(candidate.hertz, name), getattr(reference.hertz, name)
+        )
+
+
+def test_python_backend_is_default_and_never_dispatches_numba(monkeypatch) -> None:
+    import core.retarded_dipole_fields as fields
+
+    def unexpected_dispatch(*args, **kwargs):
+        del args, kwargs
+        raise AssertionError("default Python backend dispatched the Numba batch")
+
+    monkeypatch.setattr(
+        fields,
+        "_evaluate_prepared_hertz_batch_numba_roots_exact_serial",
+        unexpected_dispatch,
+    )
+    result = fields.evaluate_retarded_dipole_field_gradient_native(
+        _dipole_history(beta=(0.07, -0.02, 0.03)),
+        ObserverEvent(0.0, (1.0, 0.4, -0.7)),
+        stencil_step_mm=8.0e-4,
+    )
+
+    assert result.stencil_offsets.shape == (129, 4)
+
+
+def test_numba_roots_backend_is_bitwise_invariant_to_numba_thread_count() -> None:
+    numba = pytest.importorskip("numba")
+
+    angular_frequency_per_ns = 23.0
+
+    def rotating_spin(time_ns: float) -> np.ndarray:
+        angle = angular_frequency_per_ns * time_ns
+        return np.array((0.8 * np.cos(angle), 0.8 * np.sin(angle), 0.6))
+
+    history = _dipole_history(
+        beta=(0.13, -0.06, 0.04),
+        moment_native=-1.7,
+        spin_function=rotating_spin,
+    )
+    event = ObserverEvent(0.0, (0.9, 1.1, -0.5))
+    kwargs = {
+        "source_identities": ("rotating-source",),
+        "stencil_step_mm": 7.0e-4,
+    }
+    reference = evaluate_retarded_dipole_field_gradient_native(history, event, **kwargs)
+
+    original_threads = numba.get_num_threads()
+    maximum_threads = int(numba.config.NUMBA_NUM_THREADS)
+    try:
+        for thread_count in (1, 4, 8, 10, 15):
+            if thread_count > maximum_threads:
+                continue
+            numba.set_num_threads(thread_count)
+            candidate = evaluate_retarded_dipole_field_gradient_native(
+                history,
+                event,
+                backend="numba_roots_exact_serial",
+                **kwargs,
+            )
+            _assert_complete_gradient_result_bitwise_equal(reference, candidate)
+    finally:
+        numba.set_num_threads(original_threads)
+
+
+def test_numba_backend_recomputes_final_worldline_sample_in_python(
+    monkeypatch,
+) -> None:
+    pytest.importorskip("numba")
+    import core.retarded_dipole_numba_roots as compiled_roots
+
+    history = _dipole_history(beta=(0.11, -0.04, 0.02))
+    event = ObserverEvent(0.0, (0.8, 1.0, -0.6))
+    reference = evaluate_retarded_dipole_field_gradient_native(history, event)
+    original = compiled_roots.evaluate_source_roots_exact_serial
+
+    def roots_with_corrupted_discarded_samples(*args, **kwargs):
+        batch = original(*args, **kwargs)
+        corrupted = tuple(np.array(value, copy=True) for value in batch)
+        corrupted[1][:] = 123.0
+        corrupted[3][:] = 456.0
+        corrupted[4][:] = 789.0
+        return corrupted
+
+    monkeypatch.setattr(
+        compiled_roots,
+        "evaluate_source_roots_exact_serial",
+        roots_with_corrupted_discarded_samples,
+    )
+    candidate = evaluate_retarded_dipole_field_gradient_native(
+        history,
+        event,
+        backend="numba_roots_exact_serial",
+    )
+
+    _assert_complete_gradient_result_bitwise_equal(reference, candidate)
+
+
+def test_explicit_numba_backend_fails_when_capability_is_unavailable(
+    monkeypatch,
+) -> None:
+    import core.retarded_dipole_numba_roots as compiled_roots
+
+    monkeypatch.setattr(compiled_roots, "NUMBA_AVAILABLE", False)
+
+    with pytest.raises(
+        RetardedDipoleBackendUnavailableError,
+        match="explicitly selected, but Numba is not available",
+    ):
+        evaluate_retarded_dipole_field_gradient_native(
+            _dipole_history(),
+            ObserverEvent(0.0, (1.0, 0.0, 0.0)),
+            backend="numba_roots_exact_serial",
+        )
+
+
+def test_unknown_retarded_dipole_backend_fails_explicitly() -> None:
+    with pytest.raises(ValueError, match="backend must be one of"):
+        evaluate_retarded_dipole_field_gradient_native(
+            _dipole_history(),
+            ObserverEvent(0.0, (1.0, 0.0, 0.0)),
+            backend="auto",
+        )

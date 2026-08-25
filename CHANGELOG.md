@@ -6,6 +6,17 @@ All notable changes and updates to the LW Integrator project are documented in t
 
 ### Experimental Magnetic Dipole Moments (August 2026)
 
+- Added the explicit full-retarded source backend
+  ``numba_roots_exact_serial`` as a cross-platform CPU opt-in. ``python``
+  remains the reference/default and no automatic, platform-specific, parallel,
+  or Metal dispatch is exposed. The compiled seam solves only independent
+  light-cone roots; Python recomputes final worldline samples, residuals, Hertz
+  tensors, source sums, and finite differences in the established order.
+  Explicit selection fails clearly when Numba is unavailable. A maintained
+  300-sample electron--proton benchmark compares every public state array and
+  side channel; on the M5 Pro validation run it was bitwise identical and
+  reduced wall time from 10.711 s to 6.827 s after compilation (1.569x).
+
 - Corrected exact ``INERTIAL_PREHISTORY`` charge and dipole-source momentum
   bookkeeping. The accepted step now advances the gauge-invariant mechanical
   response ``q F`` together with the RFS ``mu G`` response, then reconstructs

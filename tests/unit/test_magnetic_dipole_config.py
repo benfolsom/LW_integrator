@@ -14,6 +14,7 @@ def test_magnetic_dipole_defaults_to_disabled_rfs_pair() -> None:
     assert config.spin_model == "rfs_minimal_2021"
     assert config.stern_gerlach_model == "rfs_full_g"
     assert config.source.model == "off"
+    assert config.source.backend == "python"
     assert config.source.active is False
 
 
@@ -75,6 +76,7 @@ def test_retarded_dipole_source_normalizes_alias_and_nested_mapping() -> None:
         enabled=True,
         source={
             "model": "full-retarded-point",
+            "backend": "numba_roots_exact_serial",
             "minimum_separation_mm": 3.0e-9,
             "relative_stencil_step": 5.0e-4,
         },
@@ -82,6 +84,7 @@ def test_retarded_dipole_source_normalizes_alias_and_nested_mapping() -> None:
 
     assert isinstance(config.source, DipoleSourceConfig)
     assert config.source.model == "covariant_retarded_point"
+    assert config.source.backend == "numba_roots_exact_serial"
     assert config.source.active is True
     assert config.source.minimum_separation_mm == 3.0e-9
     assert config.source.relative_stencil_step == 5.0e-4
@@ -91,6 +94,7 @@ def test_retarded_dipole_source_normalizes_alias_and_nested_mapping() -> None:
     ("overrides", "message"),
     (
         ({"model": "quasistatic"}, "model"),
+        ({"backend": "auto"}, "backend"),
         ({"minimum_separation_mm": 0.0}, "minimum_separation"),
         ({"relative_stencil_step": 0.05}, "relative_stencil_step"),
         ({"minimum_stencil_step_mm": float("nan")}, "minimum_stencil"),

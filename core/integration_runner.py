@@ -986,6 +986,7 @@ def _preflight_inertial_exact_histories(
                     minimum_separation_mm=float(source_options.minimum_separation_mm),
                     root_tolerance_mm=float(source_options.root_tolerance_mm),
                     max_root_iterations=int(source_options.max_root_iterations),
+                    backend=source_options.backend,
                 )
                 potential_offsets[
                     particle_idx

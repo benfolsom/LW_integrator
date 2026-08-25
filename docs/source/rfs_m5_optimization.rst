@@ -96,3 +96,47 @@ and disables plotting and output files in memory::
 The benchmark JSON records hardware, timing distributions, root diagnostics,
 selected-array hashes, and elementwise parity metrics.  It should be retained
 with any future performance claim.
+
+Conservative production root backend
+------------------------------------
+
+A later production slice, based on integrator commit ``009ecce``, adds
+``numba_roots_exact_serial`` as an explicit source-backend option.  This is a
+smaller seam than the process and full-kernel prototypes: Numba performs only
+the serial light-cone root searches.  Python recomputes the final quintic
+worldline sample and residual, then preserves the reference Hertz, Hodge,
+source-addition, and finite-difference order.  ``python`` remains the default;
+there is no ``auto`` mode, OS detection, worker count, or Metal dispatch.
+
+The production check used the central Medina-on electron--proton flyby input,
+overrode only its sample count to 300 in memory, and left every tracked launch
+flag false.  The input SHA-256 was
+``6514ee61aeb2da813bf1b513927bae103de7cd6f83343b0789fc2a566ef0c890``.
+With BLAS, OpenMP, and vecLib incidental threading limited to one thread, the
+result was:
+
+====================== ===========
+Run                    Wall time
+====================== ===========
+Python reference       10.711141 s
+Numba, cold compile      7.576499 s
+Numba, warm              6.827008 s
+Warm speedup                  1.569x
+====================== ===========
+
+The cold surcharge was about 0.749 s and maximum resident memory was
+225.69 MiB.  Both the cold and warm Numba trajectories matched all 59 public
+arrays and every non-storage side channel bit-for-bit for both particles.  A
+separate paired audit compared all 600 complete dipole-gradient calls in the
+run and also found exact identity.  The benchmark report is
+``/tmp/lw-numba-roots-backend-300-final.json`` with SHA-256
+``e692d3f1ca0ae9f0789a05b350ac30e81a4ab9ba616437def5e9e1bd191e6951``.
+
+Reproduce the same comparison with an ordinary testbed configuration::
+
+   python scripts/benchmark_dipole_source_backends.py CONFIG.json \
+      --steps 300 \
+      --output /tmp/dipole-source-backends.json \
+      --quiet
+
+Use a fresh ``NUMBA_CACHE_DIR`` when the cold-compilation number matters.

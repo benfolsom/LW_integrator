@@ -52,6 +52,7 @@ class _MagneticHarness(IntegratorGUIConfigMixin):
         self.magnetic_dipole_spin_precession_enabled_var = _Var()
         self.magnetic_dipole_stern_gerlach_force_enabled_var = _Var()
         self.magnetic_dipole_source_model_var = _Var()
+        self.magnetic_dipole_source_backend_var = _Var()
         self.magnetic_dipole_source_minimum_separation_var = _Var()
         self.rider_magnetic_species_var = _Var()
         self.driver_magnetic_species_var = _Var()
@@ -84,6 +85,7 @@ def test_current_magnetic_dipole_config_round_trips_through_gui_fields() -> None
                 "stern_gerlach_force_enabled": True,
                 "source": {
                     "model": "covariant_retarded_point",
+                    "backend": "numba_roots_exact_serial",
                     "minimum_separation_mm": 7.0e-9,
                     "relative_stencil_step": 2.0e-3,
                     "minimum_stencil_step_mm": 3.0e-15,
@@ -117,10 +119,12 @@ def test_current_magnetic_dipole_config_round_trips_through_gui_fields() -> None
     assert harness.magnetic_dipole_source_model_var.get() == (
         "Full retarded point (experimental)"
     )
+    assert harness.magnetic_dipole_source_backend_var.get() == ("Numba roots-exact CPU")
     assert float(harness.magnetic_dipole_source_minimum_separation_var.get()) == (
         pytest.approx(7.0e-9)
     )
     assert rebuilt.magnetic_dipole_source_model == "covariant_retarded_point"
+    assert rebuilt.magnetic_dipole_source_backend == "numba_roots_exact_serial"
     assert rebuilt.magnetic_dipole_source_minimum_separation_mm == pytest.approx(7.0e-9)
     assert rebuilt.magnetic_dipole_source_relative_stencil_step == pytest.approx(2.0e-3)
     assert rebuilt.magnetic_dipole_source_minimum_stencil_step_mm == pytest.approx(
@@ -148,6 +152,7 @@ def test_old_config_defaults_round_trip_with_magnetic_dipoles_off() -> None:
     assert rebuilt.magnetic_dipole_spin_model == "rfs_minimal_2021"
     assert rebuilt.magnetic_dipole_stern_gerlach_model == "rfs_full_g"
     assert rebuilt.magnetic_dipole_source_model == "off"
+    assert rebuilt.magnetic_dipole_source_backend == "python"
     assert rebuilt.magnetic_dipole_source_minimum_separation_mm == pytest.approx(2.0e-9)
     assert rebuilt.rider_magnetic_species == "electron"
     assert rebuilt.driver_magnetic_species == "proton"
@@ -335,6 +340,10 @@ def test_gui_labels_present_compact_rfs_controls() -> None:
         assert tuple(app.magnetic_dipole_source_model_combo.cget("values")) == (
             "Off",
             "Full retarded point (experimental)",
+        )
+        assert tuple(app.magnetic_dipole_source_backend_combo.cget("values")) == (
+            "Python reference",
+            "Numba roots-exact CPU",
         )
         assert app.magnetic_dipole_source_cutoff_label.cget("text") == (
             "Minimum separation abort (mm):"

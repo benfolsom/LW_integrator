@@ -34,6 +34,7 @@ Run the deterministic magnetic helper and integration tests with:
       tests/unit/test_retarded_fields.py \
       tests/unit/test_charge_source_interactions.py \
       tests/unit/test_retarded_dipole_fields.py \
+      tests/unit/test_dipole_source_backend_benchmark.py \
       tests/unit/test_dipole_source_interactions.py \
       tests/unit/test_inertial_prehistory.py \
       tests/unit/test_rfs_integration.py \
@@ -59,6 +60,20 @@ charge/dipole startup readiness, the one-time
 failure when exact source history is missing.  They also require
 :math:`P-p=q(A_q+A_{\rm dip})/c` at evolved endpoints and preserve append-only
 retarded-history preparation across the representation update.
+
+The optional ``numba_roots_exact_serial`` source backend is checked against
+the complete Python provider result, not only against isolated roots.  Its
+tests vary the configured Numba thread count and require identical source
+addition and finite-difference results.  For a representative full-state
+comparison, run the maintained 300-sample benchmark with a flyby testbed
+configuration::
+
+   python scripts/benchmark_dipole_source_backends.py CONFIG.json \
+      --steps 300 --output /tmp/dipole-source-backends.json --quiet
+
+The report compares every public trajectory array and side channel for rider
+and driver, records cold and warm timings separately, and leaves the input
+configuration unchanged.
 
 The first coupled RFS implementation has intentionally narrow integration
 guards: fixed-step ``COLD_START`` or ``INERTIAL_PREHISTORY``

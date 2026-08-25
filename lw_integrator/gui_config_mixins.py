@@ -19,6 +19,7 @@ from optimization.mode_helpers import SWEEP_OR_OPTIMIZATION_MODES
 
 from .testbed_runner import (
     CORE_PARAM_DEFAULTS,
+    DIPOLE_SOURCE_BACKEND_OPTIONS,
     DIPOLE_SOURCE_MODEL_OPTIONS,
     PARTICLE_PARAM_FIELDS,
     SimulationOptions,
@@ -40,6 +41,10 @@ _DIPOLE_SOURCE_LABEL_BY_MODEL.update(
         ],
     }
 )
+_DIPOLE_SOURCE_BACKEND_BY_LABEL = dict(DIPOLE_SOURCE_BACKEND_OPTIONS)
+_DIPOLE_SOURCE_LABEL_BY_BACKEND = {
+    backend: label for label, backend in DIPOLE_SOURCE_BACKEND_OPTIONS
+}
 
 
 def _particle_params_require_manual_config(params: object) -> bool:
@@ -144,6 +149,14 @@ class IntegratorGUIConfigMixin:
         self.magnetic_dipole_source_model_var.set(
             _DIPOLE_SOURCE_LABEL_BY_MODEL.get(source_model, source_model)
         )
+        source_backend = (
+            str(getattr(options, "magnetic_dipole_source_backend", "python"))
+            .strip()
+            .lower()
+        )
+        self.magnetic_dipole_source_backend_var.set(
+            _DIPOLE_SOURCE_LABEL_BY_BACKEND.get(source_backend, source_backend)
+        )
         self.magnetic_dipole_source_minimum_separation_var.set(
             _format_gui_float(
                 getattr(
@@ -240,6 +253,15 @@ class IntegratorGUIConfigMixin:
                 "Select Off or Full retarded point (experimental) for the "
                 "dipole source."
             )
+        backend_selection = str(self.magnetic_dipole_source_backend_var.get()).strip()
+        source_backend = _DIPOLE_SOURCE_BACKEND_BY_LABEL.get(
+            backend_selection, backend_selection.strip().lower()
+        )
+        if source_backend not in _DIPOLE_SOURCE_LABEL_BY_BACKEND:
+            raise ValueError(
+                "Select Python reference or Numba roots-exact CPU for the "
+                "dipole source backend."
+            )
         source_minimum_separation = _parse_gui_float(
             self.magnetic_dipole_source_minimum_separation_var.get(),
             "Dipole source minimum separation",
@@ -267,6 +289,7 @@ class IntegratorGUIConfigMixin:
                 self, "_magnetic_dipole_stern_gerlach_model", "rfs_full_g"
             ),
             "magnetic_dipole_source_model": source_model,
+            "magnetic_dipole_source_backend": source_backend,
             "magnetic_dipole_source_minimum_separation_mm": (source_minimum_separation),
             "magnetic_dipole_source_relative_stencil_step": getattr(
                 self, "_magnetic_dipole_source_relative_stencil_step", 1.0e-3

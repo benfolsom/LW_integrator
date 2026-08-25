@@ -66,6 +66,7 @@ def _make_args(**overrides) -> argparse.Namespace:
         "radiation_reaction_mode": None,
         "magnetic_dipole_enabled": None,
         "dipole_source_model": None,
+        "dipole_source_backend": None,
         "dipole_source_minimum_separation_mm": None,
         "rider_magnetic_species": None,
         "driver_magnetic_species": None,
@@ -277,6 +278,8 @@ class TestCliConfigParsing:
                 "--stern-gerlach",
                 "--dipole-source",
                 "full-retarded-point",
+                "--dipole-source-backend",
+                "numba_roots_exact_serial",
                 "--dipole-source-cutoff-mm",
                 "2e-9",
             ]
@@ -289,6 +292,7 @@ class TestCliConfigParsing:
         assert args.driver_spin == [1.0, 0.0, 0.0]
         assert args.stern_gerlach_force_enabled is True
         assert args.dipole_source_model == "full-retarded-point"
+        assert args.dipole_source_backend == "numba_roots_exact_serial"
         assert args.dipole_source_minimum_separation_mm == pytest.approx(2.0e-9)
 
     def test_parse_args_accepts_disabling_magnetic_dipole_options(self):
@@ -761,6 +765,7 @@ class TestCliBuildRequest:
                     "stern_gerlach_force_enabled": True,
                     "source": {
                         "model": "covariant_retarded_point",
+                        "backend": "python",
                         "minimum_separation_mm": 4.0e-9,
                         "relative_stencil_step": 2.0e-3,
                         "minimum_stencil_step_mm": 3.0e-15,
@@ -782,6 +787,7 @@ class TestCliBuildRequest:
                 stern_gerlach_force_enabled=False,
                 spin_precession_enabled=False,
                 dipole_source_model="off",
+                dipole_source_backend="numba_roots_exact_serial",
                 dipole_source_minimum_separation_mm=8.0e-9,
             ),
         )
@@ -792,6 +798,7 @@ class TestCliBuildRequest:
         assert magnetic["spin_precession_enabled"] is False
         assert magnetic["source"] == {
             "model": "off",
+            "backend": "numba_roots_exact_serial",
             "minimum_separation_mm": 8.0e-9,
             "relative_stencil_step": 2.0e-3,
             "minimum_stencil_step_mm": 3.0e-15,
@@ -871,6 +878,7 @@ class TestCliBuildRequest:
         assert request.config.magnetic_dipole.spin_model == "rfs_minimal_2021"
         assert request.config.magnetic_dipole.stern_gerlach_model == "rfs_full_g"
         assert request.config.magnetic_dipole.source.model == "off"
+        assert request.config.magnetic_dipole.source.backend == "python"
         assert request.config.magnetic_dipole.source.minimum_separation_mm == (
             pytest.approx(2.0e-9)
         )
@@ -893,6 +901,7 @@ class TestCliBuildRequest:
             {
                 "source": {
                     "model": "full_retarded_point",
+                    "backend": "numba_roots_exact_serial",
                     "minimum_separation_mm": 7.0e-9,
                     "relative_stencil_step": 2.0e-3,
                     "minimum_stencil_step_mm": 3.0e-15,
@@ -903,6 +912,7 @@ class TestCliBuildRequest:
         )
 
         assert magnetic.source.model == "covariant_retarded_point"
+        assert magnetic.source.backend == "numba_roots_exact_serial"
         assert magnetic.source.minimum_separation_mm == pytest.approx(7.0e-9)
         assert magnetic.source.relative_stencil_step == pytest.approx(2.0e-3)
         assert magnetic.source.minimum_stencil_step_mm == pytest.approx(3.0e-15)
@@ -950,6 +960,7 @@ class TestCliBuildRequest:
                 driver_spin=[1.0, 0.0, 0.0],
                 stern_gerlach_force_enabled=True,
                 dipole_source_model="full-retarded-point",
+                dipole_source_backend="numba_roots_exact_serial",
                 dipole_source_minimum_separation_mm=6.0e-9,
             )
         )
@@ -962,6 +973,7 @@ class TestCliBuildRequest:
         assert magnetic.driver.species == "antiproton"
         assert magnetic.driver.rest_spin == pytest.approx((1.0, 0.0, 0.0))
         assert magnetic.source.model == "covariant_retarded_point"
+        assert magnetic.source.backend == "numba_roots_exact_serial"
         assert magnetic.source.minimum_separation_mm == pytest.approx(6.0e-9)
         assert request.config.radiation_reaction_mode == "off"
 
@@ -1812,6 +1824,31 @@ class TestCliMain:
         assert report["steps_completed"] == 1
         assert report["driver_summary"]["steps_completed"] == 1
         assert report["driver_summary"]["initial_z_mm"] == pytest.approx(5.0)
+
+    def test_build_report_records_effective_dipole_source_backend(self):
+        trajectory = [
+            {
+                "t": np.array([0.0]),
+                "z": np.array([1.0]),
+                "gamma": np.array([2.0]),
+                "bz": np.array([0.25]),
+            }
+        ]
+        magnetic = cli._build_magnetic_dipole_config(
+            {
+                "source": {
+                    "model": "covariant_retarded_point",
+                    "backend": "numba_roots_exact_serial",
+                }
+            }
+        )
+
+        report = cli.build_report(trajectory, magnetic_dipole=magnetic)
+
+        assert report["magnetic_dipole_source"] == {
+            "model": "covariant_retarded_point",
+            "backend": "numba_roots_exact_serial",
+        }
 
     def test_main_writes_driver_summary_to_output_json(
         self, monkeypatch, tmp_path: Path

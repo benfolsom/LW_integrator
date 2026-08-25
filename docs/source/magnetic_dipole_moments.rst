@@ -169,6 +169,7 @@ gradient-force switches.  Saved testbed configurations use a nested block:
        "stern_gerlach_model": "rfs_full_g",
        "source": {
          "model": "off",
+         "backend": "python",
          "minimum_separation_mm": 2e-9,
          "relative_stencil_step": 1e-3,
          "minimum_stencil_step_mm": 1e-15,
@@ -233,6 +234,20 @@ Intrinsic source fields are a separate selection.  The GUI offers ``Off`` and
 is active only when magnetic-dipole dynamics are enabled.  The advanced
 ``--dipole-source-cutoff-mm`` option sets the strict minimum separation abort
 boundary.  It does not soften the point field.
+
+The source evaluator has two explicit backend choices.  ``python`` is the
+default and remains the reference on every platform.
+``numba_roots_exact_serial`` is a cross-platform CPU opt-in, selected in JSON
+with ``magnetic_dipole.source.backend`` or on the direct CLI with
+``--dipole-source-backend numba_roots_exact_serial``.  It compiles only the
+independent light-cone root searches.  The final quintic worldline sample,
+light-cone residual, Hertz tensor, source accumulation, and finite-difference
+assembly retain the Python reference arithmetic and order.  The kernel is
+serial: it does not select a worker count or consume multiple cores, and there
+is no automatic or operating-system-specific dispatch.  Explicit selection
+raises a capability error if Numba is unavailable; it never silently changes
+the recorded backend.  The dedicated nine-event accepted-endpoint potential
+remains on the Python path in this first slice.
 
 ``null`` selects the cited species value.  A custom species must provide both a
 signed moment in J/T and its spin quantum number.  ``rest_spin`` is normalized
@@ -383,8 +398,9 @@ from those symmetric histories and :math:`q(A_{n+1}-A_n)/c` replaces the saved
 start offset without changing mechanical momentum, position, spin, or Medina
 work.  This is bookkeeping, not an additional force.
 
-This first implementation is a full-retarded finite-difference oracle rather
-than a fast production kernel.  ``relative_stencil_step``,
+This first implementation remains a full-retarded finite-difference oracle.
+The optional roots-exact backend accelerates its light-cone searches without
+changing the oracle arithmetic.  ``relative_stencil_step``,
 ``minimum_stencil_step_mm``, ``root_tolerance_mm``, and
 ``max_root_iterations`` are advanced convergence controls preserved by the
 CLI, GUI, and testbed JSON round trip.  A validation study should repeat the
