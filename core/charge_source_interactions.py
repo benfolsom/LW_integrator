@@ -123,6 +123,7 @@ def charge_source_interaction_from_response_native(
     four_velocity_mm_ns: Sequence[float] | np.ndarray,
     observer_charge_native: float,
     proper_time_step_ns: float,
+    contraction_backend: str = "python",
 ) -> RetardedChargeSourceInteraction:
     """Contract one analytical response without materializing ``F`` or ``dF``."""
 
@@ -140,11 +141,26 @@ def charge_source_interaction_from_response_native(
         charge_native=observer_charge_native,
     )
     canonical_impulse = canonical_force * float(proper_time_step_ns)
-    mechanical_force = antisymmetric_response_charge_force_native(
-        four_velocity_mm_ns=four_velocity_mm_ns,
-        antisymmetric_response=response.antisymmetric_response,
-        charge_native=observer_charge_native,
-    )
+    if contraction_backend == "python":
+        mechanical_force = antisymmetric_response_charge_force_native(
+            four_velocity_mm_ns=four_velocity_mm_ns,
+            antisymmetric_response=response.antisymmetric_response,
+            charge_native=observer_charge_native,
+        )
+    elif contraction_backend == "numba_strict_serial":
+        from .contracted_antisymmetric_response_numba import (
+            antisymmetric_response_charge_force_strict_serial,
+        )
+
+        mechanical_force = antisymmetric_response_charge_force_strict_serial(
+            np.asarray(four_velocity_mm_ns, dtype=float),
+            response.antisymmetric_response,
+            float(observer_charge_native),
+        )
+    else:
+        raise ValueError(
+            "contraction_backend must be 'python' or 'numba_strict_serial'"
+        )
     mechanical_impulse = mechanical_force * float(proper_time_step_ns)
     return RetardedChargeSourceInteraction(
         field=None,
@@ -199,6 +215,7 @@ def evaluate_retarded_charge_source_interaction_native(
             four_velocity_mm_ns=four_velocity_mm_ns,
             observer_charge_native=observer_charge_native,
             proper_time_step_ns=proper_time_step_ns,
+            contraction_backend="numba_strict_serial",
         )
     field = evaluate_retarded_charge_field_gradient_native(
         history,

@@ -595,6 +595,7 @@ def _advance_rfs_rest_spin(
     applied_radiation_reaction_force_native: np.ndarray | None = None,
     analytic_antisymmetric_response: np.ndarray | None = None,
     analytic_partial_antisymmetric_response: np.ndarray | None = None,
+    analytic_response_contraction: str = "python",
 ) -> np.ndarray:
     """Advance normalized RFS four-spin and return rest-frame polarization.
 
@@ -648,12 +649,31 @@ def _advance_rfs_rest_spin(
         raise ValueError(
             "analytical response and its derivative must be supplied together"
         )
+    if analytic_response_contraction not in ("python", "numba_strict_serial"):
+        raise ValueError(
+            "analytic_response_contraction must be 'python' or " "'numba_strict_serial'"
+        )
 
     def analytical_spin_rhs(
         four_velocity: np.ndarray, spin_four_vector: np.ndarray
     ) -> np.ndarray:
         if packed_analytic_response is None or partial_packed_analytic_response is None:
             return np.zeros(4, dtype=float)
+        if analytic_response_contraction == "numba_strict_serial":
+            from .contracted_antisymmetric_response_numba import (
+                antisymmetric_response_rfs_strict_serial,
+            )
+
+            return antisymmetric_response_rfs_strict_serial(
+                four_velocity,
+                spin_four_vector,
+                packed_analytic_response,
+                partial_packed_analytic_response,
+                float(charge_native),
+                float(mass_amu),
+                float(magnetic_moment_native),
+                float(invariant_spin),
+            )[3]
         return antisymmetric_response_rfs_native(
             four_velocity_mm_ns=four_velocity,
             spin_four_vector=spin_four_vector,
@@ -2977,6 +2997,7 @@ def retarded_equations_of_motion(
                             ),
                             observer_charge_native=float(force_particle_charge),
                             proper_time_step_ns=float(h),
+                            contraction_backend="numba_strict_serial",
                         )
                     )
                 else:
@@ -3167,6 +3188,7 @@ def retarded_equations_of_motion(
                                 ),
                                 observer_charge_native=float(force_particle_charge),
                                 proper_time_step_ns=float(h),
+                                contraction_backend="numba_strict_serial",
                             )
                         )
                     else:
@@ -3370,24 +3392,22 @@ def retarded_equations_of_motion(
                             magnetic_moment_native=signed_moment_native,
                         )
                         if exact_analytic_antisymmetric_response is not None:
-                            from .antisymmetric_response_rfs import (
-                                antisymmetric_response_rfs_native,
+                            from .contracted_antisymmetric_response_numba import (
+                                antisymmetric_response_rfs_strict_serial,
                             )
 
-                            dipole_force_native += antisymmetric_response_rfs_native(
-                                four_velocity_mm_ns=_four_velocity_native(beta_vector),
-                                spin_four_vector=normalized_spin,
-                                antisymmetric_response=exact_analytic_antisymmetric_response,
-                                partial_antisymmetric_response=(
-                                    exact_analytic_partial_antisymmetric_response
-                                ),
-                                charge_native=float(force_particle_charge),
-                                mass_amu=float(particle_mass),
-                                magnetic_moment_native=signed_moment_native,
-                                invariant_spin_native=(
-                                    spin_quantum_number * HBAR_NATIVE
-                                ),
-                            ).dipole_four_force
+                            dipole_force_native += (
+                                antisymmetric_response_rfs_strict_serial(
+                                    _four_velocity_native(beta_vector),
+                                    normalized_spin,
+                                    exact_analytic_antisymmetric_response,
+                                    exact_analytic_partial_antisymmetric_response,
+                                    float(force_particle_charge),
+                                    float(particle_mass),
+                                    signed_moment_native,
+                                    spin_quantum_number * HBAR_NATIVE,
+                                )[1]
+                            )
                         dipole_impulse_native = dipole_force_native * float(h)
                         accumulated_momentum_t += float(dipole_impulse_native[0])
                         if exact_endpoint_recomposition_selected:
@@ -4630,6 +4650,11 @@ def retarded_equations_of_motion(
                         ),
                         analytic_partial_antisymmetric_response=(
                             exact_analytic_partial_antisymmetric_response
+                        ),
+                        analytic_response_contraction=(
+                            "numba_strict_serial"
+                            if exact_analytic_antisymmetric_response is not None
+                            else "python"
                         ),
                     )
                 else:

@@ -366,3 +366,27 @@ The isolated smooth-segment kernel measured ``0.08147 ms`` dense and
 ``0.04691 ms`` sparse, a ``1.737x`` local gain.  The smaller trajectory gain
 is expected because charge response, endpoint potentials, Medina reaction,
 history maintenance, and the rest of the integrator are unchanged.
+
+Contracted RFS response follow-up
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A follow-up rank audit tested whether the 34-value reusable response should be
+replaced by force and spin values tied to one observer state.  A generic
+relativistic contraction still touches all 36 influential second-order Hertz
+coefficients and all 96 influential third-order coefficients.  Removing four
+Bianchi-dependent ``partial F`` values likewise leaves all 144 response-visible
+Hertz coefficients active.  The 34-value materializer measured only ``0.334
+microseconds``, or ``0.959%`` of a ``34.832 microseconds`` complete sparse
+Hertz evaluation, while the 30-value materializer was marginally slower.
+
+The accepted seam therefore retains the reusable response across nonlinear and
+two-stage spin evaluations, but performs its state-specific charge, moment, and
+spin contractions in one strict serial Numba kernel.  With provider validation
+already complete, the raw contraction measured ``0.987 microseconds`` versus
+``16.083 microseconds`` for the Python and NumPy contraction.  Seven
+interleaved, contention-affected 300-sample runs
+measured medians of ``1.5129 s`` before and ``1.4765 s`` after the change, a
+``1.025x`` complete-trajectory gain.  Every run produced the same complete
+rider and driver state hashes.  The benchmark establishes a small safe CPU
+improvement; it does not justify a state-specific provider that would repeat
+the full retarded jet at the midpoint spin stage.

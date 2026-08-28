@@ -6,6 +6,17 @@ All notable changes and updates to the LW Integrator project are documented in t
 
 ### Experimental Magnetic Dipole Moments (August 2026)
 
+- Compiled the state-specific ordinary-charge, RFS magnetic-moment, and spin
+  contractions used by the analytical charge-plus-dipole backend while keeping
+  its reusable 34-value ``(A, F, partial F)`` response.  A dependency audit
+  rejected a proposed 30-value Bianchi packing: it removes four redundant
+  interface values but still requires all 144 influential Hertz coefficients,
+  and its materializer was not faster.  On the M5 Pro the cached-response
+  contraction fell from 16.083 to 0.987 microseconds once its already-validated
+  arrays entered the strict kernel; seven contention-affected interleaved
+  300-sample runs improved from 1.5129 to 1.4765 seconds median (1.025x), with
+  identical complete rider and driver state hashes.  Python and every
+  non-analytical backend retain their existing contraction path.
 - Added the explicit ``numba_analytic_charge_dipole_response_serial``
   potential-first backend.  On smooth source-history segments it differentiates
   the implicit retarded time and covariant Hertz tensor with one strict
