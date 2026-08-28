@@ -400,10 +400,7 @@ class TestCliConfigParsing:
             ]
         )
 
-        assert (
-            args.exact_retarded_backend
-            == "numba_analytic_charge_response_serial"
-        )
+        assert args.exact_retarded_backend == "numba_analytic_charge_response_serial"
 
     def test_parse_args_accepts_certified_metal_exact_retarded_backend(self):
         args = cli.parse_args(

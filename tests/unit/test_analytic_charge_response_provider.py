@@ -73,9 +73,7 @@ def test_analytical_provider_matches_fine_stencil_and_avoids_fallback() -> None:
     assert analytical.fallback_used is False
     assert analytical.minimum_segment_margin_ratio > 1.0
     np.testing.assert_allclose(
-        materialize_antisymmetric_response_native(
-            analytical.antisymmetric_response
-        ),
+        materialize_antisymmetric_response_native(analytical.antisymmetric_response),
         stencil.field.field_tensor,
         rtol=4.0e-15,
         atol=1.0e-16,
@@ -103,7 +101,7 @@ def test_root_on_interpolation_knot_uses_maintained_fallback() -> None:
     analytical = evaluate_retarded_charge_response_gradient_native(history, event)
 
     assert analytical.fallback_used is True
-    assert analytical.fallback_reason == "source_0:retarded_root_is_on_segment_boundary"
+    assert analytical.fallback_reason == "source_0:retarded_root_near_segment_boundary"
     assert analytical.fallback_stencil_step_mm is not None
     diagnostics = analytic_charge_response_diagnostics()
     assert diagnostics.calls == 1

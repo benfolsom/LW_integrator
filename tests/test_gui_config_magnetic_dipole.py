@@ -162,9 +162,7 @@ def test_full_strict_backend_round_trips_through_gui_label() -> None:
 
 def test_analytical_charge_backend_round_trips_through_gui_label() -> None:
     source = SimulationOptions(
-        magnetic_dipole_exact_retarded_backend=(
-            "numba_analytic_charge_response_serial"
-        )
+        magnetic_dipole_exact_retarded_backend=("numba_analytic_charge_response_serial")
     )
     harness = _MagneticHarness()
 

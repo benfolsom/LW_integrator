@@ -84,12 +84,8 @@ def materialize_partial_antisymmetric_response_native(
     gradient = np.zeros((4, 4, 4), dtype=float)
     for derivative in range(4):
         for pair_index, (first, second) in enumerate(_PAIRS):
-            gradient[derivative, first, second] = coefficients[
-                derivative, pair_index
-            ]
-            gradient[derivative, second, first] = -coefficients[
-                derivative, pair_index
-            ]
+            gradient[derivative, first, second] = coefficients[derivative, pair_index]
+            gradient[derivative, second, first] = -coefficients[derivative, pair_index]
     return gradient
 
 

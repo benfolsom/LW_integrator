@@ -241,9 +241,7 @@ def quintic_charge_response_coefficients_strict_serial(
         partial_packed[derivative, 4] = byd
         partial_packed[derivative, 5] = -bxd
 
-    scalar_potential_jet = _divide(
-        _constant(charge_native), _multiply(kappa, radius)
-    )
+    scalar_potential_jet = _divide(_constant(charge_native), _multiply(kappa, radius))
     potential_jet = np.empty((4, _SIZE), dtype=np.float64)
     potential_jet[0] = scalar_potential_jet
     for component in range(3):

@@ -664,6 +664,7 @@ def _advance_rfs_rest_spin(
             magnetic_moment_native=magnetic_moment_native,
             invariant_spin_native=invariant_spin,
         ).spin_rhs
+
     u_start = _four_velocity_native(beta_start)
     u_end = _four_velocity_native(beta_end)
     beta_midpoint = 0.5 * (beta_start + beta_end)
@@ -2957,9 +2958,7 @@ def retarded_equations_of_motion(
                     # request to fall back to cold-start force suppression.
                     raise
 
-                if isinstance(
-                    exact_charge_field, RetardedChargeResponseGradientResult
-                ):
+                if isinstance(exact_charge_field, RetardedChargeResponseGradientResult):
                     exact_charge_analytic_response = exact_charge_field
                     exact_charge_source_interaction = (
                         charge_source_interaction_from_response_native(
@@ -2974,13 +2973,13 @@ def retarded_equations_of_motion(
                 else:
                     exact_charge_source_interaction = (
                         charge_source_interaction_from_field_native(
-                        exact_charge_field,
-                        four_velocity_mm_ns=_four_velocity_native(
-                            np.asarray(particle_beta, dtype=float)
-                        ),
-                        observer_charge_native=float(force_particle_charge),
-                        proper_time_step_ns=float(h),
-                    )
+                            exact_charge_field,
+                            four_velocity_mm_ns=_four_velocity_native(
+                                np.asarray(particle_beta, dtype=float)
+                            ),
+                            observer_charge_native=float(force_particle_charge),
+                            proper_time_step_ns=float(h),
+                        )
                     )
 
                 # Evolve the gauge-invariant mechanical momentum.  The

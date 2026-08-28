@@ -41,8 +41,8 @@ def record_analytic_charge_response(
 
     with _LOCK:
         _COUNTERS["calls"] = int(_COUNTERS["calls"]) + 1
-        _COUNTERS["valid_sources"] = (
-            int(_COUNTERS["valid_sources"]) + int(valid_sources)
+        _COUNTERS["valid_sources"] = int(_COUNTERS["valid_sources"]) + int(
+            valid_sources
         )
         _COUNTERS["minimum_segment_margin_ratio"] = min(
             float(_COUNTERS["minimum_segment_margin_ratio"]),

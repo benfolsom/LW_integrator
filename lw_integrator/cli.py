@@ -3111,17 +3111,11 @@ def _exact_retarded_report(backend: str) -> dict[str, Any]:
             "calls": diagnostics.calls,
             "analytical_calls": diagnostics.analytical_calls,
             "fallback_calls": diagnostics.fallback_calls,
-            "fallback_segment_boundary": (
-                diagnostics.fallback_segment_boundary
-            ),
-            "fallback_nontimelike_bound": (
-                diagnostics.fallback_nontimelike_bound
-            ),
+            "fallback_segment_boundary": (diagnostics.fallback_segment_boundary),
+            "fallback_nontimelike_bound": (diagnostics.fallback_nontimelike_bound),
             "fallback_nonfinite": diagnostics.fallback_nonfinite,
             "valid_sources": diagnostics.valid_sources,
-            "minimum_segment_margin_ratio": (
-                diagnostics.minimum_segment_margin_ratio
-            ),
+            "minimum_segment_margin_ratio": (diagnostics.minimum_segment_margin_ratio),
         }
     return report
 
