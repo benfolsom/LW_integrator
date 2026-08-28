@@ -714,12 +714,14 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
             "python",
             "numba_roots_exact_serial",
             "numba_full_strict_serial",
+            "numba_analytic_charge_response_serial",
             "metal_certified_full_strict",
         ),
         help=(
             "Exact-retarded evaluator shared by charge and intrinsic-dipole "
-            "fields: the Python reference (default) or a strict serial Numba "
-            "roots-only/full-Hertz kernel. The explicit Metal option proposes "
+            "fields: the Python reference (default), a strict serial Numba "
+            "roots-only/full-Hertz kernel, or the experimental one-root "
+            "analytical charge-response kernel. The explicit Metal option proposes "
             "only float32 dipole root brackets; original-float64 certification "
             "and the strict CPU root/field remain authoritative. Source and "
             "finite-difference reductions remain deterministic."
@@ -3098,6 +3100,28 @@ def _exact_retarded_report(backend: str) -> dict[str, Any]:
             "accepted_proposals": diagnostics.accepted_proposals,
             "cpu_fallbacks": diagnostics.cpu_fallbacks,
             "dispatch_failures": diagnostics.dispatch_failures,
+        }
+    if str(backend) == "numba_analytic_charge_response_serial":
+        from core.analytic_charge_response_diagnostics import (
+            analytic_charge_response_diagnostics,
+        )
+
+        diagnostics = analytic_charge_response_diagnostics()
+        report["analytic_charge_response"] = {
+            "calls": diagnostics.calls,
+            "analytical_calls": diagnostics.analytical_calls,
+            "fallback_calls": diagnostics.fallback_calls,
+            "fallback_segment_boundary": (
+                diagnostics.fallback_segment_boundary
+            ),
+            "fallback_nontimelike_bound": (
+                diagnostics.fallback_nontimelike_bound
+            ),
+            "fallback_nonfinite": diagnostics.fallback_nonfinite,
+            "valid_sources": diagnostics.valid_sources,
+            "minimum_segment_margin_ratio": (
+                diagnostics.minimum_segment_margin_ratio
+            ),
         }
     return report
 

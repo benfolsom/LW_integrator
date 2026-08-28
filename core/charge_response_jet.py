@@ -23,6 +23,7 @@ class ChargeResponseJetResult:
     """Potential value and validation-form charge response derivatives."""
 
     four_potential: np.ndarray
+    partial_a: np.ndarray
     antisymmetric_response: np.ndarray
     partial_antisymmetric_response: np.ndarray
     field_tensor: np.ndarray
@@ -296,13 +297,28 @@ def quintic_charge_response_jet_native(
                 (ez, -by, bx, 0.0),
             )
         )
-    scalar_potential = float(charge_native) / (kappa.value * radius.value)
+    scalar_potential_jet = float(charge_native) / (kappa * radius)
+    potential_jets = [
+        scalar_potential_jet,
+        *(scalar_potential_jet * component for component in source_beta),
+    ]
+    # Retain the maintained scalar ordering for A itself.  The jet values are
+    # algebraically equivalent, while only their analytical derivatives are
+    # consumed below.
+    scalar_potential = float(charge_native) / (kappa_value * radius_value)
     four_potential = scalar_potential * np.concatenate(([1.0], source_beta_value))
+    partial_a = np.asarray(
+        [
+            [potential_jets[component].gradient[derivative] for component in range(4)]
+            for derivative in range(4)
+        ]
+    )
     light_cone_residual = (
         C_MMNS * (float(observer_time_ns) - float(retarded_time_ns)) - radius_value
     )
     return ChargeResponseJetResult(
         four_potential=four_potential,
+        partial_a=partial_a,
         antisymmetric_response=antisymmetric_response,
         partial_antisymmetric_response=partial_antisymmetric_response,
         field_tensor=field_tensor,

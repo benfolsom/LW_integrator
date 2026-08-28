@@ -37,6 +37,84 @@ def _act_on_covector(packed: np.ndarray, covector: np.ndarray) -> np.ndarray:
     return result
 
 
+def pack_antisymmetric_response_native(field_tensor: np.ndarray) -> np.ndarray:
+    """Pack the six independent upper-triangle coefficients of ``F``."""
+
+    field = np.asarray(field_tensor, dtype=float)
+    if field.shape != (4, 4):
+        raise ValueError("field_tensor must have shape (4, 4)")
+    return np.asarray([field[first, second] for first, second in _PAIRS])
+
+
+def pack_partial_antisymmetric_response_native(partial_f: np.ndarray) -> np.ndarray:
+    """Pack ``partial_lambda F`` without retaining zero/duplicate entries."""
+
+    gradient = np.asarray(partial_f, dtype=float)
+    if gradient.shape != (4, 4, 4):
+        raise ValueError("partial_f must have shape (4, 4, 4)")
+    return np.asarray(
+        [
+            [gradient[derivative, first, second] for first, second in _PAIRS]
+            for derivative in range(4)
+        ]
+    )
+
+
+def materialize_antisymmetric_response_native(packed: np.ndarray) -> np.ndarray:
+    """Materialize ``F`` only for diagnostics and reference comparisons."""
+
+    coefficients = np.asarray(packed, dtype=float)
+    if coefficients.shape != (6,):
+        raise ValueError("antisymmetric_response must have shape (6,)")
+    field = np.zeros((4, 4), dtype=float)
+    for pair_index, (first, second) in enumerate(_PAIRS):
+        field[first, second] = coefficients[pair_index]
+        field[second, first] = -coefficients[pair_index]
+    return field
+
+
+def materialize_partial_antisymmetric_response_native(
+    partial_packed: np.ndarray,
+) -> np.ndarray:
+    """Materialize ``partial_lambda F`` for diagnostics and fallback audits."""
+
+    coefficients = np.asarray(partial_packed, dtype=float)
+    if coefficients.shape != (4, 6):
+        raise ValueError("partial_antisymmetric_response must have shape (4, 6)")
+    gradient = np.zeros((4, 4, 4), dtype=float)
+    for derivative in range(4):
+        for pair_index, (first, second) in enumerate(_PAIRS):
+            gradient[derivative, first, second] = coefficients[
+                derivative, pair_index
+            ]
+            gradient[derivative, second, first] = -coefficients[
+                derivative, pair_index
+            ]
+    return gradient
+
+
+def antisymmetric_response_charge_force_native(
+    *,
+    four_velocity_mm_ns: Sequence[float],
+    antisymmetric_response: Sequence[float],
+    charge_native: float,
+) -> np.ndarray:
+    """Return ``(q/c) F.u`` directly from six response coefficients."""
+
+    velocity = np.asarray(four_velocity_mm_ns, dtype=float)
+    packed = np.asarray(antisymmetric_response, dtype=float)
+    if velocity.shape != (4,):
+        raise ValueError("four_velocity_mm_ns must have shape (4,)")
+    if packed.shape != (6,):
+        raise ValueError("antisymmetric_response must have shape (6,)")
+    if not np.all(np.isfinite(velocity)) or not np.all(np.isfinite(packed)):
+        raise ValueError("charge-response inputs must be finite")
+    charge = float(charge_native)
+    if not np.isfinite(charge):
+        raise ValueError("charge_native must be finite")
+    return charge * _act_on_covector(packed, _SIGNS * velocity) / C_MMNS
+
+
 def _partial_magnetic_potential_covariant(
     partial_packed: np.ndarray,
     spin: np.ndarray,
@@ -129,4 +207,11 @@ def antisymmetric_response_rfs_native(
     )
 
 
-__all__ = ["antisymmetric_response_rfs_native"]
+__all__ = [
+    "antisymmetric_response_charge_force_native",
+    "antisymmetric_response_rfs_native",
+    "materialize_antisymmetric_response_native",
+    "materialize_partial_antisymmetric_response_native",
+    "pack_antisymmetric_response_native",
+    "pack_partial_antisymmetric_response_native",
+]

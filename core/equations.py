@@ -593,6 +593,8 @@ def _advance_rfs_rest_spin(
     spin_quantum_number: float,
     proper_time_step_ns: float,
     applied_radiation_reaction_force_native: np.ndarray | None = None,
+    charge_antisymmetric_response: np.ndarray | None = None,
+    charge_partial_antisymmetric_response: np.ndarray | None = None,
 ) -> np.ndarray:
     """Advance normalized RFS four-spin and return rest-frame polarization.
 
@@ -612,6 +614,7 @@ def _advance_rfs_rest_spin(
         rfs_charge_radiation_reaction_terms_native,
         rfs_spin_rhs_native,
     )
+    from .antisymmetric_response_rfs import antisymmetric_response_rfs_native
 
     rest_spin = np.asarray(rest_spin, dtype=float)
     polarization = float(np.linalg.norm(rest_spin))
@@ -631,6 +634,36 @@ def _advance_rfs_rest_spin(
             "components"
         )
     radiation_reaction_active = bool(np.any(applied_rr_force != 0.0))
+    packed_charge_response = (
+        None
+        if charge_antisymmetric_response is None
+        else np.asarray(charge_antisymmetric_response, dtype=float)
+    )
+    partial_packed_charge_response = (
+        None
+        if charge_partial_antisymmetric_response is None
+        else np.asarray(charge_partial_antisymmetric_response, dtype=float)
+    )
+    if (packed_charge_response is None) != (partial_packed_charge_response is None):
+        raise ValueError(
+            "charge analytical response and its derivative must be supplied together"
+        )
+
+    def analytical_charge_spin_rhs(
+        four_velocity: np.ndarray, spin_four_vector: np.ndarray
+    ) -> np.ndarray:
+        if packed_charge_response is None or partial_packed_charge_response is None:
+            return np.zeros(4, dtype=float)
+        return antisymmetric_response_rfs_native(
+            four_velocity_mm_ns=four_velocity,
+            spin_four_vector=spin_four_vector,
+            antisymmetric_response=packed_charge_response,
+            partial_antisymmetric_response=partial_packed_charge_response,
+            charge_native=charge_native,
+            mass_amu=mass_amu,
+            magnetic_moment_native=magnetic_moment_native,
+            invariant_spin_native=invariant_spin,
+        ).spin_rhs
     u_start = _four_velocity_native(beta_start)
     u_end = _four_velocity_native(beta_end)
     beta_midpoint = 0.5 * (beta_start + beta_end)
@@ -650,6 +683,7 @@ def _advance_rfs_rest_spin(
         magnetic_moment_native=magnetic_moment_native,
         invariant_spin_native=invariant_spin,
     )
+    derivative_start += analytical_charge_spin_rhs(u_start, spin_start)
     if radiation_reaction_active:
         derivative_start += rfs_charge_radiation_reaction_terms_native(
             four_velocity_mm_ns=u_start,
@@ -672,6 +706,7 @@ def _advance_rfs_rest_spin(
         magnetic_moment_native=magnetic_moment_native,
         invariant_spin_native=invariant_spin,
     )
+    derivative_midpoint += analytical_charge_spin_rhs(u_midpoint, spin_midpoint)
     if radiation_reaction_active:
         derivative_midpoint += rfs_charge_radiation_reaction_terms_native(
             four_velocity_mm_ns=u_midpoint,
@@ -1933,6 +1968,7 @@ def retarded_equations_of_motion(
         exact_charge_field_cache = None
         dipole_source_field_cache = None
         exact_charge_source_interaction = None
+        exact_charge_analytic_response = None
         dipole_source_interaction = None
         exact_source_start_four_potential = np.zeros(4, dtype=float)
         # This is the Medina three-force actually applied during the final
@@ -2179,6 +2215,7 @@ def retarded_equations_of_motion(
             rfs_field_tensor = np.zeros((4, 4), dtype=float)
             rfs_partial_f = np.zeros((4, 4, 4), dtype=float)
             exact_charge_source_interaction = None
+            exact_charge_analytic_response = None
             dipole_source_interaction = None
             exact_source_start_four_potential.fill(0.0)
 
@@ -2818,11 +2855,14 @@ def retarded_equations_of_motion(
             ):
                 from .charge_source_interactions import (
                     charge_source_interaction_from_field_native,
+                    charge_source_interaction_from_response_native,
                 )
                 from .retarded_fields import (
                     ObserverEvent,
+                    RetardedChargeResponseGradientResult,
                     RetardedHistoryError,
                     evaluate_retarded_charge_field_gradient_native,
+                    evaluate_retarded_charge_response_gradient_native,
                 )
 
                 if sc_convergence_mode == "variable_geometry" and sc_iteration > 0:
@@ -2844,54 +2884,71 @@ def retarded_equations_of_motion(
                     ):
                         exact_charge_field = exact_charge_field_cache
                     else:
-                        exact_charge_field = evaluate_retarded_charge_field_gradient_native(
+                        charge_history = (
+                            traj_ext_soa if traj_ext_soa is not None else trajectory_ext
+                        )
+                        charge_event = ObserverEvent(
+                            time_ns=float(current_state["t"][particle_idx]),
+                            position_mm=charge_source_position,
+                        )
+                        charge_relative_step = max(
+                            1.0e-4,
                             (
-                                traj_ext_soa
-                                if traj_ext_soa is not None
-                                else trajectory_ext
-                            ),
-                            ObserverEvent(
-                                time_ns=float(current_state["t"][particle_idx]),
-                                position_mm=charge_source_position,
-                            ),
-                            relative_step=max(
-                                1.0e-4,
-                                (
-                                    float(magnetic_dipole.source.relative_stencil_step)
-                                    if magnetic_dipole is not None
-                                    and magnetic_dipole.source.active
-                                    else 1.0e-4
-                                ),
-                            ),
-                            minimum_step_mm=max(
-                                1.0e-15,
-                                (
-                                    float(
-                                        magnetic_dipole.source.minimum_stencil_step_mm
-                                    )
-                                    if magnetic_dipole is not None
-                                    and magnetic_dipole.source.active
-                                    else 1.0e-15
-                                ),
-                            ),
-                            root_tolerance_mm=(
-                                float(magnetic_dipole.source.root_tolerance_mm)
+                                float(magnetic_dipole.source.relative_stencil_step)
                                 if magnetic_dipole is not None
                                 and magnetic_dipole.source.active
-                                else 1.0e-21
-                            ),
-                            max_root_iterations=(
-                                int(magnetic_dipole.source.max_root_iterations)
-                                if magnetic_dipole is not None
-                                and magnetic_dipole.source.active
-                                else 96
-                            ),
-                            backend=(
-                                magnetic_dipole.exact_retarded_backend
-                                if magnetic_dipole is not None
-                                else "python"
+                                else 1.0e-4
                             ),
                         )
+                        charge_minimum_step = max(
+                            1.0e-15,
+                            (
+                                float(magnetic_dipole.source.minimum_stencil_step_mm)
+                                if magnetic_dipole is not None
+                                and magnetic_dipole.source.active
+                                else 1.0e-15
+                            ),
+                        )
+                        charge_root_tolerance = (
+                            float(magnetic_dipole.source.root_tolerance_mm)
+                            if magnetic_dipole is not None
+                            and magnetic_dipole.source.active
+                            else 1.0e-21
+                        )
+                        charge_root_iterations = (
+                            int(magnetic_dipole.source.max_root_iterations)
+                            if magnetic_dipole is not None
+                            and magnetic_dipole.source.active
+                            else 96
+                        )
+                        charge_backend = (
+                            magnetic_dipole.exact_retarded_backend
+                            if magnetic_dipole is not None
+                            else "python"
+                        )
+                        if charge_backend == "numba_analytic_charge_response_serial":
+                            exact_charge_field = (
+                                evaluate_retarded_charge_response_gradient_native(
+                                    charge_history,
+                                    charge_event,
+                                    relative_step=charge_relative_step,
+                                    minimum_step_mm=charge_minimum_step,
+                                    root_tolerance_mm=charge_root_tolerance,
+                                    max_root_iterations=charge_root_iterations,
+                                )
+                            )
+                        else:
+                            exact_charge_field = (
+                                evaluate_retarded_charge_field_gradient_native(
+                                    charge_history,
+                                    charge_event,
+                                    relative_step=charge_relative_step,
+                                    minimum_step_mm=charge_minimum_step,
+                                    root_tolerance_mm=charge_root_tolerance,
+                                    max_root_iterations=charge_root_iterations,
+                                    backend=charge_backend,
+                                )
+                            )
                         if sc_convergence_mode == "fixed_geometry":
                             exact_charge_field_cache = exact_charge_field
                 except RetardedHistoryError:
@@ -2900,8 +2957,23 @@ def retarded_equations_of_motion(
                     # request to fall back to cold-start force suppression.
                     raise
 
-                exact_charge_source_interaction = (
-                    charge_source_interaction_from_field_native(
+                if isinstance(
+                    exact_charge_field, RetardedChargeResponseGradientResult
+                ):
+                    exact_charge_analytic_response = exact_charge_field
+                    exact_charge_source_interaction = (
+                        charge_source_interaction_from_response_native(
+                            exact_charge_field,
+                            four_velocity_mm_ns=_four_velocity_native(
+                                np.asarray(particle_beta, dtype=float)
+                            ),
+                            observer_charge_native=float(force_particle_charge),
+                            proper_time_step_ns=float(h),
+                        )
+                    )
+                else:
+                    exact_charge_source_interaction = (
+                        charge_source_interaction_from_field_native(
                         exact_charge_field,
                         four_velocity_mm_ns=_four_velocity_native(
                             np.asarray(particle_beta, dtype=float)
@@ -2909,7 +2981,7 @@ def retarded_equations_of_motion(
                         observer_charge_native=float(force_particle_charge),
                         proper_time_step_ns=float(h),
                     )
-                )
+                    )
 
                 # Evolve the gauge-invariant mechanical momentum.  The
                 # accepted canonical state is rebuilt from A at the endpoint
@@ -2951,15 +3023,16 @@ def retarded_equations_of_motion(
                     charge_potential_momentum[3] / particle_mass
                 )
                 accumulated_scalar_potential += float(
-                    exact_charge_source_interaction.field.field.four_potential[0]
+                    exact_charge_source_interaction.four_potential[0]
                 )
                 exact_source_start_four_potential += (
-                    exact_charge_source_interaction.field.field.four_potential
+                    exact_charge_source_interaction.four_potential
                 )
-                rfs_field_tensor += (
-                    exact_charge_source_interaction.field.field.field_tensor
-                )
-                rfs_partial_f += exact_charge_source_interaction.field.partial_f
+                if exact_charge_source_interaction.field is not None:
+                    rfs_field_tensor += (
+                        exact_charge_source_interaction.field.field.field_tensor
+                    )
+                    rfs_partial_f += exact_charge_source_interaction.field.partial_f
 
             if (
                 dipole_source_selected
@@ -3107,7 +3180,7 @@ def retarded_equations_of_motion(
                         )
 
             if rfs_selected and dipole_active and (precession_active or sg_active):
-                from .magnetic_dipole import boost_rest_polarization
+                from .magnetic_dipole import HBAR_NATIVE, boost_rest_polarization
                 from .retarded_fields import (
                     ObserverEvent,
                     evaluate_retarded_charge_field_gradient_native,
@@ -3201,6 +3274,27 @@ def retarded_equations_of_motion(
                             charge_native=0.0,
                             magnetic_moment_native=signed_moment_native,
                         )
+                        if exact_charge_analytic_response is not None:
+                            from .antisymmetric_response_rfs import (
+                                antisymmetric_response_rfs_native,
+                            )
+
+                            dipole_force_native += antisymmetric_response_rfs_native(
+                                four_velocity_mm_ns=_four_velocity_native(beta_vector),
+                                spin_four_vector=normalized_spin,
+                                antisymmetric_response=(
+                                    exact_charge_analytic_response.antisymmetric_response
+                                ),
+                                partial_antisymmetric_response=(
+                                    exact_charge_analytic_response.partial_antisymmetric_response
+                                ),
+                                charge_native=float(force_particle_charge),
+                                mass_amu=float(particle_mass),
+                                magnetic_moment_native=signed_moment_native,
+                                invariant_spin_native=(
+                                    spin_quantum_number * HBAR_NATIVE
+                                ),
+                            ).dipole_four_force
                         dipole_impulse_native = dipole_force_native * float(h)
                         accumulated_momentum_t += float(dipole_impulse_native[0])
                         if exact_endpoint_recomposition_selected:
@@ -4437,6 +4531,16 @@ def retarded_equations_of_motion(
                         proper_time_step_ns=float(h),
                         applied_radiation_reaction_force_native=(
                             applied_medina_force_native
+                        ),
+                        charge_antisymmetric_response=(
+                            None
+                            if exact_charge_analytic_response is None
+                            else exact_charge_analytic_response.antisymmetric_response
+                        ),
+                        charge_partial_antisymmetric_response=(
+                            None
+                            if exact_charge_analytic_response is None
+                            else exact_charge_analytic_response.partial_antisymmetric_response
                         ),
                     )
                 else:

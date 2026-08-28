@@ -160,6 +160,25 @@ def test_full_strict_backend_round_trips_through_gui_label() -> None:
     )
 
 
+def test_analytical_charge_backend_round_trips_through_gui_label() -> None:
+    source = SimulationOptions(
+        magnetic_dipole_exact_retarded_backend=(
+            "numba_analytic_charge_response_serial"
+        )
+    )
+    harness = _MagneticHarness()
+
+    harness.apply(source)
+    rebuilt = SimulationOptions(**harness.build())
+
+    assert harness.magnetic_dipole_exact_retarded_backend_var.get() == (
+        "Numba analytical charge response CPU"
+    )
+    assert rebuilt.magnetic_dipole_exact_retarded_backend == (
+        "numba_analytic_charge_response_serial"
+    )
+
+
 def test_old_config_defaults_round_trip_with_magnetic_dipoles_off() -> None:
     old_config = SimulationOptions.from_dict({"steps": 12})
     harness = _MagneticHarness()

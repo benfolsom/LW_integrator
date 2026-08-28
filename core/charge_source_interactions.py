@@ -31,8 +31,10 @@ from .canonical_momentum import (
 from .retarded_fields import (
     ObserverEvent,
     RetardedChargeFieldGradientResult,
+    RetardedChargeResponseGradientResult,
     TrajectoryHistory,
     evaluate_retarded_charge_field_gradient_native,
+    evaluate_retarded_charge_response_gradient_native,
 )
 
 
@@ -40,12 +42,27 @@ from .retarded_fields import (
 class RetardedChargeSourceInteraction:
     """Exact charge field plus canonical and mechanical charge responses."""
 
-    field: RetardedChargeFieldGradientResult
+    field: RetardedChargeFieldGradientResult | None
     canonical_potential_momentum: np.ndarray
     canonical_four_force: np.ndarray
     canonical_four_impulse: np.ndarray
     mechanical_four_force: np.ndarray
     mechanical_four_impulse: np.ndarray
+    response: RetardedChargeResponseGradientResult | None = None
+
+    @property
+    def four_potential(self) -> np.ndarray:
+        """Return the ordinary source potential for canonical bookkeeping."""
+
+        if self.response is not None:
+            return self.response.four_potential
+        if self.field is None:
+            raise RuntimeError("charge interaction has no field or response payload")
+        return self.field.field.four_potential
+
+    @property
+    def analytical_fallback_used(self) -> bool:
+        return bool(self.response is not None and self.response.fallback_used)
 
 
 def charge_source_interaction_from_field_native(
@@ -100,6 +117,46 @@ def charge_source_interaction_from_field_native(
     )
 
 
+def charge_source_interaction_from_response_native(
+    response: RetardedChargeResponseGradientResult,
+    *,
+    four_velocity_mm_ns: Sequence[float] | np.ndarray,
+    observer_charge_native: float,
+    proper_time_step_ns: float,
+) -> RetardedChargeSourceInteraction:
+    """Contract one analytical response without materializing ``F`` or ``dF``."""
+
+    from .antisymmetric_response_rfs import (
+        antisymmetric_response_charge_force_native,
+    )
+
+    potential_momentum = canonical_potential_momentum_native(
+        response.four_potential,
+        charge_native=observer_charge_native,
+    )
+    canonical_force = canonical_four_force_from_potential_gradient_native(
+        four_velocity_mm_ns=four_velocity_mm_ns,
+        partial_a=response.partial_a,
+        charge_native=observer_charge_native,
+    )
+    canonical_impulse = canonical_force * float(proper_time_step_ns)
+    mechanical_force = antisymmetric_response_charge_force_native(
+        four_velocity_mm_ns=four_velocity_mm_ns,
+        antisymmetric_response=response.antisymmetric_response,
+        charge_native=observer_charge_native,
+    )
+    mechanical_impulse = mechanical_force * float(proper_time_step_ns)
+    return RetardedChargeSourceInteraction(
+        field=None,
+        canonical_potential_momentum=potential_momentum,
+        canonical_four_force=canonical_force,
+        canonical_four_impulse=canonical_impulse,
+        mechanical_four_force=mechanical_force,
+        mechanical_four_impulse=mechanical_impulse,
+        response=response,
+    )
+
+
 def evaluate_retarded_charge_source_interaction_native(
     history: TrajectoryHistory,
     observer_event: ObserverEvent,
@@ -123,6 +180,23 @@ def evaluate_retarded_charge_source_interaction_native(
     or radiation reaction is added here.
     """
 
+    if str(backend).strip().lower() == "numba_analytic_charge_response_serial":
+        response = evaluate_retarded_charge_response_gradient_native(
+            history,
+            observer_event,
+            excluded_source_indices=excluded_source_indices,
+            require_complete_history=require_complete_history,
+            relative_step=relative_step,
+            minimum_step_mm=minimum_step_mm,
+            root_tolerance_mm=root_tolerance_mm,
+            max_root_iterations=max_root_iterations,
+        )
+        return charge_source_interaction_from_response_native(
+            response=response,
+            four_velocity_mm_ns=four_velocity_mm_ns,
+            observer_charge_native=observer_charge_native,
+            proper_time_step_ns=proper_time_step_ns,
+        )
     field = evaluate_retarded_charge_field_gradient_native(
         history,
         observer_event,
@@ -145,5 +219,6 @@ def evaluate_retarded_charge_source_interaction_native(
 __all__ = [
     "RetardedChargeSourceInteraction",
     "charge_source_interaction_from_field_native",
+    "charge_source_interaction_from_response_native",
     "evaluate_retarded_charge_source_interaction_native",
 ]

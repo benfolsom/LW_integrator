@@ -9,6 +9,9 @@ from .constants import C_MMNS
 from .retarded_dipole_numba_roots import _STATUS_VALID, _solve_retarded_sample
 
 _SIZE = 5
+_STATUS_CHARGE_ZERO_SEPARATION = 20
+_STATUS_CHARGE_SUPERLUMINAL_SOURCE = 21
+_STATUS_CHARGE_SINGULAR_KAPPA = 22
 
 
 @njit(cache=True, fastmath=False)
@@ -88,7 +91,7 @@ def _cross(left: np.ndarray, right: np.ndarray) -> np.ndarray:
 
 
 @njit(cache=True, fastmath=False)
-def quintic_charge_response_jet_strict_serial(
+def quintic_charge_response_coefficients_strict_serial(
     observer_time_ns: float,
     observer_position_mm: np.ndarray,
     charge_native: float,
@@ -96,8 +99,15 @@ def quintic_charge_response_jet_strict_serial(
     segment_duration_ns: float,
     position_coefficients_mm: np.ndarray,
     retarded_time_ns: float,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, float, float]:
-    """Return ``A, F, partial_F, kappa, residual`` from one retarded root."""
+) -> tuple[
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    float,
+    float,
+]:
+    """Return ``A, partial_A, packed_F, partial_packed_F, kappa, residual``."""
 
     duration_coordinate = C_MMNS * segment_duration_ns
     root_coordinate = C_MMNS * retarded_time_ns
@@ -207,22 +217,16 @@ def quintic_charge_response_jet_strict_serial(
     ) / (kappa_value**3 * radius_value)
     electric_value = charge_native * (velocity_value + radiation_value)
     magnetic_value = np.cross(direction_value, electric_value)
-    field = np.zeros((4, 4), dtype=np.float64)
     ex, ey, ez = electric_value
     bx, by, bz = magnetic_value
-    field[0, 1] = -ex
-    field[0, 2] = -ey
-    field[0, 3] = -ez
-    field[1, 0] = ex
-    field[2, 0] = ey
-    field[3, 0] = ez
-    field[1, 2] = -bz
-    field[2, 1] = bz
-    field[1, 3] = by
-    field[3, 1] = -by
-    field[2, 3] = -bx
-    field[3, 2] = bx
-    partial_f = np.zeros((4, 4, 4), dtype=np.float64)
+    packed = np.empty(6, dtype=np.float64)
+    packed[0] = -ex
+    packed[1] = -ey
+    packed[2] = -ez
+    packed[3] = -bz
+    packed[4] = by
+    packed[5] = -bx
+    partial_packed = np.empty((4, 6), dtype=np.float64)
     for derivative in range(4):
         exd = electric[0, derivative + 1]
         eyd = electric[1, derivative + 1]
@@ -230,28 +234,86 @@ def quintic_charge_response_jet_strict_serial(
         bxd = magnetic[0, derivative + 1]
         byd = magnetic[1, derivative + 1]
         bzd = magnetic[2, derivative + 1]
-        partial_f[derivative, 0, 1] = -exd
-        partial_f[derivative, 0, 2] = -eyd
-        partial_f[derivative, 0, 3] = -ezd
-        partial_f[derivative, 1, 0] = exd
-        partial_f[derivative, 2, 0] = eyd
-        partial_f[derivative, 3, 0] = ezd
-        partial_f[derivative, 1, 2] = -bzd
-        partial_f[derivative, 2, 1] = bzd
-        partial_f[derivative, 1, 3] = byd
-        partial_f[derivative, 3, 1] = -byd
-        partial_f[derivative, 2, 3] = -bxd
-        partial_f[derivative, 3, 2] = bxd
+        partial_packed[derivative, 0] = -exd
+        partial_packed[derivative, 1] = -eyd
+        partial_packed[derivative, 2] = -ezd
+        partial_packed[derivative, 3] = -bzd
+        partial_packed[derivative, 4] = byd
+        partial_packed[derivative, 5] = -bxd
+
+    scalar_potential_jet = _divide(
+        _constant(charge_native), _multiply(kappa, radius)
+    )
+    potential_jet = np.empty((4, _SIZE), dtype=np.float64)
+    potential_jet[0] = scalar_potential_jet
+    for component in range(3):
+        potential_jet[component + 1] = _multiply(
+            scalar_potential_jet, source_beta[component]
+        )
+    partial_a = np.empty((4, 4), dtype=np.float64)
+    for derivative in range(4):
+        for component in range(4):
+            partial_a[derivative, component] = potential_jet[component, derivative + 1]
+
     scalar_potential = charge_native / (kappa_value * radius_value)
     potential = np.empty(4, dtype=np.float64)
     potential[0] = scalar_potential
     potential[1:] = scalar_potential * source_beta_value
     residual = C_MMNS * (observer_time_ns - retarded_time_ns) - radius_value
-    return potential, field, partial_f, kappa_value, residual
+    return potential, partial_a, packed, partial_packed, kappa_value, residual
 
 
 @njit(cache=True, fastmath=False)
-def evaluate_charge_response_jet_one_event_strict_serial(
+def _materialize_response_tensors(
+    packed: np.ndarray,
+    partial_packed: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    field = np.zeros((4, 4), dtype=np.float64)
+    partial_f = np.zeros((4, 4, 4), dtype=np.float64)
+    pairs = ((0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3))
+    for pair_index in range(6):
+        first, second = pairs[pair_index]
+        field[first, second] = packed[pair_index]
+        field[second, first] = -packed[pair_index]
+        for derivative in range(4):
+            partial_f[derivative, first, second] = partial_packed[
+                derivative, pair_index
+            ]
+            partial_f[derivative, second, first] = -partial_packed[
+                derivative, pair_index
+            ]
+    return field, partial_f
+
+
+@njit(cache=True, fastmath=False)
+def quintic_charge_response_jet_strict_serial(
+    observer_time_ns: float,
+    observer_position_mm: np.ndarray,
+    charge_native: float,
+    segment_start_time_ns: float,
+    segment_duration_ns: float,
+    position_coefficients_mm: np.ndarray,
+    retarded_time_ns: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, float, float]:
+    """Compatibility oracle returning materialized ``A, F, partial_F``."""
+
+    potential, _partial_a, packed, partial_packed, kappa, residual = (
+        quintic_charge_response_coefficients_strict_serial(
+            observer_time_ns,
+            observer_position_mm,
+            charge_native,
+            segment_start_time_ns,
+            segment_duration_ns,
+            position_coefficients_mm,
+            retarded_time_ns,
+        )
+    )
+    field, partial_f = _materialize_response_tensors(packed, partial_packed)
+    return potential, field, partial_f, kappa, residual
+
+
+@njit(cache=True, fastmath=False)
+def evaluate_charge_response_coefficients_one_event_strict_serial(
     time_ns: np.ndarray,
     position_mm: np.ndarray,
     segment_duration_ns: np.ndarray,
@@ -262,18 +324,29 @@ def evaluate_charge_response_jet_one_event_strict_serial(
     observer_position_mm: np.ndarray,
     root_tolerance_mm: float,
     max_root_iterations: int,
-) -> tuple[int, np.ndarray, np.ndarray, np.ndarray, float, float, float]:
-    """Fuse the single root, segment lookup, and response jet in one JIT call."""
+) -> tuple[
+    int,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    float,
+    float,
+    float,
+    float,
+    int,
+]:
+    """Fuse one root and one analytical response-coefficient evaluation."""
 
     (
         status,
         source_time_ns,
-        _source_x_mm,
-        _source_y_mm,
-        _source_z_mm,
-        _source_beta_x,
-        _source_beta_y,
-        _source_beta_z,
+        source_x_mm,
+        source_y_mm,
+        source_z_mm,
+        source_beta_x,
+        source_beta_y,
+        source_beta_z,
         _source_beta_prime_x,
         _source_beta_prime_y,
         _source_beta_prime_z,
@@ -297,10 +370,46 @@ def evaluate_charge_response_jet_one_event_strict_serial(
             status,
             np.zeros(4, dtype=np.float64),
             np.zeros((4, 4), dtype=np.float64),
-            np.zeros((4, 4, 4), dtype=np.float64),
+            np.zeros(6, dtype=np.float64),
+            np.zeros((4, 6), dtype=np.float64),
             np.nan,
+            source_time_ns,
             source_residual_mm,
             source_separation_mm,
+            -1,
+        )
+    if source_separation_mm <= 0.0:
+        status = _STATUS_CHARGE_ZERO_SEPARATION
+    beta_squared = (
+        source_beta_x * source_beta_x
+        + source_beta_y * source_beta_y
+        + source_beta_z * source_beta_z
+    )
+    if status == _STATUS_VALID and beta_squared >= 1.0:
+        status = _STATUS_CHARGE_SUPERLUMINAL_SOURCE
+    if status == _STATUS_VALID:
+        direction_x = (observer_position_mm[0] - source_x_mm) / source_separation_mm
+        direction_y = (observer_position_mm[1] - source_y_mm) / source_separation_mm
+        direction_z = (observer_position_mm[2] - source_z_mm) / source_separation_mm
+        kappa_at_root = 1.0 - (
+            direction_x * source_beta_x
+            + direction_y * source_beta_y
+            + direction_z * source_beta_z
+        )
+        if kappa_at_root <= 1.0e-14:
+            status = _STATUS_CHARGE_SINGULAR_KAPPA
+    if status != _STATUS_VALID:
+        return (
+            status,
+            np.zeros(4, dtype=np.float64),
+            np.zeros((4, 4), dtype=np.float64),
+            np.zeros(6, dtype=np.float64),
+            np.zeros((4, 6), dtype=np.float64),
+            np.nan,
+            source_time_ns,
+            source_residual_mm,
+            source_separation_mm,
+            -1,
         )
     lower = 0
     upper = time_ns.size
@@ -315,27 +424,65 @@ def evaluate_charge_response_jet_one_event_strict_serial(
         segment = 0
     if segment >= segment_duration_ns.size:
         segment = segment_duration_ns.size - 1
-    potential, field, partial_f, kappa, _ = quintic_charge_response_jet_strict_serial(
-        observer_time_ns,
-        observer_position_mm,
-        charge_native,
-        time_ns[segment],
-        segment_duration_ns[segment],
-        position_coefficients_mm[segment],
-        source_time_ns,
+    potential, partial_a, packed, partial_packed, kappa, _ = (
+        quintic_charge_response_coefficients_strict_serial(
+            observer_time_ns,
+            observer_position_mm,
+            charge_native,
+            time_ns[segment],
+            segment_duration_ns[segment],
+            position_coefficients_mm[segment],
+            source_time_ns,
+        )
     )
     return (
         status,
         potential,
-        field,
-        partial_f,
+        partial_a,
+        packed,
+        partial_packed,
         kappa,
+        source_time_ns,
         source_residual_mm,
         source_separation_mm,
+        segment,
     )
 
 
+@njit(cache=True, fastmath=False)
+def evaluate_charge_response_jet_one_event_strict_serial(
+    time_ns: np.ndarray,
+    position_mm: np.ndarray,
+    segment_duration_ns: np.ndarray,
+    position_coefficients_mm: np.ndarray,
+    charge_native: float,
+    ended_by_loss: bool,
+    observer_time_ns: float,
+    observer_position_mm: np.ndarray,
+    root_tolerance_mm: float,
+    max_root_iterations: int,
+) -> tuple[int, np.ndarray, np.ndarray, np.ndarray, float, float, float]:
+    """Compatibility wrapper materializing the validation tensors."""
+
+    result = evaluate_charge_response_coefficients_one_event_strict_serial(
+        time_ns,
+        position_mm,
+        segment_duration_ns,
+        position_coefficients_mm,
+        charge_native,
+        ended_by_loss,
+        observer_time_ns,
+        observer_position_mm,
+        root_tolerance_mm,
+        max_root_iterations,
+    )
+    field, partial_f = _materialize_response_tensors(result[3], result[4])
+    return result[0], result[1], field, partial_f, result[5], result[7], result[8]
+
+
 __all__ = [
+    "evaluate_charge_response_coefficients_one_event_strict_serial",
     "evaluate_charge_response_jet_one_event_strict_serial",
+    "quintic_charge_response_coefficients_strict_serial",
     "quintic_charge_response_jet_strict_serial",
 ]

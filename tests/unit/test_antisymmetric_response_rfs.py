@@ -5,7 +5,14 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from core.antisymmetric_response_rfs import antisymmetric_response_rfs_native
+from core.antisymmetric_response_rfs import (
+    antisymmetric_response_charge_force_native,
+    antisymmetric_response_rfs_native,
+    materialize_antisymmetric_response_native,
+    materialize_partial_antisymmetric_response_native,
+    pack_antisymmetric_response_native,
+    pack_partial_antisymmetric_response_native,
+)
 from core.constants import C_MMNS
 from core.magnetic_dipole import boost_rest_polarization
 from core.rfs import rfs_four_force_native, rfs_spin_rhs_native
@@ -71,3 +78,32 @@ def test_packed_response_matches_tensor_rfs(seed: int) -> None:
         result.total_four_force, expected_force, rtol=3e-15, atol=1e-18
     )
     np.testing.assert_allclose(result.spin_rhs, expected_spin, rtol=4e-15, atol=1e-18)
+
+
+def test_response_pack_materialize_and_charge_force_are_exact() -> None:
+    packed = np.asarray((0.2, -0.3, 0.4, -0.5, 0.6, -0.7))
+    partial_packed = np.arange(24, dtype=float).reshape(4, 6) / 17.0
+    field = materialize_antisymmetric_response_native(packed)
+    partial_f = materialize_partial_antisymmetric_response_native(partial_packed)
+    np.testing.assert_array_equal(pack_antisymmetric_response_native(field), packed)
+    np.testing.assert_array_equal(
+        pack_partial_antisymmetric_response_native(partial_f), partial_packed
+    )
+
+    beta = np.asarray((0.2, -0.1, 0.05))
+    gamma = 1.0 / np.sqrt(1.0 - float(beta @ beta))
+    velocity = gamma * C_MMNS * np.concatenate(((1.0,), beta))
+    expected = rfs_four_force_native(
+        four_velocity_mm_ns=velocity,
+        spin_four_vector=(0.0, 0.0, 0.0, 1.0),
+        field_tensor=field,
+        partial_f=np.zeros((4, 4, 4)),
+        charge_native=-0.8,
+        magnetic_moment_native=0.0,
+    )
+    actual = antisymmetric_response_charge_force_native(
+        four_velocity_mm_ns=velocity,
+        antisymmetric_response=packed,
+        charge_native=-0.8,
+    )
+    np.testing.assert_allclose(actual, expected, rtol=3.0e-15, atol=1.0e-18)

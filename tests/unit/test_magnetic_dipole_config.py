@@ -97,6 +97,17 @@ def test_magnetic_dipole_accepts_full_strict_exact_retarded_backend() -> None:
     assert config.exact_retarded_backend == "numba_full_strict_serial"
 
 
+def test_magnetic_dipole_accepts_analytical_charge_response_backend() -> None:
+    config = MagneticDipoleConfig(
+        exact_retarded_backend="numba_analytic_charge_response_serial"
+    )
+
+    assert (
+        config.exact_retarded_backend
+        == "numba_analytic_charge_response_serial"
+    )
+
+
 def test_magnetic_dipole_accepts_certified_metal_backend() -> None:
     config = MagneticDipoleConfig(exact_retarded_backend="metal_certified_full_strict")
 

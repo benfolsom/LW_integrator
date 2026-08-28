@@ -5,7 +5,10 @@ from __future__ import annotations
 import numpy as np
 
 from core.charge_response_jet import quintic_charge_response_jet_native
-from core.charge_response_jet_numba import quintic_charge_response_jet_strict_serial
+from core.charge_response_jet_numba import (
+    quintic_charge_response_coefficients_strict_serial,
+    quintic_charge_response_jet_strict_serial,
+)
 from core.constants import C_MMNS
 from core.rfs import electromagnetic_field_tensor_native
 
@@ -80,4 +83,25 @@ def test_compiled_charge_response_matches_python_oracle() -> None:
     )
     np.testing.assert_allclose(
         compiled[2], python_result.partial_f, rtol=8e-15, atol=1e-12
+    )
+    coefficients_result = quintic_charge_response_coefficients_strict_serial(
+        kwargs["observer_time_ns"],
+        np.asarray(kwargs["observer_position_mm"]),
+        kwargs["charge_native"],
+        kwargs["segment_start_time_ns"],
+        kwargs["segment_duration_ns"],
+        coefficients,
+        kwargs["retarded_time_ns"],
+    )
+    np.testing.assert_allclose(
+        coefficients_result[1], python_result.partial_a, rtol=8e-15, atol=1e-12
+    )
+    np.testing.assert_allclose(
+        coefficients_result[2], python_result.antisymmetric_response, rtol=3e-15
+    )
+    np.testing.assert_allclose(
+        coefficients_result[3],
+        python_result.partial_antisymmetric_response,
+        rtol=8e-15,
+        atol=1e-12,
     )
