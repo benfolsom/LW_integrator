@@ -1061,6 +1061,19 @@ class IntegratorGUIConfigMixin:
             self.config_dir_var.set(str(options.config_dir))
 
         self.config_name_var.set(options.config_name)
+        self.checkpoint_enabled_var.set(options.checkpoint_enabled)
+        self.checkpoint_directory_var.set(
+            ""
+            if options.checkpoint_directory is None
+            else str(options.checkpoint_directory)
+        )
+        self.checkpoint_resume_from_var.set(
+            ""
+            if options.checkpoint_resume_from is None
+            else str(options.checkpoint_resume_from)
+        )
+        self.checkpoint_interval_steps_var.set(options.checkpoint_interval_steps)
+        self.checkpoint_interval_seconds_var.set(options.checkpoint_interval_seconds)
 
         default_species_label = self._species_label_by_key.get(
             "custom", next(iter(self._species_by_label))
@@ -1238,6 +1251,9 @@ class IntegratorGUIConfigMixin:
             self._build_macroparticle_smearing_options_from_ui()
         )
 
+        checkpoint_resume_text = self.checkpoint_resume_from_var.get().strip()
+        checkpoint_directory_text = self.checkpoint_directory_var.get().strip()
+
         return SimulationOptions(
             simulation_type=sim_type,
             steps=int(self.steps_var.get()),
@@ -1269,6 +1285,21 @@ class IntegratorGUIConfigMixin:
             output_dir=Path(self.output_dir_var.get()),
             config_dir=Path(self.config_dir_var.get()),
             config_name=config_name,
+            checkpoint_enabled=bool(
+                self.checkpoint_enabled_var.get() or checkpoint_resume_text
+            ),
+            checkpoint_directory=(
+                None
+                if checkpoint_resume_text or not checkpoint_directory_text
+                else Path(checkpoint_directory_text)
+            ),
+            checkpoint_resume_from=(
+                Path(checkpoint_resume_text) if checkpoint_resume_text else None
+            ),
+            checkpoint_interval_steps=int(self.checkpoint_interval_steps_var.get()),
+            checkpoint_interval_seconds=float(
+                self.checkpoint_interval_seconds_var.get()
+            ),
             manual_particle_config_enabled=manual_particle_config_enabled,
             image_subcharge_count=int(self.image_subcharge_var.get()),
             use_image_weighting=bool(self.image_weighting_var.get()),

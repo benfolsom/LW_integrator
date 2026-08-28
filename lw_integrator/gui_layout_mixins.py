@@ -151,8 +151,6 @@ class IntegratorGUILayoutMixin:
         self._scroll_pages.append(page)
         return page.frame
 
-
-
     def _build_config_panel(self, parent):
         """Build persistent config/control panel on right side."""
         panel = ttk.LabelFrame(parent, text="Configuration & Control", padding=10)
@@ -233,12 +231,63 @@ class IntegratorGUILayoutMixin:
             row=3, column=1, columnspan=2, sticky="w", pady=2
         )
 
+        ttk.Checkbutton(
+            run_config_frame,
+            text="Write resumable checkpoints",
+            variable=self.checkpoint_enabled_var,
+        ).grid(row=4, column=0, columnspan=3, sticky="w", pady=(10, 2))
+        ttk.Label(run_config_frame, text="Checkpoint dir:").grid(
+            row=5, column=0, sticky="w", pady=2
+        )
+        ttk.Entry(
+            run_config_frame,
+            textvariable=self.checkpoint_directory_var,
+            width=20,
+        ).grid(row=5, column=1, sticky="ew", pady=2, padx=(5, 2))
+        ttk.Button(
+            run_config_frame,
+            text="...",
+            command=self._select_checkpoint_directory,
+            width=3,
+        ).grid(row=5, column=2, sticky="w", pady=2)
+        ttk.Label(run_config_frame, text="Resume from:").grid(
+            row=6, column=0, sticky="w", pady=2
+        )
+        ttk.Entry(
+            run_config_frame,
+            textvariable=self.checkpoint_resume_from_var,
+            width=20,
+        ).grid(row=6, column=1, sticky="ew", pady=2, padx=(5, 2))
+        ttk.Button(
+            run_config_frame,
+            text="...",
+            command=self._select_checkpoint_resume_directory,
+            width=3,
+        ).grid(row=6, column=2, sticky="w", pady=2)
+        ttk.Label(run_config_frame, text="Every steps / seconds:").grid(
+            row=7, column=0, sticky="w", pady=2
+        )
+        checkpoint_interval_frame = ttk.Frame(run_config_frame)
+        checkpoint_interval_frame.grid(
+            row=7, column=1, columnspan=2, sticky="ew", pady=2, padx=(5, 0)
+        )
+        ttk.Entry(
+            checkpoint_interval_frame,
+            textvariable=self.checkpoint_interval_steps_var,
+            width=8,
+        ).pack(side="left")
+        ttk.Entry(
+            checkpoint_interval_frame,
+            textvariable=self.checkpoint_interval_seconds_var,
+            width=8,
+        ).pack(side="left", padx=(5, 0))
+
         ttk.Label(run_config_frame, text="Saved configs:").grid(
-            row=4, column=0, columnspan=3, sticky="w", pady=(10, 2)
+            row=8, column=0, columnspan=3, sticky="w", pady=(10, 2)
         )
 
         run_list_frame = ttk.Frame(run_config_frame)
-        run_list_frame.grid(row=5, column=0, columnspan=3, sticky="nsew", pady=2)
+        run_list_frame.grid(row=9, column=0, columnspan=3, sticky="nsew", pady=2)
         run_list_frame.rowconfigure(0, weight=1)
         run_list_frame.columnconfigure(0, weight=1)
 
@@ -255,10 +304,10 @@ class IntegratorGUILayoutMixin:
         run_scrollbar.grid(row=0, column=1, sticky="ns")
         self.config_list.configure(yscrollcommand=run_scrollbar.set)
 
-        run_config_frame.rowconfigure(5, weight=1)
+        run_config_frame.rowconfigure(9, weight=1)
 
         run_btn_frame = ttk.Frame(run_config_frame)
-        run_btn_frame.grid(row=6, column=0, columnspan=3, sticky="ew", pady=(5, 0))
+        run_btn_frame.grid(row=10, column=0, columnspan=3, sticky="ew", pady=(5, 0))
 
         ttk.Button(run_btn_frame, text="Load", command=self._load_config, width=8).pack(
             side="left", padx=2
@@ -352,9 +401,7 @@ class IntegratorGUILayoutMixin:
         sweep_config_frame.rowconfigure(5, weight=1)
 
         sweep_btn_frame = ttk.Frame(sweep_config_frame)
-        sweep_btn_frame.grid(
-            row=6, column=0, columnspan=3, sticky="ew", pady=(5, 0)
-        )
+        sweep_btn_frame.grid(row=6, column=0, columnspan=3, sticky="ew", pady=(5, 0))
 
         ttk.Button(
             sweep_btn_frame, text="Load", command=self._load_sweep_config, width=8
@@ -440,9 +487,6 @@ class IntegratorGUILayoutMixin:
             self._run_button.config(text="▶ Run", command=self._trigger_run)
         else:
             self._run_button.config(text="▶ Run Sweep", command=self._trigger_sweep)
-
-
-
 
     def _build_log_summary_panel(self, bottom_container: ttk.Frame) -> None:
         """Build the lower split panel for logs and initial summary."""

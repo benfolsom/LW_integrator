@@ -27,6 +27,7 @@ from core.species import SPECIES, resolve_species
 from core.types import (
     BeamlineGeometryConfig,
     CavityExitConfig,
+    CheckpointConfig,
     ChronoMatchingMode,
     DipoleSourceConfig,
     DriverTrainConfig,
@@ -292,8 +293,8 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         dest="testbed_config",
         help=(
             "Path to a testbed/GUI JSON configuration. Runs it unchanged "
-            "through load_config() and run_testbed(); direct-run flags do not "
-            "override it."
+            "through load_config() and run_testbed(); only checkpoint/restart "
+            "flags may override it."
         ),
     )
     parser.add_argument(
@@ -1122,6 +1123,28 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--checkpoint-dir",
+        type=Path,
+        help="Write atomic accepted-step checkpoint chunks to this directory.",
+    )
+    parser.add_argument(
+        "--checkpoint-every-steps",
+        type=int,
+        default=None,
+        help="Checkpoint after this many newly accepted steps (default: 1000).",
+    )
+    parser.add_argument(
+        "--checkpoint-every-seconds",
+        type=float,
+        default=None,
+        help="Checkpoint after this much wall time (default: 900 seconds).",
+    )
+    parser.add_argument(
+        "--resume-from",
+        type=Path,
+        help="Resume and continue writing an existing checkpoint directory.",
+    )
+    parser.add_argument(
         "--output",
         type=Path,
         help="Optional path to write a JSON summary report.",
@@ -1331,7 +1354,7 @@ def _print_testbed_summary(report: Mapping[str, Any]) -> None:
 
 
 def run_testbed_config(args: argparse.Namespace) -> int:
-    """Load and run an unmodified testbed/GUI JSON configuration."""
+    """Load and run a testbed/GUI JSON config with checkpoint overrides."""
     conflicting_options = (
         ("--config", getattr(args, "config", None)),
         ("--sweep-config", getattr(args, "sweep_config", None)),
@@ -1351,6 +1374,17 @@ def run_testbed_config(args: argparse.Namespace) -> int:
         from .testbed_runner import load_config, run_testbed
 
         options = load_config(config_path)
+        if args.resume_from is not None:
+            options.checkpoint_resume_from = args.resume_from
+            options.checkpoint_directory = None
+            options.checkpoint_enabled = True
+        elif args.checkpoint_dir is not None:
+            options.checkpoint_directory = args.checkpoint_dir
+            options.checkpoint_enabled = True
+        if args.checkpoint_every_steps is not None:
+            options.checkpoint_interval_steps = args.checkpoint_every_steps
+        if args.checkpoint_every_seconds is not None:
+            options.checkpoint_interval_seconds = args.checkpoint_every_seconds
         result = run_testbed(options)
     # The runner can surface numerical and I/O failures through varied exception types.
     except Exception as exc:  # noqa: BLE001
@@ -1610,6 +1644,24 @@ def _merge_simulation_payload(
     if getattr(args, "auto_duration_post_factor", None) is not None:
         result["auto_duration_post_factor"] = args.auto_duration_post_factor
 
+    checkpoint_payload = result.get("checkpoint")
+    checkpoint = (
+        dict(checkpoint_payload) if isinstance(checkpoint_payload, Mapping) else {}
+    )
+    if getattr(args, "resume_from", None) is not None:
+        checkpoint["enabled"] = True
+        checkpoint["resume_from"] = str(args.resume_from)
+        checkpoint["directory"] = None
+    elif getattr(args, "checkpoint_dir", None) is not None:
+        checkpoint["enabled"] = True
+        checkpoint["directory"] = str(args.checkpoint_dir)
+    if getattr(args, "checkpoint_every_steps", None) is not None:
+        checkpoint["interval_steps"] = args.checkpoint_every_steps
+    if getattr(args, "checkpoint_every_seconds", None) is not None:
+        checkpoint["interval_seconds"] = args.checkpoint_every_seconds
+    if checkpoint:
+        result["checkpoint"] = checkpoint
+
     particle_loss = result["particle_loss"]
     particle_loss_overrides = {
         "enabled": getattr(args, "particle_loss_enabled", None),
@@ -1825,6 +1877,23 @@ def _merge_particle_payload(
     return result
 
 
+def _build_checkpoint_config(payload: Any) -> CheckpointConfig:
+    if payload is None:
+        return CheckpointConfig()
+    if not isinstance(payload, Mapping):
+        raise SimulationConfigError("checkpoint must be a JSON object")
+    try:
+        return CheckpointConfig(
+            enabled=bool(payload.get("enabled", False)),
+            directory=payload.get("directory"),
+            resume_from=payload.get("resume_from"),
+            interval_steps=int(payload.get("interval_steps", 1000)),
+            interval_seconds=float(payload.get("interval_seconds", 900.0)),
+        )
+    except (TypeError, ValueError) as exc:
+        raise SimulationConfigError(f"Invalid checkpoint configuration: {exc}") from exc
+
+
 def _build_integrator_config(payload: Mapping[str, Any]) -> IntegratorConfig:
     try:
         simulation_type = _parse_simulation_type(payload["simulation_type"])
@@ -1869,6 +1938,7 @@ def _build_integrator_config(payload: Mapping[str, Any]) -> IntegratorConfig:
         payload.get("macroparticle_smearing")
     )
     magnetic_dipole = _build_magnetic_dipole_config(payload.get("magnetic_dipole"))
+    checkpoint = _build_checkpoint_config(payload.get("checkpoint"))
     if magnetic_dipole.enabled and pseudo_grid.enabled:
         raise SimulationConfigError(
             "Magnetic-dipole dynamics are not compatible with pseudo-grid spin "
@@ -1907,6 +1977,7 @@ def _build_integrator_config(payload: Mapping[str, Any]) -> IntegratorConfig:
         particle_loss=particle_loss,
         beamline_geometry=beamline_geometry,
         magnetic_dipole=magnetic_dipole,
+        checkpoint=checkpoint,
     )
 
 
@@ -2914,6 +2985,7 @@ def run_simulation(request: SimulationRequest) -> tuple:
         macroparticle_smearing=request.config.macroparticle_smearing,
         beamline_geometry=request.config.beamline_geometry,
         magnetic_dipole=request.config.magnetic_dipole,
+        checkpoint=request.config.checkpoint,
     )
 
 

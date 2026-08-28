@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+from dataclasses import fields
 from types import SimpleNamespace
 
 import numpy as np
@@ -36,6 +37,7 @@ from core.retarded_fields import (
 from core.self_consistency import SelfConsistencyConfig
 from core.species import get_species
 from core.types import (
+    CheckpointConfig,
     DipoleSourceConfig,
     ExternalFieldConfig,
     MagneticDipoleConfig,
@@ -233,6 +235,9 @@ def _run_simple_inertial(
     external_field: ExternalFieldConfig | None = None,
     magnetic_dipole: MagneticDipoleConfig | None = None,
     self_consistency: SelfConsistencyConfig | None = None,
+    checkpoint: CheckpointConfig | None = None,
+    progress_callback=None,
+    cancel_callback=None,
 ):
     return retarded_integrator(
         steps=steps,
@@ -255,6 +260,9 @@ def _run_simple_inertial(
             else self_consistency
         ),
         use_numba=False,
+        checkpoint=checkpoint,
+        progress_callback=progress_callback,
+        cancel_callback=cancel_callback,
     )
 
 
@@ -336,6 +344,142 @@ def test_inertial_prefix_is_hidden_from_both_public_trajectory_forms() -> None:
     np.testing.assert_array_equal(driver_traj[0]["x"], driver["x"])
     assert float(np.min(rider_soa.t)) >= 0.0
     assert float(np.min(driver_soa.t)) >= 0.0
+
+
+@pytest.mark.parametrize("radiation_mode", ["off", "medina_lad"])
+def test_accepted_checkpoint_restart_matches_uninterrupted_run_bitwise(
+    tmp_path, radiation_mode: str
+) -> None:
+    from core.integration_runner import IntegrationCancelled
+
+    rider = _species_state(
+        "electron", position_mm=(-5.0e-8, 0.0, 0.0), beta=(0.0, 1.0e-4, 0.0)
+    )
+    driver = _species_state(
+        "proton", position_mm=(5.0e-8, 0.0, 0.0), beta=(0.0, -1.0e-4, 0.0)
+    )
+    magnetic = MagneticDipoleConfig(
+        enabled=True,
+        spin_precession_enabled=True,
+        stern_gerlach_force_enabled=False,
+        rider=MagneticDipoleParticleConfig(species="electron"),
+        driver=MagneticDipoleParticleConfig(species="proton"),
+    )
+    baseline = _run_simple_inertial(
+        rider,
+        driver,
+        steps=6,
+        h_step=1.0e-11,
+        magnetic_dipole=magnetic,
+        radiation_reaction_mode=radiation_mode,
+    )
+
+    checkpoint_directory = tmp_path / "restart.checkpoint"
+    cancel_requested = False
+
+    def progress(current: int, total: int) -> None:  # noqa: ARG001
+        nonlocal cancel_requested
+        if current >= 3:
+            cancel_requested = True
+
+    with pytest.raises(IntegrationCancelled):
+        _run_simple_inertial(
+            rider,
+            driver,
+            steps=6,
+            h_step=1.0e-11,
+            magnetic_dipole=magnetic,
+            radiation_reaction_mode=radiation_mode,
+            checkpoint=CheckpointConfig(
+                enabled=True,
+                directory=str(checkpoint_directory),
+                interval_steps=2,
+                interval_seconds=0.0,
+            ),
+            progress_callback=progress,
+            cancel_callback=lambda: cancel_requested,
+        )
+
+    resumed = _run_simple_inertial(
+        rider,
+        driver,
+        steps=6,
+        h_step=1.0e-11,
+        magnetic_dipole=magnetic,
+        radiation_reaction_mode=radiation_mode,
+        checkpoint=CheckpointConfig(
+            resume_from=str(checkpoint_directory),
+            interval_steps=2,
+            interval_seconds=0.0,
+        ),
+    )
+    for baseline_soa, resumed_soa in zip(baseline[2:4], resumed[2:4]):
+        assert baseline_soa is not None and resumed_soa is not None
+        for descriptor in fields(type(baseline_soa)):
+            baseline_value = getattr(baseline_soa, descriptor.name)
+            resumed_value = getattr(resumed_soa, descriptor.name)
+            if isinstance(baseline_value, np.ndarray):
+                np.testing.assert_array_equal(resumed_value, baseline_value)
+
+
+def test_checkpoint_restart_rejects_changed_timestep(tmp_path) -> None:
+    from core.integration_checkpoint import CheckpointCompatibilityError
+    from core.integration_runner import IntegrationCancelled
+
+    rider = _species_state(
+        "electron", position_mm=(-5.0e-8, 0.0, 0.0), beta=(0.0, 1.0e-4, 0.0)
+    )
+    driver = _species_state(
+        "proton", position_mm=(5.0e-8, 0.0, 0.0), beta=(0.0, -1.0e-4, 0.0)
+    )
+    magnetic = MagneticDipoleConfig(
+        enabled=True,
+        spin_precession_enabled=True,
+        stern_gerlach_force_enabled=False,
+        rider=MagneticDipoleParticleConfig(species="electron"),
+        driver=MagneticDipoleParticleConfig(species="proton"),
+    )
+    checkpoint_directory = tmp_path / "changed-timestep.checkpoint"
+    cancel_requested = False
+
+    def progress(current: int, total: int) -> None:  # noqa: ARG001
+        nonlocal cancel_requested
+        if current >= 2:
+            cancel_requested = True
+
+    with pytest.raises(IntegrationCancelled):
+        _run_simple_inertial(
+            rider,
+            driver,
+            steps=5,
+            h_step=1.0e-11,
+            magnetic_dipole=magnetic,
+            checkpoint=CheckpointConfig(
+                enabled=True,
+                directory=str(checkpoint_directory),
+                interval_steps=2,
+                interval_seconds=0.0,
+            ),
+            progress_callback=progress,
+            cancel_callback=lambda: cancel_requested,
+        )
+
+    with pytest.raises(
+        CheckpointCompatibilityError,
+        match="physics/configuration fingerprint",
+    ):
+        _run_simple_inertial(
+            rider,
+            driver,
+            steps=5,
+            h_step=2.0e-11,
+            magnetic_dipole=magnetic,
+            checkpoint=CheckpointConfig(
+                resume_from=str(checkpoint_directory),
+                interval_steps=2,
+                interval_seconds=0.0,
+            ),
+        )
 
 
 def test_public_startup_momentum_is_rebased_by_charge_plus_dipole_once() -> None:

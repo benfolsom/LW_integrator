@@ -6,6 +6,15 @@ All notable changes and updates to the LW Integrator project are documented in t
 
 ### Experimental Magnetic Dipole Moments (August 2026)
 
+- Added atomic, append-only accepted-step checkpoints for fixed-step
+  ``BUNCH_TO_BUNCH`` runs. Checkpoints preserve hidden inertial history,
+  canonical/mechanical state, RFS spin fields, dead masks, and Medina's prior
+  external-force samples, and reject configuration or core-source fingerprint
+  mismatches on restart. Direct CLI flags, testbed JSON round trips, and GUI
+  directory/interval controls expose creation and resume. Adaptive timestep,
+  pseudo-grid, driver-train, and cavity-exit-tail restart remain explicit
+  preflight errors until their scheduler state is serialized.
+
 - Unified the exact retarded charge and dipole CPU selection under
   ``magnetic_dipole.exact_retarded_backend`` and the direct CLI option
   ``--exact-retarded-backend``. The former

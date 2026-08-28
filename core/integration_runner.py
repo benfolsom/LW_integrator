@@ -6,9 +6,12 @@ programmatic entry points for running the modern Liénard–Wiechert integrator.
 
 from __future__ import annotations
 
+import hashlib
 import inspect
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, fields, is_dataclass, replace
+from enum import Enum
 from functools import lru_cache
+from pathlib import Path
 from typing import Any, Callable, Optional, Tuple, cast
 
 import numpy as np
@@ -50,6 +53,7 @@ from .self_consistency import (
 )
 from .types import (
     BeamlineGeometryConfig,
+    CheckpointConfig,
     ChronoMatchingMode,
     CavityExitConfig,
     DriverTrainConfig,
@@ -74,6 +78,57 @@ from .types import (
 # prefix spacing to the (much smaller) active integration timestep.
 _INERTIAL_PREHISTORY_KNOT_COUNT = 8
 _INERTIAL_PREHISTORY_SAFETY_FACTOR = 2.0
+
+
+def _checkpoint_json_value(value: Any) -> Any:
+    """Encode physics inputs without losing float or array identity."""
+
+    if value is None or isinstance(value, (bool, str, int)):
+        return value
+    if isinstance(value, float):
+        if not np.isfinite(value):
+            raise ValueError("checkpoint compatibility inputs must be finite")
+        return {"float_hex": value.hex()}
+    if isinstance(value, np.generic):
+        return _checkpoint_json_value(value.item())
+    if isinstance(value, np.ndarray):
+        contiguous = np.ascontiguousarray(value)
+        return {
+            "dtype": contiguous.dtype.str,
+            "shape": list(contiguous.shape),
+            "sha256": hashlib.sha256(contiguous.tobytes()).hexdigest(),
+        }
+    if isinstance(value, Enum):
+        return {"enum": f"{type(value).__name__}.{value.name}"}
+    if is_dataclass(value):
+        return {
+            descriptor.name: _checkpoint_json_value(getattr(value, descriptor.name))
+            for descriptor in fields(value)
+        }
+    if isinstance(value, dict):
+        return {
+            str(key): _checkpoint_json_value(item)
+            for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+        }
+    if isinstance(value, (tuple, list)):
+        return [_checkpoint_json_value(item) for item in value]
+    raise TypeError(
+        f"unsupported checkpoint compatibility input {type(value).__name__}"
+    )
+
+
+@lru_cache(maxsize=1)
+def _checkpoint_core_implementation_hash() -> str:
+    """Fingerprint maintained core Python sources for exact restart safety."""
+
+    core_directory = Path(__file__).resolve().parent
+    digest = hashlib.sha256()
+    for path in sorted(core_directory.rglob("*.py")):
+        digest.update(str(path.relative_to(core_directory)).encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
 
 
 def _initialize_magnetic_dipole_state(
@@ -2589,6 +2644,7 @@ def retarded_integrator(
     macroparticle_smearing: Optional[MacroparticleSmearingConfig] = None,
     beamline_geometry: Optional[BeamlineGeometryConfig] = None,
     magnetic_dipole: Optional[MagneticDipoleConfig] = None,
+    checkpoint: Optional[CheckpointConfig] = None,
 ) -> Tuple[
     Trajectory,
     Trajectory,
@@ -2736,6 +2792,7 @@ def retarded_integrator(
     particle_loss = particle_loss or ParticleLossConfig()
     macroparticle_smearing = macroparticle_smearing or MacroparticleSmearingConfig()
     magnetic_dipole = magnetic_dipole or MagneticDipoleConfig()
+    checkpoint = checkpoint or CheckpointConfig()
     if magnetic_dipole.exact_retarded_backend == "metal_certified_full_strict":
         from .metal_certified_roots import reset_metal_certified_root_diagnostics
 
@@ -2752,6 +2809,28 @@ def retarded_integrator(
         magnetic_dipole.enabled and magnetic_dipole.source.active
     )
     exact_magnetic_active = bool(rfs_active or dipole_source_active)
+
+    if checkpoint.enabled:
+        if sim_type is not SimulationType.BUNCH_TO_BUNCH:
+            raise NotImplementedError(
+                "resumable checkpoints currently support BUNCH_TO_BUNCH runs"
+            )
+        if adaptive_timestep is not None and adaptive_timestep.enabled:
+            raise NotImplementedError(
+                "resumable checkpoints do not yet support adaptive timesteps"
+            )
+        if pseudo_grid.enabled:
+            raise NotImplementedError(
+                "resumable checkpoints do not yet support pseudo-grid schedules"
+            )
+        if driver_train.enabled:
+            raise NotImplementedError(
+                "resumable checkpoints do not yet support driver trains"
+            )
+        if cavity_exit.enabled:
+            raise NotImplementedError(
+                "resumable checkpoints do not yet support cavity-exit tails"
+            )
 
     def _has_particles(state: ParticleState | None) -> bool:
         return state is not None and np.asarray(state.get("x", np.zeros(0))).size > 0
@@ -3421,9 +3500,6 @@ def retarded_integrator(
             )
         return changed
 
-    if progress_callback is not None:
-        progress_callback(0, requested_steps)
-
     def _to_public_return(
         rider_traj: Trajectory,
         driver_traj: Trajectory,
@@ -3454,7 +3530,163 @@ def retarded_integrator(
         )
 
     _adaptive_state = _AdaptiveStepState(current_h_step=h_step, reduced_h_step=h_step)
-    for i in range(total_steps):
+    _checkpoint_store = None
+    loop_start = 0
+    if checkpoint.enabled:
+        from .integration_checkpoint import IntegrationCheckpointStore
+
+        compatibility_payload = _checkpoint_json_value(
+            {
+                "core_implementation_sha256": (_checkpoint_core_implementation_hash()),
+                "steps": requested_steps,
+                "h_step": h_step,
+                "wall_z": wall_z,
+                "aperture_radius": aperture_radius,
+                "sim_type": sim_type,
+                "init_rider": init_rider,
+                "init_driver": init_driver,
+                "mean": mean,
+                "cav_spacing": cav_spacing,
+                "z_cutoff": z_cutoff,
+                "z_cutoff_mode": z_cutoff_mode,
+                "self_consistency": self_consistency,
+                "chrono_mode": chrono_mode,
+                "startup_mode": startup_mode,
+                "energy_monitor": energy_monitor,
+                "space_charge": space_charge,
+                "external_field": external_field,
+                "image_subcharge_count": image_subcharge_count,
+                "use_conducting_image_weighting": use_conducting_image_weighting,
+                "macroparticle_charge_multiplier": macroparticle_charge_multiplier,
+                "macroparticle_sigma_multiplier": macroparticle_sigma_multiplier,
+                "macroparticle_use_momentum_errors": (
+                    macroparticle_use_momentum_errors
+                ),
+                "bunch_transv_dist": bunch_transv_dist,
+                "bunch_transv_mom": bunch_transv_mom,
+                "use_numba": use_numba,
+                "radiation_reaction_mode": radiation_reaction_mode,
+                "particle_loss": particle_loss,
+                "macroparticle_smearing": macroparticle_smearing,
+                "beamline_geometry": beamline_geometry,
+                "magnetic_dipole": magnetic_dipole,
+            }
+        )
+        checkpoint_directory = checkpoint.resume_from or checkpoint.directory
+        if checkpoint_directory is None:
+            raise ValueError("checkpoint directory is required")
+        _checkpoint_store = IntegrationCheckpointStore(
+            checkpoint_directory,
+            compatibility_payload=cast(dict[str, Any], compatibility_payload),
+            total_steps=total_steps,
+            requested_steps=requested_steps,
+            active_start=active_start,
+            interval_steps=checkpoint.interval_steps,
+            interval_seconds=checkpoint.interval_seconds,
+            resume=checkpoint.resume_from is not None,
+        )
+        if checkpoint.resume_from is not None:
+            if init_driver is None:
+                raise ValueError("checkpoint restart requires init_driver")
+            if _traj_drv_builder is None:
+                _n_particles_drv = len(init_driver["x"])
+                _traj_drv_builder = TrajectoryBuilder(
+                    total_steps,
+                    _n_particles_drv,
+                    magnetic_dipole=magnetic_dipole.enabled,
+                )
+            _checkpoint_store.restore_builder(_traj_builder, "rider")
+            _checkpoint_store.restore_builder(_traj_drv_builder, "driver")
+            loop_start = _checkpoint_store.next_internal_step
+            rider_restored = _traj_builder.build_partial(loop_start).to_legacy()
+            driver_restored = _traj_drv_builder.build_partial(loop_start).to_legacy()
+            if inertial_prehistory_enabled:
+                for state in rider_restored + driver_restored:
+                    particle_count = len(np.asarray(state["x"]))
+                    if exact_magnetic_active:
+                        state["charge_source_canonical_ready"] = np.ones(
+                            particle_count, dtype=bool
+                        )
+                    if dipole_source_active:
+                        state["dipole_source_canonical_ready"] = np.ones(
+                            particle_count, dtype=bool
+                        )
+            trajectory[:loop_start] = rider_restored
+            trajectory_drv[:loop_start] = driver_restored
+            restored_loop_state = _checkpoint_store.loop_state
+            previous_energy_value = restored_loop_state.get("previous_energy")
+            previous_energy = (
+                None if previous_energy_value is None else float(previous_energy_value)
+            )
+            _adaptive_state = _AdaptiveStepState(
+                reduced_timestep_mode=bool(
+                    restored_loop_state.get("reduced_timestep_mode", False)
+                ),
+                reduced_h_step=float(restored_loop_state.get("reduced_h_step", h_step)),
+                cooldown_counter=int(restored_loop_state.get("cooldown_counter", 0)),
+                stable_steps_counter=int(
+                    restored_loop_state.get("stable_steps_counter", 0)
+                ),
+                last_particle_death_step=int(
+                    restored_loop_state.get("last_particle_death_step", -1)
+                ),
+                previous_energy=(
+                    None
+                    if restored_loop_state.get("adaptive_previous_energy") is None
+                    else float(restored_loop_state["adaptive_previous_energy"])
+                ),
+                current_h_step=float(restored_loop_state.get("current_h_step", h_step)),
+            )
+            if logger:
+                message = (
+                    f"Resuming checkpoint {checkpoint_directory} at public step "
+                    f"{max(0, loop_start - active_start)}/{requested_steps}"
+                )
+                if callable(logger):
+                    logger(message)
+                else:
+                    logger.info(message)
+
+    def _checkpoint_loop_state() -> dict[str, Any]:
+        return {
+            "previous_energy": previous_energy,
+            "reduced_timestep_mode": _adaptive_state.reduced_timestep_mode,
+            "reduced_h_step": _adaptive_state.reduced_h_step,
+            "cooldown_counter": _adaptive_state.cooldown_counter,
+            "stable_steps_counter": _adaptive_state.stable_steps_counter,
+            "last_particle_death_step": _adaptive_state.last_particle_death_step,
+            "adaptive_previous_energy": _adaptive_state.previous_energy,
+            "current_h_step": _adaptive_state.current_h_step,
+        }
+
+    last_checkpoint_safe_step = loop_start - 1
+    user_cancel_callback = cancel_callback
+    if user_cancel_callback is not None:
+
+        def _checkpointing_cancel_callback() -> bool:
+            if not user_cancel_callback():
+                return False
+            if (
+                _checkpoint_store is not None
+                and last_checkpoint_safe_step >= active_start
+                and _traj_drv_builder is not None
+            ):
+                _checkpoint_store.write(
+                    step_index=last_checkpoint_safe_step,
+                    rider=_traj_builder.build_partial(last_checkpoint_safe_step + 1),
+                    driver=_traj_drv_builder.build_partial(
+                        last_checkpoint_safe_step + 1
+                    ),
+                    loop_state=_checkpoint_loop_state(),
+                )
+            return True
+
+        cancel_callback = _checkpointing_cancel_callback
+
+    if progress_callback is not None:
+        progress_callback(max(0, loop_start - active_start), requested_steps)
+
+    for i in range(loop_start, total_steps):
         if cancel_callback is not None and cancel_callback():
             raise IntegrationCancelled("Integration cancelled by caller.")
         if i <= active_start:
@@ -4189,6 +4421,37 @@ def retarded_integrator(
                     )
             previous_energy = current_energy
 
+        if _checkpoint_store is not None and i >= active_start:
+            last_checkpoint_safe_step = i
+            completed_public_steps = min(
+                i - active_start + 1,
+                requested_steps,
+            )
+            checkpoint_complete = i == total_steps - 1
+            if _checkpoint_store.due(
+                completed_public_steps,
+                force=checkpoint_complete,
+            ):
+                if _traj_drv_builder is None:
+                    raise RuntimeError("checkpoint write requires a driver trajectory")
+                _checkpoint_store.write(
+                    step_index=i,
+                    rider=_traj_builder.build_partial(i + 1),
+                    driver=_traj_drv_builder.build_partial(i + 1),
+                    loop_state=_checkpoint_loop_state(),
+                    complete=checkpoint_complete,
+                )
+                if logger:
+                    message = (
+                        f"Checkpoint committed at step "
+                        f"{completed_public_steps}/{requested_steps}: "
+                        f"{_checkpoint_store.directory}"
+                    )
+                    if callable(logger):
+                        logger(message)
+                    else:
+                        logger.info(message)
+
         if progress_callback is not None and i >= active_start:
             progress_callback(
                 min(i - active_start + 1, requested_steps),
@@ -4323,6 +4586,7 @@ def run_integrator(
         macroparticle_smearing=config.macroparticle_smearing,
         beamline_geometry=config.beamline_geometry,
         magnetic_dipole=config.magnetic_dipole,
+        checkpoint=config.checkpoint,
     )
 
 

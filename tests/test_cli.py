@@ -19,6 +19,89 @@ from lw_integrator import cli
 from lw_integrator.testbed_runner import SimulationOptions
 
 
+def test_cli_direct_checkpoint_flags_build_core_config(tmp_path: Path) -> None:
+    config_path = tmp_path / "run.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "steps": 4,
+                "time_step": 1.0e-3,
+                "wall_position": 0.0,
+                "aperture_radius": 1.0,
+                "simulation_type": "bunch-to-bunch",
+                "rider": {},
+                "driver": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    checkpoint_path = tmp_path / "capture.checkpoint"
+
+    request = cli.build_request(
+        cli.parse_args(
+            [
+                "--config",
+                str(config_path),
+                "--checkpoint-dir",
+                str(checkpoint_path),
+                "--checkpoint-every-steps",
+                "25",
+                "--checkpoint-every-seconds",
+                "60",
+            ]
+        )
+    )
+
+    assert request.config.checkpoint.enabled is True
+    assert request.config.checkpoint.directory == str(checkpoint_path)
+    assert request.config.checkpoint.resume_from is None
+    assert request.config.checkpoint.interval_steps == 25
+    assert request.config.checkpoint.interval_seconds == pytest.approx(60.0)
+
+
+def test_cli_testbed_resume_flag_overrides_loaded_checkpoint(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "testbed.json"
+    config_path.write_text(json.dumps({"steps": 4}), encoding="utf-8")
+    checkpoint_path = tmp_path / "capture.checkpoint"
+    captured: dict[str, SimulationOptions] = {}
+
+    def fake_run(options: SimulationOptions):
+        captured["options"] = options
+        return SimpleNamespace(
+            duration_s=0.0,
+            filename_base="test",
+            halted_early=False,
+            halt_reason=None,
+            num_particles_dead=0,
+            rider_delta_e=0.0,
+            rider_gamma_initial=1.0,
+            rider_gamma_final=1.0,
+            driver_gamma_initial=None,
+            driver_gamma_final=None,
+            energy_ledger_metrics={},
+            saved_paths={},
+        )
+
+    monkeypatch.setattr("lw_integrator.testbed_runner.run_testbed", fake_run)
+
+    result = cli.main(
+        [
+            "--testbed-config",
+            str(config_path),
+            "--resume-from",
+            str(checkpoint_path),
+            "--quiet",
+        ]
+    )
+
+    assert result == 0
+    assert captured["options"].checkpoint_enabled is True
+    assert captured["options"].checkpoint_resume_from == checkpoint_path
+
+
 def _make_args(**overrides) -> argparse.Namespace:
     defaults = {
         "config": None,
@@ -2065,6 +2148,7 @@ class TestCliRuntimeHelpers:
             captured["macroparticle_smearing"] is request.config.macroparticle_smearing
         )
         assert captured["magnetic_dipole"] is request.config.magnetic_dipole
+        assert captured["checkpoint"] is request.config.checkpoint
 
     def test_run_simulation_applies_auto_duration_when_enabled(self, monkeypatch):
         request = cli.build_request(

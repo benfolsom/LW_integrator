@@ -91,9 +91,11 @@ simulation, and confirm that the regression tooling works on your machine.
    configuration through ``SimulationOptions`` and executes ``run_testbed()``,
    preserving the configured 3D particle setup, beamline geometry, source
    smearing, driver train, startup mode, self-consistency, and output settings.
-   The JSON is authoritative; direct-run CLI overrides are not applied. Use
-   ``--config`` only for the separate native direct-integrator schema; accompany
-   ``--testbed-config`` only with ``--output`` or ``--quiet``.
+   The JSON is authoritative for physics settings. Direct-run CLI overrides are
+   not applied, but ``--checkpoint-dir``, ``--resume-from``, and the checkpoint
+   interval flags may be supplied operationally. Use ``--config`` only for the
+   separate native direct-integrator schema. See :doc:`checkpoints` for restart
+   commands and the current fixed-step boundary.
 
    Example native direct-integrator JSON configuration structure:
 

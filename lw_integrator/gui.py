@@ -904,6 +904,29 @@ class IntegratorGUI(
         self.sweep_config_dir_var = tk.StringVar(value=self._last_sweep_config_dir)
         self.sweep_output_dir_var = tk.StringVar(value=self._last_sweep_output_dir)
         self.config_name_var = tk.StringVar(value=self.options.config_name)
+        self.checkpoint_enabled_var = tk.BooleanVar(
+            value=self.options.checkpoint_enabled
+        )
+        self.checkpoint_directory_var = tk.StringVar(
+            value=(
+                ""
+                if self.options.checkpoint_directory is None
+                else str(self.options.checkpoint_directory)
+            )
+        )
+        self.checkpoint_resume_from_var = tk.StringVar(
+            value=(
+                ""
+                if self.options.checkpoint_resume_from is None
+                else str(self.options.checkpoint_resume_from)
+            )
+        )
+        self.checkpoint_interval_steps_var = tk.IntVar(
+            value=self.options.checkpoint_interval_steps
+        )
+        self.checkpoint_interval_seconds_var = tk.DoubleVar(
+            value=self.options.checkpoint_interval_seconds
+        )
         self.config_file_var = tk.StringVar(value="")
         self.sweep_config_name_var = tk.StringVar(value="sweep_config.json")
 

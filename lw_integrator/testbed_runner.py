@@ -49,6 +49,7 @@ from core.species import list_species
 from core.types import (
     BeamlineGeometryConfig,
     CavityExitConfig,
+    CheckpointConfig,
     Occluder,
     SimulationType,
 )
@@ -252,6 +253,11 @@ class SimulationOptions:
     output_dir: Path = Path("test_outputs/testbed_runs")
     config_dir: Path = Path("configs/testbed_runs")
     config_name: str = "testbed_config.json"
+    checkpoint_enabled: bool = False
+    checkpoint_directory: Optional[Path] = None
+    checkpoint_resume_from: Optional[Path] = None
+    checkpoint_interval_steps: int = 1000
+    checkpoint_interval_seconds: float = 900.0
     manual_particle_config_enabled: bool = False
     rider_params: Dict[str, Any] = field(
         default_factory=lambda: dict(DEFAULT_RIDER_PARAMS)
@@ -496,6 +502,26 @@ class SimulationOptions:
     log_file_path: Optional[str] = None  # If None, auto-generate in output_dir
 
     def __post_init__(self) -> None:
+        self.checkpoint_enabled = bool(
+            self.checkpoint_enabled or self.checkpoint_resume_from is not None
+        )
+        self.checkpoint_interval_steps = int(self.checkpoint_interval_steps)
+        self.checkpoint_interval_seconds = float(self.checkpoint_interval_seconds)
+        if self.checkpoint_interval_steps < 0:
+            raise ValueError("checkpoint_interval_steps must be non-negative")
+        if (
+            not np.isfinite(self.checkpoint_interval_seconds)
+            or self.checkpoint_interval_seconds < 0.0
+        ):
+            raise ValueError(
+                "checkpoint_interval_seconds must be finite and non-negative"
+            )
+        if (
+            self.checkpoint_enabled
+            and self.checkpoint_interval_steps == 0
+            and self.checkpoint_interval_seconds == 0.0
+        ):
+            raise ValueError("checkpointing needs a positive interval")
         self.chrono_interpolate = bool(
             self.chrono_interpolate or self.self_consistency_chrono_interpolate
         )
@@ -551,6 +577,21 @@ class SimulationOptions:
             "output_dir": str(self.output_dir),
             "config_dir": str(self.config_dir),
             "config_name": self.config_name,
+            "checkpoint": {
+                "enabled": self.checkpoint_enabled,
+                "directory": (
+                    str(self.checkpoint_directory)
+                    if self.checkpoint_directory is not None
+                    else None
+                ),
+                "resume_from": (
+                    str(self.checkpoint_resume_from)
+                    if self.checkpoint_resume_from is not None
+                    else None
+                ),
+                "interval_steps": self.checkpoint_interval_steps,
+                "interval_seconds": self.checkpoint_interval_seconds,
+            },
             "manual_particle_config_enabled": self.manual_particle_config_enabled,
             "rider_params": dict(self.rider_params),
             "driver_params": dict(self.driver_params) if self.driver_params else None,
@@ -825,6 +866,8 @@ class SimulationOptions:
         magnetic_source = (
             magnetic_source_raw if isinstance(magnetic_source_raw, dict) else {}
         )
+        checkpoint_raw = payload.get("checkpoint")
+        checkpoint_payload = checkpoint_raw if isinstance(checkpoint_raw, dict) else {}
 
         canonical_backend_present = (
             "magnetic_dipole_exact_retarded_backend" in payload
@@ -1209,6 +1252,50 @@ class SimulationOptions:
             ),
             config_dir=Path(str(payload.get("config_dir", "configs/testbed_runs"))),
             config_name=str(payload.get("config_name", "testbed_config.json")),
+            checkpoint_enabled=bool(
+                checkpoint_payload.get(
+                    "enabled", payload.get("checkpoint_enabled", False)
+                )
+            ),
+            checkpoint_directory=(
+                Path(
+                    str(
+                        checkpoint_payload.get(
+                            "directory", payload.get("checkpoint_directory")
+                        )
+                    )
+                )
+                if checkpoint_payload.get(
+                    "directory", payload.get("checkpoint_directory")
+                )
+                not in {None, ""}
+                else None
+            ),
+            checkpoint_resume_from=(
+                Path(
+                    str(
+                        checkpoint_payload.get(
+                            "resume_from", payload.get("checkpoint_resume_from")
+                        )
+                    )
+                )
+                if checkpoint_payload.get(
+                    "resume_from", payload.get("checkpoint_resume_from")
+                )
+                not in {None, ""}
+                else None
+            ),
+            checkpoint_interval_steps=int(
+                checkpoint_payload.get(
+                    "interval_steps", payload.get("checkpoint_interval_steps", 1000)
+                )
+            ),
+            checkpoint_interval_seconds=float(
+                checkpoint_payload.get(
+                    "interval_seconds",
+                    payload.get("checkpoint_interval_seconds", 900.0),
+                )
+            ),
             manual_particle_config_enabled=_bool(
                 "manual_particle_config_enabled", False
             ),
@@ -2906,6 +2993,28 @@ def run_testbed(
     else:
         config_label = filename_base
 
+    checkpoint_directory = options.checkpoint_resume_from
+    if checkpoint_directory is None:
+        checkpoint_directory = options.checkpoint_directory
+    if checkpoint_directory is None and options.checkpoint_enabled:
+        checkpoint_directory = output_dir / f"{filename_base}_checkpoint"
+    checkpoint_config = CheckpointConfig(
+        enabled=options.checkpoint_enabled,
+        directory=(
+            str(checkpoint_directory)
+            if checkpoint_directory is not None
+            and options.checkpoint_resume_from is None
+            else None
+        ),
+        resume_from=(
+            str(options.checkpoint_resume_from)
+            if options.checkpoint_resume_from is not None
+            else None
+        ),
+        interval_steps=options.checkpoint_interval_steps,
+        interval_seconds=options.checkpoint_interval_seconds,
+    )
+
     # Start a fresh testbed log for each run so GUI and CLI single runs can
     # save the exact debug session instead of guessing the latest file later.
     initialize_debug_logging(context="testbed", force_new_log=True)
@@ -2950,6 +3059,13 @@ def run_testbed(
     _log(f"  Radiation reaction: {options.radiation_reaction_mode}")
     _log(f"  Magnetic dipole source: {options.magnetic_dipole_source_model}")
     _log(f"  Exact-retarded backend: {options.magnetic_dipole_exact_retarded_backend}")
+    if checkpoint_config.enabled:
+        _log(
+            "  Checkpoint: "
+            f"{checkpoint_config.resume_from or checkpoint_config.directory} "
+            f"(every {checkpoint_config.interval_steps} steps or "
+            f"{checkpoint_config.interval_seconds:g} s)"
+        )
     if options.driver_train_enabled and sim_type == SimulationType.BUNCH_TO_BUNCH:
         _log(
             "  Driver train: enabled "
@@ -3135,6 +3251,7 @@ def run_testbed(
             macroparticle_smearing=macroparticle_smearing_config,
             beamline_geometry=beamline_geometry_config,
             magnetic_dipole=magnetic_dipole_config,
+            checkpoint=checkpoint_config,
         )
         # Unpack: rider_traj, driver_traj, rider_soa, driver_soa, localization
         core_traj_rider = _integrator_return[0]
@@ -4938,6 +5055,13 @@ def run_testbed(
             np.savez(traj_path_npz, **npz_payload)
             saved_paths["trajectory_npz"] = traj_path_npz
             _log(f"Saved trajectory NPZ to: {traj_path_npz} (interval={interval})")
+
+    if checkpoint_config.enabled:
+        active_checkpoint_path = Path(
+            checkpoint_config.resume_from or checkpoint_config.directory or ""
+        )
+        if active_checkpoint_path.exists():
+            saved_paths["checkpoint"] = active_checkpoint_path
 
     duration = time.perf_counter() - start
     _log("")

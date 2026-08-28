@@ -212,6 +212,56 @@ def test_simulation_options_roundtrip_preserves_gamma_reconciliation_fields(
     assert loaded.log_file_path == "custom.log"
 
 
+def test_simulation_options_roundtrip_preserves_checkpoint_controls(
+    tmp_path: Path,
+) -> None:
+    options = SimulationOptions(
+        checkpoint_enabled=True,
+        checkpoint_directory=tmp_path / "capture.checkpoint",
+        checkpoint_interval_steps=250,
+        checkpoint_interval_seconds=120.0,
+    )
+
+    restored = SimulationOptions.from_dict(options.to_dict())
+
+    assert restored.checkpoint_enabled is True
+    assert restored.checkpoint_directory == tmp_path / "capture.checkpoint"
+    assert restored.checkpoint_resume_from is None
+    assert restored.checkpoint_interval_steps == 250
+    assert restored.checkpoint_interval_seconds == pytest.approx(120.0)
+
+
+def test_checkpoint_resume_path_enables_checkpointing(tmp_path: Path) -> None:
+    restored = SimulationOptions.from_dict(
+        {
+            "checkpoint": {
+                "resume_from": str(tmp_path / "capture.checkpoint"),
+                "interval_steps": 100,
+                "interval_seconds": 30.0,
+            }
+        }
+    )
+
+    assert restored.checkpoint_enabled is True
+    assert restored.checkpoint_resume_from == tmp_path / "capture.checkpoint"
+
+
+def test_flat_checkpoint_fields_remain_loadable(tmp_path: Path) -> None:
+    restored = SimulationOptions.from_dict(
+        {
+            "checkpoint_enabled": True,
+            "checkpoint_directory": str(tmp_path / "legacy.checkpoint"),
+            "checkpoint_interval_steps": 75,
+            "checkpoint_interval_seconds": 15.0,
+        }
+    )
+
+    assert restored.checkpoint_enabled is True
+    assert restored.checkpoint_directory == tmp_path / "legacy.checkpoint"
+    assert restored.checkpoint_interval_steps == 75
+    assert restored.checkpoint_interval_seconds == pytest.approx(15.0)
+
+
 def test_simulation_options_roundtrip_preserves_manual_particle_config_and_3d_payloads():
     options = SimulationOptions(
         simulation_type=SimulationType.BUNCH_TO_BUNCH,

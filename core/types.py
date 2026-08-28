@@ -770,6 +770,53 @@ class IntegratorConfig:
         default_factory=BeamlineGeometryConfig
     )
     magnetic_dipole: MagneticDipoleConfig = field(default_factory=MagneticDipoleConfig)
+    checkpoint: CheckpointConfig = field(default_factory=lambda: CheckpointConfig())
+
+
+@dataclass
+class CheckpointConfig:
+    """Accepted-step checkpoint and restart controls.
+
+    Checkpoints are append-only directories.  ``directory`` selects a new
+    checkpoint; ``resume_from`` reopens an existing one and continues writing
+    there.  A write is due when either accepted-step or wall-clock interval is
+    reached.  Setting an interval to zero disables that trigger.
+    """
+
+    enabled: bool = False
+    directory: str | None = None
+    resume_from: str | None = None
+    interval_steps: int = 1000
+    interval_seconds: float = 900.0
+
+    def __post_init__(self) -> None:
+        self.enabled = bool(self.enabled or self.resume_from is not None)
+        if self.directory is not None:
+            self.directory = str(self.directory)
+        if self.resume_from is not None:
+            self.resume_from = str(self.resume_from)
+        self.interval_steps = int(self.interval_steps)
+        self.interval_seconds = float(self.interval_seconds)
+        if self.interval_steps < 0:
+            raise ValueError("checkpoint interval_steps must be non-negative")
+        if not np.isfinite(self.interval_seconds) or self.interval_seconds < 0.0:
+            raise ValueError(
+                "checkpoint interval_seconds must be finite and non-negative"
+            )
+        if self.enabled and self.interval_steps == 0 and self.interval_seconds == 0.0:
+            raise ValueError(
+                "checkpointing needs a positive step or wall-clock interval"
+            )
+        if self.enabled and self.resume_from is None and not self.directory:
+            raise ValueError("checkpoint directory is required when checkpointing")
+        if (
+            self.resume_from is not None
+            and self.directory is not None
+            and self.directory != self.resume_from
+        ):
+            raise ValueError(
+                "checkpoint directory must match resume_from when both are supplied"
+            )
 
 
 @dataclass
@@ -1599,6 +1646,116 @@ class TrajectoryBuilder:
                 raise ValueError(f"{field_name} must contain only finite values")
             self._arrays[field_name][step] = values
 
+    def restore_checkpoint_rows(
+        self,
+        start: int,
+        row_arrays: dict[str, np.ndarray],
+        *,
+        particle_constants: dict[str, np.ndarray] | None = None,
+    ) -> None:
+        """Bulk-load one contiguous accepted checkpoint block.
+
+        This is intentionally narrower than a general mutation API.  Restart
+        creates a fresh builder, restores rows in increasing order, and only
+        then publishes a trajectory view.  No prepared-history consumer can
+        therefore observe a partially restored block.
+        """
+
+        start = int(start)
+        if start < 0:
+            raise ValueError("checkpoint row start must be non-negative")
+        if not row_arrays:
+            raise ValueError("checkpoint row block must not be empty")
+        first_values = np.asarray(next(iter(row_arrays.values())))
+        if first_values.ndim < 1:
+            raise ValueError("checkpoint row arrays must have a leading row axis")
+        row_count = int(first_values.shape[0])
+        stop = start + row_count
+        if row_count <= 0 or stop > self._n_steps:
+            raise ValueError("checkpoint row block exceeds trajectory capacity")
+        if start != self._published_stop:
+            raise ValueError("checkpoint rows must be restored contiguously")
+
+        magnetic_fields = set(self._MAGNETIC_KINEMATIC_FIELDS)
+        medina_fields = set(self._MEDINA_FLOAT_FIELDS + self._MEDINA_BOOL_FIELDS)
+        if not self._magnetic_arrays_allocated and magnetic_fields & row_arrays.keys():
+            for field_name in self._MAGNETIC_KINEMATIC_FIELDS:
+                self._arrays[field_name] = np.zeros(
+                    (self._n_steps, self._n_particles), dtype=np.float64
+                )
+            self._magnetic_arrays_allocated = True
+            self._storage_state.array_revision += 1
+        if not self._medina_arrays_allocated and medina_fields & row_arrays.keys():
+            for field_name in self._MEDINA_FLOAT_FIELDS:
+                fill = (
+                    np.nan if field_name == "medina_external_force_sample_time" else 0.0
+                )
+                self._arrays[field_name] = np.full(
+                    (self._n_steps, self._n_particles), fill, dtype=np.float64
+                )
+            for field_name in self._MEDINA_BOOL_FIELDS:
+                self._arrays[field_name] = np.zeros(
+                    (self._n_steps, self._n_particles), dtype=bool
+                )
+            self._medina_arrays_allocated = True
+            self._storage_state.array_revision += 1
+
+        expected_row_fields = set(
+            self._KINEMATIC_FIELDS
+            + self._MAGNETIC_KINEMATIC_FIELDS
+            + self._MEDINA_FLOAT_FIELDS
+            + self._MEDINA_BOOL_FIELDS
+            + ("dead",)
+        )
+        missing = expected_row_fields - row_arrays.keys()
+        if missing:
+            raise ValueError(
+                "checkpoint row block is missing fields: " + ", ".join(sorted(missing))
+            )
+        for field_name in expected_row_fields:
+            values = np.asarray(row_arrays[field_name])
+            target = self._arrays[field_name][start:stop]
+            if values.shape != target.shape:
+                raise ValueError(
+                    f"checkpoint field {field_name} has shape {values.shape}, "
+                    f"expected {target.shape}"
+                )
+            target[...] = values
+
+        for name, target in (
+            ("halted_early", self._halted_early),
+            ("halt_step", self._halt_step_arr),
+        ):
+            values = np.asarray(row_arrays[name])
+            if values.shape != (row_count,):
+                raise ValueError(
+                    f"checkpoint field {name} has shape {values.shape}, "
+                    f"expected {(row_count,)}"
+                )
+            target[start:stop] = values
+
+        if particle_constants is not None:
+            missing_constants = (
+                set(self._PARTICLE_CONST_FIELDS) - particle_constants.keys()
+            )
+            if missing_constants:
+                raise ValueError(
+                    "checkpoint constants are missing fields: "
+                    + ", ".join(sorted(missing_constants))
+                )
+            for field_name in self._PARTICLE_CONST_FIELDS:
+                values = np.asarray(particle_constants[field_name])
+                target = self._arrays[field_name]
+                if values.shape != target.shape:
+                    raise ValueError(
+                        f"checkpoint constant {field_name} has shape {values.shape}, "
+                        f"expected {target.shape}"
+                    )
+                target[...] = values
+
+        self._published_stop = stop
+        self._storage_state.generation += row_count
+
     def set_halt_metadata(
         self,
         step: int,
@@ -1787,6 +1944,7 @@ __all__ = [
     "ChronoMatchingMode",
     "StartupMode",
     "IntegratorConfig",
+    "CheckpointConfig",
     "DriverTrainConfig",
     "CavityExitConfig",
     "SpaceChargeConfig",
