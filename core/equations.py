@@ -2927,7 +2927,10 @@ def retarded_equations_of_motion(
                             if magnetic_dipole is not None
                             else "python"
                         )
-                        if charge_backend == "numba_analytic_charge_response_serial":
+                        if charge_backend in {
+                            "numba_analytic_charge_response_serial",
+                            "numba_analytic_charge_dipole_response_serial",
+                        }:
                             exact_charge_field = (
                                 evaluate_retarded_charge_response_gradient_native(
                                     charge_history,

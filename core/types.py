@@ -651,12 +651,14 @@ class MagneticDipoleConfig:
             "numba_roots_exact_serial",
             "numba_full_strict_serial",
             "numba_analytic_charge_response_serial",
+            "numba_analytic_charge_dipole_response_serial",
             "metal_certified_full_strict",
         }:
             raise ValueError(
                 "magnetic-dipole exact_retarded_backend must be one of: python, "
                 "numba_roots_exact_serial, numba_full_strict_serial, "
                 "numba_analytic_charge_response_serial, "
+                "numba_analytic_charge_dipole_response_serial, "
                 "metal_certified_full_strict"
             )
         if isinstance(self.source, dict):

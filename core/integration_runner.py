@@ -2797,15 +2797,24 @@ def retarded_integrator(
         from .metal_certified_roots import reset_metal_certified_root_diagnostics
 
         reset_metal_certified_root_diagnostics()
-    if (
-        magnetic_dipole.exact_retarded_backend
-        == "numba_analytic_charge_response_serial"
-    ):
+    if magnetic_dipole.exact_retarded_backend in {
+        "numba_analytic_charge_response_serial",
+        "numba_analytic_charge_dipole_response_serial",
+    }:
         from .analytic_charge_response_diagnostics import (
             reset_analytic_charge_response_diagnostics,
         )
 
         reset_analytic_charge_response_diagnostics()
+    if (
+        magnetic_dipole.exact_retarded_backend
+        == "numba_analytic_charge_dipole_response_serial"
+    ):
+        from .analytic_dipole_hertz_diagnostics import (
+            reset_analytic_dipole_hertz_diagnostics,
+        )
+
+        reset_analytic_dipole_hertz_diagnostics()
     rfs_active = bool(
         magnetic_dipole.enabled
         and magnetic_dipole.spin_model == "rfs_minimal_2021"

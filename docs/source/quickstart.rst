@@ -153,7 +153,11 @@ simulation, and confirm that the regression tooling works on your machine.
    ``numba_full_strict_serial`` additionally compiles the strict per-source
    charge and Hertz event paths.  It is faster but tolerance-validated rather
    than bitwise-identical.  Charge and dipole stencil centers stay on the
-   Python reference path.  On Apple silicon,
+   Python reference path.
+   ``numba_analytic_charge_dipole_response_serial`` instead differentiates one
+   retarded root through the charge response and dipole Hertz response on
+   smooth history segments.  It is fully relativistic and falls back to the
+   full strict oracle at spin/history nonsmoothness.  On Apple silicon,
    ``metal_certified_full_strict`` may accelerate sufficiently large dipole
    root batches, but only as float32 bracket proposals certified against the
    original float64 data; the strict CPU root and fields remain authoritative.

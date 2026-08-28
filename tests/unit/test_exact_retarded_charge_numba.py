@@ -232,6 +232,7 @@ def test_charge_backends_preserve_first_displaced_history_failure() -> None:
     assert capture("numba_roots_exact_serial") == expected
     assert capture("numba_full_strict_serial") == expected
     assert capture("numba_analytic_charge_response_serial") == expected
+    assert capture("numba_analytic_charge_dipole_response_serial") == expected
 
 
 @pytest.mark.parametrize(
@@ -240,6 +241,7 @@ def test_charge_backends_preserve_first_displaced_history_failure() -> None:
         "numba_roots_exact_serial",
         "numba_full_strict_serial",
         "numba_analytic_charge_response_serial",
+        "numba_analytic_charge_dipole_response_serial",
     ),
 )
 def test_charge_backends_are_invariant_to_numba_thread_setting(backend: str) -> None:
@@ -271,6 +273,7 @@ def test_explicit_charge_numba_backend_fails_when_unavailable(monkeypatch) -> No
         "numba_roots_exact_serial",
         "numba_full_strict_serial",
         "numba_analytic_charge_response_serial",
+        "numba_analytic_charge_dipole_response_serial",
     ):
         with pytest.raises(
             ExactRetardedBackendUnavailableError,

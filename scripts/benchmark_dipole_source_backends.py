@@ -46,6 +46,7 @@ _NUMBA_BACKENDS = (
     "numba_roots_exact_serial",
     "numba_full_strict_serial",
     "numba_analytic_charge_response_serial",
+    "numba_analytic_charge_dipole_response_serial",
 )
 _PROJECTION_ENERGY_BUDGET_MEV = 0.025
 _STATE_RELATIVE_TOLERANCE = 2.0e-12
@@ -283,7 +284,10 @@ def _run_backend(options: Any, backend: str) -> dict[str, Any]:
     ):
         raise RuntimeError("benchmark requires rider and driver TrajectoryArrays")
     backend_diagnostics: dict[str, Any] = {}
-    if backend == "numba_analytic_charge_response_serial":
+    if backend in {
+        "numba_analytic_charge_response_serial",
+        "numba_analytic_charge_dipole_response_serial",
+    }:
         from core.analytic_charge_response_diagnostics import (
             analytic_charge_response_diagnostics,
         )
@@ -300,6 +304,27 @@ def _run_backend(options: Any, backend: str) -> dict[str, Any]:
             "minimum_segment_margin_ratio": (
                 diagnostics.minimum_segment_margin_ratio
                 if np.isfinite(diagnostics.minimum_segment_margin_ratio)
+                else None
+            ),
+        }
+    if backend == "numba_analytic_charge_dipole_response_serial":
+        from core.analytic_dipole_hertz_diagnostics import (
+            analytic_dipole_hertz_diagnostics,
+        )
+
+        diagnostics = analytic_dipole_hertz_diagnostics()
+        backend_diagnostics["analytic_dipole_hertz_response"] = {
+            "calls": diagnostics.calls,
+            "analytical_calls": diagnostics.analytical_calls,
+            "fallback_calls": diagnostics.fallback_calls,
+            "fallback_segment_boundary": diagnostics.fallback_segment_boundary,
+            "fallback_mutable_tail": diagnostics.fallback_mutable_tail,
+            "fallback_loss_wavefront": diagnostics.fallback_loss_wavefront,
+            "fallback_short_history": diagnostics.fallback_short_history,
+            "valid_sources": diagnostics.valid_sources,
+            "minimum_boundary_fraction": (
+                diagnostics.minimum_boundary_fraction
+                if np.isfinite(diagnostics.minimum_boundary_fraction)
                 else None
             ),
         }

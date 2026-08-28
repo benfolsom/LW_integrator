@@ -23,8 +23,9 @@ magnetization current ``j^mu = c partial_nu M^(mu nu)``.  In the static rest
 limit the convention gives ``A = m x r / r^3`` and the usual Gaussian point
 dipole field.  The retarded potential and its static, oscillating, and moving
 limits follow the Green-function constructions discussed by Sautbekov,
-Nuclear Physics B 945, 114665 (2019), https://arxiv.org/abs/1806.07089, and
-Heras, Phys. Rev. E 58, 5047 (1998),
+J. Magn. Magn. Mater. 484, 403--407 (2019),
+https://doi.org/10.1016/j.jmmm.2019.04.012, and Heras,
+Phys. Rev. E 58, 5047 (1998),
 https://doi.org/10.1103/PhysRevE.58.5047.
 
 Conventions
@@ -1414,8 +1415,11 @@ def evaluate_retarded_dipole_field_gradient_native(
     ``backend='numba_full_strict_serial'`` additionally compiles worldline,
     spin, moment, Hodge-dual, and per-source Hertz arithmetic with
     ``fastmath=False``; source and finite-difference reductions retain their
-    reference order. ``python`` is the cross-platform default and no automatic
-    backend selection is performed.
+    reference order. ``backend='numba_analytic_charge_dipole_response_serial'``
+    propagates one third-order observer jet through a smooth source segment and
+    falls back to the full-strict oracle at spin/history nonsmoothness.
+    ``python`` is the cross-platform default and no automatic backend selection
+    is performed.
     """
 
     selected_backend = _require_retarded_dipole_backend(backend)
@@ -1430,6 +1434,27 @@ def evaluate_retarded_dipole_field_gradient_native(
             minimum_separation_mm=minimum_separation_mm,
         )
     )
+    if selected_backend == "numba_analytic_charge_dipole_response_serial":
+        from .dipole_hertz_jet import (
+            evaluate_retarded_dipole_field_gradient_hertz_jet_native,
+        )
+
+        return evaluate_retarded_dipole_field_gradient_hertz_jet_native(
+            history,
+            observer_event,
+            source_identities=source_identities,
+            observer_source_identity=observer_source_identity,
+            excluded_source_identities=excluded_source_identities,
+            require_complete_history=require_complete_history,
+            fallback_relative_step=relative,
+            fallback_minimum_step_mm=minimum_step,
+            fallback_stencil_step_mm=explicit_step,
+            minimum_separation_mm=minimum_separation,
+            root_tolerance_mm=tolerance,
+            max_root_iterations=iterations,
+            response_kernel="numba_strict_serial",
+            fallback_backend="numba_full_strict_serial",
+        ).response
     prepared = _prepare_dipole_history(
         history,
         source_identities=source_identities,

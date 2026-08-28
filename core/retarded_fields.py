@@ -1513,6 +1513,7 @@ def _evaluate_prepared_charge_batch(
     if backend in {
         "numba_full_strict_serial",
         "numba_analytic_charge_response_serial",
+        "numba_analytic_charge_dipole_response_serial",
         "metal_certified_full_strict",
     }:
         return _evaluate_prepared_charge_batch_numba_full_strict_serial(
@@ -1683,7 +1684,10 @@ def evaluate_retarded_charge_response_gradient_native(
     )
 
     selected_fallback = require_exact_retarded_backend(fallback_backend)
-    if selected_fallback == "numba_analytic_charge_response_serial":
+    if selected_fallback in {
+        "numba_analytic_charge_response_serial",
+        "numba_analytic_charge_dipole_response_serial",
+    }:
         raise ValueError("analytical charge-response fallback cannot select itself")
     relative = float(relative_step)
     minimum = float(minimum_step_mm)
@@ -1903,7 +1907,10 @@ def evaluate_retarded_charge_field_gradient_native(
     tolerance, iterations = _validated_root_options(
         root_tolerance_mm, max_root_iterations
     )
-    if selected_backend == "numba_analytic_charge_response_serial":
+    if selected_backend in {
+        "numba_analytic_charge_response_serial",
+        "numba_analytic_charge_dipole_response_serial",
+    }:
         from .antisymmetric_response_rfs import (
             materialize_antisymmetric_response_native,
             materialize_partial_antisymmetric_response_native,

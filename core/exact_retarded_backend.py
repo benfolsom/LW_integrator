@@ -7,6 +7,7 @@ EXACT_RETARDED_BACKENDS = (
     "numba_roots_exact_serial",
     "numba_full_strict_serial",
     "numba_analytic_charge_response_serial",
+    "numba_analytic_charge_dipole_response_serial",
     "metal_certified_full_strict",
 )
 

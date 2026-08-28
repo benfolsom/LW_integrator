@@ -83,6 +83,10 @@ EXACT_RETARDED_BACKEND_OPTIONS: Tuple[Tuple[str, str], ...] = (
     ("Numba roots-exact CPU", "numba_roots_exact_serial"),
     ("Numba full strict CPU", "numba_full_strict_serial"),
     ("Numba analytical charge response CPU", "numba_analytic_charge_response_serial"),
+    (
+        "Numba analytical charge + dipole response CPU",
+        "numba_analytic_charge_dipole_response_serial",
+    ),
     ("Metal-certified roots + strict CPU", "metal_certified_full_strict"),
 )
 

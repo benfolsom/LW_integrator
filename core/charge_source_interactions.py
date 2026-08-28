@@ -180,7 +180,10 @@ def evaluate_retarded_charge_source_interaction_native(
     or radiation reaction is added here.
     """
 
-    if str(backend).strip().lower() == "numba_analytic_charge_response_serial":
+    if str(backend).strip().lower() in {
+        "numba_analytic_charge_response_serial",
+        "numba_analytic_charge_dipole_response_serial",
+    }:
         response = evaluate_retarded_charge_response_gradient_native(
             history,
             observer_event,

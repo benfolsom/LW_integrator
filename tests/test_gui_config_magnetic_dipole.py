@@ -177,6 +177,25 @@ def test_analytical_charge_backend_round_trips_through_gui_label() -> None:
     )
 
 
+def test_analytical_charge_dipole_backend_round_trips_through_gui_label() -> None:
+    source = SimulationOptions(
+        magnetic_dipole_exact_retarded_backend=(
+            "numba_analytic_charge_dipole_response_serial"
+        )
+    )
+    harness = _MagneticHarness()
+
+    harness.apply(source)
+    rebuilt = SimulationOptions(**harness.build())
+
+    assert harness.magnetic_dipole_exact_retarded_backend_var.get() == (
+        "Numba analytical charge + dipole response CPU"
+    )
+    assert rebuilt.magnetic_dipole_exact_retarded_backend == (
+        "numba_analytic_charge_dipole_response_serial"
+    )
+
+
 def test_old_config_defaults_round_trip_with_magnetic_dipoles_off() -> None:
     old_config = SimulationOptions.from_dict({"steps": 12})
     harness = _MagneticHarness()
@@ -384,13 +403,14 @@ def test_gui_labels_present_compact_rfs_controls() -> None:
         )
         assert tuple(
             app.magnetic_dipole_exact_retarded_backend_combo.cget("values")
-            ) == (
-                "Python reference",
-                "Numba roots-exact CPU",
-                "Numba full strict CPU",
-                "Numba analytical charge response CPU",
-                "Metal-certified roots + strict CPU",
-            )
+        ) == (
+            "Python reference",
+            "Numba roots-exact CPU",
+            "Numba full strict CPU",
+            "Numba analytical charge response CPU",
+            "Numba analytical charge + dipole response CPU",
+            "Metal-certified roots + strict CPU",
+        )
         assert app.magnetic_dipole_source_cutoff_label.cget("text") == (
             "Minimum separation abort (mm):"
         )

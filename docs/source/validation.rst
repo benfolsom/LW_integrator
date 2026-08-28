@@ -114,6 +114,18 @@ invariants.  Reports must also retain analytical/fallback call counts and
 failure reasons.  A segment-boundary fallback is acceptable evidence only
 when its count and location are explicit; silent fallback is not.
 
+``numba_analytic_charge_dipole_response_serial`` extends that contract to the
+retarded intrinsic-dipole Hertz response.  Smooth-segment provider tests compare
+the one-root third-order Taylor jet with adaptive adjacent-stencil Richardson
+limits for :math:`A`, :math:`F`, :math:`\partial F`, force, and spin.  The
+trajectory test judges complete Cartesian vectors, not isolated near-zero
+components, and gives each radiation/projection ledger an independent
+``1e-6 meV`` backend budget.  A separate common-horizon run must show improving
+timestep refinement in endpoint energy, projection, radiation, position,
+velocity, and spin.  Segment-boundary, mutable-tail, short-history, and
+particle-loss-wavefront fallbacks must remain explicit and use the full strict
+oracle.
+
 The first coupled RFS implementation has intentionally narrow integration
 guards: fixed-step ``COLD_START`` or ``INERTIAL_PREHISTORY``
 ``BUNCH_TO_BUNCH`` point charges, no same-bunch RFS field, no nonzero smearing,

@@ -134,6 +134,7 @@ def test_endpoint_potential_matches_full_oracle_for_representative_histories() -
         "numba_roots_exact_serial",
         "numba_full_strict_serial",
         "numba_analytic_charge_response_serial",
+        "numba_analytic_charge_dipole_response_serial",
     ),
 )
 def test_endpoint_potential_numba_backends_preserve_reference_contract(
@@ -751,6 +752,7 @@ def test_explicit_numba_backend_fails_when_capability_is_unavailable(
         "numba_roots_exact_serial",
         "numba_full_strict_serial",
         "numba_analytic_charge_response_serial",
+        "numba_analytic_charge_dipole_response_serial",
     ):
         with pytest.raises(
             RetardedDipoleBackendUnavailableError,

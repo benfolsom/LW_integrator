@@ -6,6 +6,22 @@ All notable changes and updates to the LW Integrator project are documented in t
 
 ### Experimental Magnetic Dipole Moments (August 2026)
 
+- Added the explicit ``numba_analytic_charge_dipole_response_serial``
+  potential-first backend.  On smooth source-history segments it differentiates
+  the implicit retarded time and covariant Hertz tensor with one strict
+  binary64 third-order Taylor jet, replacing the 129 displaced dipole events
+  with one root/source while retaining the complete relativistic ordinary and
+  RFS responses.  The maintained finite-difference oracle remains the strict
+  fallback at segment boundaries, on the mutable spin tail, for one-knot
+  histories, and near particle-loss wavefronts.  A structural audit identifies
+  66 of 210 raw antisymmetric Hertz-jet coefficients as response-unused or
+  diagnostic/redundant, but production deliberately retains the dense algebra
+  until a sparse implementation can preserve the accepted numerical contract.
+  Provider continuum, grouped trajectory, energy-ledger, and independent
+  timestep-refinement gates pass.  On the M5 Pro the 300-sample precession
+  stress path measured 1.636 s analytical versus 2.561 s full-strict and
+  11.126 s Python; backend acceptance remains separate from full-flyby physics
+  authorization.
 - Added the explicit ``numba_analytic_charge_response_serial`` exact-retarded
   backend.  For the point-charge contribution it solves one center light cone,
   returns the ordinary four-potential plus six independent antisymmetric

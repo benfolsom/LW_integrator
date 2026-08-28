@@ -211,7 +211,8 @@ configurations contain only the canonical key.
 
 The reference/default choice is ``python``.  Explicit alternatives are
 ``numba_roots_exact_serial``, ``numba_full_strict_serial``,
-``numba_analytic_charge_response_serial``, and the separately certified
+``numba_analytic_charge_response_serial``,
+``numba_analytic_charge_dipole_response_serial``, and the separately certified
 Apple-silicon ``metal_certified_full_strict`` path.  The finite-difference
 Numba kernels cover both charge and dipole exact providers, including the
 charge one-event endpoint/diagnostic path, the charge nine-event gradient, the
@@ -321,9 +322,14 @@ calls used the declared segment-boundary fallback.  The accepted report is
 ``/tmp/lw-analytic-charge-response-common-horizon-v2.json`` with SHA-256
 ``854f1af56340798ad6dc8a81b34b79e0061f120fac369e68fbd9ebccedaa3ef4``.
 
-This is the charge-source seam only.  The retarded intrinsic-dipole Hertz
-provider still uses its maintained finite-difference oracle because an
-analytical third observer derivative also requires a smoother, explicitly
-causal spin/worldline history.  Python remains the default, and passing this
-backend gate does not pass the separate full-flyby timestep and projection
-energy gates.
+The first accepted version was the charge-source seam only.  The follow-on
+``numba_analytic_charge_dipole_response_serial`` backend differentiates the
+retarded Hertz construction through third observer order inside each smooth
+cubic-spin/quintic-worldline segment.  It keeps strict finite-difference
+fallback at spin-segment boundaries, on the mutable final spin segment, for a
+one-knot history, and near particle-loss wavefronts.  The provider continuum,
+grouped trajectory, energy-ledger, and common-horizon timestep gates passed;
+the 300-sample stress path measured 1.636 s analytical versus 2.561 s
+full-strict and 11.126 s Python while an unrelated one-core flyby job remained
+active.  Python remains the default, and backend acceptance still does not
+pass the separate full-flyby timestep and projection-energy gates.

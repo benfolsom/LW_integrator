@@ -235,7 +235,7 @@ is active only when magnetic-dipole dynamics are enabled.  The advanced
 ``--dipole-source-cutoff-mm`` option sets the strict minimum separation abort
 boundary.  It does not soften the point field.
 
-The exact retarded charge and dipole providers share four explicit backend
+The exact retarded charge and dipole providers share five explicit backend
 choices.  ``python`` is the default and remains the reference on every
 platform.  The canonical JSON setting is
 ``magnetic_dipole.exact_retarded_backend`` and the direct CLI option is
@@ -264,7 +264,30 @@ physical trajectory arrays, and cumulative projection-energy disagreement
 below ``0.025 meV``.  Raw derivative differences must be reported with their
 field scale and propagated force/spin effect rather than interpreted alone.
 
-Both Numba kernels consume displaced events in the oracle's lazy first-use
+``numba_analytic_charge_dipole_response_serial`` is the potential-first
+analytical opt-in.  On a smooth source-history segment it solves one retarded
+light cone and propagates a third-order four-coordinate Taylor jet through the
+implicit light-cone equation and covariant Hertz tensor.  The first, second,
+and third Hertz derivatives directly produce :math:`A^\mu`,
+:math:`F^{\mu\nu}`, and :math:`\partial_\lambda F^{\mu\nu}` without displaced
+observer events.  It supports relativistic motion; no slow-speed dipole-force
+approximation is used.  Because the current spin history is only
+:math:`C^1`, the backend strictly falls back to the full finite-difference
+oracle at segment boundaries, on the mutable final spin segment, for a
+one-knot history, and near a particle-loss wavefront.  Those fallbacks are
+counted in run diagnostics.  Endpoint-potential reconstruction retains its
+smaller strict stencil.
+
+The analytical response is accepted against adjacent-stencil Richardson
+limits, grouped physical trajectory variables, explicit radiation/projection
+energy ledgers, and independent timestep refinement.  Individual Cartesian
+components and the saved ``local_magnetic_field_*`` visualization arrays are
+reported but do not override their complete vector or force-path response.
+The coefficient audit also records response-level zeros and Bianchi
+redundancies; the current dense jet intentionally retains them until a sparse
+response algebra can remove them without changing arithmetic.
+
+The finite-difference Numba kernels consume displaced events in the oracle's lazy first-use
 order, preserving which history or singularity error is raised first.  They
 are serial: neither selects a worker count nor consumes multiple cores, and
 there is no automatic or operating-system-specific dispatch.  Explicit
@@ -272,7 +295,8 @@ selection raises a capability error if Numba is unavailable or initial
 compilation fails; it never silently changes the recorded backend.  The
 selection covers the exact charge one-event field, exact charge nine-event
 gradient, dipole nine-event accepted-endpoint potential, and full dipole
-gradient.  The finite-difference centers remain Python-reference evaluations.
+gradient.  The finite-difference centers remain Python-reference evaluations;
+the analytical mode instead uses one center root on smooth segments.
 
 ``metal_certified_full_strict`` is an explicit Apple-silicon accelerator
 option for large dipole batches.  Metal receives float32 history and observer

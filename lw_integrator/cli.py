@@ -715,13 +715,15 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
             "numba_roots_exact_serial",
             "numba_full_strict_serial",
             "numba_analytic_charge_response_serial",
+            "numba_analytic_charge_dipole_response_serial",
             "metal_certified_full_strict",
         ),
         help=(
             "Exact-retarded evaluator shared by charge and intrinsic-dipole "
             "fields: the Python reference (default), a strict serial Numba "
             "roots-only/full-Hertz kernel, or the experimental one-root "
-            "analytical charge-response kernel. The explicit Metal option proposes "
+            "analytical charge-only or charge-plus-dipole response kernel. The "
+            "explicit Metal option proposes "
             "only float32 dipole root brackets; original-float64 certification "
             "and the strict CPU root/field remain authoritative. Source and "
             "finite-difference reductions remain deterministic."
@@ -3101,7 +3103,10 @@ def _exact_retarded_report(backend: str) -> dict[str, Any]:
             "cpu_fallbacks": diagnostics.cpu_fallbacks,
             "dispatch_failures": diagnostics.dispatch_failures,
         }
-    if str(backend) == "numba_analytic_charge_response_serial":
+    if str(backend) in {
+        "numba_analytic_charge_response_serial",
+        "numba_analytic_charge_dipole_response_serial",
+    }:
         from core.analytic_charge_response_diagnostics import (
             analytic_charge_response_diagnostics,
         )
@@ -3118,6 +3123,27 @@ def _exact_retarded_report(backend: str) -> dict[str, Any]:
             "minimum_segment_margin_ratio": (
                 diagnostics.minimum_segment_margin_ratio
                 if np.isfinite(diagnostics.minimum_segment_margin_ratio)
+                else None
+            ),
+        }
+    if str(backend) == "numba_analytic_charge_dipole_response_serial":
+        from core.analytic_dipole_hertz_diagnostics import (
+            analytic_dipole_hertz_diagnostics,
+        )
+
+        diagnostics = analytic_dipole_hertz_diagnostics()
+        report["analytic_dipole_hertz_response"] = {
+            "calls": diagnostics.calls,
+            "analytical_calls": diagnostics.analytical_calls,
+            "fallback_calls": diagnostics.fallback_calls,
+            "fallback_segment_boundary": diagnostics.fallback_segment_boundary,
+            "fallback_mutable_tail": diagnostics.fallback_mutable_tail,
+            "fallback_loss_wavefront": diagnostics.fallback_loss_wavefront,
+            "fallback_short_history": diagnostics.fallback_short_history,
+            "valid_sources": diagnostics.valid_sources,
+            "minimum_boundary_fraction": (
+                diagnostics.minimum_boundary_fraction
+                if np.isfinite(diagnostics.minimum_boundary_fraction)
                 else None
             ),
         }
