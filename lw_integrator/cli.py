@@ -3115,7 +3115,11 @@ def _exact_retarded_report(backend: str) -> dict[str, Any]:
             "fallback_nontimelike_bound": (diagnostics.fallback_nontimelike_bound),
             "fallback_nonfinite": diagnostics.fallback_nonfinite,
             "valid_sources": diagnostics.valid_sources,
-            "minimum_segment_margin_ratio": (diagnostics.minimum_segment_margin_ratio),
+            "minimum_segment_margin_ratio": (
+                diagnostics.minimum_segment_margin_ratio
+                if np.isfinite(diagnostics.minimum_segment_margin_ratio)
+                else None
+            ),
         }
     return report
 

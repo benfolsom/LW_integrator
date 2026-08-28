@@ -101,6 +101,19 @@ Saved ``local_magnetic_field_*`` visualization arrays have a separate absolute
 relative tolerance.  The local-field arrays are not force-path validation;
 force-center fields and the dynamics must pass their own comparisons.
 
+The explicit ``numba_analytic_charge_response_serial`` backend has a different
+comparison contract.  It replaces the charge finite-difference derivative by
+an analytical one-root response derivative, so last-bit or near-zero
+diagnostic agreement with the finite stencil is not the accuracy target.
+Validation must show that the maintained stencil converges to the analytical
+result, then bound the full trajectory discrepancy by independently measured
+timestep/stencil uncertainty.  The maintained acceptance uses at most 10
+percent of that uncertainty, an absolute ceiling for projection/energy
+quantities, and a unit-scale roundoff floor for residuals of normalized spin
+invariants.  Reports must also retain analytical/fallback call counts and
+failure reasons.  A segment-boundary fallback is acceptable evidence only
+when its count and location are explicit; silent fallback is not.
+
 The first coupled RFS implementation has intentionally narrow integration
 guards: fixed-step ``COLD_START`` or ``INERTIAL_PREHISTORY``
 ``BUNCH_TO_BUNCH`` point charges, no same-bunch RFS field, no nonzero smearing,

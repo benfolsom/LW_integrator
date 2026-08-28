@@ -45,6 +45,7 @@ from scripts.benchmark_rfs_retarded_fields import (  # noqa: E402
 _NUMBA_BACKENDS = (
     "numba_roots_exact_serial",
     "numba_full_strict_serial",
+    "numba_analytic_charge_response_serial",
 )
 _PROJECTION_ENERGY_BUDGET_MEV = 0.025
 _STATE_RELATIVE_TOLERANCE = 2.0e-12
@@ -281,6 +282,27 @@ def _run_backend(options: Any, backend: str) -> dict[str, Any]:
         driver, TrajectoryArrays
     ):
         raise RuntimeError("benchmark requires rider and driver TrajectoryArrays")
+    backend_diagnostics: dict[str, Any] = {}
+    if backend == "numba_analytic_charge_response_serial":
+        from core.analytic_charge_response_diagnostics import (
+            analytic_charge_response_diagnostics,
+        )
+
+        diagnostics = analytic_charge_response_diagnostics()
+        backend_diagnostics["analytic_charge_response"] = {
+            "calls": diagnostics.calls,
+            "analytical_calls": diagnostics.analytical_calls,
+            "fallback_calls": diagnostics.fallback_calls,
+            "fallback_segment_boundary": diagnostics.fallback_segment_boundary,
+            "fallback_nontimelike_bound": diagnostics.fallback_nontimelike_bound,
+            "fallback_nonfinite": diagnostics.fallback_nonfinite,
+            "valid_sources": diagnostics.valid_sources,
+            "minimum_segment_margin_ratio": (
+                diagnostics.minimum_segment_margin_ratio
+                if np.isfinite(diagnostics.minimum_segment_margin_ratio)
+                else None
+            ),
+        }
     return {
         "backend": backend,
         "wall_seconds": wall_seconds,
@@ -292,6 +314,7 @@ def _run_backend(options: Any, backend: str) -> dict[str, Any]:
         },
         "rider": rider,
         "driver": driver,
+        "backend_diagnostics": backend_diagnostics,
     }
 
 
@@ -301,6 +324,7 @@ def _public_run_payload(run: dict[str, Any]) -> dict[str, Any]:
         "wall_seconds": run["wall_seconds"],
         "runner_seconds": run["runner_seconds"],
         "run_status": run["run_status"],
+        "backend_diagnostics": run["backend_diagnostics"],
         "trajectory": {
             role: _trajectory_fingerprint(run[role]) for role in ("rider", "driver")
         },

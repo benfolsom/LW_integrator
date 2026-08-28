@@ -231,10 +231,16 @@ def test_charge_backends_preserve_first_displaced_history_failure() -> None:
     assert capture("python") == expected
     assert capture("numba_roots_exact_serial") == expected
     assert capture("numba_full_strict_serial") == expected
+    assert capture("numba_analytic_charge_response_serial") == expected
 
 
 @pytest.mark.parametrize(
-    "backend", ("numba_roots_exact_serial", "numba_full_strict_serial")
+    "backend",
+    (
+        "numba_roots_exact_serial",
+        "numba_full_strict_serial",
+        "numba_analytic_charge_response_serial",
+    ),
 )
 def test_charge_backends_are_invariant_to_numba_thread_setting(backend: str) -> None:
     numba = pytest.importorskip("numba")
@@ -261,7 +267,11 @@ def test_explicit_charge_numba_backend_fails_when_unavailable(monkeypatch) -> No
     import core.exact_retarded_numba as compiled
 
     monkeypatch.setattr(compiled, "NUMBA_AVAILABLE", False)
-    for backend in ("numba_roots_exact_serial", "numba_full_strict_serial"):
+    for backend in (
+        "numba_roots_exact_serial",
+        "numba_full_strict_serial",
+        "numba_analytic_charge_response_serial",
+    ):
         with pytest.raises(
             ExactRetardedBackendUnavailableError,
             match="explicitly selected, but Numba is not available",

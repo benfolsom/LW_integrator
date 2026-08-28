@@ -1668,6 +1668,7 @@ def evaluate_retarded_charge_response_gradient_native(
     the same smooth quintic segment.
     """
 
+    require_exact_retarded_backend("numba_analytic_charge_response_serial")
     from .charge_response_jet_numba import (
         _STATUS_CHARGE_SINGULAR_KAPPA,
         _STATUS_CHARGE_SUPERLUMINAL_SOURCE,

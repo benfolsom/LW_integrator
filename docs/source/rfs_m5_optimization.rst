@@ -209,12 +209,14 @@ option is ``--exact-retarded-backend``.  The legacy
 canonical key is absent or agrees, conflicts are rejected, and serialized
 configurations contain only the canonical key.
 
-The three choices remain ``python`` (reference/default),
-``numba_roots_exact_serial``, and ``numba_full_strict_serial``.  The opt-in
-kernels now cover both charge and dipole exact providers, including the charge
-one-event endpoint/diagnostic path, the charge nine-event gradient, the dipole
-nine-event endpoint potential, and the existing full dipole gradient.  Charge
-and dipole stencil centers stay on the Python reference path.  Source
+The reference/default choice is ``python``.  Explicit alternatives are
+``numba_roots_exact_serial``, ``numba_full_strict_serial``,
+``numba_analytic_charge_response_serial``, and the separately certified
+Apple-silicon ``metal_certified_full_strict`` path.  The finite-difference
+Numba kernels cover both charge and dipole exact providers, including the
+charge one-event endpoint/diagnostic path, the charge nine-event gradient, the
+dipole nine-event endpoint potential, and the existing full dipole gradient.
+Charge and dipole stencil centers stay on the Python reference path.  Source
 accumulation and finite-difference assembly also stay in reference-order
 Python.  The Numba work is strict serial binary64 with ``fastmath=False`` and
 no ``prange``, automatic/platform dispatch, or worker-count selection.
@@ -263,3 +265,65 @@ channel, both cold and warm.  It measured ``10.7346 s`` for Python,
 ``7.23290 s`` cold, and ``6.26003 s`` warm, or ``1.7148x`` warm speedup.  Its
 report is ``/tmp/lw-exact-retarded-roots-300.json`` with SHA-256
 ``79e148c334de5885bf0617173b12af9a2eb34fa5803479a263867fb358edad41``.
+
+Analytical charge-response backend
+----------------------------------
+
+``numba_analytic_charge_response_serial`` is an explicit potential/response-
+first backend for the ordinary point-charge contribution.  It keeps the
+ordinary four-potential :math:`A^\mu` needed for canonical endpoint
+composition, but it does not route force and RFS response through stored
+electric and magnetic fields.  One retarded root supplies the six independent
+coefficients of the antisymmetric response and their derivatives,
+
+.. math::
+
+   \mathcal F=(F^{01},F^{02},F^{03},F^{12},F^{13},F^{23}),
+   \qquad
+   \partial_\lambda\mathcal F.
+
+The integrator contracts those coefficients directly into :math:`qF u`, the
+RFS :math:`\mu G[a]u` term, and the spin right-hand side.  It materializes the
+full :math:`4\times4` response or :math:`4\times4\times4` gradient only for a
+compatibility or validation request.  This changes the computational
+representation, not the fully relativistic RFS model.  The slow-speed
+:math:`\nabla(\boldsymbol\mu\mathbin{\cdot}\mathbf B)` expression remains only
+a limiting check.  The covariant response follows `Rafelski, Formanek, and
+Steinmetz <https://doi.org/10.1140/epjc/s10052-017-5493-2>`_, while the
+ordinary canonical-potential architecture follows the published
+`LW integrator formulation <https://doi.org/10.1016/j.nima.2024.169988>`_.
+
+The analytical derivative is valid within one smooth, timelike quintic source
+segment.  The provider proves a conservative observer-derivative margin from
+the segment's Bernstein speed bound.  If an event is too close to a segment
+boundary, the bound is non-timelike, or a value is non-finite, it records the
+reason and falls back to ``numba_full_strict_serial``.  No missing-history or
+source singularity is suppressed.  CLI/testbed reports expose analytical and
+fallback call counts plus the minimum observed segment-margin ratio.
+
+Production validation used three independent scales rather than demanding
+bitwise equality with a finite stencil:
+
+* a 20,000-case covariant force/spin audit had maximum conditioned-relative
+  differences below ``4.90e-15``;
+* a uniform-motion stress through :math:`\beta=0.9999` had center-response
+  error below ``1.11e-13`` and the maintained stencil approached the
+  analytical derivative at second order;
+* the common-horizon trajectory discrepancy was required to remain below
+  10 percent of independently measured timestep/stencil uncertainty, with a
+  unit-scale floating-point floor for near-zero spin-invariant residuals.
+
+All gates passed.  On a 19,137-knot history the one-root prepared provider was
+42.1 times faster than the nine-event provider.  The final 300-sample warm
+trajectory measured 2.370 s for the analytical backend, 2.474 s for
+``numba_full_strict_serial``, and 10.805 s for Python.  Four of 600 analytical
+calls used the declared segment-boundary fallback.  The accepted report is
+``/tmp/lw-analytic-charge-response-common-horizon-v2.json`` with SHA-256
+``854f1af56340798ad6dc8a81b34b79e0061f120fac369e68fbd9ebccedaa3ef4``.
+
+This is the charge-source seam only.  The retarded intrinsic-dipole Hertz
+provider still uses its maintained finite-difference oracle because an
+analytical third observer derivative also requires a smoother, explicitly
+causal spin/worldline history.  Python remains the default, and passing this
+backend gate does not pass the separate full-flyby timestep and projection
+energy gates.

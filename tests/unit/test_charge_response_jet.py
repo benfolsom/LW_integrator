@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
+
+pytest.importorskip("numba")
 
 from core.charge_response_jet import quintic_charge_response_jet_native
 from core.charge_response_jet_numba import (

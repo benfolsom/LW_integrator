@@ -2058,6 +2058,35 @@ class TestCliMain:
             },
         }
 
+    def test_analytical_charge_report_records_fallback_counts(self, monkeypatch):
+        from core.analytic_charge_response_diagnostics import (
+            AnalyticChargeResponseDiagnostics,
+        )
+
+        monkeypatch.setattr(
+            "core.analytic_charge_response_diagnostics."
+            "analytic_charge_response_diagnostics",
+            lambda: AnalyticChargeResponseDiagnostics(7, 5, 2, 2, 0, 0, 14, 3.5),
+        )
+
+        report = cli._exact_retarded_report(
+            "numba_analytic_charge_response_serial"
+        )
+
+        assert report == {
+            "backend": "numba_analytic_charge_response_serial",
+            "analytic_charge_response": {
+                "calls": 7,
+                "analytical_calls": 5,
+                "fallback_calls": 2,
+                "fallback_segment_boundary": 2,
+                "fallback_nontimelike_bound": 0,
+                "fallback_nonfinite": 0,
+                "valid_sources": 14,
+                "minimum_segment_margin_ratio": 3.5,
+            },
+        }
+
     def test_main_writes_driver_summary_to_output_json(
         self, monkeypatch, tmp_path: Path
     ):

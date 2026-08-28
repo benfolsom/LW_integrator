@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
+
+pytest.importorskip("numba")
 
 from core.charge_potential_jet import quintic_charge_potential_jet_native
 from core.charge_potential_jet_numba import quintic_charge_potential_jet_strict_serial

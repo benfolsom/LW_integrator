@@ -384,12 +384,13 @@ def test_gui_labels_present_compact_rfs_controls() -> None:
         )
         assert tuple(
             app.magnetic_dipole_exact_retarded_backend_combo.cget("values")
-        ) == (
-            "Python reference",
-            "Numba roots-exact CPU",
-            "Numba full strict CPU",
-            "Metal-certified roots + strict CPU",
-        )
+            ) == (
+                "Python reference",
+                "Numba roots-exact CPU",
+                "Numba full strict CPU",
+                "Numba analytical charge response CPU",
+                "Metal-certified roots + strict CPU",
+            )
         assert app.magnetic_dipole_source_cutoff_label.cget("text") == (
             "Minimum separation abort (mm):"
         )

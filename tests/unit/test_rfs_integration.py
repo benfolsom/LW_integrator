@@ -390,6 +390,54 @@ def test_zero_rr_force_is_exactly_the_legacy_rfs_spin_step() -> None:
     np.testing.assert_array_equal(explicit_zero, legacy)
 
 
+def test_analytical_charge_spin_response_matches_tensor_midpoint_step() -> None:
+    from core.antisymmetric_response_rfs import (
+        pack_antisymmetric_response_native,
+        pack_partial_antisymmetric_response_native,
+    )
+
+    rest_spin = np.asarray((0.2, 0.7, -0.3), dtype=float)
+    rest_spin /= np.linalg.norm(rest_spin)
+    field = electromagnetic_field_tensor_native(
+        (0.2, -0.1, 0.3), (0.4, 0.1, -0.2)
+    )
+    partial_f = np.arange(64, dtype=float).reshape(4, 4, 4) * 1.0e-6
+    partial_f = 0.5 * (partial_f - np.swapaxes(partial_f, 1, 2))
+    common: dict[str, Any] = {
+        "beta_start": np.asarray((0.07, -0.02, 0.03), dtype=float),
+        "beta_end": np.asarray((0.08, -0.015, 0.025), dtype=float),
+        "charge_native": 1.2e-5,
+        "mass_amu": 0.9,
+        "magnetic_moment_native": -2.0e-15,
+        "spin_quantum_number": 0.5,
+        "proper_time_step_ns": 1.0e-4,
+    }
+
+    tensor_result = equations._advance_rfs_rest_spin(
+        rest_spin,
+        field_tensor=field,
+        partial_f=partial_f,
+        **common,
+    )
+    analytical_result = equations._advance_rfs_rest_spin(
+        rest_spin,
+        field_tensor=np.zeros((4, 4)),
+        partial_f=np.zeros((4, 4, 4)),
+        charge_antisymmetric_response=pack_antisymmetric_response_native(field),
+        charge_partial_antisymmetric_response=(
+            pack_partial_antisymmetric_response_native(partial_f)
+        ),
+        **common,
+    )
+
+    np.testing.assert_allclose(
+        analytical_result,
+        tensor_result,
+        rtol=4.0e-15,
+        atol=1.0e-18,
+    )
+
+
 def test_unprimed_rfs_medina_step_applies_no_reaction_impulse() -> None:
     electron = _particle_state("electron", beta=(0.01, 0.02, 0.0))
     config = _rfs_config(rider_species="electron")

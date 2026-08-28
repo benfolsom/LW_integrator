@@ -130,7 +130,11 @@ def test_endpoint_potential_matches_full_oracle_for_representative_histories() -
 
 @pytest.mark.parametrize(
     "backend",
-    ("numba_roots_exact_serial", "numba_full_strict_serial"),
+    (
+        "numba_roots_exact_serial",
+        "numba_full_strict_serial",
+        "numba_analytic_charge_response_serial",
+    ),
 )
 def test_endpoint_potential_numba_backends_preserve_reference_contract(
     backend: str,
@@ -743,7 +747,11 @@ def test_explicit_numba_backend_fails_when_capability_is_unavailable(
 
     monkeypatch.setattr(compiled_roots, "NUMBA_AVAILABLE", False)
 
-    for backend in ("numba_roots_exact_serial", "numba_full_strict_serial"):
+    for backend in (
+        "numba_roots_exact_serial",
+        "numba_full_strict_serial",
+        "numba_analytic_charge_response_serial",
+    ):
         with pytest.raises(
             RetardedDipoleBackendUnavailableError,
             match="explicitly selected, but Numba is not available",

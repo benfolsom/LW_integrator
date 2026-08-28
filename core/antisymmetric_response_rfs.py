@@ -27,14 +27,30 @@ _EPSILON_UPPER = np.zeros((4, 4, 4, 4))
 for _indices in permutations(range(4)):
     _EPSILON_UPPER[_indices] = -_permutation_sign(_indices)
 
+_DUAL_PACKED_COVARIANT = np.zeros((4, 4, 6), dtype=float)
+for _dual_first in range(4):
+    for _dual_second in range(4):
+        for _pair_index, (_first, _second) in enumerate(_PAIRS):
+            _DUAL_PACKED_COVARIANT[_dual_first, _dual_second, _pair_index] = (
+                _EPSILON_UPPER[_dual_first, _dual_second, _first, _second]
+                * _SIGNS[_dual_first]
+                * _SIGNS[_dual_second]
+                * _SIGNS[_first]
+                * _SIGNS[_second]
+            )
+
 
 def _act_on_covector(packed: np.ndarray, covector: np.ndarray) -> np.ndarray:
-    result = np.zeros(4)
-    for pair_index, (first, second) in enumerate(_PAIRS):
-        value = packed[pair_index]
-        result[first] += value * covector[second]
-        result[second] -= value * covector[first]
-    return result
+    f01, f02, f03, f12, f13, f23 = packed
+    c0, c1, c2, c3 = covector
+    return np.asarray(
+        (
+            f01 * c1 + f02 * c2 + f03 * c3,
+            -f01 * c0 + f12 * c2 + f13 * c3,
+            -f02 * c0 - f12 * c1 + f23 * c3,
+            -f03 * c0 - f13 * c1 - f23 * c2,
+        )
+    )
 
 
 def pack_antisymmetric_response_native(field_tensor: np.ndarray) -> np.ndarray:
@@ -115,22 +131,13 @@ def _partial_magnetic_potential_covariant(
     partial_packed: np.ndarray,
     spin: np.ndarray,
 ) -> np.ndarray:
-    result = np.zeros((4, 4))
-    for derivative in range(4):
-        for dual_first in range(4):
-            for dual_second in range(4):
-                dual_covariant = 0.0
-                for pair_index, (first, second) in enumerate(_PAIRS):
-                    dual_covariant += (
-                        _EPSILON_UPPER[dual_first, dual_second, first, second]
-                        * _SIGNS[dual_first]
-                        * _SIGNS[dual_second]
-                        * _SIGNS[first]
-                        * _SIGNS[second]
-                        * partial_packed[derivative, pair_index]
-                    )
-                result[derivative, dual_first] += dual_covariant * spin[dual_second]
-    return result
+    return np.einsum(
+        "nrp,lp,r->ln",
+        _DUAL_PACKED_COVARIANT,
+        partial_packed,
+        spin,
+        optimize=False,
+    )
 
 
 def antisymmetric_response_rfs_native(

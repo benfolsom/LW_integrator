@@ -17,6 +17,7 @@ from core.charge_source_interactions import (
     evaluate_retarded_charge_source_interaction_native,
 )
 from core.constants import C_MMNS
+from core.exact_retarded_backend import ExactRetardedBackendUnavailableError
 from core.retarded_fields import (
     ObserverEvent,
     evaluate_retarded_charge_field_gradient_native,
@@ -167,3 +168,32 @@ def test_compatibility_gradient_materializes_only_at_api_boundary() -> None:
         ),
     )
     assert compatibility.stencil_step_mm == 0.0
+
+
+def test_initial_analytical_jit_failure_has_named_capability_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    numba = pytest.importorskip("numba")
+    import core.charge_response_jet_numba as compiled
+
+    def failed_compilation(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+        raise numba.core.errors.TypingError("synthetic compilation failure")
+
+    failed_compilation.signatures = ()
+    monkeypatch.setattr(
+        compiled,
+        "evaluate_charge_response_coefficients_one_event_strict_serial",
+        failed_compilation,
+    )
+    with pytest.raises(
+        ExactRetardedBackendUnavailableError,
+        match="failed during initial JIT compilation",
+    ):
+        evaluate_retarded_charge_response_gradient_native(
+            _uniform_history(
+                times_ns=np.linspace(-0.04, 0.004, 121),
+                beta=np.asarray((0.13, -0.06, 0.04)),
+            ),
+            ObserverEvent(-1.0e-5, (0.9, 1.1, -0.5)),
+        )

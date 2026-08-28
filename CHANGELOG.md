@@ -6,6 +6,26 @@ All notable changes and updates to the LW Integrator project are documented in t
 
 ### Experimental Magnetic Dipole Moments (August 2026)
 
+- Added the explicit ``numba_analytic_charge_response_serial`` exact-retarded
+  backend.  For the point-charge contribution it solves one center light cone,
+  returns the ordinary four-potential plus six independent antisymmetric
+  response coefficients and their 24 spacetime derivatives, and contracts
+  charge force, RFS dipole force, and spin response directly.  The production
+  path therefore no longer constructs charge ``F`` or ``partial_F`` tensor
+  intermediates.  Near a worldline-segment boundary or a failed timelike
+  smoothness bound it records the reason and falls back to the maintained
+  strict finite-difference oracle.  Python remains the reference/default and
+  the analytical backend remains opt-in.
+- The production acceptance suite covers rest through ``beta=0.9999``, 20,000
+  randomized covariant response contractions, failure ordering, a 19,137-knot
+  prepared history, and common-horizon electron--proton trajectory refinement.
+  On the M5 Pro, the one-root provider was 42.1x faster than the maintained
+  nine-event provider.  A 300-sample warm trajectory measured 2.370 s versus
+  2.474 s for the previous full-strict backend and 10.805 s for Python.  All
+  backend discrepancies passed the independent 0.1-times-discretization
+  uncertainty gate; this backend acceptance does not authorize a long capture
+  run.
+
 - Added atomic, append-only accepted-step checkpoints for fixed-step
   ``BUNCH_TO_BUNCH`` runs. Checkpoints preserve hidden inertial history,
   canonical/mechanical state, RFS spin fields, dead masks, and Medina's prior
