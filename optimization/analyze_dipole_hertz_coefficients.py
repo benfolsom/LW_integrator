@@ -139,6 +139,8 @@ def analyze_coefficients() -> dict[str, object]:
     }
     return {
         "raw_hertz_jet_coefficient_count": 210,
+        "influential_hertz_jet_coefficient_count": 144,
+        "structurally_unused_hertz_jet_coefficient_count": 66,
         "compact_response_component_count": 34,
         "blocks": blocks,
     }
@@ -153,6 +155,8 @@ def _markdown(report: dict[str, object]) -> str:
         "The antisymmetric third-order four-coordinate Hertz jet contains "
         "$6(1+4+10+20)=210$ raw Taylor coefficients. The table reports the "
         "exact linear map to the compact response.",
+        "The sparse kernel retains 144 influential coefficients and omits 66 "
+        "coefficients that provably cannot reach any maintained output.",
         "",
         "| block | degree | raw | influential | unused | outputs | rank |",
         "|---|---:|---:|---:|---:|---:|---:|",

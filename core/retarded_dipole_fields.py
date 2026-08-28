@@ -126,6 +126,17 @@ class RetardedDipoleHertzResult:
 
 
 @dataclass(frozen=True)
+class RetardedDipoleRootResult:
+    """Retarded-root diagnostics without constructing a Hertz tensor."""
+
+    source_identities: tuple[Hashable, ...]
+    retarded_time_ns: np.ndarray
+    light_cone_residual_mm: np.ndarray
+    separation_mm: np.ndarray
+    valid_sources: np.ndarray
+
+
+@dataclass(frozen=True)
 class RetardedDipolePotentialResult:
     """Ordinary dipole four-potential from a nine-event Hertz stencil.
 
@@ -172,6 +183,27 @@ class RetardedDipoleFieldGradientResult:
     stencil_retarded_time_ns: np.ndarray
     stencil_light_cone_residual_mm: np.ndarray
     lorenz_gauge_residual_per_mm: float
+
+
+@dataclass(frozen=True)
+class RetardedDipoleResponseGradientResult:
+    """Potential plus the 30 independent coefficients of ``F`` and ``partial F``.
+
+    This is the potential-first production surface for exact endpoint
+    recomposition, ordinary mechanical ``q F`` response, and RFS response.  It
+    deliberately omits the gauge-dependent ``partial A`` tensor and never
+    materializes the antisymmetric tensor middlemen.
+    """
+
+    four_potential: np.ndarray
+    antisymmetric_response: np.ndarray
+    partial_antisymmetric_response: np.ndarray
+    root: RetardedDipoleRootResult
+    used_analytic_response: bool
+    fallback_reason: str | None
+    source_segment_index: np.ndarray
+    source_segment_fraction: np.ndarray
+    source_jet_residual: np.ndarray
 
 
 @dataclass
@@ -787,6 +819,119 @@ def _evaluate_prepared_hertz_tensor_native(
         separation_mm=separation_mm,
         valid_sources=valid_sources,
     )
+
+
+def _evaluate_prepared_dipole_roots_numba_exact_serial(
+    prepared: _PreparedDipoleHistory,
+    observer_events: Sequence[ObserverEvent],
+    *,
+    require_complete_history: bool,
+    minimum_separation_mm: float,
+    root_tolerance_mm: float,
+    max_root_iterations: int,
+) -> tuple[RetardedDipoleRootResult, ...]:
+    """Solve roots and preserve source/error order without constructing ``H``."""
+
+    from .exact_retarded_numba import (
+        NUMBA_COMPILATION_ERRORS,
+        _STATUS_MISSING_HISTORY,
+        _STATUS_TERMINATED_SOURCE,
+        _STATUS_VALID,
+        evaluate_source_roots_exact_serial,
+    )
+
+    event_count = len(observer_events)
+    event_time_ns = np.asarray(
+        [float(event.time_ns) for event in observer_events], dtype=float
+    )
+    event_position_mm = np.asarray(
+        [
+            tuple(float(value) for value in event.position_mm)
+            for event in observer_events
+        ],
+        dtype=float,
+    )
+    if event_position_mm.shape != (event_count, 3):
+        raise ValueError("retarded dipole observer events must have shape [events, 3]")
+
+    source_batches: dict[int, tuple[np.ndarray, ...]] = {}
+    for source_index, source in prepared.sources.items():
+        worldline = source.worldline
+        compiling_initial_signature = not bool(
+            getattr(evaluate_source_roots_exact_serial, "signatures", ())
+        )
+        try:
+            source_batches[source_index] = cast(
+                tuple[np.ndarray, ...],
+                evaluate_source_roots_exact_serial(
+                    worldline.time_ns,
+                    worldline.position_mm,
+                    worldline.segment_duration_ns,
+                    worldline.position_coefficients_mm,
+                    bool(worldline.ended_by_loss),
+                    event_time_ns,
+                    event_position_mm,
+                    float(root_tolerance_mm),
+                    int(max_root_iterations),
+                ),
+            )
+        except NUMBA_COMPILATION_ERRORS as exc:
+            if compiling_initial_signature:
+                raise RetardedDipoleBackendUnavailableError(
+                    "the sparse analytical dipole backend failed during initial "
+                    "root-kernel compilation; select a reference backend or inspect "
+                    "the chained Numba error"
+                ) from exc
+            raise
+
+    results: list[RetardedDipoleRootResult] = []
+    arrays = prepared.arrays
+    for event_index in range(event_count):
+        retarded_time_ns = np.full(arrays.n_sources, np.nan, dtype=float)
+        residual_mm = np.full(arrays.n_sources, np.nan, dtype=float)
+        separation_mm = np.full(arrays.n_sources, np.nan, dtype=float)
+        valid_sources = np.zeros(arrays.n_sources, dtype=bool)
+        missing_sources: list[int] = []
+        for source_index, source in prepared.sources.items():
+            batch = source_batches[source_index]
+            status = int(batch[0][event_index])
+            if status == _STATUS_TERMINATED_SOURCE:
+                continue
+            if status == _STATUS_MISSING_HISTORY:
+                missing_sources.append(source_index)
+                continue
+            if status != _STATUS_VALID:
+                raise RuntimeError(f"unknown retarded dipole root status {status}")
+            source_separation_mm = float(batch[4][event_index])
+            if source_separation_mm <= minimum_separation_mm:
+                raise DipoleSourceSingularityError(
+                    "observer event is within minimum_separation_mm of dipole "
+                    f"source identity {source.identity!r}: "
+                    f"{source_separation_mm:.17g} <= "
+                    f"{minimum_separation_mm:.17g} mm"
+                )
+            retarded_time_ns[source_index] = float(batch[2][event_index])
+            residual_mm[source_index] = float(batch[3][event_index])
+            separation_mm[source_index] = source_separation_mm
+            valid_sources[source_index] = True
+        if require_complete_history and missing_sources:
+            missing_identities = [
+                prepared.source_identities[index] for index in missing_sources
+            ]
+            raise RetardedHistoryError(
+                "source history does not bracket the observer light cone for dipole "
+                f"source identities {missing_identities!r}"
+            )
+        results.append(
+            RetardedDipoleRootResult(
+                source_identities=prepared.source_identities,
+                retarded_time_ns=retarded_time_ns,
+                light_cone_residual_mm=residual_mm,
+                separation_mm=separation_mm,
+                valid_sources=valid_sources,
+            )
+        )
+    return tuple(results)
 
 
 def _evaluate_prepared_hertz_batch_numba_roots_exact_serial(
@@ -1439,22 +1584,25 @@ def evaluate_retarded_dipole_field_gradient_native(
             evaluate_retarded_dipole_field_gradient_hertz_jet_native,
         )
 
-        return evaluate_retarded_dipole_field_gradient_hertz_jet_native(
-            history,
-            observer_event,
-            source_identities=source_identities,
-            observer_source_identity=observer_source_identity,
-            excluded_source_identities=excluded_source_identities,
-            require_complete_history=require_complete_history,
-            fallback_relative_step=relative,
-            fallback_minimum_step_mm=minimum_step,
-            fallback_stencil_step_mm=explicit_step,
-            minimum_separation_mm=minimum_separation,
-            root_tolerance_mm=tolerance,
-            max_root_iterations=iterations,
-            response_kernel="numba_strict_serial",
-            fallback_backend="numba_full_strict_serial",
-        ).response
+        return cast(
+            RetardedDipoleFieldGradientResult,
+            evaluate_retarded_dipole_field_gradient_hertz_jet_native(
+                history,
+                observer_event,
+                source_identities=source_identities,
+                observer_source_identity=observer_source_identity,
+                excluded_source_identities=excluded_source_identities,
+                require_complete_history=require_complete_history,
+                fallback_relative_step=relative,
+                fallback_minimum_step_mm=minimum_step,
+                fallback_stencil_step_mm=explicit_step,
+                minimum_separation_mm=minimum_separation,
+                root_tolerance_mm=tolerance,
+                max_root_iterations=iterations,
+                response_kernel="numba_strict_serial",
+                fallback_backend="numba_full_strict_serial",
+            ).response,
+        )
     prepared = _prepare_dipole_history(
         history,
         source_identities=source_identities,
@@ -1660,6 +1808,8 @@ __all__ = [
     "RetardedDipoleFieldGradientResult",
     "RetardedDipoleHertzResult",
     "RetardedDipolePotentialResult",
+    "RetardedDipoleResponseGradientResult",
+    "RetardedDipoleRootResult",
     "evaluate_retarded_dipole_field_gradient_native",
     "evaluate_retarded_dipole_hertz_tensor_native",
     "evaluate_retarded_dipole_potential_native",

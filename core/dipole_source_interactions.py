@@ -3,15 +3,15 @@
 This module joins two independently tested pieces without adding another
 pair-force law:
 
-* :mod:`core.retarded_dipole_fields` supplies the ordinary Maxwell
-  ``A^mu``, ``partial A``, ``F``, and ``partial F`` of all non-self dipoles;
+* :mod:`core.retarded_dipole_fields` supplies either the ordinary Maxwell
+  ``A^mu``, ``partial A``, ``F``, and ``partial F`` oracle or the compact
+  ``A^mu`` plus packed ``F``/``partial F`` response of all non-self dipoles;
 * :mod:`core.canonical_momentum` supplies both the canonical derivative oracle
   and the equivalent gauge-invariant mechanical Lorentz response.
 
-The returned ``field_tensor`` and ``partial_f`` are consumed separately by the
-RFS moment response.  A caller must pass them into that response exactly once
-with ``charge_native=0``, because the ordinary charge response is already
-represented by either the canonical or mechanical result here.
+The field response is consumed separately by the RFS moment response, either
+as tensors or by direct packed contraction.  A caller must add it exactly once
+without repeating the ordinary charge response represented here.
 """
 
 from __future__ import annotations
@@ -30,6 +30,7 @@ from .canonical_momentum import (
 )
 from .retarded_dipole_fields import (
     RetardedDipoleFieldGradientResult,
+    RetardedDipoleResponseGradientResult,
     evaluate_retarded_dipole_field_gradient_native,
 )
 from .retarded_fields import ObserverEvent, TrajectoryHistory
@@ -39,12 +40,23 @@ from .retarded_fields import ObserverEvent, TrajectoryHistory
 class RetardedDipoleSourceInteraction:
     """Dipole field plus canonical and mechanical observer-charge responses."""
 
-    field: RetardedDipoleFieldGradientResult
+    field: RetardedDipoleFieldGradientResult | None
     canonical_potential_momentum: np.ndarray
-    canonical_four_force: np.ndarray
-    canonical_four_impulse: np.ndarray
+    canonical_four_force: np.ndarray | None
+    canonical_four_impulse: np.ndarray | None
     mechanical_four_force: np.ndarray
     mechanical_four_impulse: np.ndarray
+    response: RetardedDipoleResponseGradientResult | None = None
+
+    @property
+    def four_potential(self) -> np.ndarray:
+        """Return the ordinary source potential for canonical bookkeeping."""
+
+        if self.response is not None:
+            return self.response.four_potential
+        if self.field is None:
+            raise RuntimeError("dipole interaction has no field or response payload")
+        return self.field.four_potential
 
 
 def dipole_source_interaction_from_field_native(
@@ -89,6 +101,46 @@ def dipole_source_interaction_from_field_native(
         canonical_four_impulse=canonical_impulse,
         mechanical_four_force=mechanical_force,
         mechanical_four_impulse=mechanical_impulse,
+    )
+
+
+def dipole_source_interaction_from_response_native(
+    response: RetardedDipoleResponseGradientResult,
+    *,
+    four_velocity_mm_ns: Sequence[float] | np.ndarray,
+    observer_charge_native: float,
+    proper_time_step_ns: float,
+) -> RetardedDipoleSourceInteraction:
+    """Contract the compact response without materializing ``F`` or ``dF``.
+
+    The compact jet deliberately omits ``partial A``.  It is therefore valid
+    for the maintained exact endpoint scheme, which advances mechanical
+    momentum with ``q F`` and reconstructs canonical momentum from ``A`` at
+    the accepted endpoint.  The legacy COLD_START canonical-force path keeps
+    using :func:`dipole_source_interaction_from_field_native`.
+    """
+
+    from .antisymmetric_response_rfs import (
+        antisymmetric_response_charge_force_native,
+    )
+
+    potential_momentum = canonical_potential_momentum_native(
+        response.four_potential,
+        charge_native=observer_charge_native,
+    )
+    mechanical_force = antisymmetric_response_charge_force_native(
+        four_velocity_mm_ns=four_velocity_mm_ns,
+        antisymmetric_response=response.antisymmetric_response,
+        charge_native=observer_charge_native,
+    )
+    return RetardedDipoleSourceInteraction(
+        field=None,
+        canonical_potential_momentum=potential_momentum,
+        canonical_four_force=None,
+        canonical_four_impulse=None,
+        mechanical_four_force=mechanical_force,
+        mechanical_four_impulse=(mechanical_force * float(proper_time_step_ns)),
+        response=response,
     )
 
 
@@ -144,5 +196,6 @@ def evaluate_retarded_dipole_source_interaction_native(
 __all__ = [
     "RetardedDipoleSourceInteraction",
     "dipole_source_interaction_from_field_native",
+    "dipole_source_interaction_from_response_native",
     "evaluate_retarded_dipole_source_interaction_native",
 ]

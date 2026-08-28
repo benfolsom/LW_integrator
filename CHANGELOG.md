@@ -15,8 +15,13 @@ All notable changes and updates to the LW Integrator project are documented in t
   fallback at segment boundaries, on the mutable spin tail, for one-knot
   histories, and near particle-loss wavefronts.  A structural audit identifies
   66 of 210 raw antisymmetric Hertz-jet coefficients as response-unused or
-  diagnostic/redundant, but production deliberately retains the dense algebra
-  until a sparse implementation can preserve the accepted numerical contract.
+  diagnostic/redundant.  The maintained exact-endpoint path now omits those
+  coefficients, emits only the 34 consumed values (four-potential, six packed
+  field coefficients, and 24 packed field derivatives), and contracts them
+  directly into ordinary charge force and RFS force/spin response without
+  materializing ``partial A``, ``F``, or ``partial F`` tensors.  The legacy
+  canonical-force path and every declared analytical fallback retain the dense
+  oracle.
   Provider continuum, grouped trajectory, energy-ledger, and independent
   timestep-refinement gates pass.  On the M5 Pro the 300-sample precession
   stress path measured 1.636 s analytical versus 2.561 s full-strict and

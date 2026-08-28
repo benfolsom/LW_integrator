@@ -126,6 +126,14 @@ velocity, and spin.  Segment-boundary, mutable-tail, short-history, and
 particle-loss-wavefront fallbacks must remain explicit and use the full strict
 oracle.
 
+The sparse dipole-response implementation is additionally checked against the
+dense analytical jet on randomized relativistic, accelerated, and rotating-
+spin segments.  Its structural table must report exactly 144 influential and
+66 unused Hertz coefficients, while its public payload remains the 34 consumed
+components.  A provider-level guard proves that the smooth sparse route does
+not construct a center Hertz tensor, and direct packed charge/RFS contractions
+are compared with the dense tensor formulation.
+
 The first coupled RFS implementation has intentionally narrow integration
 guards: fixed-step ``COLD_START`` or ``INERTIAL_PREHISTORY``
 ``BUNCH_TO_BUNCH`` point charges, no same-bunch RFS field, no nonzero smearing,

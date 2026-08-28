@@ -333,3 +333,36 @@ the 300-sample stress path measured 1.636 s analytical versus 2.561 s
 full-strict and 11.126 s Python while an unrelated one-core flyby job remained
 active.  Python remains the default, and backend acceptance still does not
 pass the separate full-flyby timestep and projection-energy gates.
+
+Sparse dipole response jet
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The response dependency audit proves that 66 of the 210 coefficients in the
+dense third-order antisymmetric Hertz jet cannot contribute to the maintained
+response.  The sparse kernel stores and computes only the 144 influential
+coefficients, emits the compact 34-value :math:`(A,F,\partial F)` response,
+and sends its packed antisymmetric coefficients directly to the ordinary
+charge and RFS contractions.  The dense :math:`\partial A`,
+:math:`4\times4` field tensor, and :math:`4\times4\times4` field-gradient
+tensor are therefore absent from the smooth exact-endpoint production path.
+The legacy canonical path and nonsmooth-segment fallback retain the dense
+oracles.
+
+The audit also flags four Bianchi-dependent combinations among the 24 packed
+field derivatives.  They are not independent physics data, but the present
+direct RFS interface consumes the full ``(4, 6)`` packing.  They remain in the
+34-value jet until a contracted 20-component basis can be shown to improve
+runtime without worsening last-bit cancellation.
+
+An interleaved 300-sample M5 Pro comparison while the long flyby job remained
+active measured medians of ``1.6073 s`` for the dense analytical path and
+``1.5145 s`` for the sparse path, a ``1.061x`` complete-trajectory gain.  All
+retained rider and driver arrays had the same SHA-256 digest.  This short
+comparison validates routing and arithmetic identity for the aligned-spin
+capture state; it is not a long-flyby physics validation or an uncontended
+performance benchmark.
+
+The isolated smooth-segment kernel measured ``0.08147 ms`` dense and
+``0.04691 ms`` sparse, a ``1.737x`` local gain.  The smaller trajectory gain
+is expected because charge response, endpoint potentials, Medina reaction,
+history maintenance, and the rest of the integrator are unchanged.

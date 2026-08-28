@@ -284,8 +284,20 @@ energy ledgers, and independent timestep refinement.  Individual Cartesian
 components and the saved ``local_magnetic_field_*`` visualization arrays are
 reported but do not override their complete vector or force-path response.
 The coefficient audit also records response-level zeros and Bianchi
-redundancies; the current dense jet intentionally retains them until a sparse
-response algebra can remove them without changing arithmetic.
+redundancies.  The exact-endpoint production path uses that audit to retain
+only 144 of 210 Hertz-jet coefficients and emits the 34 values actually
+consumed: four components of :math:`A^\mu`, six packed independent components
+of :math:`F^{\mu\nu}`, and 24 packed components of
+:math:`\partial_\lambda F^{\mu\nu}`.  It does not materialize
+:math:`\partial A`, the full field tensor, or the full field-gradient tensor.
+The dense analytical jet remains the comparison oracle, and the finite-
+difference fallback is unchanged.
+Four of the 24 packed field-derivative outputs are constrained by the
+homogeneous Maxwell/Bianchi identities (the response map has rank 20).  They
+are retained for now because the direct RFS contraction consumes the existing
+``(4, 6)`` layout; removing them would require an explicit reconstruction or a
+still narrower force/spin contraction kernel and therefore a separate
+roundoff audit.
 
 The finite-difference Numba kernels consume displaced events in the oracle's lazy first-use
 order, preserving which history or singularity error is raised first.  They

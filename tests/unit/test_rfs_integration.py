@@ -398,9 +398,7 @@ def test_analytical_charge_spin_response_matches_tensor_midpoint_step() -> None:
 
     rest_spin = np.asarray((0.2, 0.7, -0.3), dtype=float)
     rest_spin /= np.linalg.norm(rest_spin)
-    field = electromagnetic_field_tensor_native(
-        (0.2, -0.1, 0.3), (0.4, 0.1, -0.2)
-    )
+    field = electromagnetic_field_tensor_native((0.2, -0.1, 0.3), (0.4, 0.1, -0.2))
     partial_f = np.arange(64, dtype=float).reshape(4, 4, 4) * 1.0e-6
     partial_f = 0.5 * (partial_f - np.swapaxes(partial_f, 1, 2))
     common: dict[str, Any] = {
@@ -423,8 +421,8 @@ def test_analytical_charge_spin_response_matches_tensor_midpoint_step() -> None:
         rest_spin,
         field_tensor=np.zeros((4, 4)),
         partial_f=np.zeros((4, 4, 4)),
-        charge_antisymmetric_response=pack_antisymmetric_response_native(field),
-        charge_partial_antisymmetric_response=(
+        analytic_antisymmetric_response=pack_antisymmetric_response_native(field),
+        analytic_partial_antisymmetric_response=(
             pack_partial_antisymmetric_response_native(partial_f)
         ),
         **common,

@@ -8,10 +8,17 @@ import pytest
 from core.constants import C_MMNS
 from core.dipole_source_interactions import (
     dipole_source_interaction_from_field_native,
+    dipole_source_interaction_from_response_native,
     evaluate_retarded_dipole_source_interaction_native,
 )
 from core.retarded_dipole_fields import (
+    RetardedDipoleResponseGradientResult,
+    RetardedDipoleRootResult,
     evaluate_retarded_dipole_field_gradient_native,
+)
+from core.antisymmetric_response_rfs import (
+    pack_antisymmetric_response_native,
+    pack_partial_antisymmetric_response_native,
 )
 from core.retarded_fields import ObserverEvent
 from core.rfs import rfs_four_force_native
@@ -176,3 +183,69 @@ def test_cached_dipole_field_is_recontracted_with_each_trial_velocity() -> None:
             rtol=2.0e-15,
             atol=2.0e-14,
         )
+
+
+def test_compact_response_matches_dense_mechanical_contraction() -> None:
+    history = _static_dipole_history(1.3)
+    event = ObserverEvent(0.0, (1.4, -0.3, 0.2))
+    field = evaluate_retarded_dipole_field_gradient_native(
+        history,
+        event,
+        stencil_step_mm=8.0e-4,
+    )
+    response = RetardedDipoleResponseGradientResult(
+        four_potential=field.four_potential,
+        antisymmetric_response=pack_antisymmetric_response_native(field.field_tensor),
+        partial_antisymmetric_response=pack_partial_antisymmetric_response_native(
+            field.partial_f
+        ),
+        root=RetardedDipoleRootResult(
+            source_identities=field.hertz.source_identities,
+            retarded_time_ns=field.hertz.retarded_time_ns,
+            light_cone_residual_mm=field.hertz.light_cone_residual_mm,
+            separation_mm=field.hertz.separation_mm,
+            valid_sources=field.hertz.valid_sources,
+        ),
+        used_analytic_response=True,
+        fallback_reason=None,
+        source_segment_index=np.array([4]),
+        source_segment_fraction=np.array([0.5]),
+        source_jet_residual=np.array([0.0]),
+    )
+    beta = np.array((0.04, -0.08, 0.03))
+    gamma = 1.0 / np.sqrt(1.0 - float(beta @ beta))
+    velocity = gamma * C_MMNS * np.concatenate(((1.0,), beta))
+    dense = dipole_source_interaction_from_field_native(
+        field,
+        four_velocity_mm_ns=velocity,
+        observer_charge_native=-0.9,
+        proper_time_step_ns=0.012,
+    )
+    compact = dipole_source_interaction_from_response_native(
+        response,
+        four_velocity_mm_ns=velocity,
+        observer_charge_native=-0.9,
+        proper_time_step_ns=0.012,
+    )
+
+    assert compact.field is None
+    assert compact.response is response
+    assert compact.canonical_four_force is None
+    assert compact.canonical_four_impulse is None
+    np.testing.assert_array_equal(compact.four_potential, field.four_potential)
+    np.testing.assert_array_equal(
+        compact.canonical_potential_momentum,
+        dense.canonical_potential_momentum,
+    )
+    np.testing.assert_allclose(
+        compact.mechanical_four_force,
+        dense.mechanical_four_force,
+        rtol=3.0e-16,
+        atol=5.0e-18,
+    )
+    np.testing.assert_allclose(
+        compact.mechanical_four_impulse,
+        dense.mechanical_four_impulse,
+        rtol=4.0e-16,
+        atol=1.0e-19,
+    )

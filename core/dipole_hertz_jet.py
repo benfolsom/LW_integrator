@@ -26,7 +26,10 @@ from .constants import C_MMNS
 from .rfs import fields_from_tensor_native
 
 if TYPE_CHECKING:
-    from .retarded_dipole_fields import RetardedDipoleFieldGradientResult
+    from .retarded_dipole_fields import (
+        RetardedDipoleFieldGradientResult,
+        RetardedDipoleResponseGradientResult,
+    )
     from .retarded_fields import ObserverEvent, TrajectoryHistory
 
 _DIMENSION = 4
@@ -100,10 +103,22 @@ class DipoleHertzResponseJetResult:
 
 
 @dataclass(frozen=True)
+class DipoleHertzSparseResponseJetResult:
+    """The 34 production response values from one smooth source segment."""
+
+    four_potential: np.ndarray
+    antisymmetric_response: np.ndarray
+    partial_antisymmetric_response: np.ndarray
+    retarded_time_ns: float
+    light_cone_jet_residual: float
+    segment_fraction: float
+
+
+@dataclass(frozen=True)
 class DipoleHertzJetProviderResult:
     """History-facing analytical result and explicit fallback diagnostics."""
 
-    response: "RetardedDipoleFieldGradientResult"
+    response: "RetardedDipoleFieldGradientResult | RetardedDipoleResponseGradientResult"
     used_analytic_response: bool
     fallback_reason: str | None
     source_segment_index: np.ndarray
@@ -630,6 +645,101 @@ def quintic_dipole_hertz_response_jet_numba_native(
     )
 
 
+def quintic_dipole_hertz_sparse_response_numba_native(
+    *,
+    observer_time_ns: float,
+    observer_position_mm: Sequence[float],
+    magnetic_moment_native: float,
+    segment_start_time_ns: float,
+    segment_duration_ns: float,
+    position_coefficients_mm: np.ndarray,
+    rest_spin_start: Sequence[float],
+    rest_spin_end: Sequence[float],
+    rest_spin_start_derivative_per_ns: Sequence[float],
+    rest_spin_end_derivative_per_ns: Sequence[float],
+    preserved_rest_spin_magnitude: float | None,
+    retarded_time_ns: float,
+) -> DipoleHertzSparseResponseJetResult:
+    """Return only the compact potential/response surface through strict Numba."""
+
+    from .dipole_hertz_jet_numba import (
+        quintic_dipole_hertz_sparse_response_strict_serial,
+    )
+
+    observer_position = np.asarray(observer_position_mm, dtype=float)
+    position_coefficients = np.asarray(position_coefficients_mm, dtype=float)
+    spin_start = np.asarray(rest_spin_start, dtype=float)
+    spin_end = np.asarray(rest_spin_end, dtype=float)
+    spin_start_slope = np.asarray(rest_spin_start_derivative_per_ns, dtype=float)
+    spin_end_slope = np.asarray(rest_spin_end_derivative_per_ns, dtype=float)
+    start_time = float(segment_start_time_ns)
+    duration = float(segment_duration_ns)
+    root_time = float(retarded_time_ns)
+    fraction = (root_time - start_time) / duration
+    if observer_position.shape != (3,) or not np.all(np.isfinite(observer_position)):
+        raise ValueError("observer_position_mm must contain three finite values")
+    if position_coefficients.shape != (6, 3) or not np.all(
+        np.isfinite(position_coefficients)
+    ):
+        raise ValueError("position_coefficients_mm must have finite shape (6, 3)")
+    vectors = (spin_start, spin_end, spin_start_slope, spin_end_slope)
+    if any(
+        vector.shape != (3,) or not np.all(np.isfinite(vector)) for vector in vectors
+    ):
+        raise ValueError(
+            "source spin values and slopes must contain three finite values"
+        )
+    if not 0.0 < fraction < 1.0:
+        raise ValueError(
+            "retarded_time_ns must lie strictly inside the selected smooth segment"
+        )
+    preserve_magnitude = preserved_rest_spin_magnitude is not None
+    preserved_magnitude = (
+        0.0
+        if preserved_rest_spin_magnitude is None
+        else float(preserved_rest_spin_magnitude)
+    )
+    spin_coefficients = _spin_coefficients(
+        spin_start,
+        spin_end,
+        spin_start_slope,
+        spin_end_slope,
+        duration,
+    )
+    status, potential, packed_field, packed_partial_f, residual = (
+        quintic_dipole_hertz_sparse_response_strict_serial(
+            float(observer_time_ns),
+            observer_position,
+            float(magnetic_moment_native),
+            start_time,
+            duration,
+            position_coefficients,
+            spin_coefficients,
+            preserve_magnitude,
+            preserved_magnitude,
+            root_time,
+        )
+    )
+    if status == 1:
+        raise ValueError("constant-magnitude source-spin interpolation crossed zero")
+    if status == 2:
+        raise ValueError(
+            "retarded dipole response is singular because 1 - n.beta is too small"
+        )
+    if status == 3:
+        raise ValueError("source beta magnitude must be less than one")
+    if status != 0:
+        raise RuntimeError(f"unexpected sparse analytical Hertz status {status}")
+    return DipoleHertzSparseResponseJetResult(
+        four_potential=potential,
+        antisymmetric_response=packed_field,
+        partial_antisymmetric_response=packed_partial_f,
+        retarded_time_ns=root_time,
+        light_cone_jet_residual=float(residual),
+        segment_fraction=float(fraction),
+    )
+
+
 def evaluate_retarded_dipole_field_gradient_hertz_jet_native(
     history: "TrajectoryHistory",
     observer_event: "ObserverEvent",
@@ -664,6 +774,7 @@ def evaluate_retarded_dipole_field_gradient_hertz_jet_native(
     # provider's import graph until the backend is accepted for integration.
     from .retarded_dipole_fields import (
         RetardedDipoleFieldGradientResult,
+        _evaluate_prepared_dipole_roots_numba_exact_serial,
         _evaluate_prepared_hertz_tensor_native,
         _prepare_dipole_history,
         evaluate_retarded_dipole_field_gradient_native,
@@ -672,22 +783,39 @@ def evaluate_retarded_dipole_field_gradient_hertz_jet_native(
     boundary_guard = float(boundary_guard_fraction)
     if not np.isfinite(boundary_guard) or boundary_guard < 0.0 or boundary_guard >= 0.5:
         raise ValueError("boundary_guard_fraction must be finite in [0, 0.5)")
-    if response_kernel not in ("python", "numba_strict_serial"):
-        raise ValueError("response_kernel must be 'python' or 'numba_strict_serial'")
+    if response_kernel not in (
+        "python",
+        "numba_strict_serial",
+        "numba_sparse_strict_serial",
+    ):
+        raise ValueError(
+            "response_kernel must be 'python', 'numba_strict_serial', or "
+            "'numba_sparse_strict_serial'"
+        )
     prepared = _prepare_dipole_history(
         history,
         source_identities=source_identities,
         observer_source_identity=observer_source_identity,
         excluded_source_identities=excluded_source_identities,
     )
-    center = _evaluate_prepared_hertz_tensor_native(
-        prepared,
-        observer_event,
-        require_complete_history=require_complete_history,
-        minimum_separation_mm=float(minimum_separation_mm),
-        root_tolerance_mm=float(root_tolerance_mm),
-        max_root_iterations=int(max_root_iterations),
-    )
+    if response_kernel == "numba_sparse_strict_serial":
+        center = _evaluate_prepared_dipole_roots_numba_exact_serial(
+            prepared,
+            (observer_event,),
+            require_complete_history=require_complete_history,
+            minimum_separation_mm=float(minimum_separation_mm),
+            root_tolerance_mm=float(root_tolerance_mm),
+            max_root_iterations=int(max_root_iterations),
+        )[0]
+    else:
+        center = _evaluate_prepared_hertz_tensor_native(
+            prepared,
+            observer_event,
+            require_complete_history=require_complete_history,
+            minimum_separation_mm=float(minimum_separation_mm),
+            root_tolerance_mm=float(root_tolerance_mm),
+            max_root_iterations=int(max_root_iterations),
+        )
     segment_index = np.full(len(center.source_identities), -1, dtype=int)
     segment_fraction = np.full(len(center.source_identities), np.nan, dtype=float)
     jet_residual = np.full(len(center.source_identities), np.nan, dtype=float)
@@ -697,7 +825,7 @@ def evaluate_retarded_dipole_field_gradient_hertz_jet_native(
             record_analytic_dipole_hertz_response,
         )
 
-        response = evaluate_retarded_dipole_field_gradient_native(
+        full_response = evaluate_retarded_dipole_field_gradient_native(
             history,
             observer_event,
             source_identities=source_identities,
@@ -712,6 +840,42 @@ def evaluate_retarded_dipole_field_gradient_hertz_jet_native(
             max_root_iterations=max_root_iterations,
             backend=fallback_backend,
         )
+        response: (
+            RetardedDipoleFieldGradientResult | RetardedDipoleResponseGradientResult
+        )
+        if response_kernel == "numba_sparse_strict_serial":
+            from .antisymmetric_response_rfs import (
+                pack_antisymmetric_response_native,
+                pack_partial_antisymmetric_response_native,
+            )
+            from .retarded_dipole_fields import (
+                RetardedDipoleResponseGradientResult,
+                RetardedDipoleRootResult,
+            )
+
+            response = RetardedDipoleResponseGradientResult(
+                four_potential=full_response.four_potential,
+                antisymmetric_response=pack_antisymmetric_response_native(
+                    full_response.field_tensor
+                ),
+                partial_antisymmetric_response=(
+                    pack_partial_antisymmetric_response_native(full_response.partial_f)
+                ),
+                root=RetardedDipoleRootResult(
+                    source_identities=full_response.hertz.source_identities,
+                    retarded_time_ns=full_response.hertz.retarded_time_ns,
+                    light_cone_residual_mm=(full_response.hertz.light_cone_residual_mm),
+                    separation_mm=full_response.hertz.separation_mm,
+                    valid_sources=full_response.hertz.valid_sources,
+                ),
+                used_analytic_response=False,
+                fallback_reason=reason,
+                source_segment_index=segment_index.copy(),
+                source_segment_fraction=segment_fraction.copy(),
+                source_jet_residual=jet_residual.copy(),
+            )
+        else:
+            response = full_response
         finite_fraction = segment_fraction[np.isfinite(segment_fraction)]
         minimum_boundary_fraction = (
             float(np.min(np.minimum(finite_fraction, 1.0 - finite_fraction)))
@@ -732,7 +896,9 @@ def evaluate_retarded_dipole_field_gradient_hertz_jet_native(
             source_jet_residual=jet_residual,
         )
 
-    source_results: list[DipoleHertzResponseJetResult] = []
+    source_results: list[
+        DipoleHertzResponseJetResult | DipoleHertzSparseResponseJetResult
+    ] = []
     for source_array_index, source in prepared.sources.items():
         if not center.valid_sources[source_array_index]:
             if source.worldline.ended_by_loss and source.worldline.time_ns.size:
@@ -786,11 +952,12 @@ def evaluate_retarded_dipole_field_gradient_hertz_jet_native(
                 "retarded root is inside the nonsmooth segment-boundary guard "
                 f"for source {source.identity!r}: fraction={fraction:.17g}"
             )
-        evaluator = (
-            quintic_dipole_hertz_response_jet_native
-            if response_kernel == "python"
-            else quintic_dipole_hertz_response_jet_numba_native
-        )
+        if response_kernel == "python":
+            evaluator = quintic_dipole_hertz_response_jet_native
+        elif response_kernel == "numba_strict_serial":
+            evaluator = quintic_dipole_hertz_response_jet_numba_native
+        else:
+            evaluator = quintic_dipole_hertz_sparse_response_numba_native
         result = evaluator(
             observer_time_ns=float(observer_event.time_ns),
             observer_position_mm=observer_event.position_mm,
@@ -815,29 +982,52 @@ def evaluate_retarded_dipole_field_gradient_hertz_jet_native(
         source_results.append(result)
 
     four_potential = np.zeros(4, dtype=float)
-    partial_a = np.zeros((4, 4), dtype=float)
-    field_tensor = np.zeros((4, 4), dtype=float)
-    partial_f = np.zeros((4, 4, 4), dtype=float)
-    for result in source_results:
-        four_potential += result.four_potential
-        partial_a += result.partial_a
-        field_tensor += result.field_tensor
-        partial_f += result.partial_f
-    electric, magnetic = fields_from_tensor_native(field_tensor)
-    response = RetardedDipoleFieldGradientResult(
-        four_potential=four_potential,
-        partial_a=partial_a,
-        electric_field_native=electric,
-        magnetic_field_native=magnetic,
-        field_tensor=field_tensor,
-        partial_f=partial_f,
-        hertz=center,
-        stencil_step_mm=0.0,
-        stencil_offsets=np.zeros((1, 4), dtype=int),
-        stencil_retarded_time_ns=center.retarded_time_ns[np.newaxis, :],
-        stencil_light_cone_residual_mm=center.light_cone_residual_mm[np.newaxis, :],
-        lorenz_gauge_residual_per_mm=float(np.trace(partial_a)),
-    )
+    if response_kernel == "numba_sparse_strict_serial":
+        from .retarded_dipole_fields import RetardedDipoleResponseGradientResult
+
+        packed_field = np.zeros(6, dtype=float)
+        packed_partial_f = np.zeros((4, 6), dtype=float)
+        for result in source_results:
+            assert isinstance(result, DipoleHertzSparseResponseJetResult)
+            four_potential += result.four_potential
+            packed_field += result.antisymmetric_response
+            packed_partial_f += result.partial_antisymmetric_response
+        response = RetardedDipoleResponseGradientResult(
+            four_potential=four_potential,
+            antisymmetric_response=packed_field,
+            partial_antisymmetric_response=packed_partial_f,
+            root=center,
+            used_analytic_response=True,
+            fallback_reason=None,
+            source_segment_index=segment_index.copy(),
+            source_segment_fraction=segment_fraction.copy(),
+            source_jet_residual=jet_residual.copy(),
+        )
+    else:
+        partial_a = np.zeros((4, 4), dtype=float)
+        field_tensor = np.zeros((4, 4), dtype=float)
+        partial_f = np.zeros((4, 4, 4), dtype=float)
+        for result in source_results:
+            assert isinstance(result, DipoleHertzResponseJetResult)
+            four_potential += result.four_potential
+            partial_a += result.partial_a
+            field_tensor += result.field_tensor
+            partial_f += result.partial_f
+        electric, magnetic = fields_from_tensor_native(field_tensor)
+        response = RetardedDipoleFieldGradientResult(
+            four_potential=four_potential,
+            partial_a=partial_a,
+            electric_field_native=electric,
+            magnetic_field_native=magnetic,
+            field_tensor=field_tensor,
+            partial_f=partial_f,
+            hertz=center,
+            stencil_step_mm=0.0,
+            stencil_offsets=np.zeros((1, 4), dtype=int),
+            stencil_retarded_time_ns=center.retarded_time_ns[np.newaxis, :],
+            stencil_light_cone_residual_mm=center.light_cone_residual_mm[np.newaxis, :],
+            lorenz_gauge_residual_per_mm=float(np.trace(partial_a)),
+        )
     from .analytic_dipole_hertz_diagnostics import (
         record_analytic_dipole_hertz_response,
     )
@@ -866,7 +1056,9 @@ def evaluate_retarded_dipole_field_gradient_hertz_jet_native(
 __all__ = [
     "DipoleHertzJetProviderResult",
     "DipoleHertzResponseJetResult",
+    "DipoleHertzSparseResponseJetResult",
     "evaluate_retarded_dipole_field_gradient_hertz_jet_native",
     "quintic_dipole_hertz_response_jet_native",
     "quintic_dipole_hertz_response_jet_numba_native",
+    "quintic_dipole_hertz_sparse_response_numba_native",
 ]

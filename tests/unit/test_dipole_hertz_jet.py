@@ -1,13 +1,19 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from core.constants import C_MMNS
 from core.dipole_fields import static_point_dipole_field_native
 from core.dipole_hertz_jet import (
+    _spin_coefficients,
     evaluate_retarded_dipole_field_gradient_hertz_jet_native,
     quintic_dipole_hertz_response_jet_native,
     quintic_dipole_hertz_response_jet_numba_native,
+)
+from core.antisymmetric_response_rfs import (
+    pack_antisymmetric_response_native,
+    pack_partial_antisymmetric_response_native,
 )
 from core.retarded_dipole_fields import (
     _prepare_dipole_history,
@@ -334,6 +340,90 @@ def test_strict_numba_hertz_jet_matches_the_python_oracle() -> None:
     assert compiled.light_cone_jet_residual < 2.0e-10
 
 
+def test_sparse_strict_kernel_matches_the_dense_response_outputs() -> None:
+    from core.dipole_hertz_jet_numba import (
+        _HERTZ_RESPONSE_USED,
+        _SPARSE_HERTZ_SIZE,
+        quintic_dipole_hertz_response_coefficients_strict_serial,
+        quintic_dipole_hertz_sparse_response_strict_serial,
+    )
+
+    random = np.random.default_rng(112358)
+    stress_beta = (0.0, 0.5, 0.9, 0.99, 0.9999)
+    for case in range(20):
+        duration_ns = float(random.uniform(5.0e-4, 1.4e-3))
+        duration_coordinate = C_MMNS * duration_ns
+        start_time = float(random.uniform(-0.02, -0.004))
+        fraction = float(random.uniform(0.12, 0.88))
+        root_time = start_time + fraction * duration_ns
+        coefficients = np.zeros((6, 3))
+        coefficients[0] = random.normal(scale=0.15, size=3)
+        beta = random.normal(size=3)
+        beta_magnitude = (
+            stress_beta[case]
+            if case < len(stress_beta)
+            else float(random.uniform(0.0, 0.92))
+        )
+        beta *= beta_magnitude / np.linalg.norm(beta)
+        coefficients[1] = beta * duration_coordinate
+        for order in range(2, 6):
+            coefficients[order] = random.normal(scale=1.0e-4 / order**2, size=3)
+        source_position = (
+            np.asarray([fraction**order for order in range(6)]) @ coefficients
+        )
+        direction = random.normal(size=3)
+        direction /= np.linalg.norm(direction)
+        radius = float(random.uniform(0.5, 1.8))
+        observer_position = source_position + radius * direction
+        observer_time = root_time + radius / C_MMNS
+        spin_start = random.normal(size=3)
+        spin_start /= np.linalg.norm(spin_start)
+        spin_end = random.normal(size=3)
+        spin_end /= np.linalg.norm(spin_end)
+        start_slope = random.normal(scale=12.0, size=3)
+        end_slope = random.normal(scale=12.0, size=3)
+        spin_coefficients = _spin_coefficients(
+            spin_start,
+            spin_end,
+            start_slope,
+            end_slope,
+            duration_ns,
+        )
+        common = (
+            observer_time,
+            observer_position,
+            float(random.uniform(-2.0, 2.0)),
+            start_time,
+            duration_ns,
+            coefficients,
+            spin_coefficients,
+            bool(case % 2 == 0),
+            1.0,
+            root_time,
+        )
+        dense = quintic_dipole_hertz_response_coefficients_strict_serial(*common)
+        sparse = quintic_dipole_hertz_sparse_response_strict_serial(*common)
+
+        assert dense[0] == sparse[0] == 0
+        np.testing.assert_allclose(sparse[1], dense[2], rtol=2.0e-12, atol=2.0e-12)
+        np.testing.assert_allclose(
+            sparse[2],
+            pack_antisymmetric_response_native(dense[4]),
+            rtol=2.0e-12,
+            atol=2.0e-12,
+        )
+        np.testing.assert_allclose(
+            sparse[3],
+            pack_partial_antisymmetric_response_native(dense[5]),
+            rtol=2.0e-12,
+            atol=2.0e-12,
+        )
+        assert abs(sparse[4] - dense[9]) <= 2.0e-10
+
+    assert int(np.count_nonzero(_HERTZ_RESPONSE_USED)) == 144
+    assert _SPARSE_HERTZ_SIZE == 144
+
+
 def test_random_smooth_segments_match_the_python_third_order_oracle() -> None:
     random = np.random.default_rng(20260828)
     for case in range(20):
@@ -439,6 +529,32 @@ def test_history_provider_uses_one_event_inside_a_smooth_segment() -> None:
             err_msg=name,
         )
 
+    sparse = evaluate_retarded_dipole_field_gradient_hertz_jet_native(
+        history,
+        event,
+        source_identities=("source",),
+        response_kernel="numba_sparse_strict_serial",
+    )
+    assert sparse.used_analytic_response
+    np.testing.assert_allclose(
+        sparse.response.four_potential,
+        compiled.response.four_potential,
+        rtol=2.0e-12,
+        atol=2.0e-12,
+    )
+    np.testing.assert_allclose(
+        sparse.response.antisymmetric_response,
+        pack_antisymmetric_response_native(compiled.response.field_tensor),
+        rtol=2.0e-12,
+        atol=2.0e-12,
+    )
+    np.testing.assert_allclose(
+        sparse.response.partial_antisymmetric_response,
+        pack_partial_antisymmetric_response_native(compiled.response.partial_f),
+        rtol=2.0e-12,
+        atol=2.0e-12,
+    )
+
     production = evaluate_retarded_dipole_field_gradient_native(
         history,
         event,
@@ -451,6 +567,31 @@ def test_history_provider_uses_one_event_inside_a_smooth_segment() -> None:
             getattr(production, name),
             getattr(compiled.response, name),
         )
+
+
+def test_sparse_provider_does_not_construct_the_center_hertz_tensor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from core import retarded_dipole_fields
+
+    def fail_if_called(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("sparse provider constructed a center Hertz tensor")
+
+    monkeypatch.setattr(
+        retarded_dipole_fields,
+        "_evaluate_prepared_hertz_tensor_native",
+        fail_if_called,
+    )
+    result = evaluate_retarded_dipole_field_gradient_hertz_jet_native(
+        _accelerating_rotating_history(),
+        ObserverEvent(-1.7e-4, (1.1, -0.6, 0.8)),
+        source_identities=("source",),
+        response_kernel="numba_sparse_strict_serial",
+    )
+
+    assert result.used_analytic_response
+    assert result.response.antisymmetric_response.shape == (6,)
+    assert result.response.partial_antisymmetric_response.shape == (4, 6)
 
 
 def test_history_provider_falls_back_at_a_spin_segment_knot() -> None:
@@ -488,6 +629,29 @@ def test_history_provider_falls_back_at_a_spin_segment_knot() -> None:
         < 1.0e-10
     )
     assert provider.response.stencil_offsets.shape == (129, 4)
+
+    sparse = evaluate_retarded_dipole_field_gradient_hertz_jet_native(
+        history,
+        event,
+        source_identities=("source",),
+        boundary_guard_fraction=1.0e-5,
+        fallback_stencil_step_mm=2.0e-4,
+        response_kernel="numba_sparse_strict_serial",
+    )
+    assert not sparse.used_analytic_response
+    assert sparse.fallback_reason == provider.fallback_reason
+    np.testing.assert_array_equal(
+        sparse.response.four_potential,
+        provider.response.four_potential,
+    )
+    np.testing.assert_array_equal(
+        sparse.response.antisymmetric_response,
+        pack_antisymmetric_response_native(provider.response.field_tensor),
+    )
+    np.testing.assert_array_equal(
+        sparse.response.partial_antisymmetric_response,
+        pack_partial_antisymmetric_response_native(provider.response.partial_f),
+    )
 
 
 def test_history_provider_falls_back_in_the_mutable_final_spin_segment() -> None:
@@ -541,6 +705,8 @@ def test_coefficient_audit_flags_dead_raw_hertz_slots() -> None:
     blocks = report["blocks"]
 
     assert report["raw_hertz_jet_coefficient_count"] == 210
+    assert report["influential_hertz_jet_coefficient_count"] == 144
+    assert report["structurally_unused_hertz_jet_coefficient_count"] == 66
     assert report["compact_response_component_count"] == 34
     assert blocks["H_value"]["structurally_unused_coefficient_count"] == 6
     assert blocks["A"]["influential_coefficient_count"] == 12
