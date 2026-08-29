@@ -14,6 +14,10 @@
   accepted histories in contiguous blocks. The current checkpoint manifest
   still requires a declared fixed total and does not yet persist an adaptive
   controller; this is storage-format validation, not adaptive restart support.
+- Added a separate append-only accepted-pair checkpoint manifest that does not
+  require a final adaptive knot count. It stores equal rider/driver history
+  chunks plus controller and public-output cursor state, with compatibility
+  hashes and atomic manifest updates. No current CLI/GUI mode selects it yet.
 
 All notable changes and updates to the LW Integrator project are documented in this file.
 

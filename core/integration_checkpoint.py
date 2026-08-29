@@ -21,8 +21,8 @@ import numpy as np
 
 from .types import TrajectoryArrays, TrajectoryBuilder
 
-
 SCHEMA_VERSION = 1
+ACCEPTED_PAIR_SCHEMA_VERSION = 1
 
 
 class CheckpointError(RuntimeError):
@@ -387,7 +387,330 @@ class IntegrationCheckpointStore:
             )
 
 
+class AcceptedPairCheckpointStore:
+    """Append-only checkpoint store for a variable-length accepted pair history.
+
+    Unlike :class:`IntegrationCheckpointStore`, this format does not require a
+    final step count.  Each immutable chunk contains an equal number of rider
+    and driver source-history knots.  The atomically replaced manifest also
+    records the adaptive controller and public-output cursor needed to resume
+    at the next shared lab-time barrier.
+
+    The class is a storage substrate only.  No current CLI/GUI option or
+    integrator mode selects it yet.
+    """
+
+    def __init__(
+        self,
+        directory: str | Path,
+        *,
+        compatibility_payload: dict[str, Any],
+        interval_knots: int,
+        interval_seconds: float,
+        resume: bool,
+    ) -> None:
+        self.directory = Path(directory).expanduser().resolve()
+        self.chunks_directory = self.directory / "chunks"
+        self.manifest_path = self.directory / "manifest.json"
+        self.constants_path = self.directory / "constants.npz"
+        self.compatibility_payload = compatibility_payload
+        self.compatibility_hash = canonical_json_hash(compatibility_payload)
+        self.interval_knots = int(interval_knots)
+        self.interval_seconds = float(interval_seconds)
+        if self.interval_knots < 0:
+            raise ValueError("interval_knots must be non-negative")
+        if not np.isfinite(self.interval_seconds) or self.interval_seconds < 0.0:
+            raise ValueError("interval_seconds must be finite and non-negative")
+        if self.interval_knots == 0 and self.interval_seconds == 0.0:
+            raise ValueError("accepted-pair checkpoint needs a positive interval")
+        self._last_write_monotonic = time.monotonic()
+
+        if resume:
+            self.manifest = self._load_and_validate_manifest()
+        else:
+            if self.directory.exists() and any(self.directory.iterdir()):
+                raise CheckpointError(
+                    f"checkpoint directory is not empty: {self.directory}; "
+                    "resume it or choose a new directory"
+                )
+            self.chunks_directory.mkdir(parents=True, exist_ok=True)
+            self.manifest = {
+                "schema_version": ACCEPTED_PAIR_SCHEMA_VERSION,
+                "checkpoint_kind": "accepted_pair_history",
+                "status": "running",
+                "created_utc": _utc_now(),
+                "updated_utc": _utc_now(),
+                "compatibility_hash": self.compatibility_hash,
+                "compatibility": compatibility_payload,
+                "committed_knots": 0,
+                "constants": None,
+                "chunks": [],
+                "controller_state": {},
+                "public_output_state": {},
+            }
+            _atomic_json(self.manifest_path, self.manifest)
+
+    @property
+    def committed_knots(self) -> int:
+        return int(self.manifest["committed_knots"])
+
+    @property
+    def controller_state(self) -> dict[str, Any]:
+        value = self.manifest.get("controller_state", {})
+        if not isinstance(value, dict):
+            raise CheckpointError("controller_state must be a JSON object")
+        return cast(dict[str, Any], dict(value))
+
+    @property
+    def public_output_state(self) -> dict[str, Any]:
+        value = self.manifest.get("public_output_state", {})
+        if not isinstance(value, dict):
+            raise CheckpointError("public_output_state must be a JSON object")
+        return cast(dict[str, Any], dict(value))
+
+    def _load_and_validate_manifest(self) -> dict[str, Any]:
+        if not self.manifest_path.is_file():
+            raise CheckpointError(
+                f"checkpoint manifest not found: {self.manifest_path}"
+            )
+        try:
+            manifest = json.loads(self.manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise CheckpointError(f"cannot read checkpoint manifest: {exc}") from exc
+        if (
+            manifest.get("schema_version") != ACCEPTED_PAIR_SCHEMA_VERSION
+            or manifest.get("checkpoint_kind") != "accepted_pair_history"
+        ):
+            raise CheckpointCompatibilityError(
+                "unsupported accepted-pair checkpoint schema or kind"
+            )
+        if manifest.get("compatibility_hash") != self.compatibility_hash:
+            raise CheckpointCompatibilityError(
+                "checkpoint physics/configuration fingerprint does not match this run"
+            )
+        committed = int(manifest.get("committed_knots", -1))
+        if committed < 1:
+            raise CheckpointError(
+                "resumable accepted-pair history has no committed knots"
+            )
+        return cast(dict[str, Any], manifest)
+
+    def due(self, accepted_knots: int, *, force: bool = False) -> bool:
+        if force:
+            return True
+        knot_due = bool(
+            self.interval_knots > 0
+            and int(accepted_knots) >= self.committed_knots + self.interval_knots
+        )
+        time_due = bool(
+            self.interval_seconds > 0.0
+            and time.monotonic() - self._last_write_monotonic >= self.interval_seconds
+        )
+        return knot_due or time_due
+
+    @staticmethod
+    def _validate_side_channels(
+        trajectory: TrajectoryArrays,
+        role: str,
+    ) -> None:
+        if trajectory.particle_failure_info:
+            raise CheckpointError(
+                f"cannot checkpoint {role} particle failure side-channel state"
+            )
+        if any(value is not None for value in trajectory.pseudo_grid_schedule):
+            raise CheckpointError(
+                f"cannot checkpoint {role} pseudo-grid schedule side-channel state"
+            )
+        if any(value is not None for value in trajectory.halt_reason):
+            raise CheckpointError(f"cannot checkpoint halted {role} trajectory state")
+
+    @staticmethod
+    def _json_state(value: dict[str, Any], label: str) -> dict[str, Any]:
+        """Validate and detach one JSON checkpoint state object."""
+
+        try:
+            encoded = json.dumps(
+                value,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            )
+            decoded = json.loads(encoded)
+        except (TypeError, ValueError) as exc:
+            raise CheckpointError(
+                f"{label} must contain only finite JSON-compatible values"
+            ) from exc
+        if not isinstance(decoded, dict):
+            raise CheckpointError(f"{label} must be a JSON object")
+        return cast(dict[str, Any], decoded)
+
+    def _constants_metadata(
+        self,
+        rider: TrajectoryArrays,
+        driver: TrajectoryArrays,
+    ) -> dict[str, str]:
+        existing = self.manifest.get("constants")
+        if existing is not None:
+            if not isinstance(existing, dict):
+                raise CheckpointError("checkpoint constants metadata is invalid")
+            with self._verified_npz(
+                str(existing["file"]), str(existing["sha256"])
+            ) as archive:
+                for role, trajectory in (("rider", rider), ("driver", driver)):
+                    for name in _PARTICLE_CONSTANT_FIELDS:
+                        stored = np.asarray(archive[f"{role}__{name}"])
+                        current = np.asarray(getattr(trajectory, name))
+                        if not np.array_equal(stored, current, equal_nan=True):
+                            raise CheckpointCompatibilityError(
+                                f"{role} particle constant {name} changed after "
+                                "the accepted-pair checkpoint was created"
+                            )
+            return {
+                "file": str(existing["file"]),
+                "sha256": str(existing["sha256"]),
+            }
+
+        arrays: dict[str, np.ndarray] = {}
+        for role, trajectory in (("rider", rider), ("driver", driver)):
+            for name in _PARTICLE_CONSTANT_FIELDS:
+                arrays[f"{role}__{name}"] = np.array(
+                    getattr(trajectory, name), copy=True
+                )
+        digest = _atomic_npz(self.constants_path, arrays)
+        return {
+            "file": self.constants_path.name,
+            "sha256": digest,
+        }
+
+    def write(
+        self,
+        *,
+        rider: TrajectoryArrays,
+        driver: TrajectoryArrays,
+        controller_state: dict[str, Any],
+        public_output_state: dict[str, Any],
+        complete: bool = False,
+    ) -> None:
+        """Commit all jointly accepted knots after the manifest boundary."""
+
+        if self.manifest.get("status") == "complete":
+            raise CheckpointError("cannot append to a completed checkpoint")
+        if rider.n_steps != driver.n_steps:
+            raise CheckpointError(
+                "rider and driver accepted histories must have equal knot counts"
+            )
+        normalized_controller = self._json_state(controller_state, "controller_state")
+        normalized_output = self._json_state(public_output_state, "public_output_state")
+        start = self.committed_knots
+        stop = int(rider.n_steps)
+        if stop < start:
+            raise CheckpointError("accepted history is shorter than the checkpoint")
+        if stop == start:
+            if complete:
+                next_manifest = dict(self.manifest)
+                next_manifest["status"] = "complete"
+                next_manifest["controller_state"] = normalized_controller
+                next_manifest["public_output_state"] = normalized_output
+                next_manifest["updated_utc"] = _utc_now()
+                _atomic_json(self.manifest_path, next_manifest)
+                self.manifest = next_manifest
+            return
+
+        self._validate_side_channels(rider, "rider")
+        self._validate_side_channels(driver, "driver")
+        constants = self._constants_metadata(rider, driver)
+        arrays: dict[str, np.ndarray] = {}
+        for role, trajectory in (("rider", rider), ("driver", driver)):
+            for name in _ROW_ARRAY_FIELDS:
+                values = np.asarray(getattr(trajectory, name))
+                arrays[f"{role}__{name}"] = np.array(values[start:stop], copy=True)
+        filename = f"knots_{start:09d}_{stop:09d}.npz"
+        chunk_path = self.chunks_directory / filename
+        digest = _atomic_npz(chunk_path, arrays)
+        chunks = list(self.manifest.get("chunks", []))
+        chunks.append(
+            {
+                "file": str(Path("chunks") / filename),
+                "start": start,
+                "stop": stop,
+                "sha256": digest,
+            }
+        )
+        next_manifest = dict(self.manifest)
+        next_manifest["constants"] = constants
+        next_manifest["chunks"] = chunks
+        next_manifest["committed_knots"] = stop
+        next_manifest["controller_state"] = normalized_controller
+        next_manifest["public_output_state"] = normalized_output
+        next_manifest["status"] = "complete" if complete else "running"
+        next_manifest["updated_utc"] = _utc_now()
+        _atomic_json(self.manifest_path, next_manifest)
+        self.manifest = next_manifest
+        self._last_write_monotonic = time.monotonic()
+
+    def _verified_npz(self, relative_path: str, expected_hash: str) -> Any:
+        path = self.directory / relative_path
+        if not path.is_file():
+            raise CheckpointError(f"checkpoint data file is missing: {path}")
+        actual_hash = _sha256(path)
+        if actual_hash != expected_hash:
+            raise CheckpointError(
+                f"checkpoint data hash mismatch for {path.name}: "
+                f"{actual_hash} != {expected_hash}"
+            )
+        return np.load(path, allow_pickle=False)
+
+    def _restore_builder(self, builder: TrajectoryBuilder, role: str) -> None:
+        constants_meta = self.manifest.get("constants")
+        if not isinstance(constants_meta, dict):
+            raise CheckpointError("checkpoint constants metadata is missing")
+        with self._verified_npz(
+            str(constants_meta["file"]),
+            str(constants_meta["sha256"]),
+        ) as archive:
+            constants = {
+                name: np.array(archive[f"{role}__{name}"], copy=True)
+                for name in _PARTICLE_CONSTANT_FIELDS
+            }
+
+        expected_start = 0
+        for chunk_index, chunk in enumerate(self.manifest.get("chunks", [])):
+            start = int(chunk["start"])
+            stop = int(chunk["stop"])
+            if start != expected_start or stop <= start:
+                raise CheckpointError("accepted-pair chunks are not contiguous")
+            with self._verified_npz(
+                str(chunk["file"]),
+                str(chunk["sha256"]),
+            ) as archive:
+                row_arrays = {
+                    name: np.array(archive[f"{role}__{name}"], copy=True)
+                    for name in _ROW_ARRAY_FIELDS
+                }
+            builder.restore_checkpoint_rows(
+                start,
+                row_arrays,
+                particle_constants=constants if chunk_index == 0 else None,
+            )
+            expected_start = stop
+        if expected_start != self.committed_knots:
+            raise CheckpointError(
+                "accepted-pair chunk boundary does not match committed knot count"
+            )
+
+    def restore_pair(
+        self,
+        rider_builder: TrajectoryBuilder,
+        driver_builder: TrajectoryBuilder,
+    ) -> None:
+        """Restore both histories through the same committed knot boundary."""
+
+        self._restore_builder(rider_builder, "rider")
+        self._restore_builder(driver_builder, "driver")
+
+
 __all__ = [
+    "AcceptedPairCheckpointStore",
     "CheckpointCompatibilityError",
     "CheckpointError",
     "IntegrationCheckpointStore",
