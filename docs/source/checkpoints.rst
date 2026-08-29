@@ -79,3 +79,19 @@ interruptible.  The GUI **Cancel** action flushes the latest complete joint
 rider/driver step before stopping.  A terminal interrupt, hard process kill,
 or machine loss during one expensive step returns to the most recent committed
 manifest boundary.
+
+Internal variable-length pair checkpoint
+----------------------------------------
+
+The experimental exact-retarded return substrate has a second checkpoint
+format for a variable number of accepted electron--proton history knots. It
+stores equal rider and driver chunks together with the adaptive-controller
+state and the sparse public-output cursor. A focused interrupted/resumed run
+reproduces the uninterrupted accepted histories, controller, and output-row
+selection bit-for-bit.
+
+This format is currently reachable only from the internal return-runner API.
+It has no CLI, saved-configuration, or GUI control yet. The fixed-step options
+documented above continue to use the original maintained format. See
+:doc:`multirate_return` for the separation between accepted source history and
+public output.

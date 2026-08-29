@@ -6,6 +6,10 @@ import math
 import numpy as np
 import pytest
 
+from core.adaptive_pair_return import (
+    AdaptivePairControllerState,
+    run_exact_pair_adaptive_window,
+)
 from core.constants import C_MMNS, ELEMENTARY_CHARGE
 from core.exact_pair_trial import (
     ExactPairEOMOptions,
@@ -24,7 +28,11 @@ from core.integration_runner import (
 from core.self_consistency import SelfConsistencyConfig
 from core.shared_lab_time import SharedLabTimeError
 from core.species import get_species
-from core.step_doubling import ErrorScale, StepDoublingTolerances
+from core.step_doubling import (
+    ErrorScale,
+    StepControllerConfig,
+    StepDoublingTolerances,
+)
 from core.types import (
     ChronoMatchingMode,
     DipoleSourceConfig,
@@ -633,6 +641,61 @@ def test_charged_exact_rfs_step_doubling_uses_trial_history_without_commit(
             assert not bool(endpoint.driver.state["medina_force_derivative_ready"][0])
         assert bool(trial.refined.pair.rider.state["medina_force_derivative_ready"][0])
         assert bool(trial.refined.pair.driver.state["medina_force_derivative_ready"][0])
+
+
+def test_short_adaptive_window_runs_charged_rfs_medina_and_dipole_source() -> None:
+    rider_builder, driver_builder, magnetic = _charged_accepted_pair(
+        include_dipole_source=True
+    )
+    start_time = float(rider_builder.build_current().t[-1, 0])
+    advance = make_exact_role_eom_advance(
+        ExactPairEOMOptions(
+            aperture_radius_mm=1.0,
+            magnetic_dipole=magnetic,
+            self_consistency=SelfConsistencyConfig.standard(),
+            radiation_reaction_mode="medina_lad",
+        )
+    )
+    loose = StepDoublingTolerances(
+        position_mm=ErrorScale(1.0, 1.0),
+        mechanical_momentum_native=ErrorScale(1.0, 1.0),
+        rest_spin=ErrorScale(1.0, 1.0),
+        diagnostics_native=ErrorScale(1.0, 1.0),
+    )
+
+    result = run_exact_pair_adaptive_window(
+        rider_builder=rider_builder,
+        driver_builder=driver_builder,
+        advance_rider=advance,
+        advance_driver=advance,
+        controller_state=AdaptivePairControllerState(
+            current_step_ns=1.0e-8,
+            rider_proper_step_guess_ns=1.0e-8,
+            driver_proper_step_guess_ns=1.0e-8,
+        ),
+        controller_config=StepControllerConfig(method_order=1),
+        tolerances=loose,
+        target_time_ns=start_time + 2.0e-8,
+        minimum_step_ns=1.0e-12,
+        maximum_step_ns=1.0e-8,
+        maximum_attempts=4,
+        maximum_accepted_slabs=2,
+        public_sample_interval_ns=1.5e-8,
+        magnetic_dipole=magnetic,
+        include_dipole_source=True,
+    )
+
+    assert result.completed
+    assert result.accepted_slabs == 2
+    assert result.rejected_trials == 0
+    rider = rider_builder.build_current()
+    driver = driver_builder.build_current()
+    np.testing.assert_array_equal(rider.t, driver.t)
+    assert bool(rider.medina_force_derivative_ready[-1, 0])
+    assert bool(driver.medina_force_derivative_ready[-1, 0])
+    assert not np.any(rider.medina_impulse_capped)
+    assert not np.any(driver.medina_impulse_capped)
+    assert result.public_output_state.selected_rows[-1] == rider.n_steps - 1
 
 
 def test_real_neutral_eom_step_doubling_accepts_identical_coasting_paths() -> None:

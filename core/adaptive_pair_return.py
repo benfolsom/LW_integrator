@@ -1,9 +1,16 @@
-"""One transactional adaptive attempt for the exact-retarded return mode."""
+"""Transactional adaptive attempts and bounded exact-pair run windows.
+
+The accepted source history and the sparse public-output selection are
+deliberately independent.  Every accepted step-doubling midpoint and endpoint
+remains available to future retarded providers, while output cadence selects
+only existing accepted row indices and cannot influence the equations.
+"""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any
+import math
+from dataclasses import dataclass, replace
+from typing import Any, Protocol
 
 import numpy as np
 
@@ -19,7 +26,21 @@ from .step_doubling import (
     StepDoublingTolerances,
     propose_next_step_ns,
 )
-from .types import GrowableTrajectoryBuilder, MagneticDipoleConfig
+from .types import GrowableTrajectoryBuilder, MagneticDipoleConfig, TrajectoryArrays
+
+
+class _AcceptedPairCheckpoint(Protocol):
+    def due(self, accepted_knots: int, *, force: bool = False) -> bool: ...
+
+    def write(
+        self,
+        *,
+        rider: TrajectoryArrays,
+        driver: TrajectoryArrays,
+        controller_state: dict[str, Any],
+        public_output_state: dict[str, Any],
+        complete: bool = False,
+    ) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -93,6 +114,152 @@ class AdaptivePairAttempt:
     @property
     def accepted(self) -> bool:
         return self.committed_rows is not None
+
+
+@dataclass(frozen=True)
+class AdaptivePairPublicOutputState:
+    """Checkpointable sparse view over the complete accepted source history."""
+
+    sample_interval_ns: float
+    next_sample_time_ns: float
+    selected_rows: tuple[int, ...]
+
+    def __post_init__(self) -> None:
+        if not np.isfinite(self.sample_interval_ns) or self.sample_interval_ns <= 0.0:
+            raise ValueError("public output interval must be finite and positive")
+        if not np.isfinite(self.next_sample_time_ns):
+            raise ValueError("next public output time must be finite")
+        if any(
+            isinstance(row, (bool, np.bool_)) or not isinstance(row, (int, np.integer))
+            for row in self.selected_rows
+        ):
+            raise ValueError("public output rows must be integer row indices")
+        rows = tuple(int(row) for row in self.selected_rows)
+        if not rows or rows[0] < 0:
+            raise ValueError("public output must contain an initial accepted row")
+        if any(current <= previous for previous, current in zip(rows, rows[1:])):
+            raise ValueError("public output rows must be strictly increasing")
+        if self.next_sample_time_ns + self.sample_interval_ns <= (
+            self.next_sample_time_ns
+        ):
+            raise ValueError("public output interval is below time resolution")
+        object.__setattr__(self, "selected_rows", rows)
+
+    def to_checkpoint_state(self) -> dict[str, Any]:
+        """Return the complete sparse-output cursor as strict JSON data."""
+
+        return {
+            "schema_version": 1,
+            "sample_interval_ns": float(self.sample_interval_ns),
+            "next_sample_time_ns": float(self.next_sample_time_ns),
+            "selected_rows": [int(row) for row in self.selected_rows],
+        }
+
+    @classmethod
+    def from_checkpoint_state(
+        cls,
+        payload: dict[str, Any],
+    ) -> "AdaptivePairPublicOutputState":
+        """Restore one sparse-output cursor, rejecting partial schemas."""
+
+        if set(payload) != {
+            "schema_version",
+            "sample_interval_ns",
+            "next_sample_time_ns",
+            "selected_rows",
+        }:
+            raise ValueError(
+                "adaptive pair public-output checkpoint fields are invalid"
+            )
+        if payload["schema_version"] != 1:
+            raise ValueError("unsupported adaptive pair public-output schema")
+        rows = payload["selected_rows"]
+        if not isinstance(rows, list):
+            raise ValueError("adaptive pair public-output rows must be a list")
+        if any(isinstance(row, bool) or not isinstance(row, int) for row in rows):
+            raise ValueError("adaptive pair public-output rows must contain integers")
+        return cls(
+            sample_interval_ns=float(payload["sample_interval_ns"]),
+            next_sample_time_ns=float(payload["next_sample_time_ns"]),
+            selected_rows=tuple(int(row) for row in rows),
+        )
+
+
+@dataclass(frozen=True)
+class AdaptivePairRunResult:
+    """Outcome of one bounded internal adaptive integration window."""
+
+    controller_state: AdaptivePairControllerState
+    public_output_state: AdaptivePairPublicOutputState
+    attempts: int
+    accepted_slabs: int
+    rejected_trials: int
+    final_time_ns: float
+    completed: bool
+
+
+def _accepted_pair_time_ns(
+    rider_builder: GrowableTrajectoryBuilder,
+    driver_builder: GrowableTrajectoryBuilder,
+    *,
+    tolerance_ns: float,
+) -> float:
+    if rider_builder.accepted_steps != driver_builder.accepted_steps:
+        raise SharedLabTimeError("accepted rider and driver histories are misaligned")
+    rider_time = np.asarray(rider_builder.build_current().t[-1], dtype=np.float64)
+    driver_time = np.asarray(driver_builder.build_current().t[-1], dtype=np.float64)
+    if rider_time.shape != (1,) or driver_time.shape != (1,):
+        raise SharedLabTimeError(
+            "adaptive pair return mode currently requires one particle per role"
+        )
+    values = (float(rider_time[0]), float(driver_time[0]))
+    if not all(np.isfinite(value) for value in values):
+        raise SharedLabTimeError("accepted pair coordinate time is not finite")
+    if abs(values[0] - values[1]) > tolerance_ns:
+        raise SharedLabTimeError("accepted rider and driver times are not synchronized")
+    return values[0]
+
+
+def _initial_public_output_state(
+    *,
+    accepted_rows: int,
+    current_time_ns: float,
+    sample_interval_ns: float,
+) -> AdaptivePairPublicOutputState:
+    return AdaptivePairPublicOutputState(
+        sample_interval_ns=sample_interval_ns,
+        next_sample_time_ns=current_time_ns + sample_interval_ns,
+        selected_rows=(accepted_rows - 1,),
+    )
+
+
+def _select_public_rows(
+    state: AdaptivePairPublicOutputState,
+    *,
+    committed_rows: tuple[int, int],
+    rider_builder: GrowableTrajectoryBuilder,
+    time_tolerance_ns: float,
+    include_final_row: bool,
+) -> AdaptivePairPublicOutputState:
+    selected = list(state.selected_rows)
+    next_time = state.next_sample_time_ns
+    times = np.asarray(rider_builder.build_current().t[:, 0], dtype=np.float64)
+    for row in committed_rows:
+        row_time = float(times[row])
+        if row_time + time_tolerance_ns >= next_time:
+            if row != selected[-1]:
+                selected.append(row)
+            crossed = 1 + math.floor(
+                (row_time + time_tolerance_ns - next_time) / state.sample_interval_ns
+            )
+            next_time += crossed * state.sample_interval_ns
+    if include_final_row and committed_rows[-1] != selected[-1]:
+        selected.append(committed_rows[-1])
+    return AdaptivePairPublicOutputState(
+        sample_interval_ns=state.sample_interval_ns,
+        next_sample_time_ns=next_time,
+        selected_rows=tuple(selected),
+    )
 
 
 def attempt_exact_pair_adaptive_step(
@@ -185,8 +352,209 @@ def attempt_exact_pair_adaptive_step(
     )
 
 
+def run_exact_pair_adaptive_window(
+    *,
+    rider_builder: GrowableTrajectoryBuilder,
+    driver_builder: GrowableTrajectoryBuilder,
+    advance_rider: AdvanceRoleTrial,
+    advance_driver: AdvanceRoleTrial,
+    controller_state: AdaptivePairControllerState,
+    controller_config: StepControllerConfig,
+    tolerances: StepDoublingTolerances,
+    target_time_ns: float,
+    minimum_step_ns: float,
+    maximum_step_ns: float,
+    maximum_attempts: int,
+    maximum_accepted_slabs: int,
+    public_sample_interval_ns: float,
+    magnetic_dipole: MagneticDipoleConfig,
+    include_dipole_source: bool,
+    public_output_state: AdaptivePairPublicOutputState | None = None,
+    checkpoint_store: _AcceptedPairCheckpoint | None = None,
+    spin_interpolation_model: str = "causal_frozen_c1",
+    absolute_time_tolerance_ns: float = 1.0e-18,
+    relative_time_tolerance: float = 1.0e-12,
+) -> AdaptivePairRunResult:
+    """Advance accepted pair history to a bounded shared lab-time target.
+
+    The final proposed slab is clipped to ``target_time_ns``.  A rejected trial
+    publishes neither source-history rows nor public-output rows. Public output
+    is a list of accepted row indices; no interpolation or state mutation is
+    performed for output sampling. An optional variable-length pair checkpoint
+    is written only after accepted pair commits.
+
+    This remains an internal substrate. The fixed production loop, CLI, and GUI
+    do not select it yet.
+    """
+
+    target_time_ns = float(target_time_ns)
+    minimum_step_ns = float(minimum_step_ns)
+    maximum_step_ns = float(maximum_step_ns)
+    public_sample_interval_ns = float(public_sample_interval_ns)
+    maximum_attempts = int(maximum_attempts)
+    maximum_accepted_slabs = int(maximum_accepted_slabs)
+    scalar_values = (
+        target_time_ns,
+        minimum_step_ns,
+        maximum_step_ns,
+        public_sample_interval_ns,
+        absolute_time_tolerance_ns,
+        relative_time_tolerance,
+    )
+    if not all(np.isfinite(value) for value in scalar_values):
+        raise ValueError("adaptive pair run controls must be finite")
+    if minimum_step_ns <= 0.0 or maximum_step_ns < minimum_step_ns:
+        raise ValueError("adaptive pair run step bounds are invalid")
+    if not minimum_step_ns <= controller_state.current_step_ns <= maximum_step_ns:
+        raise ValueError("initial adaptive pair step is outside the declared bounds")
+    if public_sample_interval_ns <= 0.0:
+        raise ValueError("public sample interval must be positive")
+    if maximum_attempts < 1 or maximum_accepted_slabs < 1:
+        raise ValueError("adaptive pair run limits must be positive")
+    if absolute_time_tolerance_ns < 0.0 or relative_time_tolerance < 0.0:
+        raise ValueError("adaptive pair time tolerances must be non-negative")
+    if absolute_time_tolerance_ns == 0.0 and relative_time_tolerance == 0.0:
+        raise ValueError("at least one adaptive pair time tolerance must be positive")
+
+    current_time = _accepted_pair_time_ns(
+        rider_builder,
+        driver_builder,
+        tolerance_ns=absolute_time_tolerance_ns,
+    )
+    requested_window_ns = max(0.0, target_time_ns - current_time)
+    completion_tolerance = (
+        absolute_time_tolerance_ns + relative_time_tolerance * requested_window_ns
+    )
+    if target_time_ns < current_time - completion_tolerance:
+        raise ValueError("adaptive pair target time precedes accepted history")
+
+    if public_output_state is None:
+        output_state = _initial_public_output_state(
+            accepted_rows=rider_builder.accepted_steps,
+            current_time_ns=current_time,
+            sample_interval_ns=public_sample_interval_ns,
+        )
+    else:
+        output_state = public_output_state
+        if output_state.sample_interval_ns != public_sample_interval_ns:
+            raise ValueError("public sample interval conflicts with restored cursor")
+        if output_state.selected_rows[-1] >= rider_builder.accepted_steps:
+            raise ValueError(
+                "public output cursor references an unavailable history row"
+            )
+        if output_state.next_sample_time_ns <= current_time - completion_tolerance:
+            raise ValueError("public output cursor precedes accepted history")
+
+    attempts = 0
+    accepted_slabs = 0
+    rejected_trials = 0
+    state = controller_state
+    completed = target_time_ns - current_time <= completion_tolerance
+
+    while not completed:
+        if attempts >= maximum_attempts:
+            raise SharedLabTimeError(
+                "adaptive pair window exhausted its maximum trial attempts"
+            )
+        if accepted_slabs >= maximum_accepted_slabs:
+            raise SharedLabTimeError(
+                "adaptive pair window exhausted its maximum accepted slabs"
+            )
+
+        remaining = target_time_ns - current_time
+        attempted_step = min(state.current_step_ns, remaining)
+        clipped = attempted_step < state.current_step_ns
+        attempt_state = state
+        if clipped:
+            scale = attempted_step / state.current_step_ns
+            attempt_state = replace(
+                state,
+                current_step_ns=attempted_step,
+                rider_proper_step_guess_ns=(state.rider_proper_step_guess_ns * scale),
+                driver_proper_step_guess_ns=(state.driver_proper_step_guess_ns * scale),
+            )
+        attempt_minimum = min(minimum_step_ns, attempted_step)
+        result = attempt_exact_pair_adaptive_step(
+            rider_builder=rider_builder,
+            driver_builder=driver_builder,
+            advance_rider=advance_rider,
+            advance_driver=advance_driver,
+            controller_state=attempt_state,
+            controller_config=controller_config,
+            tolerances=tolerances,
+            minimum_step_ns=attempt_minimum,
+            maximum_step_ns=maximum_step_ns,
+            magnetic_dipole=magnetic_dipole,
+            include_dipole_source=include_dipole_source,
+            spin_interpolation_model=spin_interpolation_model,
+            absolute_time_tolerance_ns=absolute_time_tolerance_ns,
+            relative_time_tolerance=relative_time_tolerance,
+        )
+        attempts += 1
+        state = result.controller_state
+        if not result.accepted:
+            rejected_trials += 1
+            shrink_tolerance = np.finfo(np.float64).eps * max(
+                attempted_step, attempt_minimum
+            )
+            if state.current_step_ns >= attempted_step - shrink_tolerance:
+                raise SharedLabTimeError(
+                    "adaptive pair trial was rejected at the minimum usable step"
+                )
+            continue
+
+        if result.committed_rows is None:  # pragma: no cover - property invariant
+            raise RuntimeError("accepted adaptive pair result has no committed rows")
+        accepted_slabs += 1
+        current_time = _accepted_pair_time_ns(
+            rider_builder,
+            driver_builder,
+            tolerance_ns=(
+                2.0
+                * (
+                    absolute_time_tolerance_ns
+                    + relative_time_tolerance * attempted_step
+                )
+            ),
+        )
+        completed = target_time_ns - current_time <= completion_tolerance
+        if current_time > target_time_ns + completion_tolerance:
+            raise SharedLabTimeError("adaptive pair window overshot its target time")
+        output_state = _select_public_rows(
+            output_state,
+            committed_rows=result.committed_rows,
+            rider_builder=rider_builder,
+            time_tolerance_ns=completion_tolerance,
+            include_final_row=completed,
+        )
+        if checkpoint_store is not None and checkpoint_store.due(
+            rider_builder.accepted_steps,
+            force=completed,
+        ):
+            checkpoint_store.write(
+                rider=rider_builder.build_current(),
+                driver=driver_builder.build_current(),
+                controller_state=state.to_checkpoint_state(),
+                public_output_state=output_state.to_checkpoint_state(),
+                complete=completed,
+            )
+
+    return AdaptivePairRunResult(
+        controller_state=state,
+        public_output_state=output_state,
+        attempts=attempts,
+        accepted_slabs=accepted_slabs,
+        rejected_trials=rejected_trials,
+        final_time_ns=current_time,
+        completed=completed,
+    )
+
+
 __all__ = [
     "AdaptivePairAttempt",
     "AdaptivePairControllerState",
+    "AdaptivePairPublicOutputState",
+    "AdaptivePairRunResult",
     "attempt_exact_pair_adaptive_step",
+    "run_exact_pair_adaptive_window",
 ]

@@ -66,6 +66,16 @@
   checkpoint. A focused interrupted/resumed adaptive sequence restores both
   histories and reproduces the next accepted attempt bit-for-bit against the
   uninterrupted path.
+- Added a bounded internal exact-pair adaptive run window. It clips the last
+  shared-lab-time slab to a declared target, retains every accepted midpoint
+  and endpoint in causal source history, and selects public output only by
+  accepted row index. Changing the public sampling interval is regression
+  tested not to change dynamics. Attempt and accepted-slab limits fail
+  explicitly, irreducible minimum-step rejection cannot loop forever, and the
+  variable-length pair checkpoint now reproduces the full run window and its
+  output cursor bit-for-bit after interruption. A short charged RFS + Medina +
+  retarded-dipole run exercises the complete internal path. This mode is not
+  yet exposed through the production integrator, CLI, or GUI.
 
 All notable changes and updates to the LW Integrator project are documented in this file.
 
