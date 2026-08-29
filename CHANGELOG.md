@@ -6,6 +6,16 @@ All notable changes and updates to the LW Integrator project are documented in t
 
 ### Experimental Magnetic Dipole Moments (August 2026)
 
+- Reused the authoritative rider and driver trajectory builders during fixed-step
+  ``INERTIAL_PREHISTORY`` exact-retarded runs.  The previous non-adaptive path
+  reconstructed both complete accepted histories before every step, making a
+  nominally fixed run quadratic in its number of stored samples and eventually
+  hiding the analytical-provider speedup.  Adaptive, substep, and pseudo-grid
+  paths retain their isolated trial histories.  In a 2,500-sample analytical
+  electron--proton checkpoint probe, the new path preserved the complete result
+  byte-for-byte, reduced wall time from 37.81 to 7.79 seconds despite checkpoint
+  writes, and kept the final four 500-step intervals flat at 1.19--1.43 seconds.
+
 - Compiled the state-specific ordinary-charge, RFS magnetic-moment, and spin
   contractions used by the analytical charge-plus-dipole backend while keeping
   its reusable 34-value ``(A, F, partial F)`` response.  A dependency audit

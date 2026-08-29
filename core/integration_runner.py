@@ -1771,6 +1771,7 @@ def _run_adaptive_step(
     z_cutoff: float,
     trajectory: Trajectory,
     trajectory_drv: Trajectory,
+    _traj_builder: Optional[TrajectoryBuilder],
     _traj_drv_builder: Optional[TrajectoryBuilder],
     cancel_callback: Optional[Callable],
     logger: Optional[Any],
@@ -2063,6 +2064,14 @@ def _run_adaptive_step(
                     state_with_deaths["_particle_failure_info"]
                 )
 
+    _scs_accepts_soa = _call_accepts_kw(self_consistent_step, "traj_soa")
+    _scs_accepts_radiation = _call_accepts_kw(
+        self_consistent_step, "radiation_reaction_mode"
+    )
+    _scs_accepts_external_field = _call_accepts_kw(
+        self_consistent_step, "external_field"
+    )
+
     while not step_accepted:
         if cancel_callback is not None and cancel_callback():
             raise IntegrationCancelled("Integration cancelled by caller.")
@@ -2091,6 +2100,98 @@ def _run_adaptive_step(
 
         if num_substeps < 1:
             num_substeps = 1
+
+        fixed_full_history_direct = (
+            not _adaptive_timestep_enabled(adaptive_timestep)
+            and startup_mode is StartupMode.INERTIAL_PREHISTORY
+            and sim_type is SimulationType.BUNCH_TO_BUNCH
+            and use_full_history
+            and num_substeps == 1
+            and current_h_step == h_step
+            and not pseudo_grid_force_reduction_enabled
+            and _traj_builder is not None
+            and _traj_drv_builder is not None
+        )
+        if fixed_full_history_direct:
+            assert _traj_builder is not None
+            assert _traj_drv_builder is not None
+            try:
+                trial_state = self_consistent_step(
+                    retarded_equations_of_motion,
+                    current_h_step,
+                    trajectory,
+                    trajectory_drv,
+                    i - 1,
+                    aperture_radius,
+                    sim_type,
+                    self_consistency,
+                    chrono_mode,
+                    startup_mode,
+                    step_idx=i,
+                    cancel_callback=cancel_callback,
+                    **(
+                        {"radiation_reaction_mode": radiation_reaction_mode}
+                        if _scs_accepts_radiation
+                        else {}
+                    ),
+                    **(
+                        {"space_charge": space_charge}
+                        if space_charge is not None
+                        else {}
+                    ),
+                    **(
+                        {"external_field": external_field}
+                        if external_field is not None and _scs_accepts_external_field
+                        else {}
+                    ),
+                    **(
+                        {"traj_soa": _traj_builder.build_partial(i)}
+                        if _scs_accepts_soa
+                        else {}
+                    ),
+                    **(
+                        {"traj_ext_soa": _traj_drv_builder.build_partial(i)}
+                        if _scs_accepts_soa
+                        else {}
+                    ),
+                    macroparticle_smearing=macroparticle_smearing,
+                    beamline_geometry=beamline_geometry,
+                    magnetic_dipole=magnetic_dipole,
+                )
+            except GammaBlowupError as exc:
+                msg = (
+                    f"    [CRITICAL] Step {i}, Particle {exc.particle_idx}: "
+                    f"Gamma blowup (\u03b3={exc.gamma_value:.2e}) with no adaptive "
+                    "timestep available. Marking particle as dead."
+                )
+                if logger:
+                    logger(msg)
+                else:
+                    print(msg)
+                trial_state = {
+                    key: (
+                        value.copy() if isinstance(value, (dict, np.ndarray)) else value
+                    )
+                    for key, value in temp_trajectory_base.items()
+                }
+                mark_particle_dead(
+                    trial_state,
+                    exc.particle_idx,
+                    i,
+                    "gamma_blowup_no_adaptive",
+                    gamma_value=exc.gamma_value,
+                    iteration=exc.iteration,
+                )
+                last_particle_death_step = i
+
+            adaptive_state.reduced_timestep_mode = reduced_timestep_mode
+            adaptive_state.reduced_h_step = reduced_h_step
+            adaptive_state.cooldown_counter = cooldown_counter
+            adaptive_state.stable_steps_counter = stable_steps_counter
+            adaptive_state.last_particle_death_step = last_particle_death_step
+            adaptive_state.previous_energy = previous_energy
+            adaptive_state.current_h_step = current_h_step
+            return trial_state
 
         temp_trajectory = []
         if use_full_history and i > 1:
@@ -2121,14 +2222,6 @@ def _run_adaptive_step(
         )
         for step_index, state in enumerate(temp_driver):
             _temp_drv_builder.set_step(step_index, state)
-        _scs_accepts_soa = _call_accepts_kw(self_consistent_step, "traj_soa")
-        _scs_accepts_radiation = _call_accepts_kw(
-            self_consistent_step, "radiation_reaction_mode"
-        )
-        _scs_accepts_external_field = _call_accepts_kw(
-            self_consistent_step, "external_field"
-        )
-
         energy_jump_detected = False
         gamma_blowup_detected = False
         max_refinement_reached = False
@@ -3852,6 +3945,7 @@ def retarded_integrator(
                 z_cutoff=z_cutoff,
                 trajectory=trajectory,
                 trajectory_drv=trajectory_drv,
+                _traj_builder=_traj_builder,
                 _traj_drv_builder=_traj_drv_builder,
                 cancel_callback=cancel_callback,
                 logger=logger,

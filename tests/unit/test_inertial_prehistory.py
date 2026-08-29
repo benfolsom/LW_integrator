@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 from dataclasses import fields
 from types import SimpleNamespace
+from typing import Any
 
 import numpy as np
 import pytest
@@ -677,8 +678,64 @@ def test_joint_endpoint_publication_keeps_exact_history_append_only() -> None:
         dipole_fields._DIPOLE_PREPARED_HISTORY_CACHE,
     ):
         stats = cache.stats()
-        assert stats.appends == 7
+        # Both authoritative source histories append once per accepted step.
+        # The fixed-step path must not replace either with a rebuilt temporary
+        # builder whose storage token changes on every call.
+        assert stats.misses == 2
+        assert stats.appends == 14
         assert stats.rebuilds == 0
+
+
+def test_fixed_exact_run_reuses_only_authoritative_trajectory_builders(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fixed full-history stepping must not rebuild the accepted past."""
+
+    import core.integration_runner as integration_runner
+
+    constructor_calls: list[tuple[int, int]] = []
+    original_init = integration_runner.TrajectoryBuilder.__init__
+
+    def counted_init(
+        self: Any,
+        n_steps: int,
+        n_particles: int,
+        *args: Any,
+        **kwargs: Any,
+    ) -> None:
+        constructor_calls.append((int(n_steps), int(n_particles)))
+        original_init(self, n_steps, n_particles, *args, **kwargs)
+
+    monkeypatch.setattr(integration_runner.TrajectoryBuilder, "__init__", counted_init)
+
+    rider = _species_state(
+        "electron",
+        position_mm=(0.0, 0.1, 0.0),
+        beta=(0.01, 0.0, 0.0),
+    )
+    driver = _species_state("proton", position_mm=(0.0, 0.0, 0.0))
+    magnetic = MagneticDipoleConfig(
+        enabled=True,
+        spin_precession_enabled=True,
+        stern_gerlach_force_enabled=True,
+        source=DipoleSourceConfig(model="covariant_retarded_point"),
+        rider=MagneticDipoleParticleConfig(species="electron", polarization=1.0),
+        driver=MagneticDipoleParticleConfig(species="proton", polarization=1.0),
+    )
+
+    _run_simple_inertial(
+        rider,
+        driver,
+        steps=8,
+        h_step=1.0e-3,
+        magnetic_dipole=magnetic,
+    )
+
+    # One preallocated builder per role is O(1) in the number of accepted
+    # steps.  The historical path constructed two temporary builders on every
+    # step and copied every already accepted row into them, making a long run
+    # O(N^2) even when adaptive stepping was disabled.
+    assert constructor_calls == [(15, 1), (15, 1)]
 
 
 def test_joint_endpoint_publication_is_role_swap_symmetric() -> None:
