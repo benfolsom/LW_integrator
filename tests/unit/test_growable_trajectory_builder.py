@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 
 from core import retarded_dipole_fields, retarded_fields
 from core.constants import C_MMNS
+from core.integration_checkpoint import IntegrationCheckpointStore
 from core.retarded_fields import ObserverEvent
 from core.types import (
     GrowableTrajectoryBuilder,
@@ -138,8 +141,6 @@ def test_append_api_rejects_arbitrary_rows_and_allows_unprimed_medina_time() -> 
         builder.set_step(0, _state(0))
     with pytest.raises(ValueError, match="accepted history length"):
         builder.build_partial(2)
-    with pytest.raises(NotImplementedError, match="checkpoint restore"):
-        builder.restore_checkpoint_rows(0, {"x": np.zeros((1, 1))})
 
 
 @pytest.mark.parametrize(
@@ -282,3 +283,59 @@ def test_causal_spin_slopes_make_past_hertz_result_append_invariant() -> None:
 
     assert before.retarded_time_ns[0] == after.retarded_time_ns[0] == 0.015
     np.testing.assert_array_equal(before.hertz_tensor, after.hertz_tensor)
+
+
+def test_existing_chunk_format_restores_growable_accepted_history(
+    tmp_path: Path,
+) -> None:
+    source = GrowableTrajectoryBuilder(2, 1, magnetic_dipole=True)
+    for step in range(5):
+        state = _state(step)
+        state["medina_external_force_sample_time"] = np.array(
+            [np.nan if step == 0 else 0.01 * (step - 0.5)]
+        )
+        source.append_step(state)
+
+    checkpoint_directory = tmp_path / "accepted-history.checkpoint"
+    store = IntegrationCheckpointStore(
+        checkpoint_directory,
+        compatibility_payload={"mode": "accepted-history-test"},
+        total_steps=5,
+        requested_steps=5,
+        active_start=0,
+        interval_steps=2,
+        interval_seconds=0.0,
+        resume=False,
+    )
+    history = source.build_current()
+    store.write(
+        step_index=1,
+        rider=history,
+        driver=history,
+        loop_state={"controller": "coarse"},
+    )
+    store.write(
+        step_index=4,
+        rider=history,
+        driver=history,
+        loop_state={"controller": "fine"},
+        complete=True,
+    )
+
+    reopened = IntegrationCheckpointStore(
+        checkpoint_directory,
+        compatibility_payload={"mode": "accepted-history-test"},
+        total_steps=5,
+        requested_steps=5,
+        active_start=0,
+        interval_steps=2,
+        interval_seconds=0.0,
+        resume=True,
+    )
+    restored = GrowableTrajectoryBuilder(1, 1, magnetic_dipole=True)
+    reopened.restore_builder(restored, "rider")
+
+    assert restored.accepted_steps == 5
+    assert restored.capacity >= 5
+    assert reopened.loop_state == {"controller": "fine"}
+    _assert_public_arrays_equal(restored.build_current(), history)

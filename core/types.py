@@ -2160,11 +2160,28 @@ class GrowableTrajectoryBuilder(TrajectoryBuilder):
         *,
         particle_constants: dict[str, np.ndarray] | None = None,
     ) -> None:
-        """Reserve variable-history restore semantics for checkpoint phase 2."""
+        """Restore one contiguous accepted block, growing before publication."""
 
-        raise NotImplementedError(
-            "growable accepted-history checkpoint restore is not implemented yet"
+        start = int(start)
+        if start != self._accepted_steps:
+            raise ValueError(
+                "checkpoint rows must continue the accepted history contiguously"
+            )
+        if not row_arrays:
+            raise ValueError("checkpoint row block must not be empty")
+        first_values = np.asarray(next(iter(row_arrays.values())))
+        if first_values.ndim < 1 or int(first_values.shape[0]) < 1:
+            raise ValueError("checkpoint row arrays need a non-empty row axis")
+        stop = start + int(first_values.shape[0])
+        while stop > self._n_steps:
+            grown = max(stop, int(np.ceil(self._n_steps * self._growth_factor)))
+            self._replace_row_capacity(grown)
+        super().restore_checkpoint_rows(
+            start,
+            row_arrays,
+            particle_constants=particle_constants,
         )
+        self._accepted_steps = stop
 
     def build_current(self) -> TrajectoryArrays:
         """Return a managed view containing exactly the accepted rows."""

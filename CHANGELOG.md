@@ -10,6 +10,10 @@
   multirate dipole history. It uses only accepted past knots, preserves every
   queryable slope under future appends, and is not yet selected by production
   field providers.
+- Extended the existing immutable checkpoint-row format to restore growable
+  accepted histories in contiguous blocks. The current checkpoint manifest
+  still requires a declared fixed total and does not yet persist an adaptive
+  controller; this is storage-format validation, not adaptive restart support.
 
 All notable changes and updates to the LW Integrator project are documented in this file.
 
