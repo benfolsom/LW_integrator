@@ -96,3 +96,47 @@ def test_append_rejects_noncausal_or_corrupt_prefix() -> None:
     previous[1, 0] += 1.0
     with pytest.raises(ValueError, match="causal accepted prefix"):
         append_causal_frozen_spin_slopes_per_ns(previous, spin, time)
+
+
+def test_rotating_spin_interpolation_has_third_order_interior_convergence() -> None:
+    errors: list[float] = []
+    angular_frequency = 3.1
+    fraction = 0.37
+    for knot_count in (17, 33, 65):
+        time = np.linspace(0.0, 1.0, knot_count)
+        spin = np.stack(
+            (
+                np.cos(angular_frequency * time),
+                np.sin(angular_frequency * time),
+                0.2 * np.cos(0.5 * angular_frequency * time),
+            ),
+            axis=1,
+        )
+        slopes = causal_frozen_spin_slopes_per_ns(spin, time)
+        level_errors = []
+        for segment in range(2, knot_count - 1):
+            duration = time[segment + 1] - time[segment]
+            u = fraction
+            h00 = 2.0 * u**3 - 3.0 * u**2 + 1.0
+            h10 = u**3 - 2.0 * u**2 + u
+            h01 = -2.0 * u**3 + 3.0 * u**2
+            h11 = u**3 - u**2
+            interpolated = (
+                h00 * spin[segment]
+                + h10 * duration * slopes[segment]
+                + h01 * spin[segment + 1]
+                + h11 * duration * slopes[segment + 1]
+            )
+            sample_time = time[segment] + fraction * duration
+            expected = np.array(
+                [
+                    np.cos(angular_frequency * sample_time),
+                    np.sin(angular_frequency * sample_time),
+                    0.2 * np.cos(0.5 * angular_frequency * sample_time),
+                ]
+            )
+            level_errors.append(float(np.linalg.norm(interpolated - expected)))
+        errors.append(max(level_errors))
+
+    assert errors[0] / errors[1] > 7.5
+    assert errors[1] / errors[2] > 7.5

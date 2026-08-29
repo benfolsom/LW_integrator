@@ -57,6 +57,10 @@ from typing import Hashable, Sequence, cast
 
 import numpy as np
 
+from .causal_spin_history import (
+    append_causal_frozen_spin_slopes_per_ns,
+    causal_frozen_spin_slopes_per_ns,
+)
 from .constants import C_MMNS
 from .exact_retarded_backend import (
     EXACT_RETARDED_BACKENDS,
@@ -103,6 +107,14 @@ _DEFAULT_STENCIL_MINIMUM_STEP_MM = 1.0e-15
 _DEFAULT_MINIMUM_SEPARATION_MM = 1.0e-15
 _CONTRAVARIANT_DERIVATIVE_SIGNS = np.array((1.0, -1.0, -1.0, -1.0))
 RETARDED_DIPOLE_BACKENDS = EXACT_RETARDED_BACKENDS
+_CENTERED_C1_SPIN_INTERPOLATION = "centered_c1"
+_CAUSAL_FROZEN_C1_SPIN_INTERPOLATION = "causal_frozen_c1"
+_SPIN_INTERPOLATION_MODELS = frozenset(
+    {
+        _CENTERED_C1_SPIN_INTERPOLATION,
+        _CAUSAL_FROZEN_C1_SPIN_INTERPOLATION,
+    }
+)
 
 
 class DipoleSourceSingularityError(ValueError):
@@ -223,11 +235,22 @@ class _PreparedDipoleHistory:
     arrays: _HistoryArrays
     source_identities: tuple[Hashable, ...]
     sources: dict[int, _PreparedDipoleSource]
+    spin_interpolation_model: str = _CENTERED_C1_SPIN_INTERPOLATION
 
 
 _DIPOLE_PREPARED_HISTORY_CACHE: AppendAwarePreparedHistoryCache[
     TrajectoryHistory, _PreparedDipoleHistory
 ] = AppendAwarePreparedHistoryCache(max_entries=2)
+
+
+def _validated_spin_interpolation_model(model: str) -> str:
+    selected = str(model).strip().lower().replace("-", "_")
+    if selected not in _SPIN_INTERPOLATION_MODELS:
+        raise ValueError(
+            "spin_interpolation_model must be one of: "
+            + ", ".join(sorted(_SPIN_INTERPOLATION_MODELS))
+        )
+    return selected
 
 
 @lru_cache(maxsize=1)
@@ -337,6 +360,8 @@ def _append_source_spin_slopes_per_ns(
     source: _PreparedDipoleSource,
     appended_spin: np.ndarray,
     combined_time_ns: np.ndarray,
+    *,
+    spin_interpolation_model: str = _CENTERED_C1_SPIN_INTERPOLATION,
 ) -> None:
     """Append spin knots in place and recompute only the Hermite tail.
 
@@ -375,6 +400,16 @@ def _append_source_spin_slopes_per_ns(
     source._rest_spin_buffer[old_count:count] = appended_spin
     spin = source._rest_spin_buffer[:count]
     slopes = source._slope_buffer
+    if spin_interpolation_model == _CAUSAL_FROZEN_C1_SPIN_INTERPOLATION:
+        extended = append_causal_frozen_spin_slopes_per_ns(
+            source.rest_spin_derivative_per_ns,
+            spin,
+            combined_time_ns,
+        )
+        slopes[:count] = extended
+        source.rest_spin = spin
+        source.rest_spin_derivative_per_ns = slopes[:count]
+        return
     if count < 2:
         slopes[:count] = 0.0
         source.rest_spin = spin
@@ -429,7 +464,11 @@ def _prepare_dipole_history_uncached(
     excluded_source_identities: Sequence[Hashable],
     reserve_capacity: int | None = None,
     maximum_capacity: int | None = None,
+    spin_interpolation_model: str = _CENTERED_C1_SPIN_INTERPOLATION,
 ) -> _PreparedDipoleHistory:
+    selected_spin_interpolation = _validated_spin_interpolation_model(
+        spin_interpolation_model
+    )
     arrays = _reserve_history_arrays(
         _extract_history(history),
         reserve_capacity,
@@ -499,8 +538,17 @@ def _prepare_dipole_history_uncached(
                 identity=identity,
                 worldline=worldline,
                 rest_spin=source_spin,
-                rest_spin_derivative_per_ns=_source_spin_slopes_per_ns(
-                    source_spin, worldline.time_ns
+                rest_spin_derivative_per_ns=(
+                    causal_frozen_spin_slopes_per_ns(
+                        source_spin,
+                        worldline.time_ns,
+                    )
+                    if selected_spin_interpolation
+                    == _CAUSAL_FROZEN_C1_SPIN_INTERPOLATION
+                    else _source_spin_slopes_per_ns(
+                        source_spin,
+                        worldline.time_ns,
+                    )
                 ),
                 preserved_rest_spin_magnitude=preserved_magnitude,
                 magnetic_moment_native=float(moments[source_index]),
@@ -511,6 +559,7 @@ def _prepare_dipole_history_uncached(
         arrays=arrays,
         source_identities=identities,
         sources=sources,
+        spin_interpolation_model=selected_spin_interpolation,
     )
 
 
@@ -547,6 +596,7 @@ def _append_prepared_dipole_history(
             excluded_source_identities=excluded_source_identities,
             reserve_capacity=history_prepared_buffer_capacity(history),
             maximum_capacity=history_storage_capacity(history),
+            spin_interpolation_model=previous.spin_interpolation_model,
         )
     previous_moments = np.zeros(arrays.n_sources, dtype=float)
     previous_active = np.zeros(arrays.n_sources, dtype=bool)
@@ -586,6 +636,7 @@ def _append_prepared_dipole_history(
             excluded_source_identities=excluded_source_identities,
             reserve_capacity=history_prepared_buffer_capacity(history),
             maximum_capacity=history_storage_capacity(history),
+            spin_interpolation_model=previous.spin_interpolation_model,
         )
 
     spin_components = tuple(
@@ -616,6 +667,7 @@ def _append_prepared_dipole_history(
                 source,
                 appended_spin,
                 worldline.time_ns,
+                spin_interpolation_model=previous.spin_interpolation_model,
             )
         preserved_magnitude = source.preserved_rest_spin_magnitude
         if preserved_magnitude is not None and appended_alive_count:
@@ -638,9 +690,13 @@ def _prepare_dipole_history(
     source_identities: Sequence[Hashable] | None,
     observer_source_identity: Hashable | None,
     excluded_source_identities: Sequence[Hashable],
+    spin_interpolation_model: str = _CENTERED_C1_SPIN_INTERPOLATION,
 ) -> _PreparedDipoleHistory:
     """Prepare dipole histories, extending a safe builder-backed cache."""
 
+    selected_spin_interpolation = _validated_spin_interpolation_model(
+        spin_interpolation_model
+    )
     identities_key = None if source_identities is None else tuple(source_identities)
     effective_excluded = set(excluded_source_identities)
     if observer_source_identity is not None:
@@ -650,6 +706,7 @@ def _prepare_dipole_history(
         effective_excluded.intersection_update(available_identities)
     variant = (
         "dipole",
+        selected_spin_interpolation,
         identities_key,
         frozenset(effective_excluded),
     )
@@ -663,6 +720,7 @@ def _prepare_dipole_history(
             excluded_source_identities=excluded_source_identities,
             reserve_capacity=history_prepared_buffer_capacity(current),
             maximum_capacity=history_storage_capacity(current),
+            spin_interpolation_model=selected_spin_interpolation,
         ),
         append=lambda prepared, current, old_stop: _append_prepared_dipole_history(
             prepared,

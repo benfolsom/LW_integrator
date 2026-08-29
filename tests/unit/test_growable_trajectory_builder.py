@@ -4,7 +4,6 @@ import numpy as np
 import pytest
 
 from core import retarded_dipole_fields, retarded_fields
-from core.causal_spin_history import causal_frozen_spin_slopes_per_ns
 from core.constants import C_MMNS
 from core.retarded_fields import ObserverEvent
 from core.types import (
@@ -248,18 +247,13 @@ def test_causal_spin_slopes_make_past_hertz_result_append_invariant() -> None:
         builder.append_step(state)
 
     def prepared_with_causal_slopes() -> retarded_dipole_fields._PreparedDipoleHistory:
-        prepared = retarded_dipole_fields._prepare_dipole_history_uncached(
+        return retarded_dipole_fields._prepare_dipole_history(
             builder.build_current(),
             source_identities=("source",),
             observer_source_identity=None,
             excluded_source_identities=(),
+            spin_interpolation_model="causal_frozen_c1",
         )
-        source = prepared.sources[0]
-        source.rest_spin_derivative_per_ns = causal_frozen_spin_slopes_per_ns(
-            source.rest_spin,
-            source.worldline.time_ns,
-        )
-        return prepared
 
     for step in range(3):
         append_rotating_state(step)
