@@ -758,6 +758,7 @@ def evaluate_retarded_dipole_field_gradient_hertz_jet_native(
     max_root_iterations: int = 96,
     response_kernel: str = "python",
     fallback_backend: str = "numba_full_strict_serial",
+    spin_interpolation_model: str = "centered_c1",
 ) -> DipoleHertzJetProviderResult:
     """Evaluate the analytical response, falling back at nonsmooth knots.
 
@@ -797,6 +798,7 @@ def evaluate_retarded_dipole_field_gradient_hertz_jet_native(
         source_identities=source_identities,
         observer_source_identity=observer_source_identity,
         excluded_source_identities=excluded_source_identities,
+        spin_interpolation_model=spin_interpolation_model,
     )
     if response_kernel == "numba_sparse_strict_serial":
         center = _evaluate_prepared_dipole_roots_numba_exact_serial(
@@ -839,6 +841,7 @@ def evaluate_retarded_dipole_field_gradient_hertz_jet_native(
             root_tolerance_mm=root_tolerance_mm,
             max_root_iterations=max_root_iterations,
             backend=fallback_backend,
+            spin_interpolation_model=spin_interpolation_model,
         )
         response: (
             RetardedDipoleFieldGradientResult | RetardedDipoleResponseGradientResult

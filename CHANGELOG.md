@@ -27,6 +27,14 @@
   slab-summed diagnostics use independent absolute/relative scales. The
   complete RFS-plus-Medina path remains conservatively first order until an
   end-to-end refinement study proves otherwise.
+- Added an immutable one- or two-row trial-history overlay for exact charge and
+  dipole providers. It extends a private shallow clone of cached accepted
+  history, so a full or half-step trial can expose provisional light-cone
+  segments without publishing rejected knots. It shares existing prepared
+  prefix buffers and copies them only at an amortized geometric-capacity
+  boundary. Dipole overlays hard-require the causal-frozen spin model; the
+  centered fixed-step default is rejected because appending would revise its
+  tail.
 
 All notable changes and updates to the LW Integrator project are documented in this file.
 

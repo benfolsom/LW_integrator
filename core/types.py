@@ -8,6 +8,7 @@ and example notebooks.
 
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass, field, fields
 from enum import Enum, IntEnum, auto
 from itertools import count
@@ -1243,6 +1244,78 @@ class TrajectoryArrays:
         return [self.state_at(i) for i in range(self.n_steps)]
 
 
+@dataclass(frozen=True)
+class TrialTrajectoryHistory:
+    """Immutable one- or two-row tail over accepted managed history.
+
+    Step-doubling trials need provisional endpoints to participate in exact
+    light-cone interpolation without publishing rejected knots. Providers
+    recognize this wrapper and normally share the prepared prefix buffers,
+    copying them only when the tiny tail crosses a geometric-capacity
+    boundary. The accepted base and its cache entry remain logically
+    unchanged.
+
+    The first return milestone deliberately permits at most two trial rows:
+    one full endpoint, or one midpoint plus one refined endpoint.
+    """
+
+    base: TrajectoryArrays
+    tail: tuple[ParticleState, ...]
+
+    def __post_init__(self) -> None:
+        self.base.require_current_storage()
+        if len(self.tail) not in {1, 2}:
+            raise ValueError("trial history tail must contain one or two rows")
+        particle_count = self.base.n_particles
+        previous_time = np.asarray(self.base.t[-1], dtype=np.float64)
+        detached_rows: list[ParticleState] = []
+        constant_fields = (
+            "q",
+            "q_source",
+            "magnetic_moment_native",
+            "magnetic_dipole_active",
+        )
+        for state in self.tail:
+            if "t" not in state:
+                raise ValueError("trial history rows require coordinate time t")
+            next_time = np.asarray(state["t"], dtype=np.float64)
+            if next_time.shape != (particle_count,) or not np.all(
+                np.isfinite(next_time)
+            ):
+                raise ValueError(
+                    "trial history coordinate time must contain one finite value "
+                    "per source"
+                )
+            if np.any(next_time <= previous_time):
+                raise ValueError(
+                    "trial history coordinate time must increase for every source"
+                )
+            for field_name in constant_fields:
+                if field_name not in state or not hasattr(self.base, field_name):
+                    continue
+                values = np.asarray(state[field_name])
+                expected = np.asarray(getattr(self.base, field_name))
+                if not np.array_equal(values, expected, equal_nan=True):
+                    raise ValueError(
+                        f"trial history source constant {field_name} changed"
+                    )
+            detached: ParticleState = {}
+            for name, values in state.items():
+                if isinstance(values, np.ndarray):
+                    copied = np.array(values, copy=True)
+                    copied.flags.writeable = False
+                    detached[name] = copied
+                else:
+                    detached[name] = copy.deepcopy(values)
+            detached_rows.append(detached)
+            previous_time = next_time
+        object.__setattr__(self, "tail", tuple(detached_rows))
+
+    @property
+    def n_steps(self) -> int:
+        return self.base.n_steps + len(self.tail)
+
+
 @dataclass
 class IndexedTrajectoryArrays:
     """Particle-indexed view over a :class:`TrajectoryArrays` history."""
@@ -2233,6 +2306,7 @@ __all__ = [
     "ExternalFieldConfig",
     "C_MMNS",
     "TrajectoryArrays",
+    "TrialTrajectoryHistory",
     "IndexedTrajectoryArrays",
     "TrajectoryBuilder",
     "GrowableTrajectoryBuilder",

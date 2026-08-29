@@ -178,6 +178,7 @@ def evaluate_retarded_dipole_source_interaction_native(
     root_tolerance_mm: float = 1.0e-21,
     max_root_iterations: int = 96,
     backend: str = "python",
+    spin_interpolation_model: str = "centered_c1",
 ) -> RetardedDipoleSourceInteraction:
     """Evaluate the non-self dipole field and ordinary charge responses.
 
@@ -200,6 +201,7 @@ def evaluate_retarded_dipole_source_interaction_native(
         root_tolerance_mm=root_tolerance_mm,
         max_root_iterations=max_root_iterations,
         backend=backend,
+        spin_interpolation_model=spin_interpolation_model,
     )
     return dipole_source_interaction_from_field_native(
         field=field,
