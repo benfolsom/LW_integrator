@@ -16,7 +16,13 @@ from core.retarded_fields import (
     _prepare_history,
     evaluate_retarded_charge_field_native,
 )
-from core.types import GrowableTrajectoryBuilder, TrialTrajectoryHistory
+from core.self_consistency import self_consistent_step
+from core.types import (
+    ChronoMatchingMode,
+    GrowableTrajectoryBuilder,
+    StartupMode,
+    TrialTrajectoryHistory,
+)
 
 
 def _source_state(step: int) -> dict[str, np.ndarray]:
@@ -253,3 +259,33 @@ def test_trial_dipole_history_rejects_centered_mutable_spin_model() -> None:
         evaluate_retarded_dipole_hertz_tensor_native(
             trial, ObserverEvent(0.25, (2, 1, 0))
         )
+
+
+def test_self_consistency_forwards_exact_trial_history_separately() -> None:
+    accepted = _dipole_history(3).build_current()
+    trial = TrialTrajectoryHistory(accepted, (_dipole_state(3),))
+    received: dict[str, object] = {}
+
+    def fake_step(*args: object, **kwargs: object) -> dict[str, np.ndarray]:
+        del args
+        received.update(kwargs)
+        return _source_state(3)
+
+    result = self_consistent_step(
+        fake_step,
+        0.1,
+        [_source_state(2)],
+        [_source_state(2)],
+        0,
+        1.0,
+        2,
+        None,
+        ChronoMatchingMode.FAST,
+        StartupMode.COLD_START,
+        exact_source_history=trial,
+        exact_source_spin_interpolation_model="causal_frozen_c1",
+    )
+
+    assert result["t"][0] == pytest.approx(0.3)
+    assert received["exact_source_history"] is trial
+    assert received["exact_source_spin_interpolation_model"] == "causal_frozen_c1"

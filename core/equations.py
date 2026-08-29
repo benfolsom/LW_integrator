@@ -1770,6 +1770,8 @@ def retarded_equations_of_motion(
     macroparticle_smearing: Optional[MacroparticleSmearingConfig] = None,
     beamline_geometry: Optional[BeamlineGeometryConfig] = None,
     magnetic_dipole: Optional[MagneticDipoleConfig] = None,
+    exact_source_history: Optional[Any] = None,
+    exact_source_spin_interpolation_model: str = "centered_c1",
 ) -> ParticleState:
     """Core equations of motion preserving the validated reference behavior.
 
@@ -1796,6 +1798,12 @@ def retarded_equations_of_motion(
         until sufficient observer travel has occurred, while
         ``APPROXIMATE_BACK_HISTORY`` assumes constant source velocity to
         reconstruct an analytic history.
+    exact_source_history:
+        Optional immutable source-history view used by exact charge and dipole
+        providers without replacing the accepted chronology/gating history.
+    exact_source_spin_interpolation_model:
+        Spin interpolation contract for ``exact_source_history``. Trial overlays
+        require ``"causal_frozen_c1"`` so accepted spin segments stay fixed.
     self_consistency:
         Optional configuration for self-consistency iterations. If provided and
         enabled, each particle's update will iterate until gamma converges,
@@ -2952,7 +2960,13 @@ def retarded_equations_of_motion(
                         exact_charge_field = exact_charge_field_cache
                     else:
                         charge_history = (
-                            traj_ext_soa if traj_ext_soa is not None else trajectory_ext
+                            exact_source_history
+                            if exact_source_history is not None
+                            else (
+                                traj_ext_soa
+                                if traj_ext_soa is not None
+                                else trajectory_ext
+                            )
                         )
                         charge_event = ObserverEvent(
                             time_ns=float(current_state["t"][particle_idx]),
@@ -3148,9 +3162,13 @@ def retarded_equations_of_motion(
                         ):
                             dipole_source_field = evaluate_retarded_dipole_field_gradient_hertz_jet_native(
                                 (
-                                    traj_ext_soa
-                                    if traj_ext_soa is not None
-                                    else trajectory_ext
+                                    exact_source_history
+                                    if exact_source_history is not None
+                                    else (
+                                        traj_ext_soa
+                                        if traj_ext_soa is not None
+                                        else trajectory_ext
+                                    )
                                 ),
                                 ObserverEvent(
                                     time_ns=float(current_state["t"][particle_idx]),
@@ -3174,14 +3192,21 @@ def retarded_equations_of_motion(
                                 ),
                                 response_kernel="numba_sparse_strict_serial",
                                 fallback_backend="numba_full_strict_serial",
+                                spin_interpolation_model=(
+                                    exact_source_spin_interpolation_model
+                                ),
                             ).response
                         else:
                             dipole_source_field = (
                                 evaluate_retarded_dipole_field_gradient_native(
                                     (
-                                        traj_ext_soa
-                                        if traj_ext_soa is not None
-                                        else trajectory_ext
+                                        exact_source_history
+                                        if exact_source_history is not None
+                                        else (
+                                            traj_ext_soa
+                                            if traj_ext_soa is not None
+                                            else trajectory_ext
+                                        )
                                     ),
                                     ObserverEvent(
                                         time_ns=float(current_state["t"][particle_idx]),
@@ -3203,6 +3228,9 @@ def retarded_equations_of_motion(
                                         magnetic_dipole.source.max_root_iterations
                                     ),
                                     backend=magnetic_dipole.exact_retarded_backend,
+                                    spin_interpolation_model=(
+                                        exact_source_spin_interpolation_model
+                                    ),
                                 )
                             )
                         if sc_convergence_mode == "fixed_geometry":

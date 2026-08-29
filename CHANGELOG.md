@@ -35,6 +35,11 @@
   boundary. Dipole overlays hard-require the causal-frozen spin model; the
   centered fixed-step default is rejected because appending would revise its
   tail.
+- Added an internal equations-of-motion seam that separates the exact provider
+  source history from legacy chronology and gating history. Future half-step
+  trials can keep the accepted chronology view while giving charge and dipole
+  providers an immutable provisional overlay. Existing callers do not pass
+  the seam and retain their previous behavior.
 
 All notable changes and updates to the LW Integrator project are documented in this file.
 
