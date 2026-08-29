@@ -54,6 +54,10 @@
   Both rider/driver sequences and both capacity expansions are preflighted
   before publication; rejected trials and ordinary validation failures append
   no history, while the one-full-step comparison path is never committed.
+- Added hard health gates above the adaptive error norm. A trial containing a
+  particle death, Medina impulse cap, negative/invalid far-radiated energy, or
+  an unexpected charged-particle Medina derivative-readiness transition is
+  never eligible for commit even when its scaled local error is below one.
 
 All notable changes and updates to the LW Integrator project are documented in this file.
 

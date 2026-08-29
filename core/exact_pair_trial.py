@@ -90,6 +90,13 @@ class ExactPairStepDoublingTrial:
     midpoint: ExactPairSlabTrial
     refined: ExactPairSlabTrial
     assessment: StepDoublingAssessment
+    health_failures: tuple[str, ...] = ()
+
+    @property
+    def accepted(self) -> bool:
+        """Whether both the error norm and non-negotiable health gates pass."""
+
+        return bool(self.assessment.accepted and not self.health_failures)
 
 
 def make_exact_role_eom_advance(options: ExactPairEOMOptions) -> AdvanceRoleTrial:
@@ -375,12 +382,127 @@ def solve_exact_pair_step_doubling_trial(
         method_order=method_order,
         tolerances=tolerances,
     )
+    health_failures = _step_doubling_health_failures(
+        accepted_rider_history=accepted_rider_history,
+        accepted_driver_history=accepted_driver_history,
+        full=full,
+        midpoint=midpoint,
+        refined=refined,
+    )
     return ExactPairStepDoublingTrial(
         full=full,
         midpoint=midpoint,
         refined=refined,
         assessment=assessment,
+        health_failures=health_failures,
     )
+
+
+def _state_has_finite_medina_sample(state: ParticleState) -> bool:
+    values = np.asarray(
+        state.get("medina_external_force_sample_time", np.array([np.nan])),
+        dtype=np.float64,
+    )
+    return bool(values.shape == (1,) and np.isfinite(values[0]))
+
+
+def _state_observer_is_charged(state: ParticleState) -> bool:
+    values = np.asarray(
+        state.get("q_observer", state.get("q", np.zeros(1))),
+        dtype=np.float64,
+    )
+    return bool(values.shape == (1,) and np.isfinite(values[0]) and values[0] != 0.0)
+
+
+def _trial_state_health_failures(
+    state: ParticleState,
+    *,
+    label: str,
+    expected_medina_ready: bool | None,
+) -> list[str]:
+    failures: list[str] = []
+    dead = np.asarray(state.get("_dead_particles", np.zeros(1, dtype=bool)), dtype=bool)
+    if dead.shape != (1,) or bool(dead[0]):
+        failures.append(f"{label}: particle death")
+    capped = np.asarray(
+        state.get("medina_impulse_capped", np.zeros(1, dtype=bool)), dtype=bool
+    )
+    if capped.shape != (1,) or bool(capped[0]):
+        failures.append(f"{label}: Medina impulse cap")
+    far_energy = np.asarray(
+        state.get("radiation_energy", np.zeros(1)), dtype=np.float64
+    )
+    if far_energy.shape != (1,) or not np.isfinite(far_energy[0]):
+        failures.append(f"{label}: invalid far-radiated energy")
+    elif far_energy[0] < 0.0:
+        failures.append(f"{label}: negative far-radiated energy")
+    if expected_medina_ready is not None:
+        ready = np.asarray(
+            state.get("medina_force_derivative_ready", np.zeros(1, dtype=bool)),
+            dtype=bool,
+        )
+        if ready.shape != (1,) or bool(ready[0]) is not expected_medina_ready:
+            failures.append(f"{label}: unexpected Medina derivative readiness")
+    return failures
+
+
+def _step_doubling_health_failures(
+    *,
+    accepted_rider_history: TrajectoryArrays,
+    accepted_driver_history: TrajectoryArrays,
+    full: ExactPairSlabTrial,
+    midpoint: ExactPairSlabTrial,
+    refined: ExactPairSlabTrial,
+) -> tuple[str, ...]:
+    failures: list[str] = []
+    paths = (
+        (
+            "rider",
+            accepted_rider_history,
+            full.pair.rider.state,
+            midpoint.pair.rider.state,
+            refined.pair.rider.state,
+        ),
+        (
+            "driver",
+            accepted_driver_history,
+            full.pair.driver.state,
+            midpoint.pair.driver.state,
+            refined.pair.driver.state,
+        ),
+    )
+    for role, accepted, full_state, midpoint_state, refined_state in paths:
+        start = accepted.state_at(-1)
+        medina_present = any(
+            "medina_external_force_sample_time" in state
+            for state in (full_state, midpoint_state, refined_state)
+        )
+        charged = _state_observer_is_charged(start)
+        start_primed = _state_has_finite_medina_sample(start)
+        first_ready = bool(start_primed) if medina_present and charged else None
+        refined_ready = True if medina_present and charged else None
+        failures.extend(
+            _trial_state_health_failures(
+                full_state,
+                label=f"{role} full",
+                expected_medina_ready=first_ready,
+            )
+        )
+        failures.extend(
+            _trial_state_health_failures(
+                midpoint_state,
+                label=f"{role} midpoint",
+                expected_medina_ready=first_ready,
+            )
+        )
+        failures.extend(
+            _trial_state_health_failures(
+                refined_state,
+                label=f"{role} refined endpoint",
+                expected_medina_ready=refined_ready,
+            )
+        )
+    return tuple(failures)
 
 
 def commit_accepted_exact_pair_step_doubling_trial(
@@ -397,8 +519,12 @@ def commit_accepted_exact_pair_step_doubling_trial(
     process-level interruption is recovered from the last atomic checkpoint.
     """
 
-    if not trial.assessment.accepted:
-        raise SharedLabTimeError("rejected step-doubling trial cannot be committed")
+    if not trial.accepted:
+        detail = "; ".join(trial.health_failures)
+        suffix = f": {detail}" if detail else ""
+        raise SharedLabTimeError(
+            f"rejected step-doubling trial cannot be committed{suffix}"
+        )
     if rider_builder.accepted_steps != driver_builder.accepted_steps:
         raise SharedLabTimeError("accepted rider and driver histories are misaligned")
     rider_states = (

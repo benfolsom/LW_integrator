@@ -6,7 +6,7 @@ import math
 import numpy as np
 import pytest
 
-from core.constants import C_MMNS
+from core.constants import C_MMNS, ELEMENTARY_CHARGE
 from core.exact_pair_trial import (
     ExactPairEOMOptions,
     commit_accepted_exact_pair_step_doubling_trial,
@@ -14,13 +14,23 @@ from core.exact_pair_trial import (
     solve_exact_pair_slab_trial,
     solve_exact_pair_step_doubling_trial,
 )
+from core.integration_runner import (
+    _apply_inertial_canonical_rebase,
+    _build_inertial_coasting_history,
+    _estimate_inertial_prehistory_duration_ns,
+    _initialize_magnetic_dipole_state,
+    _preflight_inertial_exact_histories,
+)
 from core.self_consistency import SelfConsistencyConfig
 from core.shared_lab_time import SharedLabTimeError
+from core.species import get_species
 from core.step_doubling import ErrorScale, StepDoublingTolerances
 from core.types import (
     ChronoMatchingMode,
+    DipoleSourceConfig,
     GrowableTrajectoryBuilder,
     MagneticDipoleConfig,
+    MagneticDipoleParticleConfig,
     StartupMode,
     TrialTrajectoryHistory,
 )
@@ -103,6 +113,94 @@ def _coasting_history(position_mm: float, gamma: float) -> GrowableTrajectoryBui
     )
     builder.append_step(_coasting_state(0.0, position_mm, gamma))
     return builder
+
+
+def _charged_species_state(
+    species_name: str,
+    *,
+    position_mm: float,
+) -> dict[str, np.ndarray]:
+    species = get_species(species_name)
+    state = _state(0.0, position_mm)
+    charge = float(species.charge_e) * ELEMENTARY_CHARGE
+    state.update(
+        {
+            "Pt": np.array([species.mass_amu * C_MMNS]),
+            "q": np.array([charge]),
+            "q_species": np.array([charge]),
+            "q_observer": np.array([charge]),
+            "q_source": np.array([charge]),
+            "macro_population": np.array([1.0]),
+            "m": np.array([species.mass_amu]),
+            "m_species": np.array([species.mass_amu]),
+            "char_time": np.array([0.0]),
+            "_dead_particles": np.array([False]),
+        }
+    )
+    return state
+
+
+def _charged_accepted_pair(
+    *,
+    include_dipole_source: bool = False,
+) -> tuple[
+    GrowableTrajectoryBuilder,
+    GrowableTrajectoryBuilder,
+    MagneticDipoleConfig,
+]:
+    rider = _charged_species_state("electron", position_mm=-5.0e-3)
+    driver = _charged_species_state("proton", position_mm=5.0e-3)
+    magnetic = MagneticDipoleConfig(
+        enabled=True,
+        spin_precession_enabled=True,
+        stern_gerlach_force_enabled=True,
+        source=DipoleSourceConfig(
+            model=("covariant_retarded_point" if include_dipole_source else "off")
+        ),
+        rider=MagneticDipoleParticleConfig(species="electron"),
+        driver=MagneticDipoleParticleConfig(species="proton"),
+    )
+    _initialize_magnetic_dipole_state(
+        rider,
+        magnetic.rider,
+        magnetic,
+        role="rider",
+    )
+    _initialize_magnetic_dipole_state(
+        driver,
+        magnetic.driver,
+        magnetic,
+        role="driver",
+    )
+    duration = _estimate_inertial_prehistory_duration_ns(rider, driver, magnetic)
+    rider_seed = _build_inertial_coasting_history(rider, duration)
+    driver_seed = _build_inertial_coasting_history(driver, duration)
+    rider_offset, driver_offset = _preflight_inertial_exact_histories(
+        rider_seed,
+        driver_seed,
+        magnetic_dipole=magnetic,
+        charge_field_required=True,
+        dipole_field_required=include_dipole_source,
+    )
+    _apply_inertial_canonical_rebase(
+        rider_seed[-1],
+        rider_offset,
+        charge_field_ready=True,
+        dipole_field_ready=include_dipole_source,
+    )
+    _apply_inertial_canonical_rebase(
+        driver_seed[-1],
+        driver_offset,
+        charge_field_ready=True,
+        dipole_field_ready=include_dipole_source,
+    )
+    rider_builder = GrowableTrajectoryBuilder(8, 1, magnetic_dipole=True)
+    driver_builder = GrowableTrajectoryBuilder(8, 1, magnetic_dipole=True)
+    for state in rider_seed:
+        rider_builder.append_step(state)
+    for state in driver_seed:
+        driver_builder.append_step(state)
+    return rider_builder, driver_builder, magnetic
 
 
 def _advance(scale: float, seen: list[object]):
@@ -438,6 +536,103 @@ def test_two_row_preflight_failure_publishes_neither_midpoint_nor_endpoint() -> 
 
     assert rider_builder.accepted_steps == 1
     assert driver_builder.accepted_steps == 1
+
+
+def test_health_gate_blocks_commit_even_when_error_norm_accepts() -> None:
+    rider_builder = _accepted(-1.0)
+    driver_builder = _accepted(1.0)
+    nominal = _advance(2.0, [])
+
+    def capped(*args: object) -> dict[str, np.ndarray]:
+        state = nominal(*args)  # type: ignore[arg-type]
+        state["medina_impulse_capped"] = np.array([True])
+        return state
+
+    trial = solve_exact_pair_step_doubling_trial(
+        accepted_rider_history=rider_builder.build_current(),
+        accepted_driver_history=driver_builder.build_current(),
+        advance_rider=capped,
+        advance_driver=_advance(4.0, []),
+        delta_time_ns=0.2,
+        rider_initial_proper_step_ns=0.1,
+        driver_initial_proper_step_ns=0.05,
+        magnetic_dipole=MagneticDipoleConfig(),
+        include_dipole_source=False,
+        tolerances=StepDoublingTolerances(
+            position_mm=ErrorScale(1.0, 0.0),
+            mechanical_momentum_native=ErrorScale(1.0, 0.0),
+            rest_spin=ErrorScale(1.0, 0.0),
+            diagnostics_native=ErrorScale(1.0, 0.0),
+        ),
+    )
+
+    assert trial.assessment.accepted
+    assert not trial.accepted
+    assert any("Medina impulse cap" in failure for failure in trial.health_failures)
+    with pytest.raises(SharedLabTimeError, match="Medina impulse cap"):
+        commit_accepted_exact_pair_step_doubling_trial(
+            trial,
+            rider_builder=rider_builder,
+            driver_builder=driver_builder,
+        )
+    assert rider_builder.accepted_steps == 1
+    assert driver_builder.accepted_steps == 1
+
+
+@pytest.mark.parametrize(
+    ("radiation_reaction_mode", "include_dipole_source"),
+    [("off", False), ("medina_lad", False), ("medina_lad", True)],
+)
+def test_charged_exact_rfs_step_doubling_uses_trial_history_without_commit(
+    radiation_reaction_mode: str,
+    include_dipole_source: bool,
+) -> None:
+    rider_builder, driver_builder, magnetic = _charged_accepted_pair(
+        include_dipole_source=include_dipole_source
+    )
+    accepted_count = rider_builder.accepted_steps
+    advance = make_exact_role_eom_advance(
+        ExactPairEOMOptions(
+            aperture_radius_mm=1.0,
+            magnetic_dipole=magnetic,
+            self_consistency=SelfConsistencyConfig.standard(),
+            radiation_reaction_mode=radiation_reaction_mode,
+        )
+    )
+    loose = StepDoublingTolerances(
+        position_mm=ErrorScale(1.0, 1.0),
+        mechanical_momentum_native=ErrorScale(1.0, 1.0),
+        rest_spin=ErrorScale(1.0, 1.0),
+        diagnostics_native=ErrorScale(1.0, 1.0),
+    )
+
+    trial = solve_exact_pair_step_doubling_trial(
+        accepted_rider_history=rider_builder.build_current(),
+        accepted_driver_history=driver_builder.build_current(),
+        advance_rider=advance,
+        advance_driver=advance,
+        delta_time_ns=1.0e-8,
+        rider_initial_proper_step_ns=1.0e-8,
+        driver_initial_proper_step_ns=1.0e-8,
+        magnetic_dipole=magnetic,
+        include_dipole_source=include_dipole_source,
+        tolerances=loose,
+    )
+
+    assert trial.accepted
+    assert not trial.health_failures
+    assert rider_builder.accepted_steps == accepted_count
+    assert driver_builder.accepted_steps == accepted_count
+    assert np.all(np.isfinite(trial.refined.pair.rider.state["Px"]))
+    assert np.all(np.isfinite(trial.refined.pair.driver.state["Px"]))
+    assert trial.refined.rider_history.n_steps == accepted_count + 2
+    assert trial.refined.driver_history.n_steps == accepted_count + 2
+    if radiation_reaction_mode == "medina_lad":
+        for endpoint in (trial.full.pair, trial.midpoint.pair):
+            assert not bool(endpoint.rider.state["medina_force_derivative_ready"][0])
+            assert not bool(endpoint.driver.state["medina_force_derivative_ready"][0])
+        assert bool(trial.refined.pair.rider.state["medina_force_derivative_ready"][0])
+        assert bool(trial.refined.pair.driver.state["medina_force_derivative_ready"][0])
 
 
 def test_real_neutral_eom_step_doubling_accepts_identical_coasting_paths() -> None:
