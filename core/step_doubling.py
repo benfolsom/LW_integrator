@@ -10,8 +10,12 @@ per-half diagnostic increments before constructing the refined sample.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Sequence, cast
 
 import numpy as np
+
+from .constants import C_MMNS
+from .types import ParticleState
 
 
 @dataclass(frozen=True)
@@ -91,13 +95,103 @@ class StepControllerConfig:
             raise ValueError("maximum_growth_factor must be at least one")
 
 
+_PAIR_INCREMENT_DIAGNOSTICS = (
+    "radiation_energy",
+    "radiation_reaction_work",
+    "medina_cross_field_energy_change",
+    "mass_shell_projection_energy",
+)
+
+
+def _single_particle_vector(
+    state: ParticleState,
+    field_names: tuple[str, str, str],
+    *,
+    role: str,
+) -> np.ndarray:
+    values = np.asarray(
+        [float(np.asarray(state[name], dtype=np.float64)[0]) for name in field_names],
+        dtype=np.float64,
+    )
+    if values.shape != (3,) or not np.all(np.isfinite(values)):
+        raise ValueError(f"{role} {field_names} must contain finite scalars")
+    return cast(np.ndarray, values)
+
+
+def _pair_role_step_doubling_values(
+    states: Sequence[ParticleState],
+    *,
+    role: str,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    if not states:
+        raise ValueError(f"{role} step-doubling path must contain a state")
+    endpoint = states[-1]
+    position = _single_particle_vector(endpoint, ("x", "y", "z"), role=role)
+    beta = _single_particle_vector(endpoint, ("bx", "by", "bz"), role=role)
+    gamma_values = np.asarray(endpoint.get("gamma", []), dtype=np.float64)
+    mass_values = np.asarray(
+        endpoint.get("m_species", endpoint.get("m", [])), dtype=np.float64
+    )
+    if (
+        gamma_values.shape != (1,)
+        or mass_values.shape != (1,)
+        or not np.all(np.isfinite(gamma_values))
+        or not np.all(np.isfinite(mass_values))
+        or gamma_values[0] < 1.0
+        or mass_values[0] <= 0.0
+    ):
+        raise ValueError(f"{role} endpoint gamma and mass must be physical scalars")
+    mechanical_momentum = gamma_values[0] * mass_values[0] * C_MMNS * beta
+
+    spin_names = ("spin_x", "spin_y", "spin_z")
+    if not any(name in endpoint for name in spin_names):
+        spin: np.ndarray = np.zeros(3, dtype=np.float64)
+    elif not all(name in endpoint for name in spin_names):
+        raise ValueError(f"{role} endpoint spin components must be all present")
+    else:
+        spin = _single_particle_vector(endpoint, spin_names, role=role)
+    diagnostics: np.ndarray = np.zeros(
+        len(_PAIR_INCREMENT_DIAGNOSTICS), dtype=np.float64
+    )
+    for state in states:
+        for index, name in enumerate(_PAIR_INCREMENT_DIAGNOSTICS):
+            values = np.asarray(state.get(name, np.zeros(1)), dtype=np.float64)
+            if values.shape != (1,) or not np.all(np.isfinite(values)):
+                raise ValueError(f"{role} {name} must contain one finite increment")
+            diagnostics[index] += float(values[0])
+    return position, mechanical_momentum, spin, diagnostics
+
+
+def build_pair_step_doubling_state(
+    *,
+    rider_states: Sequence[ParticleState],
+    driver_states: Sequence[ParticleState],
+) -> StepDoublingState:
+    """Reduce one full or two-half $1+1$ path to acceptance quantities.
+
+    Spatial mechanical momentum is reconstructed from the endpoint
+    ``gamma*m*c*beta`` so the comparison is independent of ordinary-potential
+    gauge bookkeeping. Energy-like diagnostics are increments and are summed
+    over both accepted half steps on the refined path.
+    """
+
+    rider = _pair_role_step_doubling_values(rider_states, role="rider")
+    driver = _pair_role_step_doubling_values(driver_states, role="driver")
+    return StepDoublingState(
+        position_mm=np.stack((rider[0], driver[0])),
+        mechanical_momentum_native=np.stack((rider[1], driver[1])),
+        rest_spin=np.stack((rider[2], driver[2])),
+        diagnostics_native=np.stack((rider[3], driver[3])),
+    )
+
+
 def _validated_array(values: np.ndarray, name: str) -> np.ndarray:
     result = np.asarray(values, dtype=np.float64)
     if result.ndim < 1:
         raise ValueError(f"{name} must have at least one dimension")
     if not np.all(np.isfinite(result)):
         raise ValueError(f"{name} must contain only finite values")
-    return result
+    return cast(np.ndarray, result)
 
 
 def _scaled_max_error(
@@ -235,5 +329,6 @@ __all__ = [
     "StepDoublingState",
     "StepDoublingTolerances",
     "assess_step_doubling",
+    "build_pair_step_doubling_state",
     "propose_next_step_ns",
 ]

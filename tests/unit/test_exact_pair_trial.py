@@ -11,9 +11,11 @@ from core.exact_pair_trial import (
     ExactPairEOMOptions,
     make_exact_role_eom_advance,
     solve_exact_pair_slab_trial,
+    solve_exact_pair_step_doubling_trial,
 )
 from core.self_consistency import SelfConsistencyConfig
 from core.shared_lab_time import SharedLabTimeError
+from core.step_doubling import ErrorScale, StepDoublingTolerances
 from core.types import (
     ChronoMatchingMode,
     GrowableTrajectoryBuilder,
@@ -115,6 +117,13 @@ def _advance(scale: float, seen: list[object]):
         result["x"] = np.array([float(observer_start["x"][0]) + proper_step_ns])
         result["_exact_source_start_four_potential"] = np.zeros((1, 4))
         result["_exact_source_endpoint_rebase_required"] = np.array([False])
+        result["spin_x"] = np.array([0.0])
+        result["spin_y"] = np.array([0.0])
+        result["spin_z"] = np.array([1.0])
+        result["radiation_energy"] = np.array([proper_step_ns**2])
+        result["radiation_reaction_work"] = np.array([0.0])
+        result["medina_cross_field_energy_change"] = np.array([0.0])
+        result["mass_shell_projection_energy"] = np.array([0.0])
         assert float(source_start["t"][0]) == pytest.approx(
             float(observer_start["t"][0])
         )
@@ -315,5 +324,78 @@ def test_real_neutral_eom_trial_lands_shared_time_without_publication() -> None:
     assert trial.pair.driver.proper_step_ns == pytest.approx(0.008)
     assert trial.pair.rider.coordinate_time_ns == pytest.approx(0.01)
     assert trial.pair.driver.coordinate_time_ns == pytest.approx(0.01)
+    assert rider_builder.accepted_steps == 2
+    assert driver_builder.accepted_steps == 2
+
+
+def test_step_doubling_keeps_both_paths_unpublished_and_sums_half_diagnostics() -> None:
+    rider_builder = _accepted(-1.0)
+    driver_builder = _accepted(1.0)
+    trial = solve_exact_pair_step_doubling_trial(
+        accepted_rider_history=rider_builder.build_current(),
+        accepted_driver_history=driver_builder.build_current(),
+        advance_rider=_advance(2.0, []),
+        advance_driver=_advance(4.0, []),
+        delta_time_ns=0.2,
+        rider_initial_proper_step_ns=0.1,
+        driver_initial_proper_step_ns=0.05,
+        magnetic_dipole=MagneticDipoleConfig(),
+        include_dipole_source=False,
+        tolerances=StepDoublingTolerances(
+            position_mm=ErrorScale(1.0, 0.0),
+            mechanical_momentum_native=ErrorScale(1.0, 0.0),
+            rest_spin=ErrorScale(1.0, 0.0),
+            diagnostics_native=ErrorScale(1.0e-4, 0.0),
+        ),
+    )
+
+    assert not trial.assessment.accepted
+    assert trial.assessment.diagnostics_error > 1.0
+    assert trial.midpoint.pair.target_time_ns == pytest.approx(0.1)
+    assert trial.refined.pair.target_time_ns == pytest.approx(0.2)
+    assert trial.refined.rider_history.n_steps == 3
+    assert trial.refined.driver_history.n_steps == 3
+    assert rider_builder.accepted_steps == 1
+    assert driver_builder.accepted_steps == 1
+
+
+def test_real_neutral_eom_step_doubling_accepts_identical_coasting_paths() -> None:
+    rider_builder = _coasting_history(-1.0, 2.0)
+    driver_builder = _coasting_history(1.0, 1.25)
+    magnetic = MagneticDipoleConfig(
+        enabled=True,
+        spin_precession_enabled=False,
+        stern_gerlach_force_enabled=False,
+    )
+    advance = make_exact_role_eom_advance(
+        ExactPairEOMOptions(
+            aperture_radius_mm=10.0,
+            magnetic_dipole=magnetic,
+            self_consistency=SelfConsistencyConfig.standard(),
+        )
+    )
+    tolerances = StepDoublingTolerances(
+        position_mm=ErrorScale(1.0e-12, 1.0e-12),
+        mechanical_momentum_native=ErrorScale(1.0e-12, 1.0e-12),
+        rest_spin=ErrorScale(1.0e-12, 1.0e-12),
+        diagnostics_native=ErrorScale(1.0e-12, 1.0e-12),
+    )
+
+    trial = solve_exact_pair_step_doubling_trial(
+        accepted_rider_history=rider_builder.build_current(),
+        accepted_driver_history=driver_builder.build_current(),
+        advance_rider=advance,
+        advance_driver=advance,
+        delta_time_ns=0.01,
+        rider_initial_proper_step_ns=0.005,
+        driver_initial_proper_step_ns=0.008,
+        magnetic_dipole=magnetic,
+        include_dipole_source=False,
+        tolerances=tolerances,
+    )
+
+    assert trial.assessment.accepted
+    assert trial.assessment.normalized_error <= 1.0e-2
+    assert trial.refined.pair.target_time_ns == pytest.approx(0.01)
     assert rider_builder.accepted_steps == 2
     assert driver_builder.accepted_steps == 2

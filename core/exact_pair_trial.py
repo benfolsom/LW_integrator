@@ -21,6 +21,12 @@ from .shared_lab_time import (
     SharedLabTimePair,
     solve_shared_lab_time_pair,
 )
+from .step_doubling import (
+    StepDoublingAssessment,
+    StepDoublingTolerances,
+    assess_step_doubling,
+    build_pair_step_doubling_state,
+)
 from .types import (
     ChronoMatchingMode,
     ExternalFieldConfig,
@@ -73,6 +79,16 @@ class ExactPairEOMOptions:
             raise ValueError("exact pair trials require fixed_geometry convergence")
         if self.spin_interpolation_model != "causal_frozen_c1":
             raise ValueError("exact pair trials require causal_frozen_c1 spin history")
+
+
+@dataclass(frozen=True)
+class ExactPairStepDoublingTrial:
+    """One full path and the authoritative two-half trial path."""
+
+    full: ExactPairSlabTrial
+    midpoint: ExactPairSlabTrial
+    refined: ExactPairSlabTrial
+    assessment: StepDoublingAssessment
 
 
 def make_exact_role_eom_advance(options: ExactPairEOMOptions) -> AdvanceRoleTrial:
@@ -271,10 +287,91 @@ def solve_exact_pair_slab_trial(
     )
 
 
+def solve_exact_pair_step_doubling_trial(
+    *,
+    accepted_rider_history: TrajectoryArrays,
+    accepted_driver_history: TrajectoryArrays,
+    advance_rider: AdvanceRoleTrial,
+    advance_driver: AdvanceRoleTrial,
+    delta_time_ns: float,
+    rider_initial_proper_step_ns: float,
+    driver_initial_proper_step_ns: float,
+    magnetic_dipole: MagneticDipoleConfig,
+    include_dipole_source: bool,
+    tolerances: StepDoublingTolerances,
+    method_order: int = 1,
+    spin_interpolation_model: str = "causal_frozen_c1",
+    absolute_time_tolerance_ns: float = 1.0e-18,
+    relative_time_tolerance: float = 1.0e-12,
+    max_iterations: int = 32,
+    max_bracket_expansions: int = 20,
+    maximum_proper_step_ns: float = np.inf,
+) -> ExactPairStepDoublingTrial:
+    """Evaluate full and two-half paths without mutating accepted state."""
+
+    common = {
+        "accepted_rider_history": accepted_rider_history,
+        "accepted_driver_history": accepted_driver_history,
+        "advance_rider": advance_rider,
+        "advance_driver": advance_driver,
+        "magnetic_dipole": magnetic_dipole,
+        "include_dipole_source": include_dipole_source,
+        "spin_interpolation_model": spin_interpolation_model,
+        "absolute_tolerance_ns": absolute_time_tolerance_ns,
+        "relative_tolerance": relative_time_tolerance,
+        "max_iterations": max_iterations,
+        "max_bracket_expansions": max_bracket_expansions,
+        "maximum_proper_step_ns": maximum_proper_step_ns,
+    }
+    full = solve_exact_pair_slab_trial(
+        **common,
+        delta_time_ns=delta_time_ns,
+        rider_initial_proper_step_ns=rider_initial_proper_step_ns,
+        driver_initial_proper_step_ns=driver_initial_proper_step_ns,
+    )
+    half_time_ns = 0.5 * float(delta_time_ns)
+    midpoint = solve_exact_pair_slab_trial(
+        **common,
+        delta_time_ns=half_time_ns,
+        rider_initial_proper_step_ns=0.5 * float(rider_initial_proper_step_ns),
+        driver_initial_proper_step_ns=0.5 * float(driver_initial_proper_step_ns),
+    )
+    refined = solve_exact_pair_slab_trial(
+        **common,
+        delta_time_ns=half_time_ns,
+        rider_initial_proper_step_ns=midpoint.pair.rider.proper_step_ns,
+        driver_initial_proper_step_ns=midpoint.pair.driver.proper_step_ns,
+        rider_prior_tail=(midpoint.pair.rider.state,),
+        driver_prior_tail=(midpoint.pair.driver.state,),
+    )
+    full_state = build_pair_step_doubling_state(
+        rider_states=(full.pair.rider.state,),
+        driver_states=(full.pair.driver.state,),
+    )
+    refined_state = build_pair_step_doubling_state(
+        rider_states=(midpoint.pair.rider.state, refined.pair.rider.state),
+        driver_states=(midpoint.pair.driver.state, refined.pair.driver.state),
+    )
+    assessment = assess_step_doubling(
+        full_state,
+        refined_state,
+        method_order=method_order,
+        tolerances=tolerances,
+    )
+    return ExactPairStepDoublingTrial(
+        full=full,
+        midpoint=midpoint,
+        refined=refined,
+        assessment=assessment,
+    )
+
+
 __all__ = [
     "AdvanceRoleTrial",
     "ExactPairEOMOptions",
     "ExactPairSlabTrial",
+    "ExactPairStepDoublingTrial",
     "make_exact_role_eom_advance",
     "solve_exact_pair_slab_trial",
+    "solve_exact_pair_step_doubling_trial",
 ]

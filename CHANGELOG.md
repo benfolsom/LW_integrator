@@ -45,6 +45,11 @@
   trial midpoint only through immutable provider history, evaluates both
   endpoint potentials before changing either canonical state, and publishes
   nothing until a later acceptance layer explicitly commits the pair.
+- Composed the exact-pair slab into unpublished full-step and two-half-step
+  paths. The componentwise acceptance state reconstructs gauge-independent
+  mechanical momentum and sums radiation, Medina, cross-field, and projection
+  increments over both refined half steps; the accepted-history builders stay
+  unchanged regardless of the provisional decision.
 
 All notable changes and updates to the LW Integrator project are documented in this file.
 

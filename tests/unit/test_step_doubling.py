@@ -9,6 +9,7 @@ from core.step_doubling import (
     StepDoublingState,
     StepDoublingTolerances,
     assess_step_doubling,
+    build_pair_step_doubling_state,
     propose_next_step_ns,
 )
 
@@ -193,3 +194,66 @@ def test_rejected_step_never_grows_even_for_subunit_error() -> None:
     )
 
     assert result <= 0.1
+
+
+def _pair_state(
+    *,
+    position: float,
+    beta: float,
+    radiation: float,
+    work: float,
+) -> dict[str, np.ndarray]:
+    return {
+        "x": np.array([position]),
+        "y": np.array([0.0]),
+        "z": np.array([0.0]),
+        "bx": np.array([beta]),
+        "by": np.array([0.0]),
+        "bz": np.array([0.0]),
+        "gamma": np.array([1.0 / np.sqrt(1.0 - beta * beta)]),
+        "m": np.array([2.0]),
+        "spin_x": np.array([0.0]),
+        "spin_y": np.array([0.0]),
+        "spin_z": np.array([1.0]),
+        "radiation_energy": np.array([radiation]),
+        "radiation_reaction_work": np.array([work]),
+        "medina_cross_field_energy_change": np.array([-radiation - work]),
+        "mass_shell_projection_energy": np.array([0.0]),
+    }
+
+
+def test_pair_reducer_uses_mechanical_momentum_and_sums_half_increments() -> None:
+    rider_first = _pair_state(
+        position=1.0,
+        beta=0.1,
+        radiation=2.0,
+        work=-0.5,
+    )
+    rider_second = _pair_state(
+        position=2.0,
+        beta=0.2,
+        radiation=3.0,
+        work=-0.25,
+    )
+    driver = _pair_state(
+        position=-2.0,
+        beta=-0.05,
+        radiation=7.0,
+        work=-1.0,
+    )
+
+    reduced = build_pair_step_doubling_state(
+        rider_states=(rider_first, rider_second),
+        driver_states=(driver,),
+    )
+
+    assert reduced.position_mm[:, 0].tolist() == [2.0, -2.0]
+    expected_rider_p = (
+        float(rider_second["gamma"][0]) * float(rider_second["m"][0]) * 299.792458 * 0.2
+    )
+    assert reduced.mechanical_momentum_native[0, 0] == pytest.approx(expected_rider_p)
+    np.testing.assert_array_equal(reduced.rest_spin[:, 2], np.ones(2))
+    np.testing.assert_array_equal(
+        reduced.diagnostics_native[0],
+        np.array([5.0, -0.75, -4.25, 0.0]),
+    )
