@@ -18,6 +18,10 @@
   require a final adaptive knot count. It stores equal rider/driver history
   chunks plus controller and public-output cursor state, with compatibility
   hashes and atomic manifest updates. No current CLI/GUI mode selects it yet.
+- Added an isolated shared-lab-time solver for the future $1+1$ exact-retarded
+  return mode. It solves separate rider/driver proper-time increments against
+  one coordinate-time target and preflights both growable-history rows before
+  publishing either. It is not yet wired into the production integration loop.
 
 All notable changes and updates to the LW Integrator project are documented in this file.
 

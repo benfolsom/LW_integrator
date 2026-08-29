@@ -2118,6 +2118,28 @@ class GrowableTrajectoryBuilder(TrajectoryBuilder):
                     "accepted history coordinate time must increase for every particle"
                 )
 
+        if not self._accepted_steps:
+            for field_name in self._PARTICLE_CONST_FIELDS:
+                if field_name not in state:
+                    continue
+                values = np.asarray(state[field_name])
+                if values.shape != (self._n_particles,):
+                    raise ValueError(
+                        f"{field_name} must have shape ({self._n_particles},)"
+                    )
+                if not np.all(np.isfinite(values)):
+                    raise ValueError(f"{field_name} must contain only finite values")
+
+    def validate_append_step(self, state: ParticleState) -> None:
+        """Validate a proposed accepted row without changing stored history."""
+
+        self._validate_append_state(state)
+
+    def reserve_append_capacity(self) -> None:
+        """Ensure one more row fits without publishing a history knot."""
+
+        self._ensure_append_capacity()
+
     def _ensure_append_capacity(self) -> None:
         if self._accepted_steps < self._n_steps:
             return
@@ -2135,8 +2157,8 @@ class GrowableTrajectoryBuilder(TrajectoryBuilder):
     def append_step(self, state: ParticleState) -> int:
         """Validate and append one accepted state, returning its row index."""
 
-        self._validate_append_state(state)
-        self._ensure_append_capacity()
+        self.validate_append_step(state)
+        self.reserve_append_capacity()
         step = self._accepted_steps
         super().set_step(step, state)
         self._accepted_steps += 1
