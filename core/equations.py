@@ -4787,7 +4787,15 @@ def retarded_equations_of_motion(
 
                 try:
                     diagnostic_charge_field = evaluate_retarded_charge_field_native(
-                        traj_ext_soa if traj_ext_soa is not None else trajectory_ext,
+                        (
+                            exact_source_history
+                            if exact_source_history is not None
+                            else (
+                                traj_ext_soa
+                                if traj_ext_soa is not None
+                                else trajectory_ext
+                            )
+                        ),
                         ObserverEvent(
                             time_ns=float(result["t"][particle_idx]),
                             position_mm=(

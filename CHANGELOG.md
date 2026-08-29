@@ -40,6 +40,11 @@
   trials can keep the accepted chronology view while giving charge and dipole
   providers an immutable provisional overlay. Existing callers do not pass
   the seam and retain their previous behavior.
+- Added a non-production transactional exact-pair slab adapter. It solves the
+  rider and driver proper steps against one lab-time barrier, exposes a prior
+  trial midpoint only through immutable provider history, evaluates both
+  endpoint potentials before changing either canonical state, and publishes
+  nothing until a later acceptance layer explicitly commits the pair.
 
 All notable changes and updates to the LW Integrator project are documented in this file.
 

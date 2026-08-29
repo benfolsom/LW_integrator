@@ -1,0 +1,280 @@
+"""Transactional one-slab trials for the exact-retarded $1+1$ mode.
+
+This module composes the shared-lab-time solver, immutable provisional source
+histories, and pure endpoint canonical recomposition.  It deliberately does
+not append accepted history or write checkpoints/public output.  A caller may
+therefore discard the returned path without rollback work.
+"""
+
+from __future__ import annotations
+
+import copy
+from dataclasses import dataclass, replace
+from typing import Any, Callable
+
+import numpy as np
+
+from .exact_pair_endpoint import finalize_exact_source_canonical_pair_states
+from .self_consistency import SelfConsistencyConfig
+from .shared_lab_time import (
+    SharedLabTimeError,
+    SharedLabTimePair,
+    solve_shared_lab_time_pair,
+)
+from .types import (
+    ChronoMatchingMode,
+    ExternalFieldConfig,
+    MagneticDipoleConfig,
+    ParticleState,
+    SimulationType,
+    StartupMode,
+    TrajectoryArrays,
+    TrialTrajectoryHistory,
+)
+
+AdvanceRoleTrial = Callable[[float, ParticleState, ParticleState, Any], ParticleState]
+
+
+@dataclass(frozen=True)
+class ExactPairSlabTrial:
+    """One finalized but unpublished pair slab and its source-history views."""
+
+    pair: SharedLabTimePair
+    rider_history: TrialTrajectoryHistory
+    driver_history: TrialTrajectoryHistory
+
+
+@dataclass(frozen=True)
+class ExactPairEOMOptions:
+    """Maintained equations-of-motion settings for a transactional pair trial."""
+
+    aperture_radius_mm: float
+    magnetic_dipole: MagneticDipoleConfig
+    self_consistency: SelfConsistencyConfig | None = None
+    chrono_mode: ChronoMatchingMode = ChronoMatchingMode.FAST
+    radiation_reaction_mode: str = "off"
+    external_field: ExternalFieldConfig | None = None
+    step_idx: int | None = None
+    cancel_callback: Any = None
+    spin_interpolation_model: str = "causal_frozen_c1"
+
+    def __post_init__(self) -> None:
+        if not np.isfinite(self.aperture_radius_mm) or self.aperture_radius_mm <= 0.0:
+            raise ValueError("aperture_radius_mm must be finite and positive")
+        if not self.magnetic_dipole.enabled:
+            raise ValueError("exact pair trials require magnetic-dipole/RFS mode")
+        if self.magnetic_dipole.spin_model != "rfs_minimal_2021":
+            raise ValueError("exact pair trials require rfs_minimal_2021")
+        if (
+            self.self_consistency is not None
+            and self.self_consistency.enabled
+            and self.self_consistency.convergence_mode != "fixed_geometry"
+        ):
+            raise ValueError("exact pair trials require fixed_geometry convergence")
+        if self.spin_interpolation_model != "causal_frozen_c1":
+            raise ValueError("exact pair trials require causal_frozen_c1 spin history")
+
+
+def make_exact_role_eom_advance(options: ExactPairEOMOptions) -> AdvanceRoleTrial:
+    """Bind the maintained EOM to the transactional role-callback contract."""
+
+    from .equations import retarded_equations_of_motion
+    from .self_consistency import self_consistent_step
+
+    def advance(
+        proper_step_ns: float,
+        observer_start: ParticleState,
+        source_start: ParticleState,
+        exact_source_history: Any,
+    ) -> ParticleState:
+        return self_consistent_step(
+            retarded_equations_of_motion,
+            proper_step_ns,
+            [observer_start],
+            [source_start],
+            0,
+            options.aperture_radius_mm,
+            SimulationType.BUNCH_TO_BUNCH,
+            options.self_consistency,
+            options.chrono_mode,
+            StartupMode.INERTIAL_PREHISTORY,
+            step_idx=options.step_idx,
+            cancel_callback=options.cancel_callback,
+            radiation_reaction_mode=options.radiation_reaction_mode,
+            external_field=options.external_field,
+            magnetic_dipole=options.magnetic_dipole,
+            exact_source_history=exact_source_history,
+            exact_source_spin_interpolation_model=options.spin_interpolation_model,
+        )
+
+    return advance
+
+
+def _history_tail_state(
+    base: TrajectoryArrays,
+    tail: tuple[ParticleState, ...],
+    *,
+    role: str,
+) -> ParticleState:
+    if base.n_particles != 1:
+        raise SharedLabTimeError(
+            f"{role} exact pair trial currently requires exactly one particle"
+        )
+    if tail:
+        return copy.deepcopy(tail[-1])
+    return copy.deepcopy(base.state_at(-1))
+
+
+def _single_state_time(state: ParticleState, *, role: str) -> float:
+    values = np.asarray(state.get("t", []), dtype=np.float64)
+    if values.shape != (1,) or not np.all(np.isfinite(values)):
+        raise SharedLabTimeError(f"{role} trial start must have one finite time")
+    return float(values[0])
+
+
+def _mark_accepted_canonical_offsets_ready(
+    state: ParticleState,
+    *,
+    include_dipole_source: bool,
+) -> None:
+    """Restore readiness metadata omitted from public trajectory arrays."""
+
+    particle_count = len(np.asarray(state.get("x", [])))
+    state["charge_source_canonical_ready"] = np.ones(particle_count, dtype=bool)
+    if include_dipole_source:
+        state["dipole_source_canonical_ready"] = np.ones(particle_count, dtype=bool)
+
+
+def _source_history(
+    base: TrajectoryArrays,
+    tail: tuple[ParticleState, ...],
+) -> TrajectoryArrays | TrialTrajectoryHistory:
+    return base if not tail else TrialTrajectoryHistory(base, tail)
+
+
+def solve_exact_pair_slab_trial(
+    *,
+    accepted_rider_history: TrajectoryArrays,
+    accepted_driver_history: TrajectoryArrays,
+    advance_rider: AdvanceRoleTrial,
+    advance_driver: AdvanceRoleTrial,
+    delta_time_ns: float,
+    rider_initial_proper_step_ns: float,
+    driver_initial_proper_step_ns: float,
+    magnetic_dipole: MagneticDipoleConfig,
+    include_dipole_source: bool,
+    rider_prior_tail: tuple[ParticleState, ...] = (),
+    driver_prior_tail: tuple[ParticleState, ...] = (),
+    spin_interpolation_model: str = "causal_frozen_c1",
+    absolute_tolerance_ns: float = 1.0e-18,
+    relative_tolerance: float = 1.0e-12,
+    max_iterations: int = 32,
+    max_bracket_expansions: int = 20,
+    maximum_proper_step_ns: float = np.inf,
+) -> ExactPairSlabTrial:
+    """Return one endpoint-canonical pair slab without publishing history.
+
+    ``advance_rider`` and ``advance_driver`` receive the proper step, detached
+    observer/source states at the accepted slab boundary, and the exact source
+    history view.  For a second half-step that view contains the accepted
+    prefix plus the first provisional midpoint.
+    """
+
+    rider_prior_tail = tuple(rider_prior_tail)
+    driver_prior_tail = tuple(driver_prior_tail)
+    if len(rider_prior_tail) != len(driver_prior_tail):
+        raise SharedLabTimeError("rider and driver trial tails must be aligned")
+    if len(rider_prior_tail) > 1:
+        raise SharedLabTimeError("one slab may begin after at most one trial midpoint")
+
+    rider_start = _history_tail_state(
+        accepted_rider_history, rider_prior_tail, role="rider"
+    )
+    driver_start = _history_tail_state(
+        accepted_driver_history, driver_prior_tail, role="driver"
+    )
+    _mark_accepted_canonical_offsets_ready(
+        rider_start,
+        include_dipole_source=include_dipole_source,
+    )
+    _mark_accepted_canonical_offsets_ready(
+        driver_start,
+        include_dipole_source=include_dipole_source,
+    )
+    rider_start_time = _single_state_time(rider_start, role="rider")
+    driver_start_time = _single_state_time(driver_start, role="driver")
+    time_tolerance = float(absolute_tolerance_ns) + float(relative_tolerance) * max(
+        abs(rider_start_time), abs(driver_start_time)
+    )
+    if abs(rider_start_time - driver_start_time) > time_tolerance:
+        raise SharedLabTimeError("rider and driver trial starts are not synchronized")
+    start_time_ns = 0.5 * (rider_start_time + driver_start_time)
+
+    rider_source_history = _source_history(accepted_driver_history, driver_prior_tail)
+    driver_source_history = _source_history(accepted_rider_history, rider_prior_tail)
+    provisional = solve_shared_lab_time_pair(
+        advance_rider=lambda h: advance_rider(
+            h,
+            copy.deepcopy(rider_start),
+            copy.deepcopy(driver_start),
+            rider_source_history,
+        ),
+        advance_driver=lambda h: advance_driver(
+            h,
+            copy.deepcopy(driver_start),
+            copy.deepcopy(rider_start),
+            driver_source_history,
+        ),
+        start_time_ns=start_time_ns,
+        delta_time_ns=delta_time_ns,
+        rider_initial_proper_step_ns=rider_initial_proper_step_ns,
+        driver_initial_proper_step_ns=driver_initial_proper_step_ns,
+        absolute_tolerance_ns=absolute_tolerance_ns,
+        relative_tolerance=relative_tolerance,
+        max_iterations=max_iterations,
+        max_bracket_expansions=max_bracket_expansions,
+        maximum_proper_step_ns=maximum_proper_step_ns,
+    )
+
+    provisional_rider_history = TrialTrajectoryHistory(
+        accepted_rider_history,
+        rider_prior_tail + (provisional.rider.state,),
+    )
+    provisional_driver_history = TrialTrajectoryHistory(
+        accepted_driver_history,
+        driver_prior_tail + (provisional.driver.state,),
+    )
+    rider_state, driver_state = finalize_exact_source_canonical_pair_states(
+        rider_state=provisional.rider.state,
+        driver_state=provisional.driver.state,
+        rider_endpoint_history=provisional_rider_history,
+        driver_endpoint_history=provisional_driver_history,
+        magnetic_dipole=magnetic_dipole,
+        include_dipole_source=include_dipole_source,
+        spin_interpolation_model=spin_interpolation_model,
+    )
+    finalized = replace(
+        provisional,
+        rider=replace(provisional.rider, state=rider_state),
+        driver=replace(provisional.driver, state=driver_state),
+    )
+    return ExactPairSlabTrial(
+        pair=finalized,
+        rider_history=TrialTrajectoryHistory(
+            accepted_rider_history,
+            rider_prior_tail + (rider_state,),
+        ),
+        driver_history=TrialTrajectoryHistory(
+            accepted_driver_history,
+            driver_prior_tail + (driver_state,),
+        ),
+    )
+
+
+__all__ = [
+    "AdvanceRoleTrial",
+    "ExactPairEOMOptions",
+    "ExactPairSlabTrial",
+    "make_exact_role_eom_advance",
+    "solve_exact_pair_slab_trial",
+]
