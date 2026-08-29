@@ -14,6 +14,7 @@ def test_magnetic_dipole_defaults_to_disabled_rfs_pair() -> None:
     assert config.spin_model == "rfs_minimal_2021"
     assert config.stern_gerlach_model == "rfs_full_g"
     assert config.exact_retarded_backend == "python"
+    assert config.exact_retarded_update == "first_order_endpoint"
     assert config.source.model == "off"
     assert not hasattr(config.source, "backend")
     assert config.source.active is False
@@ -119,6 +120,36 @@ def test_magnetic_dipole_accepts_certified_metal_backend() -> None:
     config = MagneticDipoleConfig(exact_retarded_backend="metal_certified_full_strict")
 
     assert config.exact_retarded_backend == "metal_certified_full_strict"
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    (
+        ("first-order", "first_order_endpoint"),
+        ("second_order", "second_order_start_taylor_endpoint"),
+        ("second-order-taylor", "second_order_start_taylor_endpoint"),
+        (
+            "second_order_taylor_endpoint",
+            "second_order_start_taylor_endpoint",
+        ),
+        (
+            "second-order-start-taylor",
+            "second_order_start_taylor_endpoint",
+        ),
+    ),
+)
+def test_magnetic_dipole_normalizes_exact_retarded_update(
+    value: str,
+    expected: str,
+) -> None:
+    config = MagneticDipoleConfig(exact_retarded_update=value)
+
+    assert config.exact_retarded_update == expected
+
+
+def test_magnetic_dipole_rejects_unknown_exact_retarded_update() -> None:
+    with pytest.raises(ValueError, match="exact_retarded_update"):
+        MagneticDipoleConfig(exact_retarded_update="adaptive_magic")
 
 
 def test_magnetic_dipole_rejects_unknown_exact_retarded_backend() -> None:

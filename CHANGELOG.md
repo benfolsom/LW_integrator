@@ -6,6 +6,21 @@ All notable changes and updates to the LW Integrator project are documented in t
 
 ### Experimental Magnetic Dipole Moments (August 2026)
 
+- Added the opt-in exact-retarded translation update
+  ``second_order_start_taylor_endpoint``.  It evaluates the ordinary charge
+  and dipole-source Lorentz force and its proper-time derivative at the same
+  accepted start phase-space event, applies
+  ``h K + h^2 dK/dtau / 2``, uses a matching trapezoidal worldline update, and
+  retains accepted-endpoint canonical-potential recomposition.  The first
+  prototype exposed and fixed an important sampling error: a nonlinear trial
+  endpoint velocity must never be contracted with the start-event field in a
+  start-Taylor update.  On the maintained electron--proton calibration horizon,
+  full RFS/Medina position and momentum differences now decrease at about
+  second order, while accumulated mass-shell projection decreases at order
+  1.94--1.99.  The established ``first_order_endpoint`` path remains the
+  default.  RFS moment-force and Medina derivatives are not promoted to second
+  order by this option and retain their separate validation requirements.
+
 - Reused the authoritative rider and driver trajectory builders during fixed-step
   ``INERTIAL_PREHISTORY`` exact-retarded runs.  The previous non-adaptive path
   reconstructed both complete accepted histories before every step, making a

@@ -3113,6 +3113,17 @@ def retarded_integrator(
     )
     driver_train_enabled = bool(driver_train.enabled)
     inertial_prehistory_enabled = startup_mode is StartupMode.INERTIAL_PREHISTORY
+    if (
+        magnetic_dipole.enabled
+        and magnetic_dipole.exact_retarded_update
+        == "second_order_start_taylor_endpoint"
+        and not inertial_prehistory_enabled
+    ):
+        raise ValueError(
+            "second_order_start_taylor_endpoint requires "
+            "startup_mode=INERTIAL_PREHISTORY so ordinary force derivatives "
+            "and accepted-endpoint potentials share the exact causal history"
+        )
     if inertial_prehistory_enabled:
         if not exact_magnetic_active:
             raise ValueError(

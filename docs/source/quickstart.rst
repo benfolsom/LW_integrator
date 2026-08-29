@@ -162,6 +162,10 @@ simulation, and confirm that the regression tooling works on your machine.
    root batches, but only as float32 bracket proposals certified against the
    original float64 data; the strict CPU root and fields remain authoritative.
    Small calls stay on the CPU and there is no automatic platform dispatch.
+   ``--exact-retarded-update second_order_start_taylor_endpoint`` opts the
+   ordinary exact-source Lorentz translation into the experimental
+   accepted-start second-order Taylor update; ``first_order_endpoint`` remains
+   the default.  Backend and update choices are independent.
    Neutral
    particles and prescribed gradients are best configured in a saved JSON.
    See :doc:`magnetic_dipole_moments` for the numerical contract, all hard

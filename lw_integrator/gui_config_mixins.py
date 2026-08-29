@@ -21,6 +21,7 @@ from .testbed_runner import (
     CORE_PARAM_DEFAULTS,
     DIPOLE_SOURCE_MODEL_OPTIONS,
     EXACT_RETARDED_BACKEND_OPTIONS,
+    EXACT_RETARDED_UPDATE_OPTIONS,
     PARTICLE_PARAM_FIELDS,
     SimulationOptions,
     load_config,
@@ -44,6 +45,10 @@ _DIPOLE_SOURCE_LABEL_BY_MODEL.update(
 _EXACT_RETARDED_BACKEND_BY_LABEL = dict(EXACT_RETARDED_BACKEND_OPTIONS)
 _EXACT_RETARDED_LABEL_BY_BACKEND = {
     backend: label for label, backend in EXACT_RETARDED_BACKEND_OPTIONS
+}
+_EXACT_RETARDED_UPDATE_BY_LABEL = dict(EXACT_RETARDED_UPDATE_OPTIONS)
+_EXACT_RETARDED_LABEL_BY_UPDATE = {
+    update: label for label, update in EXACT_RETARDED_UPDATE_OPTIONS
 }
 
 
@@ -165,6 +170,28 @@ class IntegratorGUIConfigMixin:
                 exact_retarded_backend, exact_retarded_backend
             )
         )
+        exact_retarded_update = (
+            str(
+                getattr(
+                    options,
+                    "magnetic_dipole_exact_retarded_update",
+                    "first_order_endpoint",
+                )
+            )
+            .strip()
+            .lower()
+            .replace("-", "_")
+        )
+        exact_retarded_update = {
+            "second_order": "second_order_start_taylor_endpoint",
+            "second_order_taylor": "second_order_start_taylor_endpoint",
+            "second_order_taylor_endpoint": ("second_order_start_taylor_endpoint"),
+        }.get(exact_retarded_update, exact_retarded_update)
+        self.magnetic_dipole_exact_retarded_update_var.set(
+            _EXACT_RETARDED_LABEL_BY_UPDATE.get(
+                exact_retarded_update, exact_retarded_update
+            )
+        )
         self.magnetic_dipole_source_minimum_separation_var.set(
             _format_gui_float(
                 getattr(
@@ -273,6 +300,18 @@ class IntegratorGUIConfigMixin:
                 "strict CPU, or Metal-certified roots + strict CPU for the "
                 "exact-retarded backend."
             )
+        update_selection = str(
+            self.magnetic_dipole_exact_retarded_update_var.get()
+        ).strip()
+        exact_retarded_update = _EXACT_RETARDED_UPDATE_BY_LABEL.get(
+            update_selection,
+            update_selection.strip().lower().replace("-", "_"),
+        )
+        if exact_retarded_update not in _EXACT_RETARDED_LABEL_BY_UPDATE:
+            raise ValueError(
+                "Select First-order endpoint or Second-order accepted-start "
+                "Taylor for the exact-retarded update."
+            )
         source_minimum_separation = _parse_gui_float(
             self.magnetic_dipole_source_minimum_separation_var.get(),
             "Dipole source minimum separation",
@@ -301,6 +340,7 @@ class IntegratorGUIConfigMixin:
             ),
             "magnetic_dipole_source_model": source_model,
             "magnetic_dipole_exact_retarded_backend": exact_retarded_backend,
+            "magnetic_dipole_exact_retarded_update": exact_retarded_update,
             "magnetic_dipole_source_minimum_separation_mm": (source_minimum_separation),
             "magnetic_dipole_source_relative_stencil_step": getattr(
                 self, "_magnetic_dipole_source_relative_stencil_step", 1.0e-3

@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from core.constants import C_MMNS
+from core.constants import C_MMNS, ELEMENTARY_CHARGE
 from core.integration_runner import (
     AdaptiveTimestepConfig,
     IntegrationCancelled,
@@ -12,7 +12,8 @@ from core.integration_runner import (
     _ensure_startup_metadata,
     retarded_integrator,
 )
-from core.types import SimulationType
+from core.types import MagneticDipoleConfig, SimulationType
+from core.species import resolve_species
 
 
 def _make_particle_state(
@@ -68,7 +69,9 @@ def test_compute_total_energy_and_gamma_use_particle_arrays() -> None:
         "m": np.array([4.0, 5.0], dtype=float),
     }
 
-    assert _compute_total_energy(state) == np.sum(state["gamma"] * state["m"] * C_MMNS**2)
+    assert _compute_total_energy(state) == np.sum(
+        state["gamma"] * state["m"] * C_MMNS**2
+    )
     assert _calculate_gamma(state) == 3.0
 
 
@@ -161,5 +164,36 @@ def test_retarded_integrator_requires_driver_for_bunch_to_bunch_mode() -> None:
             mean=0.0,
             cav_spacing=0.0,
             z_cutoff=0.0,
+            use_numba=False,
+        )
+
+
+def test_second_order_exact_update_requires_inertial_prehistory() -> None:
+    with pytest.raises(
+        ValueError,
+        match="second_order_start_taylor_endpoint requires",
+    ):
+        retarded_integrator(
+            steps=1,
+            h_step=1e-3,
+            wall_z=0.0,
+            aperture_radius=0.5,
+            sim_type=SimulationType.BUNCH_TO_BUNCH,
+            init_rider=_make_particle_state(
+                charge=-ELEMENTARY_CHARGE,
+                mass=resolve_species("electron").mass_amu,
+            ),
+            init_driver=_make_particle_state(
+                z=1.0,
+                charge=ELEMENTARY_CHARGE,
+                mass=resolve_species("proton").mass_amu,
+            ),
+            mean=0.0,
+            cav_spacing=0.0,
+            z_cutoff=0.0,
+            magnetic_dipole=MagneticDipoleConfig(
+                enabled=True,
+                exact_retarded_update=("second_order_start_taylor_endpoint"),
+            ),
             use_numba=False,
         )

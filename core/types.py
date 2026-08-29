@@ -610,6 +610,7 @@ class MagneticDipoleConfig:
     spin_model: str = "rfs_minimal_2021"
     stern_gerlach_model: str = "rfs_full_g"
     exact_retarded_backend: str = "python"
+    exact_retarded_update: str = "first_order_endpoint"
     source: DipoleSourceConfig = field(default_factory=DipoleSourceConfig)
     rider: MagneticDipoleParticleConfig = field(
         default_factory=lambda: MagneticDipoleParticleConfig(species="electron")
@@ -625,6 +626,20 @@ class MagneticDipoleConfig:
         self.spin_model = str(self.spin_model).strip().lower()
         self.stern_gerlach_model = str(self.stern_gerlach_model).strip().lower()
         self.exact_retarded_backend = str(self.exact_retarded_backend).strip().lower()
+        self.exact_retarded_update = (
+            str(self.exact_retarded_update).strip().lower().replace("-", "_")
+        )
+        update_aliases = {
+            "first_order": "first_order_endpoint",
+            "second_order": "second_order_start_taylor_endpoint",
+            "second_order_taylor": "second_order_start_taylor_endpoint",
+            "second_order_taylor_endpoint": ("second_order_start_taylor_endpoint"),
+            "second_order_start_taylor": ("second_order_start_taylor_endpoint"),
+        }
+        self.exact_retarded_update = update_aliases.get(
+            self.exact_retarded_update,
+            self.exact_retarded_update,
+        )
         valid_spin_models = {"bmt_frenkel", "rfs_minimal_2021"}
         if self.spin_model not in valid_spin_models:
             raise ValueError(
@@ -660,6 +675,14 @@ class MagneticDipoleConfig:
                 "numba_analytic_charge_response_serial, "
                 "numba_analytic_charge_dipole_response_serial, "
                 "metal_certified_full_strict"
+            )
+        if self.exact_retarded_update not in {
+            "first_order_endpoint",
+            "second_order_start_taylor_endpoint",
+        }:
+            raise ValueError(
+                "magnetic-dipole exact_retarded_update must be one of: "
+                "first_order_endpoint, second_order_start_taylor_endpoint"
             )
         if isinstance(self.source, dict):
             self.source = DipoleSourceConfig(**self.source)

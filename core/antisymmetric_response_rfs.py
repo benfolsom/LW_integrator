@@ -127,6 +127,59 @@ def antisymmetric_response_charge_force_native(
     return charge * _act_on_covector(packed, _SIGNS * velocity) / C_MMNS
 
 
+def antisymmetric_response_charge_force_derivative_native(
+    *,
+    four_velocity_mm_ns: Sequence[float],
+    four_acceleration_mm_ns2: Sequence[float],
+    antisymmetric_response: Sequence[float],
+    partial_antisymmetric_response: Sequence[Sequence[float]],
+    charge_native: float,
+) -> np.ndarray:
+    """Differentiate the packed ordinary charge response along the worldline.
+
+    This is the packed equivalent of
+    ``(q/c)[(u^lambda partial_lambda F) u_lower + F a_lower]``.  It preserves
+    the potential-first response surface and does not materialize ``F`` or
+    ``partial F`` merely to construct a second-order Lorentz impulse.
+    """
+
+    velocity = np.asarray(four_velocity_mm_ns, dtype=float)
+    acceleration = np.asarray(four_acceleration_mm_ns2, dtype=float)
+    packed = np.asarray(antisymmetric_response, dtype=float)
+    partial_packed = np.asarray(partial_antisymmetric_response, dtype=float)
+    if velocity.shape != (4,) or acceleration.shape != (4,):
+        raise ValueError(
+            "four_velocity_mm_ns and four_acceleration_mm_ns2 must have shape (4,)"
+        )
+    if packed.shape != (6,):
+        raise ValueError("antisymmetric_response must have shape (6,)")
+    if partial_packed.shape != (4, 6):
+        raise ValueError("partial_antisymmetric_response must have shape (4, 6)")
+    if not all(
+        np.all(np.isfinite(value))
+        for value in (velocity, acceleration, packed, partial_packed)
+    ):
+        raise ValueError("charge-response derivative inputs must be finite")
+    charge = float(charge_native)
+    if not np.isfinite(charge):
+        raise ValueError("charge_native must be finite")
+
+    convective_response = np.einsum(
+        "l,lp->p",
+        velocity,
+        partial_packed,
+        optimize=False,
+    )
+    return (
+        charge
+        * (
+            _act_on_covector(convective_response, _SIGNS * velocity)
+            + _act_on_covector(packed, _SIGNS * acceleration)
+        )
+        / C_MMNS
+    )
+
+
 def _partial_magnetic_potential_covariant(
     partial_packed: np.ndarray,
     spin: np.ndarray,
@@ -211,6 +264,7 @@ def antisymmetric_response_rfs_native(
 
 
 __all__ = [
+    "antisymmetric_response_charge_force_derivative_native",
     "antisymmetric_response_charge_force_native",
     "antisymmetric_response_rfs_native",
     "materialize_antisymmetric_response_native",

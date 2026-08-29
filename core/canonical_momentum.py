@@ -33,6 +33,7 @@ from .constants import C_MMNS
 
 VectorLike = Union[Sequence[float], np.ndarray]
 MatrixLike = Union[Sequence[Sequence[float]], np.ndarray]
+GradientLike = Union[Sequence[Sequence[Sequence[float]]], np.ndarray]
 
 _MINKOWSKI_SIGNS = np.array((1.0, -1.0, -1.0, -1.0), dtype=float)
 
@@ -64,6 +65,22 @@ def _field_tensor(value: MatrixLike) -> np.ndarray:
     if not np.allclose(field, -field.T, rtol=0.0, atol=1.0e-15):
         raise ValueError("field_tensor must be antisymmetric")
     return cast(np.ndarray, field)
+
+
+def _field_gradient(value: GradientLike) -> np.ndarray:
+    gradient = np.asarray(value, dtype=float)
+    if gradient.shape != (4, 4, 4):
+        raise ValueError("partial_f must have shape (4, 4, 4)")
+    if not np.all(np.isfinite(gradient)):
+        raise ValueError("partial_f must contain only finite values")
+    if not np.allclose(
+        gradient,
+        -np.swapaxes(gradient, 1, 2),
+        rtol=0.0,
+        atol=1.0e-15,
+    ):
+        raise ValueError("partial_f must be antisymmetric in its field indices")
+    return cast(np.ndarray, gradient)
 
 
 def canonical_potential_momentum_native(
@@ -181,6 +198,95 @@ def mechanical_lorentz_four_impulse_native(
     )
 
 
+def mechanical_lorentz_four_force_derivative_native(
+    *,
+    four_velocity_mm_ns: VectorLike,
+    four_acceleration_mm_ns2: VectorLike,
+    field_tensor: MatrixLike,
+    partial_f: GradientLike,
+    charge_native: float,
+) -> np.ndarray:
+    """Return ``d/dtau [(q/c) F^(mu nu) u_nu]``.
+
+    ``partial_f[lambda, mu, nu]`` is ``partial_lambda F^(mu nu)`` for
+    ``x^lambda=(ct,x,y,z)`` in millimetres.  Consequently the convective
+    derivative is ``u^lambda partial_lambda F`` with no additional factor of
+    ``c``.  ``four_acceleration_mm_ns2`` is ``du^mu/dtau`` and may include all
+    forces acting at the start event, not only the Lorentz term represented by
+    ``field_tensor``.
+
+    This helper supplies the analytical derivative needed by a second-order
+    proper-time Taylor update.  It does not differentiate RFS moment response,
+    radiation reaction, or another force sector.
+    """
+
+    velocity = _four_vector(four_velocity_mm_ns, name="four_velocity_mm_ns")
+    acceleration = _four_vector(
+        four_acceleration_mm_ns2,
+        name="four_acceleration_mm_ns2",
+    )
+    field = _field_tensor(field_tensor)
+    gradient = _field_gradient(partial_f)
+    charge = float(charge_native)
+    if not np.isfinite(charge):
+        raise ValueError("charge_native must be finite")
+
+    velocity_covariant = _MINKOWSKI_SIGNS * velocity
+    acceleration_covariant = _MINKOWSKI_SIGNS * acceleration
+    convective_field_derivative = np.einsum(
+        "l,lmn->mn",
+        velocity,
+        gradient,
+    )
+    return cast(
+        np.ndarray,
+        (charge / C_MMNS)
+        * (
+            convective_field_derivative @ velocity_covariant
+            + field @ acceleration_covariant
+        ),
+    )
+
+
+def mechanical_lorentz_second_order_four_impulse_native(
+    *,
+    four_velocity_mm_ns: VectorLike,
+    four_acceleration_mm_ns2: VectorLike,
+    field_tensor: MatrixLike,
+    partial_f: GradientLike,
+    charge_native: float,
+    proper_time_step_ns: float,
+) -> np.ndarray:
+    """Return the second-order Taylor impulse ``h K + h^2 dK/dtau / 2``.
+
+    The force is the ordinary Lorentz four-force ``K``.  Accuracy is second
+    order only when the supplied acceleration is the complete start-event
+    acceleration required by the force derivative.  The caller remains
+    responsible for a matching second-order worldline update and for treating
+    force sectors whose derivatives are unavailable.
+    """
+
+    step = float(proper_time_step_ns)
+    if not np.isfinite(step):
+        raise ValueError("proper_time_step_ns must be finite")
+    force = mechanical_lorentz_four_force_native(
+        four_velocity_mm_ns=four_velocity_mm_ns,
+        field_tensor=field_tensor,
+        charge_native=charge_native,
+    )
+    force_derivative = mechanical_lorentz_four_force_derivative_native(
+        four_velocity_mm_ns=four_velocity_mm_ns,
+        four_acceleration_mm_ns2=four_acceleration_mm_ns2,
+        field_tensor=field_tensor,
+        partial_f=partial_f,
+        charge_native=charge_native,
+    )
+    return cast(
+        np.ndarray,
+        step * force + 0.5 * step * step * force_derivative,
+    )
+
+
 def canonical_four_force_from_potential_gradient_native(
     *,
     four_velocity_mm_ns: VectorLike,
@@ -258,7 +364,9 @@ __all__ = [
     "canonical_four_impulse_from_potential_gradient_native",
     "canonical_potential_momentum_native",
     "mechanical_lorentz_four_force_native",
+    "mechanical_lorentz_four_force_derivative_native",
     "mechanical_lorentz_four_impulse_native",
+    "mechanical_lorentz_second_order_four_impulse_native",
     "mechanical_four_momentum_native",
     "replace_canonical_potential_native",
 ]

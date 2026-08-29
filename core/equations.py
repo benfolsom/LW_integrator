@@ -1829,6 +1829,12 @@ def retarded_equations_of_motion(
         and startup_mode is StartupMode.INERTIAL_PREHISTORY
         and sim_type == SimulationType.BUNCH_TO_BUNCH
     )
+    second_order_exact_source_selected = bool(
+        exact_endpoint_recomposition_selected
+        and magnetic_dipole is not None
+        and magnetic_dipole.exact_retarded_update
+        == "second_order_start_taylor_endpoint"
+    )
     if exact_endpoint_recomposition_selected:
         # Private, step-local handoff to the pair-level accepted-endpoint
         # finalizer in integration_runner.  It is intentionally absent from
@@ -2244,6 +2250,23 @@ def retarded_equations_of_motion(
             exact_analytic_antisymmetric_response = None
             exact_analytic_partial_antisymmetric_response = None
             dipole_source_interaction = None
+            rfs_dipole_force_native = np.zeros(4, dtype=float)
+            additional_start_force_native = np.zeros(4, dtype=float)
+            exact_ordinary_response_beta = (
+                np.asarray(
+                    (
+                        current_state["bx"][particle_idx],
+                        current_state["by"][particle_idx],
+                        current_state["bz"][particle_idx],
+                    ),
+                    dtype=float,
+                )
+                if second_order_exact_source_selected
+                else np.asarray(
+                    (working_beta_x, working_beta_y, working_beta_z),
+                    dtype=float,
+                )
+            )
             exact_source_start_four_potential.fill(0.0)
 
             # ================================================================
@@ -2737,11 +2760,15 @@ def retarded_equations_of_motion(
                 ) = compute_uniform_external_field_impulse(
                     external_field,
                     charge=float(force_particle_charge),
-                    gamma=float(particle_gamma),
+                    gamma=(
+                        float(current_state["gamma"][particle_idx])
+                        if second_order_exact_source_selected
+                        else float(particle_gamma)
+                    ),
                     beta=(
-                        float(particle_beta[0]),
-                        float(particle_beta[1]),
-                        float(particle_beta[2]),
+                        float(exact_ordinary_response_beta[0]),
+                        float(exact_ordinary_response_beta[1]),
+                        float(exact_ordinary_response_beta[2]),
                     ),
                     h_step=float(h),
                     position=field_position,
@@ -2753,6 +2780,11 @@ def retarded_equations_of_motion(
                 accumulated_momentum_t += ext_dp_t
                 if exact_endpoint_recomposition_selected:
                     exact_mechanical_temporal_impulse += float(ext_dp_t)
+                if second_order_exact_source_selected:
+                    additional_start_force_native += np.asarray(
+                        (ext_dp_t, ext_dp_x, ext_dp_y, ext_dp_z),
+                        dtype=float,
+                    ) / float(h)
 
                 dipole_active = (
                     bool(
@@ -2805,9 +2837,7 @@ def retarded_equations_of_motion(
                         ),
                         dtype=float,
                     )
-                    beta_magnitude = float(
-                        np.linalg.norm(np.asarray(particle_beta, dtype=float))
-                    )
+                    beta_magnitude = float(np.linalg.norm(exact_ordinary_response_beta))
                     trial_px = accumulated_momentum_x + float(sg_impulse[0])
                     trial_py = accumulated_momentum_y + float(sg_impulse[1])
                     trial_pz = accumulated_momentum_z + float(sg_impulse[2])
@@ -2849,12 +2879,22 @@ def retarded_equations_of_motion(
                     accumulated_momentum_y += float(sg_impulse[1])
                     accumulated_momentum_z += float(sg_impulse[2])
                     accumulated_momentum_t += float(
-                        np.dot(np.asarray(particle_beta, dtype=float), sg_impulse)
+                        np.dot(exact_ordinary_response_beta, sg_impulse)
                     )
                     if exact_endpoint_recomposition_selected:
                         exact_mechanical_temporal_impulse += float(
-                            np.dot(np.asarray(particle_beta, dtype=float), sg_impulse)
+                            np.dot(exact_ordinary_response_beta, sg_impulse)
                         )
+                    if second_order_exact_source_selected:
+                        additional_start_force_native += np.asarray(
+                            (
+                                np.dot(exact_ordinary_response_beta, sg_impulse),
+                                sg_impulse[0],
+                                sg_impulse[1],
+                                sg_impulse[2],
+                            ),
+                            dtype=float,
+                        ) / float(h)
                     stern_gerlach_impulse_applied = bool(np.any(sg_impulse))
 
             # ================================================================
@@ -2993,7 +3033,7 @@ def retarded_equations_of_motion(
                         charge_source_interaction_from_response_native(
                             exact_charge_field,
                             four_velocity_mm_ns=_four_velocity_native(
-                                np.asarray(particle_beta, dtype=float)
+                                exact_ordinary_response_beta
                             ),
                             observer_charge_native=float(force_particle_charge),
                             proper_time_step_ns=float(h),
@@ -3005,7 +3045,7 @@ def retarded_equations_of_motion(
                         charge_source_interaction_from_field_native(
                             exact_charge_field,
                             four_velocity_mm_ns=_four_velocity_native(
-                                np.asarray(particle_beta, dtype=float)
+                                exact_ordinary_response_beta
                             ),
                             observer_charge_native=float(force_particle_charge),
                             proper_time_step_ns=float(h),
@@ -3184,7 +3224,7 @@ def retarded_equations_of_motion(
                             dipole_source_interaction_from_response_native(
                                 dipole_source_field,
                                 four_velocity_mm_ns=_four_velocity_native(
-                                    np.asarray(particle_beta, dtype=float)
+                                    exact_ordinary_response_beta
                                 ),
                                 observer_charge_native=float(force_particle_charge),
                                 proper_time_step_ns=float(h),
@@ -3196,7 +3236,7 @@ def retarded_equations_of_motion(
                             dipole_source_interaction_from_field_native(
                                 dipole_source_field,
                                 four_velocity_mm_ns=_four_velocity_native(
-                                    np.asarray(particle_beta, dtype=float)
+                                    exact_ordinary_response_beta
                                 ),
                                 observer_charge_native=float(force_particle_charge),
                                 proper_time_step_ns=float(h),
@@ -3379,7 +3419,11 @@ def retarded_equations_of_motion(
                             ),
                             dtype=float,
                         )
-                        beta_vector = np.asarray(particle_beta, dtype=float)
+                        beta_vector = (
+                            exact_ordinary_response_beta
+                            if second_order_exact_source_selected
+                            else np.asarray(particle_beta, dtype=float)
+                        )
                         normalized_spin = boost_rest_polarization(
                             rest_spin, beta_vector
                         )
@@ -3408,6 +3452,7 @@ def retarded_equations_of_motion(
                                     spin_quantum_number * HBAR_NATIVE,
                                 )[1]
                             )
+                        rfs_dipole_force_native += dipole_force_native
                         dipole_impulse_native = dipole_force_native * float(h)
                         accumulated_momentum_t += float(dipole_impulse_native[0])
                         if exact_endpoint_recomposition_selected:
@@ -3417,6 +3462,74 @@ def retarded_equations_of_motion(
                         accumulated_momentum_x += float(dipole_impulse_native[1])
                         accumulated_momentum_y += float(dipole_impulse_native[2])
                         accumulated_momentum_z += float(dipole_impulse_native[3])
+
+            if second_order_exact_source_selected:
+                from .antisymmetric_response_rfs import (
+                    antisymmetric_response_charge_force_derivative_native,
+                )
+                from .canonical_momentum import (
+                    mechanical_lorentz_four_force_derivative_native,
+                )
+
+                start_four_velocity = _four_velocity_native(
+                    exact_ordinary_response_beta
+                )
+                ordinary_force_native = np.zeros(4, dtype=float)
+                for interaction in (
+                    exact_charge_source_interaction,
+                    dipole_source_interaction,
+                ):
+                    if interaction is not None:
+                        ordinary_force_native += interaction.mechanical_four_force
+                start_four_acceleration = (
+                    ordinary_force_native
+                    + rfs_dipole_force_native
+                    + additional_start_force_native
+                ) / particle_mass
+                ordinary_force_derivative = np.zeros(4, dtype=float)
+                for interaction in (
+                    exact_charge_source_interaction,
+                    dipole_source_interaction,
+                ):
+                    if interaction is None:
+                        continue
+                    if interaction.response is not None:
+                        ordinary_force_derivative += (
+                            antisymmetric_response_charge_force_derivative_native(
+                                four_velocity_mm_ns=start_four_velocity,
+                                four_acceleration_mm_ns2=start_four_acceleration,
+                                antisymmetric_response=(
+                                    interaction.response.antisymmetric_response
+                                ),
+                                partial_antisymmetric_response=(
+                                    interaction.response.partial_antisymmetric_response
+                                ),
+                                charge_native=float(force_particle_charge),
+                            )
+                        )
+                    elif interaction.field is not None:
+                        interaction_field = interaction.field
+                        if hasattr(interaction_field, "field"):
+                            field_tensor = interaction_field.field.field_tensor
+                        else:
+                            field_tensor = interaction_field.field_tensor
+                        ordinary_force_derivative += (
+                            mechanical_lorentz_four_force_derivative_native(
+                                four_velocity_mm_ns=start_four_velocity,
+                                four_acceleration_mm_ns2=start_four_acceleration,
+                                field_tensor=field_tensor,
+                                partial_f=interaction_field.partial_f,
+                                charge_native=float(force_particle_charge),
+                            )
+                        )
+                second_order_correction = (
+                    0.5 * float(h) * float(h) * ordinary_force_derivative
+                )
+                accumulated_momentum_t += float(second_order_correction[0])
+                accumulated_momentum_x += float(second_order_correction[1])
+                accumulated_momentum_y += float(second_order_correction[2])
+                accumulated_momentum_z += float(second_order_correction[3])
+                exact_mechanical_temporal_impulse += float(second_order_correction[0])
 
             # ================================================================
             # STEP 4: Update momentum and derive gamma from Pt
@@ -3733,7 +3846,17 @@ def retarded_equations_of_motion(
                 )
 
             # Update x^0 = dt = dtau * gamma
-            proper_to_coordinate_dt = float(h * result["gamma"][particle_idx])
+            if second_order_exact_source_selected:
+                proper_to_coordinate_dt = float(
+                    0.5
+                    * h
+                    * (
+                        float(current_state["gamma"][particle_idx])
+                        + float(result["gamma"][particle_idx])
+                    )
+                )
+            else:
+                proper_to_coordinate_dt = float(h * result["gamma"][particle_idx])
             result["t"][particle_idx] = (
                 current_state["t"][particle_idx] + proper_to_coordinate_dt
             )
@@ -3744,15 +3867,56 @@ def retarded_equations_of_motion(
             # Position update in proper time formulation: dx/dτ = v·γ
             # Since h = dτ = dt/γ, we have: dx = v·γ·dτ = (P/m)·h
             # where v = P/(γ·m) and γ cancels in the product v·γ = P/m
-            result["x"][particle_idx] = current_state["x"][particle_idx] + h / (
-                particle_mass
-            ) * (result["Px"][particle_idx] - accumulated_field_x * particle_mass)
-            result["y"][particle_idx] = current_state["y"][particle_idx] + h / (
-                particle_mass
-            ) * (result["Py"][particle_idx] - accumulated_field_y * particle_mass)
-            result["z"][particle_idx] = current_state["z"][particle_idx] + h / (
-                particle_mass
-            ) * (result["Pz"][particle_idx] - accumulated_field_z * particle_mass)
+            if second_order_exact_source_selected:
+                start_mechanical_momentum = (
+                    float(current_state["gamma"][particle_idx])
+                    * particle_mass
+                    * C_MMNS
+                    * np.asarray(
+                        (
+                            current_state["bx"][particle_idx],
+                            current_state["by"][particle_idx],
+                            current_state["bz"][particle_idx],
+                        ),
+                        dtype=float,
+                    )
+                )
+                end_mechanical_momentum = np.asarray(
+                    (
+                        result["Px"][particle_idx]
+                        - accumulated_field_x * particle_mass,
+                        result["Py"][particle_idx]
+                        - accumulated_field_y * particle_mass,
+                        result["Pz"][particle_idx]
+                        - accumulated_field_z * particle_mass,
+                    ),
+                    dtype=float,
+                )
+                displacement = (
+                    0.5
+                    * float(h)
+                    * (start_mechanical_momentum + end_mechanical_momentum)
+                    / particle_mass
+                )
+                result["x"][particle_idx] = (
+                    current_state["x"][particle_idx] + displacement[0]
+                )
+                result["y"][particle_idx] = (
+                    current_state["y"][particle_idx] + displacement[1]
+                )
+                result["z"][particle_idx] = (
+                    current_state["z"][particle_idx] + displacement[2]
+                )
+            else:
+                result["x"][particle_idx] = current_state["x"][particle_idx] + h / (
+                    particle_mass
+                ) * (result["Px"][particle_idx] - accumulated_field_x * particle_mass)
+                result["y"][particle_idx] = current_state["y"][particle_idx] + h / (
+                    particle_mass
+                ) * (result["Py"][particle_idx] - accumulated_field_y * particle_mass)
+                result["z"][particle_idx] = current_state["z"][particle_idx] + h / (
+                    particle_mass
+                ) * (result["Pz"][particle_idx] - accumulated_field_z * particle_mass)
 
             # ================================================================
             # STEP 6: Compute velocity (beta) from position changes
@@ -4249,19 +4413,50 @@ def retarded_equations_of_motion(
                             # its mass-shell gamma.  Pt is reconstructed from
                             # p and q Phi / c; there is no independent temporal
                             # radiation-reaction kick.
-                            result["x"][particle_idx] = (
-                                current_state["x"][particle_idx]
-                                + h * mechanical_px / particle_mass
-                            )
-                            result["y"][particle_idx] = (
-                                current_state["y"][particle_idx]
-                                + h * mechanical_py / particle_mass
-                            )
-                            result["z"][particle_idx] = (
-                                current_state["z"][particle_idx]
-                                + h * mechanical_pz / particle_mass
-                            )
-                            coordinate_dt = float(h * medina_gamma)
+                            if second_order_exact_source_selected:
+                                result["x"][particle_idx] = (
+                                    current_state["x"][particle_idx]
+                                    + 0.5
+                                    * h
+                                    * (previous_mechanical_px + mechanical_px)
+                                    / particle_mass
+                                )
+                                result["y"][particle_idx] = (
+                                    current_state["y"][particle_idx]
+                                    + 0.5
+                                    * h
+                                    * (previous_mechanical_py + mechanical_py)
+                                    / particle_mass
+                                )
+                                result["z"][particle_idx] = (
+                                    current_state["z"][particle_idx]
+                                    + 0.5
+                                    * h
+                                    * (previous_mechanical_pz + mechanical_pz)
+                                    / particle_mass
+                                )
+                                coordinate_dt = float(
+                                    0.5
+                                    * h
+                                    * (
+                                        float(current_state["gamma"][particle_idx])
+                                        + medina_gamma
+                                    )
+                                )
+                            else:
+                                result["x"][particle_idx] = (
+                                    current_state["x"][particle_idx]
+                                    + h * mechanical_px / particle_mass
+                                )
+                                result["y"][particle_idx] = (
+                                    current_state["y"][particle_idx]
+                                    + h * mechanical_py / particle_mass
+                                )
+                                result["z"][particle_idx] = (
+                                    current_state["z"][particle_idx]
+                                    + h * mechanical_pz / particle_mass
+                                )
+                                coordinate_dt = float(h * medina_gamma)
                             result["t"][particle_idx] = (
                                 current_state["t"][particle_idx] + coordinate_dt
                             )

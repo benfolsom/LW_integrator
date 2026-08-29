@@ -644,6 +644,102 @@ def test_exact_endpoint_projection_converges_locally_and_globally() -> None:
         assert coarse / fine == pytest.approx(4.0, rel=0.05)
 
 
+def test_second_order_exact_projection_converges_one_order_faster() -> None:
+    rider = _species_state("electron", position_mm=(-5.0e-8, 0.0, 0.0))
+    driver = _species_state("proton", position_mm=(5.0e-8, 0.0, 0.0))
+    magnetic = MagneticDipoleConfig(
+        enabled=True,
+        spin_precession_enabled=True,
+        stern_gerlach_force_enabled=False,
+        exact_retarded_update="second_order_start_taylor_endpoint",
+        rider=MagneticDipoleParticleConfig(species="electron"),
+        driver=MagneticDipoleParticleConfig(species="proton"),
+    )
+    proper_time_horizon_ns = 2.0e-11
+    cumulative: list[float] = []
+    maximum: list[float] = []
+
+    for interval_count in (8, 16, 32):
+        _, _, rider_soa, driver_soa, *_ = _run_simple_inertial(
+            rider,
+            driver,
+            steps=interval_count + 1,
+            h_step=proper_time_horizon_ns / interval_count,
+            magnetic_dipole=magnetic,
+        )
+        assert rider_soa is not None and driver_soa is not None
+        projection = np.concatenate(
+            (
+                rider_soa.mass_shell_projection_energy[:, 0],
+                driver_soa.mass_shell_projection_energy[:, 0],
+            )
+        )
+        assert np.all(np.isfinite(projection))
+        cumulative.append(float(np.sum(np.abs(projection))))
+        maximum.append(float(np.max(np.abs(projection))))
+
+    # The Taylor force correction makes each shell residual O(h^3), so its
+    # fixed-horizon cumulative sum is O(h^2).
+    for coarse, fine in zip(cumulative, cumulative[1:]):
+        assert coarse / fine == pytest.approx(4.0, rel=0.12)
+    for coarse, fine in zip(maximum, maximum[1:]):
+        assert coarse / fine == pytest.approx(8.0, rel=0.12)
+
+
+def test_second_order_exact_force_contraction_stays_at_accepted_start_velocity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import core.charge_source_interactions as interactions
+
+    original = interactions.charge_source_interaction_from_field_native
+    observed_velocities: dict[float, list[np.ndarray]] = {}
+
+    def recording_interaction(*args: object, **kwargs: object):
+        charge = float(kwargs["observer_charge_native"])
+        observed_velocities.setdefault(charge, []).append(
+            np.asarray(kwargs["four_velocity_mm_ns"], dtype=float).copy()
+        )
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(
+        interactions,
+        "charge_source_interaction_from_field_native",
+        recording_interaction,
+    )
+    rider = _species_state(
+        "electron",
+        position_mm=(-5.0e-8, 0.0, 0.0),
+        beta=(0.01, 0.002, 0.0),
+    )
+    driver = _species_state(
+        "proton",
+        position_mm=(5.0e-8, 0.0, 0.0),
+        beta=(-1.0e-5, 0.0, 0.0),
+    )
+    magnetic = MagneticDipoleConfig(
+        enabled=True,
+        spin_precession_enabled=True,
+        stern_gerlach_force_enabled=False,
+        exact_retarded_update="second_order_start_taylor_endpoint",
+    )
+
+    _run_simple_inertial(
+        rider,
+        driver,
+        steps=3,
+        h_step=1.0e-12,
+        magnetic_dipole=magnetic,
+    )
+
+    assert len(observed_velocities) == 2
+    for values in observed_velocities.values():
+        # Two accepted intervals supply two start velocities. Nonlinear trials
+        # may repeat a contraction, but must never substitute a trial endpoint
+        # velocity into the start-event Taylor force.
+        unique = {value.tobytes() for value in values}
+        assert len(unique) == 2
+
+
 def test_joint_endpoint_publication_keeps_exact_history_append_only() -> None:
     import core.retarded_dipole_fields as dipole_fields
     import core.retarded_fields as charge_fields

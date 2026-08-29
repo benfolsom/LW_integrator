@@ -6,12 +6,16 @@ import numpy as np
 import pytest
 
 from core.antisymmetric_response_rfs import (
+    antisymmetric_response_charge_force_derivative_native,
     antisymmetric_response_charge_force_native,
     antisymmetric_response_rfs_native,
     materialize_antisymmetric_response_native,
     materialize_partial_antisymmetric_response_native,
     pack_antisymmetric_response_native,
     pack_partial_antisymmetric_response_native,
+)
+from core.canonical_momentum import (
+    mechanical_lorentz_four_force_derivative_native,
 )
 from core.constants import C_MMNS
 from core.magnetic_dipole import boost_rest_polarization
@@ -107,3 +111,33 @@ def test_response_pack_materialize_and_charge_force_are_exact() -> None:
         charge_native=-0.8,
     )
     np.testing.assert_allclose(actual, expected, rtol=3.0e-15, atol=1.0e-18)
+
+
+def test_packed_charge_force_derivative_matches_dense_contraction() -> None:
+    rng = np.random.default_rng(314159)
+    raw_field = rng.normal(size=(4, 4))
+    field = raw_field - raw_field.T
+    raw_partial = rng.normal(size=(4, 4, 4))
+    partial_f = raw_partial - np.swapaxes(raw_partial, 1, 2)
+    velocity = np.array((1.09, 0.14, -0.07, 0.03)) * C_MMNS
+    acceleration = np.array((0.025, -0.011, 0.032, -0.018)) * C_MMNS
+    charge = -0.47
+
+    packed = antisymmetric_response_charge_force_derivative_native(
+        four_velocity_mm_ns=velocity,
+        four_acceleration_mm_ns2=acceleration,
+        antisymmetric_response=pack_antisymmetric_response_native(field),
+        partial_antisymmetric_response=pack_partial_antisymmetric_response_native(
+            partial_f
+        ),
+        charge_native=charge,
+    )
+    dense = mechanical_lorentz_four_force_derivative_native(
+        four_velocity_mm_ns=velocity,
+        four_acceleration_mm_ns2=acceleration,
+        field_tensor=field,
+        partial_f=partial_f,
+        charge_native=charge,
+    )
+
+    np.testing.assert_allclose(packed, dense, rtol=2.0e-15, atol=2.0e-14)

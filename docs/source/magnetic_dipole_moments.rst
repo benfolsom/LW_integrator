@@ -478,6 +478,36 @@ from those symmetric histories and :math:`q(A_{n+1}-A_n)/c` replaces the saved
 start offset without changing mechanical momentum, position, spin, or Medina
 work.  This is bookkeeping, not an additional force.
 
+The exact-retarded translation update is selected independently of the field
+backend.  ``first_order_endpoint`` remains the default.  The experimental
+``second_order_start_taylor_endpoint`` option expands the ordinary Lorentz
+four-force at the accepted start event,
+
+.. math::
+
+   K^\mu={q\over c}F^{\mu\nu}u_\nu,
+   \qquad
+   \dot K^\mu={q\over c}\left[
+   u^\lambda(\partial_\lambda F^{\mu\nu})u_\nu
+   +F^{\mu\nu}a_\nu\right],
+
+and applies
+
+.. math::
+
+   \Delta p^\mu=hK^\mu+{h^2\over2}\dot K^\mu.
+
+The force, field derivative, velocity, and acceleration in this expression all
+belong to the same accepted start phase-space event.  In particular, a
+self-consistency trial endpoint velocity is not substituted into the
+start-event contraction.  Position and coordinate time use the matching
+start/end trapezoidal update, and canonical momentum is still recomposed from
+the accepted endpoint potential after both source endpoints are published.
+The option differentiates the ordinary charge and dipole-source Lorentz
+response.  It does not yet supply the higher field derivatives needed to make
+the RFS moment force or Medina reaction intrinsically second order, so full
+coupled runs still require timestep refinement and projection-energy audits.
+
 This first implementation remains a full-retarded finite-difference oracle.
 The shared optional exact-retarded backends accelerate charge and dipole
 light-cone work without changing Python reference-order source or stencil

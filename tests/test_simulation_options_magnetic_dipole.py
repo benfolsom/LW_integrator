@@ -17,6 +17,7 @@ def test_magnetic_dipole_nested_config_round_trip() -> None:
         magnetic_dipole_stern_gerlach_force_enabled=True,
         magnetic_dipole_source_model="covariant_retarded_point",
         magnetic_dipole_exact_retarded_backend="numba_roots_exact_serial",
+        magnetic_dipole_exact_retarded_update=("second_order_start_taylor_endpoint"),
         magnetic_dipole_source_minimum_separation_mm=7.0e-9,
         magnetic_dipole_source_relative_stencil_step=2.0e-3,
         magnetic_dipole_source_minimum_stencil_step_mm=3.0e-15,
@@ -46,6 +47,7 @@ def test_magnetic_dipole_nested_config_round_trip() -> None:
     assert config.stern_gerlach_model == "rfs_full_g"
     assert config.source.model == "covariant_retarded_point"
     assert config.exact_retarded_backend == "numba_roots_exact_serial"
+    assert config.exact_retarded_update == ("second_order_start_taylor_endpoint")
     assert config.source.minimum_separation_mm == pytest.approx(7.0e-9)
     assert config.source.relative_stencil_step == pytest.approx(2.0e-3)
     assert config.source.minimum_stencil_step_mm == pytest.approx(3.0e-15)
@@ -61,6 +63,9 @@ def test_magnetic_dipole_nested_config_round_trip() -> None:
     }
     assert restored.to_dict()["magnetic_dipole"]["exact_retarded_backend"] == (
         "numba_roots_exact_serial"
+    )
+    assert restored.to_dict()["magnetic_dipole"]["exact_retarded_update"] == (
+        "second_order_start_taylor_endpoint"
     )
     assert config.rider.species == "neutron"
     assert config.rider.polarization == pytest.approx(0.75)
@@ -87,6 +92,7 @@ def test_old_config_defaults_magnetic_dipoles_off() -> None:
     assert magnetic_payload["spin_model"] == "rfs_minimal_2021"
     assert magnetic_payload["stern_gerlach_model"] == "rfs_full_g"
     assert magnetic_payload["exact_retarded_backend"] == "python"
+    assert magnetic_payload["exact_retarded_update"] == "first_order_endpoint"
     assert magnetic_payload["source"]["model"] == "off"
     assert "backend" not in magnetic_payload["source"]
     assert magnetic_payload["source"]["minimum_separation_mm"] == pytest.approx(2.0e-9)

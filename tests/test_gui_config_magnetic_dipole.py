@@ -53,6 +53,7 @@ class _MagneticHarness(IntegratorGUIConfigMixin):
         self.magnetic_dipole_stern_gerlach_force_enabled_var = _Var()
         self.magnetic_dipole_source_model_var = _Var()
         self.magnetic_dipole_exact_retarded_backend_var = _Var()
+        self.magnetic_dipole_exact_retarded_update_var = _Var()
         self.magnetic_dipole_source_minimum_separation_var = _Var()
         self.rider_magnetic_species_var = _Var()
         self.driver_magnetic_species_var = _Var()
@@ -84,6 +85,7 @@ def test_current_magnetic_dipole_config_round_trips_through_gui_fields() -> None
                 "spin_precession_enabled": False,
                 "stern_gerlach_force_enabled": True,
                 "exact_retarded_backend": "numba_roots_exact_serial",
+                "exact_retarded_update": ("second_order_start_taylor_endpoint"),
                 "source": {
                     "model": "covariant_retarded_point",
                     "minimum_separation_mm": 7.0e-9,
@@ -122,12 +124,18 @@ def test_current_magnetic_dipole_config_round_trips_through_gui_fields() -> None
     assert harness.magnetic_dipole_exact_retarded_backend_var.get() == (
         "Numba roots-exact CPU"
     )
+    assert harness.magnetic_dipole_exact_retarded_update_var.get() == (
+        "Second-order accepted-start Taylor"
+    )
     assert float(harness.magnetic_dipole_source_minimum_separation_var.get()) == (
         pytest.approx(7.0e-9)
     )
     assert rebuilt.magnetic_dipole_source_model == "covariant_retarded_point"
     assert rebuilt.magnetic_dipole_exact_retarded_backend == (
         "numba_roots_exact_serial"
+    )
+    assert rebuilt.magnetic_dipole_exact_retarded_update == (
+        "second_order_start_taylor_endpoint"
     )
     assert rebuilt.magnetic_dipole_source_minimum_separation_mm == pytest.approx(7.0e-9)
     assert rebuilt.magnetic_dipole_source_relative_stencil_step == pytest.approx(2.0e-3)
@@ -210,6 +218,7 @@ def test_old_config_defaults_round_trip_with_magnetic_dipoles_off() -> None:
     assert rebuilt.magnetic_dipole_stern_gerlach_model == "rfs_full_g"
     assert rebuilt.magnetic_dipole_source_model == "off"
     assert rebuilt.magnetic_dipole_exact_retarded_backend == "python"
+    assert rebuilt.magnetic_dipole_exact_retarded_update == "first_order_endpoint"
     assert rebuilt.magnetic_dipole_source_minimum_separation_mm == pytest.approx(2.0e-9)
     assert rebuilt.rider_magnetic_species == "electron"
     assert rebuilt.driver_magnetic_species == "proton"
@@ -410,6 +419,15 @@ def test_gui_labels_present_compact_rfs_controls() -> None:
             "Numba analytical charge response CPU",
             "Numba analytical charge + dipole response CPU",
             "Metal-certified roots + strict CPU",
+        )
+        assert app.magnetic_dipole_exact_retarded_update_label.cget("text") == (
+            "Exact-retarded update:"
+        )
+        assert tuple(
+            app.magnetic_dipole_exact_retarded_update_combo.cget("values")
+        ) == (
+            "First-order endpoint",
+            "Second-order accepted-start Taylor",
         )
         assert app.magnetic_dipole_source_cutoff_label.cget("text") == (
             "Minimum separation abort (mm):"

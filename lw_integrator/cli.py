@@ -162,6 +162,7 @@ DEFAULT_MAGNETIC_DIPOLE: Dict[str, Any] = {
     "spin_model": "rfs_minimal_2021",
     "stern_gerlach_model": "rfs_full_g",
     "exact_retarded_backend": "python",
+    "exact_retarded_update": "first_order_endpoint",
     "source": {
         "model": "off",
         "minimum_separation_mm": 2.0e-9,
@@ -727,6 +728,20 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
             "only float32 dipole root brackets; original-float64 certification "
             "and the strict CPU root/field remain authoritative. Source and "
             "finite-difference reductions remain deterministic."
+        ),
+    )
+    parser.add_argument(
+        "--exact-retarded-update",
+        dest="exact_retarded_update",
+        choices=(
+            "first_order_endpoint",
+            "second_order_start_taylor_endpoint",
+        ),
+        help=(
+            "Exact-retarded translation update: the established first-order "
+            "endpoint scheme (default), or an experimental second-order "
+            "proper-time Taylor update evaluated entirely at the accepted "
+            "start phase-space event."
         ),
     )
     parser.add_argument(
@@ -1326,6 +1341,9 @@ def _build_testbed_report(
         report["exact_retarded"] = _exact_retarded_report(
             str(options.magnetic_dipole_exact_retarded_backend)
         )
+        report["exact_retarded"]["update"] = str(
+            options.magnetic_dipole_exact_retarded_update
+        )
     return report
 
 
@@ -1816,6 +1834,8 @@ def _merge_simulation_payload(
         dipole_source["model"] = args.dipole_source_model
     if getattr(args, "exact_retarded_backend", None) is not None:
         magnetic_dipole["exact_retarded_backend"] = args.exact_retarded_backend
+    if getattr(args, "exact_retarded_update", None) is not None:
+        magnetic_dipole["exact_retarded_update"] = args.exact_retarded_update
     if getattr(args, "dipole_source_minimum_separation_mm", None) is not None:
         dipole_source["minimum_separation_mm"] = (
             args.dipole_source_minimum_separation_mm
@@ -2086,6 +2106,9 @@ def _build_magnetic_dipole_config(payload: Any) -> MagneticDipoleConfig:
             spin_model=payload.get("spin_model", "rfs_minimal_2021"),
             stern_gerlach_model=payload.get("stern_gerlach_model", "rfs_full_g"),
             exact_retarded_backend=exact_retarded_backend,
+            exact_retarded_update=payload.get(
+                "exact_retarded_update", "first_order_endpoint"
+            ),
             source=source_config,
             rider=_particle_config("rider", "electron"),
             driver=_particle_config("driver", "proton"),
@@ -3084,6 +3107,7 @@ def build_report(
         report["exact_retarded"] = _exact_retarded_report(
             magnetic_dipole.exact_retarded_backend
         )
+        report["exact_retarded"]["update"] = magnetic_dipole.exact_retarded_update
     return report
 
 

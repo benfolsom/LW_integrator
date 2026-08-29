@@ -392,6 +392,16 @@ class TestCliConfigParsing:
 
         assert args.exact_retarded_backend == "numba_full_strict_serial"
 
+    def test_parse_args_accepts_second_order_start_taylor_update(self):
+        args = cli.parse_args(
+            [
+                "--exact-retarded-update",
+                "second_order_start_taylor_endpoint",
+            ]
+        )
+
+        assert args.exact_retarded_update == ("second_order_start_taylor_endpoint")
+
     def test_parse_args_accepts_analytical_charge_response_backend(self):
         args = cli.parse_args(
             [
@@ -2015,6 +2025,7 @@ class TestCliMain:
         }
         assert report["exact_retarded"] == {
             "backend": "numba_roots_exact_serial",
+            "update": "first_order_endpoint",
         }
 
     def test_testbed_report_records_source_model_and_exact_retarded_backend(
@@ -2046,6 +2057,7 @@ class TestCliMain:
         }
         assert report["exact_retarded"] == {
             "backend": "numba_full_strict_serial",
+            "update": "first_order_endpoint",
         }
 
     def test_metal_report_records_certification_and_fallback_counts(self, monkeypatch):
@@ -2081,9 +2093,7 @@ class TestCliMain:
             lambda: AnalyticChargeResponseDiagnostics(7, 5, 2, 2, 0, 0, 14, 3.5),
         )
 
-        report = cli._exact_retarded_report(
-            "numba_analytic_charge_response_serial"
-        )
+        report = cli._exact_retarded_report("numba_analytic_charge_response_serial")
 
         assert report == {
             "backend": "numba_analytic_charge_response_serial",

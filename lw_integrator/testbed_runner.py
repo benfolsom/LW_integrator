@@ -90,6 +90,14 @@ EXACT_RETARDED_BACKEND_OPTIONS: Tuple[Tuple[str, str], ...] = (
     ("Metal-certified roots + strict CPU", "metal_certified_full_strict"),
 )
 
+EXACT_RETARDED_UPDATE_OPTIONS: Tuple[Tuple[str, str], ...] = (
+    ("First-order endpoint", "first_order_endpoint"),
+    (
+        "Second-order accepted-start Taylor",
+        "second_order_start_taylor_endpoint",
+    ),
+)
+
 PARAM_LABELS: Dict[str, str] = {
     "starting_distance": "Start z (mm)",
     "transv_mom": "Transverse momentum spread (amu*mm/ns, ±)",
@@ -426,6 +434,7 @@ class SimulationOptions:
     magnetic_dipole_spin_model: str = "rfs_minimal_2021"
     magnetic_dipole_stern_gerlach_model: str = "rfs_full_g"
     magnetic_dipole_exact_retarded_backend: str = "python"
+    magnetic_dipole_exact_retarded_update: str = "first_order_endpoint"
     magnetic_dipole_source_model: str = "off"
     magnetic_dipole_source_minimum_separation_mm: float = 2.0e-9
     magnetic_dipole_source_relative_stencil_step: float = 1.0e-3
@@ -706,6 +715,7 @@ class SimulationOptions:
                 "spin_model": self.magnetic_dipole_spin_model,
                 "stern_gerlach_model": (self.magnetic_dipole_stern_gerlach_model),
                 "exact_retarded_backend": (self.magnetic_dipole_exact_retarded_backend),
+                "exact_retarded_update": (self.magnetic_dipole_exact_retarded_update),
                 "source": {
                     "model": self.magnetic_dipole_source_model,
                     "minimum_separation_mm": (
@@ -1501,6 +1511,9 @@ class SimulationOptions:
                 _magnetic_value("stern_gerlach_model", "rfs_full_g")
             ),
             magnetic_dipole_exact_retarded_backend=str(exact_retarded_backend),
+            magnetic_dipole_exact_retarded_update=str(
+                _magnetic_value("exact_retarded_update", "first_order_endpoint")
+            ),
             magnetic_dipole_source_model=str(_magnetic_source_value("model", "off")),
             magnetic_dipole_source_minimum_separation_mm=float(
                 _magnetic_source_value("minimum_separation_mm", 2.0e-9)
@@ -2850,6 +2863,7 @@ def build_magnetic_dipole_config(options: SimulationOptions) -> object:
         spin_model=options.magnetic_dipole_spin_model,
         stern_gerlach_model=options.magnetic_dipole_stern_gerlach_model,
         exact_retarded_backend=options.magnetic_dipole_exact_retarded_backend,
+        exact_retarded_update=options.magnetic_dipole_exact_retarded_update,
         source=DipoleSourceConfig(
             model=options.magnetic_dipole_source_model,
             minimum_separation_mm=(
@@ -3064,6 +3078,7 @@ def run_testbed(
     _log(f"  Radiation reaction: {options.radiation_reaction_mode}")
     _log(f"  Magnetic dipole source: {options.magnetic_dipole_source_model}")
     _log(f"  Exact-retarded backend: {options.magnetic_dipole_exact_retarded_backend}")
+    _log(f"  Exact-retarded update: {options.magnetic_dipole_exact_retarded_update}")
     if checkpoint_config.enabled:
         _log(
             "  Checkpoint: "
@@ -5177,6 +5192,7 @@ __all__ = [
     "PARTICLE_PARAM_FIELDS",
     "RADIATION_REACTION_MODE_CHOICES",
     "EXACT_RETARDED_BACKEND_OPTIONS",
+    "EXACT_RETARDED_UPDATE_OPTIONS",
     "DIPOLE_SOURCE_MODEL_OPTIONS",
     "SimulationOptions",
     "InitialSummary",
