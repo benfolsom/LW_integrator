@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -9,6 +10,7 @@ from core.adaptive_pair_return import (
     AdaptivePairControllerState,
     attempt_exact_pair_adaptive_step,
 )
+from core.integration_checkpoint import AcceptedPairCheckpointStore
 from core.shared_lab_time import SharedLabTimeError
 from core.step_doubling import (
     ErrorScale,
@@ -98,13 +100,14 @@ def _attempt(
     *,
     rider_advance,
     tolerances: StepDoublingTolerances,
+    controller_state: AdaptivePairControllerState | None = None,
 ):
     return attempt_exact_pair_adaptive_step(
         rider_builder=rider,
         driver_builder=driver,
         advance_rider=rider_advance,
         advance_driver=_advance(4.0),
-        controller_state=_controller(),
+        controller_state=controller_state or _controller(),
         controller_config=StepControllerConfig(method_order=1),
         tolerances=tolerances,
         minimum_step_ns=0.001,
@@ -179,3 +182,76 @@ def test_particle_death_is_fatal_and_never_published() -> None:
 
     assert rider.accepted_steps == 1
     assert driver.accepted_steps == 1
+
+
+def test_checkpoint_restore_reproduces_next_adaptive_attempt_bitwise(
+    tmp_path: Path,
+) -> None:
+    continuous_rider, continuous_driver = _pair()
+    first = _attempt(
+        continuous_rider,
+        continuous_driver,
+        rider_advance=_advance(2.0),
+        tolerances=_tolerances(1.0),
+    )
+    checkpoint = AcceptedPairCheckpointStore(
+        tmp_path / "pair.checkpoint",
+        compatibility_payload={"physics": "adaptive-pair-test"},
+        interval_knots=1,
+        interval_seconds=0.0,
+        resume=False,
+    )
+    checkpoint.write(
+        rider=continuous_rider.build_current(),
+        driver=continuous_driver.build_current(),
+        controller_state=first.controller_state.to_checkpoint_state(),
+        public_output_state={"cursor": 0},
+    )
+
+    continuous_second = _attempt(
+        continuous_rider,
+        continuous_driver,
+        rider_advance=_advance(2.0),
+        tolerances=_tolerances(1.0),
+        controller_state=first.controller_state,
+    )
+
+    reopened = AcceptedPairCheckpointStore(
+        tmp_path / "pair.checkpoint",
+        compatibility_payload={"physics": "adaptive-pair-test"},
+        interval_knots=1,
+        interval_seconds=0.0,
+        resume=True,
+    )
+    restored_rider = GrowableTrajectoryBuilder(1, 1)
+    restored_driver = GrowableTrajectoryBuilder(1, 1)
+    reopened.restore_pair(restored_rider, restored_driver)
+    restored_controller = AdaptivePairControllerState.from_checkpoint_state(
+        reopened.controller_state
+    )
+    restored_second = _attempt(
+        restored_rider,
+        restored_driver,
+        rider_advance=_advance(2.0),
+        tolerances=_tolerances(1.0),
+        controller_state=restored_controller,
+    )
+
+    assert restored_second.controller_state == continuous_second.controller_state
+    for restored, continuous in (
+        (restored_rider.build_current(), continuous_rider.build_current()),
+        (restored_driver.build_current(), continuous_driver.build_current()),
+    ):
+        for name in (
+            "x",
+            "t",
+            "Px",
+            "Pt",
+            "gamma",
+            "radiation_energy",
+            "mass_shell_projection_energy",
+        ):
+            np.testing.assert_array_equal(
+                np.asarray(getattr(restored, name)),
+                np.asarray(getattr(continuous, name)),
+            )

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 
@@ -41,6 +42,44 @@ class AdaptivePairControllerState:
             raise ValueError("adaptive pair step sizes must be finite and positive")
         if self.accepted_slabs < 0 or self.rejected_trials < 0:
             raise ValueError("adaptive pair counters must be non-negative")
+
+    def to_checkpoint_state(self) -> dict[str, Any]:
+        """Return a strict JSON-compatible controller payload."""
+
+        return {
+            "schema_version": 1,
+            "current_step_ns": float(self.current_step_ns),
+            "rider_proper_step_guess_ns": float(self.rider_proper_step_guess_ns),
+            "driver_proper_step_guess_ns": float(self.driver_proper_step_guess_ns),
+            "accepted_slabs": int(self.accepted_slabs),
+            "rejected_trials": int(self.rejected_trials),
+        }
+
+    @classmethod
+    def from_checkpoint_state(
+        cls,
+        payload: dict[str, Any],
+    ) -> "AdaptivePairControllerState":
+        """Restore the exact scalar state, rejecting unknown schema revisions."""
+
+        if set(payload) != {
+            "schema_version",
+            "current_step_ns",
+            "rider_proper_step_guess_ns",
+            "driver_proper_step_guess_ns",
+            "accepted_slabs",
+            "rejected_trials",
+        }:
+            raise ValueError("adaptive pair checkpoint controller fields are invalid")
+        if payload["schema_version"] != 1:
+            raise ValueError("unsupported adaptive pair controller schema")
+        return cls(
+            current_step_ns=float(payload["current_step_ns"]),
+            rider_proper_step_guess_ns=float(payload["rider_proper_step_guess_ns"]),
+            driver_proper_step_guess_ns=float(payload["driver_proper_step_guess_ns"]),
+            accepted_slabs=int(payload["accepted_slabs"]),
+            rejected_trials=int(payload["rejected_trials"]),
+        )
 
 
 @dataclass(frozen=True)

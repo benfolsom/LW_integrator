@@ -62,6 +62,10 @@
   exact-pair path. Healthy accepted attempts commit the refined midpoint and
   endpoint, ordinary error failures shrink without publication, Medina caps
   force a smaller retry, and non-recoverable health failures abort explicitly.
+- Added strict controller serialization for the variable-length accepted-pair
+  checkpoint. A focused interrupted/resumed adaptive sequence restores both
+  histories and reproduces the next accepted attempt bit-for-bit against the
+  uninterrupted path.
 
 All notable changes and updates to the LW Integrator project are documented in this file.
 
