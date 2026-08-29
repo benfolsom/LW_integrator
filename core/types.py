@@ -1566,6 +1566,72 @@ class TrajectoryBuilder:
         self._particle_failure_info: dict = {}
         self._pseudo_grid_schedule: list = [None] * n_steps
 
+    def _replace_row_capacity(self, new_capacity: int) -> None:
+        """Replace row-shaped storage while preserving every existing value.
+
+        Fixed-size integration never calls this helper.  The growable accepted-
+        history builder below uses it at geometric capacity boundaries.  Every
+        previously published wrapper becomes stale because all row-array bases
+        have changed; the live array revision makes that failure explicit.
+        """
+
+        new_capacity = int(new_capacity)
+        if new_capacity <= self._n_steps:
+            raise ValueError("new trajectory capacity must exceed the old capacity")
+
+        old_capacity = self._n_steps
+        always_allocated = set(self._KINEMATIC_FIELDS) | {"dead"}
+        magnetic_fields = set(self._MAGNETIC_KINEMATIC_FIELDS)
+        medina_float_fields = set(self._MEDINA_FLOAT_FIELDS)
+        medina_bool_fields = set(self._MEDINA_BOOL_FIELDS)
+        for field_name in (
+            always_allocated
+            | magnetic_fields
+            | medina_float_fields
+            | medina_bool_fields
+        ):
+            old = self._arrays[field_name]
+            if field_name in magnetic_fields and not self._magnetic_arrays_allocated:
+                replacement = np.broadcast_to(
+                    np.array(0.0, dtype=np.float64),
+                    (new_capacity, self._n_particles),
+                )
+            elif (
+                field_name in medina_float_fields and not self._medina_arrays_allocated
+            ):
+                default = (
+                    np.nan if field_name == "medina_external_force_sample_time" else 0.0
+                )
+                replacement = np.broadcast_to(
+                    np.array(default, dtype=np.float64),
+                    (new_capacity, self._n_particles),
+                )
+            elif field_name in medina_bool_fields and not self._medina_arrays_allocated:
+                replacement = np.broadcast_to(
+                    np.array(False, dtype=bool),
+                    (new_capacity, self._n_particles),
+                )
+            else:
+                replacement = np.zeros(
+                    (new_capacity, self._n_particles), dtype=old.dtype
+                )
+                replacement[:old_capacity] = old
+            self._arrays[field_name] = replacement
+
+        halted_early = np.zeros(new_capacity, dtype=bool)
+        halted_early[:old_capacity] = self._halted_early
+        self._halted_early = halted_early
+        halt_step = np.full(new_capacity, -1, dtype=np.int64)
+        halt_step[:old_capacity] = self._halt_step_arr
+        self._halt_step_arr = halt_step
+        self._halt_reason.extend([None] * (new_capacity - old_capacity))
+        self._pseudo_grid_schedule.extend([None] * (new_capacity - old_capacity))
+
+        self._n_steps = new_capacity
+        self._storage_state.capacity = new_capacity
+        self._storage_state.rewrite_epoch += 1
+        self._storage_state.array_revision += 1
+
     def set_step(self, step: int, state: ParticleState) -> None:
         """Copy *state* fields into row *step* of the pre-allocated arrays."""
         step = int(step)
@@ -1963,6 +2029,156 @@ class TrajectoryBuilder:
         )._make_managed_arrays_read_only()
 
 
+class GrowableTrajectoryBuilder(TrajectoryBuilder):
+    """Append-only trajectory storage for accepted retarded-history knots.
+
+    ``TrajectoryBuilder`` remains the fixed-size public-output accumulator.
+    This separate builder starts with a small capacity and grows geometrically,
+    allowing accepted source history to have a cadence and final length that
+    are independent of public output.  It intentionally exposes no truncate or
+    arbitrary-row append operation.
+
+    Growth replaces backing arrays and therefore invalidates older managed
+    views.  Appends within the current capacity preserve the allocation and are
+    eligible for the existing append-aware provider caches.
+    """
+
+    def __init__(
+        self,
+        initial_capacity: int,
+        n_particles: int,
+        *,
+        magnetic_dipole: bool = False,
+        growth_factor: float = 2.0,
+    ) -> None:
+        initial_capacity = int(initial_capacity)
+        n_particles = int(n_particles)
+        growth_factor = float(growth_factor)
+        if initial_capacity < 1:
+            raise ValueError("initial_capacity must be positive")
+        if n_particles < 1:
+            raise ValueError("n_particles must be positive")
+        if not np.isfinite(growth_factor) or growth_factor <= 1.0:
+            raise ValueError("growth_factor must be finite and greater than one")
+        super().__init__(
+            initial_capacity,
+            n_particles,
+            magnetic_dipole=magnetic_dipole,
+        )
+        self._growth_factor = growth_factor
+        self._accepted_steps = 0
+
+    @property
+    def accepted_steps(self) -> int:
+        """Number of accepted rows currently stored."""
+
+        return self._accepted_steps
+
+    @property
+    def capacity(self) -> int:
+        """Current allocated row capacity."""
+
+        return self._n_steps
+
+    def _validate_append_state(self, state: ParticleState) -> None:
+        row_fields = (
+            self._KINEMATIC_FIELDS
+            + self._MAGNETIC_KINEMATIC_FIELDS
+            + self._MEDINA_FLOAT_FIELDS
+            + self._MEDINA_BOOL_FIELDS
+        )
+        for field_name in row_fields:
+            if field_name not in state:
+                continue
+            values = np.asarray(state[field_name])
+            if values.shape != (self._n_particles,):
+                raise ValueError(f"{field_name} must have shape ({self._n_particles},)")
+            if field_name == "medina_external_force_sample_time":
+                valid = not np.any(np.isinf(values))
+            else:
+                valid = bool(np.all(np.isfinite(values)))
+            if not valid:
+                if field_name == "medina_external_force_sample_time":
+                    raise ValueError(
+                        "medina_external_force_sample_time must not contain infinity"
+                    )
+                raise ValueError(f"{field_name} must contain only finite values")
+
+        dead = state.get("_dead_particles")
+        if dead is not None and np.asarray(dead).shape != (self._n_particles,):
+            raise ValueError(f"_dead_particles must have shape ({self._n_particles},)")
+
+        if "t" not in state:
+            raise ValueError("accepted history rows require coordinate time t")
+        if self._accepted_steps:
+            previous_t = self._arrays["t"][self._accepted_steps - 1]
+            next_t = np.asarray(state["t"], dtype=np.float64)
+            if np.any(next_t <= previous_t):
+                raise ValueError(
+                    "accepted history coordinate time must increase for every particle"
+                )
+
+    def _ensure_append_capacity(self) -> None:
+        if self._accepted_steps < self._n_steps:
+            return
+        grown = max(
+            self._accepted_steps + 1,
+            int(np.ceil(self._n_steps * self._growth_factor)),
+        )
+        self._replace_row_capacity(grown)
+
+    def set_step(self, step: int, state: ParticleState) -> None:
+        """Reject arbitrary row writes; accepted history is append-only."""
+
+        raise TypeError("GrowableTrajectoryBuilder rows must use append_step()")
+
+    def append_step(self, state: ParticleState) -> int:
+        """Validate and append one accepted state, returning its row index."""
+
+        self._validate_append_state(state)
+        self._ensure_append_capacity()
+        step = self._accepted_steps
+        super().set_step(step, state)
+        self._accepted_steps += 1
+        self._published_stop = self._accepted_steps
+        return step
+
+    def build_partial(self, up_to_step: int) -> TrajectoryArrays:
+        """Publish only a prefix of rows that were actually accepted."""
+
+        if int(up_to_step) > self._accepted_steps:
+            raise ValueError(
+                "up_to_step must not exceed the accepted history length "
+                f"{self._accepted_steps}"
+            )
+        return super().build_partial(up_to_step)
+
+    def restore_checkpoint_rows(
+        self,
+        start: int,
+        row_arrays: dict[str, np.ndarray],
+        *,
+        particle_constants: dict[str, np.ndarray] | None = None,
+    ) -> None:
+        """Reserve variable-history restore semantics for checkpoint phase 2."""
+
+        raise NotImplementedError(
+            "growable accepted-history checkpoint restore is not implemented yet"
+        )
+
+    def build_current(self) -> TrajectoryArrays:
+        """Return a managed view containing exactly the accepted rows."""
+
+        if self._accepted_steps < 1:
+            raise ValueError("accepted history is empty")
+        return self.build_partial(self._accepted_steps)
+
+    def build(self) -> TrajectoryArrays:
+        """Return accepted rows rather than unused geometric capacity."""
+
+        return self.build_current()
+
+
 __all__ = [
     "ParticleState",
     "Trajectory",
@@ -1980,6 +2196,7 @@ __all__ = [
     "TrajectoryArrays",
     "IndexedTrajectoryArrays",
     "TrajectoryBuilder",
+    "GrowableTrajectoryBuilder",
     "StaleTrajectoryViewError",
     "Occluder",
     "BeamlineGeometryConfig",

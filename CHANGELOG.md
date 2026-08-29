@@ -1,5 +1,16 @@
 # Changelog
 
+- Added an isolated growable, append-only trajectory-history builder for the
+  future exact-retarded multirate integrator. Accepted source-history knots can
+  now grow independently of public output capacity while retaining managed
+  read-only views, explicit stale-view invalidation at geometric reallocations,
+  and append-aware charge/dipole provider caching. The fixed-step solver does
+  not use this builder yet, so existing trajectories are unchanged.
+- Added a pure causal-frozen $C^1$ rest-spin slope oracle for the future
+  multirate dipole history. It uses only accepted past knots, preserves every
+  queryable slope under future appends, and is not yet selected by production
+  field providers.
+
 All notable changes and updates to the LW Integrator project are documented in this file.
 
 ## v0.8.5 — August 2026
