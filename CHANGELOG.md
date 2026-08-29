@@ -58,6 +58,10 @@
   particle death, Medina impulse cap, negative/invalid far-radiated energy, or
   an unexpected charged-particle Medina derivative-readiness transition is
   never eligible for commit even when its scaled local error is below one.
+- Added a checkpointable scalar adaptive-attempt controller for the internal
+  exact-pair path. Healthy accepted attempts commit the refined midpoint and
+  endpoint, ordinary error failures shrink without publication, Medina caps
+  force a smaller retry, and non-recoverable health failures abort explicitly.
 
 All notable changes and updates to the LW Integrator project are documented in this file.
 
