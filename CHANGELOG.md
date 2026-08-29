@@ -50,6 +50,10 @@
   mechanical momentum and sums radiation, Medina, cross-field, and projection
   increments over both refined half steps; the accepted-history builders stay
   unchanged regardless of the provisional decision.
+- Added a joint two-row acceptance gate for the refined midpoint and endpoint.
+  Both rider/driver sequences and both capacity expansions are preflighted
+  before publication; rejected trials and ordinary validation failures append
+  no history, while the one-full-step comparison path is never committed.
 
 All notable changes and updates to the LW Integrator project are documented in this file.
 

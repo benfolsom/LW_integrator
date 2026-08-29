@@ -9,6 +9,7 @@ import pytest
 from core.constants import C_MMNS
 from core.exact_pair_trial import (
     ExactPairEOMOptions,
+    commit_accepted_exact_pair_step_doubling_trial,
     make_exact_role_eom_advance,
     solve_exact_pair_slab_trial,
     solve_exact_pair_step_doubling_trial,
@@ -355,6 +356,86 @@ def test_step_doubling_keeps_both_paths_unpublished_and_sums_half_diagnostics() 
     assert trial.refined.pair.target_time_ns == pytest.approx(0.2)
     assert trial.refined.rider_history.n_steps == 3
     assert trial.refined.driver_history.n_steps == 3
+    assert rider_builder.accepted_steps == 1
+    assert driver_builder.accepted_steps == 1
+    with pytest.raises(SharedLabTimeError, match="rejected"):
+        commit_accepted_exact_pair_step_doubling_trial(
+            trial,
+            rider_builder=rider_builder,
+            driver_builder=driver_builder,
+        )
+    assert rider_builder.accepted_steps == 1
+    assert driver_builder.accepted_steps == 1
+
+
+def test_accepted_step_doubling_commits_only_the_two_half_path() -> None:
+    rider_builder = _accepted(-1.0)
+    driver_builder = _accepted(1.0)
+    trial = solve_exact_pair_step_doubling_trial(
+        accepted_rider_history=rider_builder.build_current(),
+        accepted_driver_history=driver_builder.build_current(),
+        advance_rider=_advance(2.0, []),
+        advance_driver=_advance(4.0, []),
+        delta_time_ns=0.2,
+        rider_initial_proper_step_ns=0.1,
+        driver_initial_proper_step_ns=0.05,
+        magnetic_dipole=MagneticDipoleConfig(),
+        include_dipole_source=False,
+        tolerances=StepDoublingTolerances(
+            position_mm=ErrorScale(1.0, 0.0),
+            mechanical_momentum_native=ErrorScale(1.0, 0.0),
+            rest_spin=ErrorScale(1.0, 0.0),
+            diagnostics_native=ErrorScale(1.0, 0.0),
+        ),
+    )
+    assert trial.assessment.accepted
+
+    rows = commit_accepted_exact_pair_step_doubling_trial(
+        trial,
+        rider_builder=rider_builder,
+        driver_builder=driver_builder,
+    )
+
+    assert rows == (1, 2)
+    assert rider_builder.accepted_steps == 3
+    assert driver_builder.accepted_steps == 3
+    rider = rider_builder.build_current()
+    driver = driver_builder.build_current()
+    np.testing.assert_allclose(rider.t[:, 0], [0.0, 0.1, 0.2])
+    np.testing.assert_allclose(driver.t[:, 0], [0.0, 0.1, 0.2])
+    np.testing.assert_allclose(rider.radiation_energy[1:, 0], [0.0025, 0.0025])
+    np.testing.assert_allclose(driver.radiation_energy[1:, 0], [0.000625, 0.000625])
+
+
+def test_two_row_preflight_failure_publishes_neither_midpoint_nor_endpoint() -> None:
+    rider_builder = _accepted(-1.0)
+    driver_builder = _accepted(1.0)
+    trial = solve_exact_pair_step_doubling_trial(
+        accepted_rider_history=rider_builder.build_current(),
+        accepted_driver_history=driver_builder.build_current(),
+        advance_rider=_advance(2.0, []),
+        advance_driver=_advance(4.0, []),
+        delta_time_ns=0.2,
+        rider_initial_proper_step_ns=0.1,
+        driver_initial_proper_step_ns=0.05,
+        magnetic_dipole=MagneticDipoleConfig(),
+        include_dipole_source=False,
+        tolerances=StepDoublingTolerances(
+            position_mm=ErrorScale(1.0, 0.0),
+            mechanical_momentum_native=ErrorScale(1.0, 0.0),
+            rest_spin=ErrorScale(1.0, 0.0),
+            diagnostics_native=ErrorScale(1.0, 0.0),
+        ),
+    )
+    trial.refined.pair.rider.state["x"][0] = np.nan
+
+    with pytest.raises(ValueError, match="x must contain only finite"):
+        commit_accepted_exact_pair_step_doubling_trial(
+            trial,
+            rider_builder=rider_builder,
+            driver_builder=driver_builder,
+        )
+
     assert rider_builder.accepted_steps == 1
     assert driver_builder.accepted_steps == 1
 

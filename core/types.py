@@ -2208,16 +2208,38 @@ class GrowableTrajectoryBuilder(TrajectoryBuilder):
 
         self._validate_append_state(state)
 
-    def reserve_append_capacity(self) -> None:
-        """Ensure one more row fits without publishing a history knot."""
+    def validate_append_steps(self, states: Sequence[ParticleState]) -> None:
+        """Preflight a contiguous row sequence without publishing any row."""
 
-        self._ensure_append_capacity()
+        states = tuple(states)
+        previous_time = (
+            np.asarray(self._arrays["t"][self._accepted_steps - 1], dtype=np.float64)
+            if self._accepted_steps
+            else None
+        )
+        for state in states:
+            self._validate_append_state(state)
+            next_time = np.asarray(state["t"], dtype=np.float64)
+            if previous_time is not None and np.any(next_time <= previous_time):
+                raise ValueError(
+                    "accepted history coordinate time must increase for every particle"
+                )
+            previous_time = next_time
 
-    def _ensure_append_capacity(self) -> None:
-        if self._accepted_steps < self._n_steps:
+    def reserve_append_capacity(self, additional_rows: int = 1) -> None:
+        """Ensure a row sequence fits without publishing a history knot."""
+
+        self._ensure_append_capacity(additional_rows)
+
+    def _ensure_append_capacity(self, additional_rows: int = 1) -> None:
+        additional_rows = int(additional_rows)
+        if additional_rows < 1:
+            raise ValueError("additional_rows must be positive")
+        required_capacity = self._accepted_steps + additional_rows
+        if required_capacity <= self._n_steps:
             return
         grown = max(
-            self._accepted_steps + 1,
+            required_capacity,
             int(np.ceil(self._n_steps * self._growth_factor)),
         )
         self._replace_row_capacity(grown)

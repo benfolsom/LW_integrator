@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import copy
 from dataclasses import dataclass, replace
-from typing import Any, Callable
+from typing import Any, Callable, cast
 
 import numpy as np
 
@@ -30,6 +30,7 @@ from .step_doubling import (
 from .types import (
     ChronoMatchingMode,
     ExternalFieldConfig,
+    GrowableTrajectoryBuilder,
     MagneticDipoleConfig,
     ParticleState,
     SimulationType,
@@ -103,24 +104,29 @@ def make_exact_role_eom_advance(options: ExactPairEOMOptions) -> AdvanceRoleTria
         source_start: ParticleState,
         exact_source_history: Any,
     ) -> ParticleState:
-        return self_consistent_step(
-            retarded_equations_of_motion,
-            proper_step_ns,
-            [observer_start],
-            [source_start],
-            0,
-            options.aperture_radius_mm,
-            SimulationType.BUNCH_TO_BUNCH,
-            options.self_consistency,
-            options.chrono_mode,
-            StartupMode.INERTIAL_PREHISTORY,
-            step_idx=options.step_idx,
-            cancel_callback=options.cancel_callback,
-            radiation_reaction_mode=options.radiation_reaction_mode,
-            external_field=options.external_field,
-            magnetic_dipole=options.magnetic_dipole,
-            exact_source_history=exact_source_history,
-            exact_source_spin_interpolation_model=options.spin_interpolation_model,
+        return cast(
+            ParticleState,
+            self_consistent_step(
+                retarded_equations_of_motion,
+                proper_step_ns,
+                [observer_start],
+                [source_start],
+                0,
+                options.aperture_radius_mm,
+                SimulationType.BUNCH_TO_BUNCH,
+                options.self_consistency,
+                options.chrono_mode,
+                StartupMode.INERTIAL_PREHISTORY,
+                step_idx=options.step_idx,
+                cancel_callback=options.cancel_callback,
+                radiation_reaction_mode=options.radiation_reaction_mode,
+                external_field=options.external_field,
+                magnetic_dipole=options.magnetic_dipole,
+                exact_source_history=exact_source_history,
+                exact_source_spin_interpolation_model=(
+                    options.spin_interpolation_model
+                ),
+            ),
         )
 
     return advance
@@ -309,40 +315,51 @@ def solve_exact_pair_step_doubling_trial(
 ) -> ExactPairStepDoublingTrial:
     """Evaluate full and two-half paths without mutating accepted state."""
 
-    common = {
-        "accepted_rider_history": accepted_rider_history,
-        "accepted_driver_history": accepted_driver_history,
-        "advance_rider": advance_rider,
-        "advance_driver": advance_driver,
-        "magnetic_dipole": magnetic_dipole,
-        "include_dipole_source": include_dipole_source,
-        "spin_interpolation_model": spin_interpolation_model,
-        "absolute_tolerance_ns": absolute_time_tolerance_ns,
-        "relative_tolerance": relative_time_tolerance,
-        "max_iterations": max_iterations,
-        "max_bracket_expansions": max_bracket_expansions,
-        "maximum_proper_step_ns": maximum_proper_step_ns,
-    }
-    full = solve_exact_pair_slab_trial(
-        **common,
-        delta_time_ns=delta_time_ns,
-        rider_initial_proper_step_ns=rider_initial_proper_step_ns,
-        driver_initial_proper_step_ns=driver_initial_proper_step_ns,
+    def solve_slab(
+        *,
+        slab_time_ns: float,
+        rider_proper_step_ns: float,
+        driver_proper_step_ns: float,
+        rider_tail: tuple[ParticleState, ...] = (),
+        driver_tail: tuple[ParticleState, ...] = (),
+    ) -> ExactPairSlabTrial:
+        return solve_exact_pair_slab_trial(
+            accepted_rider_history=accepted_rider_history,
+            accepted_driver_history=accepted_driver_history,
+            advance_rider=advance_rider,
+            advance_driver=advance_driver,
+            delta_time_ns=slab_time_ns,
+            rider_initial_proper_step_ns=rider_proper_step_ns,
+            driver_initial_proper_step_ns=driver_proper_step_ns,
+            magnetic_dipole=magnetic_dipole,
+            include_dipole_source=include_dipole_source,
+            rider_prior_tail=rider_tail,
+            driver_prior_tail=driver_tail,
+            spin_interpolation_model=spin_interpolation_model,
+            absolute_tolerance_ns=absolute_time_tolerance_ns,
+            relative_tolerance=relative_time_tolerance,
+            max_iterations=max_iterations,
+            max_bracket_expansions=max_bracket_expansions,
+            maximum_proper_step_ns=maximum_proper_step_ns,
+        )
+
+    full = solve_slab(
+        slab_time_ns=delta_time_ns,
+        rider_proper_step_ns=rider_initial_proper_step_ns,
+        driver_proper_step_ns=driver_initial_proper_step_ns,
     )
     half_time_ns = 0.5 * float(delta_time_ns)
-    midpoint = solve_exact_pair_slab_trial(
-        **common,
-        delta_time_ns=half_time_ns,
-        rider_initial_proper_step_ns=0.5 * float(rider_initial_proper_step_ns),
-        driver_initial_proper_step_ns=0.5 * float(driver_initial_proper_step_ns),
+    midpoint = solve_slab(
+        slab_time_ns=half_time_ns,
+        rider_proper_step_ns=0.5 * float(rider_initial_proper_step_ns),
+        driver_proper_step_ns=0.5 * float(driver_initial_proper_step_ns),
     )
-    refined = solve_exact_pair_slab_trial(
-        **common,
-        delta_time_ns=half_time_ns,
-        rider_initial_proper_step_ns=midpoint.pair.rider.proper_step_ns,
-        driver_initial_proper_step_ns=midpoint.pair.driver.proper_step_ns,
-        rider_prior_tail=(midpoint.pair.rider.state,),
-        driver_prior_tail=(midpoint.pair.driver.state,),
+    refined = solve_slab(
+        slab_time_ns=half_time_ns,
+        rider_proper_step_ns=midpoint.pair.rider.proper_step_ns,
+        driver_proper_step_ns=midpoint.pair.driver.proper_step_ns,
+        rider_tail=(midpoint.pair.rider.state,),
+        driver_tail=(midpoint.pair.driver.state,),
     )
     full_state = build_pair_step_doubling_state(
         rider_states=(full.pair.rider.state,),
@@ -366,11 +383,54 @@ def solve_exact_pair_step_doubling_trial(
     )
 
 
+def commit_accepted_exact_pair_step_doubling_trial(
+    trial: ExactPairStepDoublingTrial,
+    *,
+    rider_builder: GrowableTrajectoryBuilder,
+    driver_builder: GrowableTrajectoryBuilder,
+) -> tuple[int, int]:
+    """Jointly publish the authoritative midpoint and endpoint after acceptance.
+
+    All four rows and both two-row capacity reservations are validated before
+    the first append. Ordinary validation/allocation failures therefore leave
+    both accepted histories unchanged. As with the one-row pair commit, a
+    process-level interruption is recovered from the last atomic checkpoint.
+    """
+
+    if not trial.assessment.accepted:
+        raise SharedLabTimeError("rejected step-doubling trial cannot be committed")
+    if rider_builder.accepted_steps != driver_builder.accepted_steps:
+        raise SharedLabTimeError("accepted rider and driver histories are misaligned")
+    rider_states = (
+        trial.midpoint.pair.rider.state,
+        trial.refined.pair.rider.state,
+    )
+    driver_states = (
+        trial.midpoint.pair.driver.state,
+        trial.refined.pair.driver.state,
+    )
+    rider_builder.validate_append_steps(rider_states)
+    driver_builder.validate_append_steps(driver_states)
+    rider_builder.reserve_append_capacity(2)
+    driver_builder.reserve_append_capacity(2)
+
+    midpoint_rider_row = rider_builder.append_step(rider_states[0])
+    midpoint_driver_row = driver_builder.append_step(driver_states[0])
+    endpoint_rider_row = rider_builder.append_step(rider_states[1])
+    endpoint_driver_row = driver_builder.append_step(driver_states[1])
+    if midpoint_rider_row != midpoint_driver_row:
+        raise RuntimeError("joint midpoint row indices diverged")
+    if endpoint_rider_row != endpoint_driver_row:
+        raise RuntimeError("joint endpoint row indices diverged")
+    return midpoint_rider_row, endpoint_rider_row
+
+
 __all__ = [
     "AdvanceRoleTrial",
     "ExactPairEOMOptions",
     "ExactPairSlabTrial",
     "ExactPairStepDoublingTrial",
+    "commit_accepted_exact_pair_step_doubling_trial",
     "make_exact_role_eom_advance",
     "solve_exact_pair_slab_trial",
     "solve_exact_pair_step_doubling_trial",
