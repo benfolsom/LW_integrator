@@ -22,6 +22,11 @@
   return mode. It solves separate rider/driver proper-time increments against
   one coordinate-time target and preflights both growable-history rows before
   publishing either. It is not yet wired into the production integration loop.
+- Added an isolated step-doubling error budget and bounded step controller for
+  the future return mode. Position, mechanical momentum, rest spin, and
+  slab-summed diagnostics use independent absolute/relative scales. The
+  complete RFS-plus-Medina path remains conservatively first order until an
+  end-to-end refinement study proves otherwise.
 
 All notable changes and updates to the LW Integrator project are documented in this file.
 
