@@ -29,6 +29,36 @@ class IntegratorGUIStateMixin:
             if hasattr(self.optimization_tab, "sim_type_var"):
                 self.optimization_tab.sim_type_var.set(sim_type_value)
 
+    def _toggle_adaptive_pair_return_controls(self) -> None:
+        """Enable exact-pair return entries only when the mode is selected."""
+
+        enabled_var = getattr(self, "adaptive_pair_return_enabled_var", None)
+        enabled = bool(enabled_var is not None and enabled_var.get())
+        state = "normal" if enabled else "disabled"
+        color = "black" if enabled else "gray60"
+        for widget in getattr(self, "_adaptive_pair_return_controls", []):
+            widget.configure(state=state)
+        for label in getattr(self, "_adaptive_pair_return_labels", []):
+            label.configure(foreground=color)
+
+    def _on_adaptive_pair_return_toggle(self) -> None:
+        """Select the validated prerequisites when adaptive return is enabled."""
+
+        enabled = bool(self.adaptive_pair_return_enabled_var.get())
+        if enabled:
+            if hasattr(self, "checkpoint_enabled_var"):
+                self.checkpoint_enabled_var.set(True)
+            if hasattr(self, "adaptive_timestep_enabled_var"):
+                self.adaptive_timestep_enabled_var.set(False)
+            core_vars = getattr(self, "core_param_vars", {})
+            if "startup_mode" in core_vars:
+                core_vars["startup_mode"].set("INERTIAL_PREHISTORY")
+            if hasattr(self, "magnetic_dipole_exact_retarded_update_var"):
+                self.magnetic_dipole_exact_retarded_update_var.set(
+                    "Second-order accepted-start Taylor"
+                )
+        self._toggle_adaptive_pair_return_controls()
+
     def _update_driver_visibility(self) -> None:
         sim_type = SimulationType[self.sim_type_var.get()]
         enabled = supports_driver(sim_type)

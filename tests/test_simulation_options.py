@@ -246,6 +246,38 @@ def test_checkpoint_resume_path_enables_checkpointing(tmp_path: Path) -> None:
     assert restored.checkpoint_resume_from == tmp_path / "capture.checkpoint"
 
 
+def test_adaptive_pair_return_roundtrip_preserves_production_controls() -> None:
+    options = SimulationOptions(
+        adaptive_pair_return_enabled=True,
+        adaptive_pair_target_lab_time_ns=1.25,
+        adaptive_pair_tolerance_scale=0.5,
+        adaptive_pair_minimum_step_factor=1.0 / 128.0,
+        adaptive_pair_maximum_step_factor=32.0,
+        adaptive_pair_public_sample_interval_ns=0.025,
+        adaptive_pair_shared_time_absolute_tolerance_ns=2.0e-20,
+        adaptive_pair_shared_time_relative_tolerance=3.0e-13,
+        adaptive_pair_maximum_attempts=1234,
+        adaptive_pair_maximum_accepted_slabs=567,
+    )
+
+    restored = SimulationOptions.from_dict(options.to_dict())
+
+    assert restored.adaptive_pair_return_enabled is True
+    assert restored.adaptive_pair_target_lab_time_ns == pytest.approx(1.25)
+    assert restored.adaptive_pair_tolerance_scale == pytest.approx(0.5)
+    assert restored.adaptive_pair_minimum_step_factor == pytest.approx(1.0 / 128.0)
+    assert restored.adaptive_pair_maximum_step_factor == pytest.approx(32.0)
+    assert restored.adaptive_pair_public_sample_interval_ns == pytest.approx(0.025)
+    assert restored.adaptive_pair_shared_time_absolute_tolerance_ns == pytest.approx(
+        2.0e-20
+    )
+    assert restored.adaptive_pair_shared_time_relative_tolerance == pytest.approx(
+        3.0e-13
+    )
+    assert restored.adaptive_pair_maximum_attempts == 1234
+    assert restored.adaptive_pair_maximum_accepted_slabs == 567
+
+
 def test_flat_checkpoint_fields_remain_loadable(tmp_path: Path) -> None:
     restored = SimulationOptions.from_dict(
         {

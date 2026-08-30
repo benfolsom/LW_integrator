@@ -943,6 +943,44 @@ class IntegratorGUI(
         self.checkpoint_interval_seconds_var = tk.DoubleVar(
             value=self.options.checkpoint_interval_seconds
         )
+        self.adaptive_pair_return_enabled_var = tk.BooleanVar(
+            value=self.options.adaptive_pair_return_enabled
+        )
+        self.adaptive_pair_target_lab_time_ns_var = tk.StringVar(
+            value=(
+                ""
+                if self.options.adaptive_pair_target_lab_time_ns is None
+                else str(self.options.adaptive_pair_target_lab_time_ns)
+            )
+        )
+        self.adaptive_pair_tolerance_scale_var = tk.DoubleVar(
+            value=self.options.adaptive_pair_tolerance_scale
+        )
+        self.adaptive_pair_minimum_step_factor_var = tk.DoubleVar(
+            value=self.options.adaptive_pair_minimum_step_factor
+        )
+        self.adaptive_pair_maximum_step_factor_var = tk.DoubleVar(
+            value=self.options.adaptive_pair_maximum_step_factor
+        )
+        self.adaptive_pair_public_sample_interval_ns_var = tk.StringVar(
+            value=(
+                ""
+                if self.options.adaptive_pair_public_sample_interval_ns is None
+                else str(self.options.adaptive_pair_public_sample_interval_ns)
+            )
+        )
+        self.adaptive_pair_shared_time_absolute_tolerance_ns_var = tk.DoubleVar(
+            value=self.options.adaptive_pair_shared_time_absolute_tolerance_ns
+        )
+        self.adaptive_pair_shared_time_relative_tolerance_var = tk.DoubleVar(
+            value=self.options.adaptive_pair_shared_time_relative_tolerance
+        )
+        self.adaptive_pair_maximum_attempts_var = tk.IntVar(
+            value=self.options.adaptive_pair_maximum_attempts
+        )
+        self.adaptive_pair_maximum_accepted_slabs_var = tk.IntVar(
+            value=self.options.adaptive_pair_maximum_accepted_slabs
+        )
         self.config_file_var = tk.StringVar(value="")
         self.sweep_config_name_var = tk.StringVar(value="sweep_config.json")
 
@@ -963,6 +1001,9 @@ class IntegratorGUI(
 
         self.driver_train_enabled_var.trace_add(
             "write", lambda *_: self._toggle_driver_train_controls()
+        )
+        self.adaptive_pair_return_enabled_var.trace_add(
+            "write", lambda *_: self._on_adaptive_pair_return_toggle()
         )
         self.cavity_exit_enabled_var.trace_add(
             "write", lambda *_: self._toggle_cavity_exit_controls()

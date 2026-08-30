@@ -396,8 +396,8 @@ class AcceptedPairCheckpointStore:
     records the adaptive controller and public-output cursor needed to resume
     at the next shared lab-time barrier.
 
-    The class is a storage substrate only.  No current CLI/GUI option or
-    integrator mode selects it yet.
+    The exact-pair adaptive CLI/GUI mode selects this format. Fixed-step runs
+    continue to use :class:`IntegrationCheckpointStore`.
     """
 
     def __init__(

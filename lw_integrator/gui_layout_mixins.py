@@ -282,12 +282,91 @@ class IntegratorGUILayoutMixin:
             width=8,
         ).pack(side="left", padx=(5, 0))
 
+        ttk.Checkbutton(
+            run_config_frame,
+            text="Exact-pair adaptive return (1 rider + 1 driver)",
+            variable=self.adaptive_pair_return_enabled_var,
+        ).grid(row=8, column=0, columnspan=3, sticky="w", pady=(10, 2))
+        self._adaptive_pair_return_labels = []
+        self._adaptive_pair_return_controls = []
+
+        target_label = ttk.Label(run_config_frame, text="Target lab time (ns):")
+        target_label.grid(row=9, column=0, sticky="w", pady=2)
+        target_entry = ttk.Entry(
+            run_config_frame,
+            textvariable=self.adaptive_pair_target_lab_time_ns_var,
+        )
+        target_entry.grid(row=9, column=1, columnspan=2, sticky="ew", pady=2)
+
+        tolerance_label = ttk.Label(run_config_frame, text="Error / time abs / rel:")
+        tolerance_label.grid(row=10, column=0, sticky="w", pady=2)
+        tolerance_frame = ttk.Frame(run_config_frame)
+        tolerance_frame.grid(row=10, column=1, columnspan=2, sticky="ew", pady=2)
+        tolerance_entry = ttk.Entry(
+            tolerance_frame,
+            textvariable=self.adaptive_pair_tolerance_scale_var,
+            width=10,
+        )
+        tolerance_entry.pack(side="left")
+        time_abs_entry = ttk.Entry(
+            tolerance_frame,
+            textvariable=self.adaptive_pair_shared_time_absolute_tolerance_ns_var,
+            width=12,
+        )
+        time_abs_entry.pack(side="left", padx=(5, 0))
+        time_relative_entry = ttk.Entry(
+            tolerance_frame,
+            textvariable=self.adaptive_pair_shared_time_relative_tolerance_var,
+            width=10,
+        )
+        time_relative_entry.pack(side="left", padx=(5, 0))
+
+        factors_label = ttk.Label(run_config_frame, text="Min / max step factors:")
+        factors_label.grid(row=11, column=0, sticky="w", pady=2)
+        factors_frame = ttk.Frame(run_config_frame)
+        factors_frame.grid(row=11, column=1, columnspan=2, sticky="ew", pady=2)
+        minimum_factor_entry = ttk.Entry(
+            factors_frame,
+            textvariable=self.adaptive_pair_minimum_step_factor_var,
+            width=10,
+        )
+        minimum_factor_entry.pack(side="left")
+        maximum_factor_entry = ttk.Entry(
+            factors_frame,
+            textvariable=self.adaptive_pair_maximum_step_factor_var,
+            width=10,
+        )
+        maximum_factor_entry.pack(side="left", padx=(5, 0))
+
+        sample_label = ttk.Label(run_config_frame, text="Output cursor interval (ns):")
+        sample_label.grid(row=12, column=0, sticky="w", pady=2)
+        sample_entry = ttk.Entry(
+            run_config_frame,
+            textvariable=self.adaptive_pair_public_sample_interval_ns_var,
+        )
+        sample_entry.grid(row=12, column=1, columnspan=2, sticky="ew", pady=2)
+        self._adaptive_pair_return_labels.extend(
+            (target_label, tolerance_label, factors_label, sample_label)
+        )
+        self._adaptive_pair_return_controls.extend(
+            (
+                target_entry,
+                tolerance_entry,
+                time_abs_entry,
+                time_relative_entry,
+                minimum_factor_entry,
+                maximum_factor_entry,
+                sample_entry,
+            )
+        )
+        self._toggle_adaptive_pair_return_controls()
+
         ttk.Label(run_config_frame, text="Saved configs:").grid(
-            row=8, column=0, columnspan=3, sticky="w", pady=(10, 2)
+            row=13, column=0, columnspan=3, sticky="w", pady=(10, 2)
         )
 
         run_list_frame = ttk.Frame(run_config_frame)
-        run_list_frame.grid(row=9, column=0, columnspan=3, sticky="nsew", pady=2)
+        run_list_frame.grid(row=14, column=0, columnspan=3, sticky="nsew", pady=2)
         run_list_frame.rowconfigure(0, weight=1)
         run_list_frame.columnconfigure(0, weight=1)
 
@@ -304,10 +383,10 @@ class IntegratorGUILayoutMixin:
         run_scrollbar.grid(row=0, column=1, sticky="ns")
         self.config_list.configure(yscrollcommand=run_scrollbar.set)
 
-        run_config_frame.rowconfigure(9, weight=1)
+        run_config_frame.rowconfigure(14, weight=1)
 
         run_btn_frame = ttk.Frame(run_config_frame)
-        run_btn_frame.grid(row=10, column=0, columnspan=3, sticky="ew", pady=(5, 0))
+        run_btn_frame.grid(row=15, column=0, columnspan=3, sticky="ew", pady=(5, 0))
 
         ttk.Button(run_btn_frame, text="Load", command=self._load_config, width=8).pack(
             side="left", padx=2

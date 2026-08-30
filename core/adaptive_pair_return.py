@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, replace
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 
 import numpy as np
 
@@ -420,6 +420,8 @@ def run_exact_pair_adaptive_window(
     absolute_time_tolerance_ns: float = 1.0e-18,
     relative_time_tolerance: float = 1.0e-12,
     record_attempt_diagnostics: bool = False,
+    cancel_callback: Callable[[], bool] | None = None,
+    accepted_progress_callback: Callable[[float, float], None] | None = None,
 ) -> AdaptivePairRunResult:
     """Advance accepted pair history to a bounded shared lab-time target.
 
@@ -429,8 +431,8 @@ def run_exact_pair_adaptive_window(
     performed for output sampling. An optional variable-length pair checkpoint
     is written only after accepted pair commits.
 
-    This remains an internal substrate. The fixed production loop, CLI, and GUI
-    do not select it yet.
+    The public exact-pair production surface selects this substrate only after
+    enforcing its one-particle, exact-history, checkpoint, and scheduler guards.
     """
 
     target_time_ns = float(target_time_ns)
@@ -508,7 +510,23 @@ def run_exact_pair_adaptive_window(
     state = controller_state
     completed = target_time_ns - current_time <= completion_tolerance
 
+    def flush_interrupted_checkpoint() -> None:
+        if checkpoint_store is None:
+            return
+        checkpoint_store.write(
+            rider=rider_builder.build_current(),
+            driver=driver_builder.build_current(),
+            controller_state=state.to_checkpoint_state(),
+            public_output_state=output_state.to_checkpoint_state(),
+            complete=False,
+        )
+
     while not completed:
+        from .integration_runner import IntegrationCancelled
+
+        if cancel_callback is not None and cancel_callback():
+            flush_interrupted_checkpoint()
+            raise IntegrationCancelled("Integration cancelled by caller.")
         if attempts >= maximum_attempts:
             raise SharedLabTimeError(
                 "adaptive pair window exhausted its maximum trial attempts"
@@ -531,22 +549,26 @@ def run_exact_pair_adaptive_window(
                 driver_proper_step_guess_ns=(state.driver_proper_step_guess_ns * scale),
             )
         attempt_minimum = min(minimum_step_ns, attempted_step)
-        result = attempt_exact_pair_adaptive_step(
-            rider_builder=rider_builder,
-            driver_builder=driver_builder,
-            advance_rider=advance_rider,
-            advance_driver=advance_driver,
-            controller_state=attempt_state,
-            controller_config=controller_config,
-            tolerances=tolerances,
-            minimum_step_ns=attempt_minimum,
-            maximum_step_ns=maximum_step_ns,
-            magnetic_dipole=magnetic_dipole,
-            include_dipole_source=include_dipole_source,
-            spin_interpolation_model=spin_interpolation_model,
-            absolute_time_tolerance_ns=absolute_time_tolerance_ns,
-            relative_time_tolerance=relative_time_tolerance,
-        )
+        try:
+            result = attempt_exact_pair_adaptive_step(
+                rider_builder=rider_builder,
+                driver_builder=driver_builder,
+                advance_rider=advance_rider,
+                advance_driver=advance_driver,
+                controller_state=attempt_state,
+                controller_config=controller_config,
+                tolerances=tolerances,
+                minimum_step_ns=attempt_minimum,
+                maximum_step_ns=maximum_step_ns,
+                magnetic_dipole=magnetic_dipole,
+                include_dipole_source=include_dipole_source,
+                spin_interpolation_model=spin_interpolation_model,
+                absolute_time_tolerance_ns=absolute_time_tolerance_ns,
+                relative_time_tolerance=relative_time_tolerance,
+            )
+        except IntegrationCancelled:
+            flush_interrupted_checkpoint()
+            raise
         attempts += 1
         state = result.controller_state
         if record_attempt_diagnostics:
@@ -620,6 +642,8 @@ def run_exact_pair_adaptive_window(
                 public_output_state=output_state.to_checkpoint_state(),
                 complete=completed,
             )
+        if accepted_progress_callback is not None:
+            accepted_progress_callback(current_time, target_time_ns)
 
     return AdaptivePairRunResult(
         controller_state=state,

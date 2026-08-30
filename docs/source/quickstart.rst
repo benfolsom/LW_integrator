@@ -95,7 +95,22 @@ simulation, and confirm that the regression tooling works on your machine.
    not applied, but ``--checkpoint-dir``, ``--resume-from``, and the checkpoint
    interval flags may be supplied operationally. Use ``--config`` only for the
    separate native direct-integrator schema. See :doc:`checkpoints` for restart
-   commands and the current fixed-step boundary.
+   commands and the fixed-step and exact-pair checkpoint boundaries.
+
+   For the guarded one-rider/one-driver exact-retarded return path, add an
+   absolute shared lab-time target and a checkpoint directory:
+
+   .. code-block:: bash
+
+      lw-simulate --testbed-config capture.json \
+        --adaptive-pair-return \
+        --adaptive-pair-target-time-ns 1.0e-6 \
+        --checkpoint-dir results/capture-return.checkpoint \
+        --checkpoint-every-seconds 900
+
+   This path is independent of the legacy adaptive-timestep option and rejects
+   unsupported scheduler or particle-count combinations before integration.
+   See :doc:`multirate_return` for the complete guard list.
 
    Example native direct-integrator JSON configuration structure:
 

@@ -25,6 +25,7 @@ from core.integration_runner import AdaptiveTimestepConfig, retarded_integrator
 from core.self_consistency import SelfConsistencyConfig
 from core.species import SPECIES, resolve_species
 from core.types import (
+    AdaptivePairReturnConfig,
     BeamlineGeometryConfig,
     CavityExitConfig,
     CheckpointConfig,
@@ -1164,6 +1165,53 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         help="Resume and continue writing an existing checkpoint directory.",
     )
     parser.add_argument(
+        "--adaptive-pair-return",
+        action="store_true",
+        help=(
+            "Use the checkpointed shared-lab-time exact 1+1 adaptive mode. "
+            "Requires inertial prehistory, exact RFS/dipole dynamics, disabled "
+            "particle loss, and --checkpoint-dir or --resume-from."
+        ),
+    )
+    parser.add_argument(
+        "--adaptive-pair-target-time-ns",
+        type=float,
+        help="Required final shared lab time in ns for adaptive-pair mode.",
+    )
+    parser.add_argument(
+        "--adaptive-pair-tolerance-scale",
+        type=float,
+        help="Scale all validated exact-pair step-doubling tolerances.",
+    )
+    parser.add_argument(
+        "--adaptive-pair-minimum-step-factor",
+        type=float,
+        help="Minimum adaptive slab as a factor of --time-step (default: 1/64).",
+    )
+    parser.add_argument(
+        "--adaptive-pair-maximum-step-factor",
+        type=float,
+        help="Maximum adaptive slab as a factor of --time-step (default: 64).",
+    )
+    parser.add_argument(
+        "--adaptive-pair-public-sample-interval-ns",
+        type=float,
+        help=(
+            "Sparse public-output cursor interval in ns; accepted source history "
+            "and incremental diagnostics remain complete."
+        ),
+    )
+    parser.add_argument(
+        "--adaptive-pair-shared-time-absolute-tolerance-ns",
+        type=float,
+        help="Absolute shared-endpoint root tolerance in ns (default: 1e-20).",
+    )
+    parser.add_argument(
+        "--adaptive-pair-shared-time-relative-tolerance",
+        type=float,
+        help="Relative shared-endpoint root tolerance (default: 1e-12).",
+    )
+    parser.add_argument(
         "--output",
         type=Path,
         help="Optional path to write a JSON summary report.",
@@ -1407,6 +1455,35 @@ def run_testbed_config(args: argparse.Namespace) -> int:
             options.checkpoint_interval_steps = args.checkpoint_every_steps
         if args.checkpoint_every_seconds is not None:
             options.checkpoint_interval_seconds = args.checkpoint_every_seconds
+        if args.adaptive_pair_return:
+            options.adaptive_pair_return_enabled = True
+        for argument_name, option_name in (
+            ("adaptive_pair_target_time_ns", "adaptive_pair_target_lab_time_ns"),
+            ("adaptive_pair_tolerance_scale", "adaptive_pair_tolerance_scale"),
+            (
+                "adaptive_pair_minimum_step_factor",
+                "adaptive_pair_minimum_step_factor",
+            ),
+            (
+                "adaptive_pair_maximum_step_factor",
+                "adaptive_pair_maximum_step_factor",
+            ),
+            (
+                "adaptive_pair_public_sample_interval_ns",
+                "adaptive_pair_public_sample_interval_ns",
+            ),
+            (
+                "adaptive_pair_shared_time_absolute_tolerance_ns",
+                "adaptive_pair_shared_time_absolute_tolerance_ns",
+            ),
+            (
+                "adaptive_pair_shared_time_relative_tolerance",
+                "adaptive_pair_shared_time_relative_tolerance",
+            ),
+        ):
+            value = getattr(args, argument_name, None)
+            if value is not None:
+                setattr(options, option_name, value)
         result = run_testbed(options)
     # The runner can surface numerical and I/O failures through varied exception types.
     except Exception as exc:  # noqa: BLE001
@@ -1684,6 +1761,35 @@ def _merge_simulation_payload(
     if checkpoint:
         result["checkpoint"] = checkpoint
 
+    adaptive_pair_payload = result.get("adaptive_pair_return")
+    adaptive_pair = (
+        dict(adaptive_pair_payload)
+        if isinstance(adaptive_pair_payload, Mapping)
+        else {}
+    )
+    if getattr(args, "adaptive_pair_return", False):
+        adaptive_pair["enabled"] = True
+    adaptive_pair_overrides = {
+        "target_lab_time_ns": getattr(args, "adaptive_pair_target_time_ns", None),
+        "tolerance_scale": getattr(args, "adaptive_pair_tolerance_scale", None),
+        "minimum_step_factor": getattr(args, "adaptive_pair_minimum_step_factor", None),
+        "maximum_step_factor": getattr(args, "adaptive_pair_maximum_step_factor", None),
+        "public_sample_interval_ns": getattr(
+            args, "adaptive_pair_public_sample_interval_ns", None
+        ),
+        "shared_time_absolute_tolerance_ns": getattr(
+            args, "adaptive_pair_shared_time_absolute_tolerance_ns", None
+        ),
+        "shared_time_relative_tolerance": getattr(
+            args, "adaptive_pair_shared_time_relative_tolerance", None
+        ),
+    }
+    for name, value in adaptive_pair_overrides.items():
+        if value is not None:
+            adaptive_pair[name] = value
+    if adaptive_pair:
+        result["adaptive_pair_return"] = adaptive_pair
+
     particle_loss = result["particle_loss"]
     particle_loss_overrides = {
         "enabled": getattr(args, "particle_loss_enabled", None),
@@ -1918,6 +2024,36 @@ def _build_checkpoint_config(payload: Any) -> CheckpointConfig:
         raise SimulationConfigError(f"Invalid checkpoint configuration: {exc}") from exc
 
 
+def _build_adaptive_pair_return_config(payload: Any) -> AdaptivePairReturnConfig:
+    if payload is None:
+        return AdaptivePairReturnConfig()
+    if not isinstance(payload, Mapping):
+        raise SimulationConfigError("adaptive_pair_return must be a JSON object")
+    try:
+        return AdaptivePairReturnConfig(
+            enabled=bool(payload.get("enabled", False)),
+            target_lab_time_ns=payload.get("target_lab_time_ns"),
+            tolerance_scale=float(payload.get("tolerance_scale", 1.0)),
+            minimum_step_factor=float(payload.get("minimum_step_factor", 1.0 / 64.0)),
+            maximum_step_factor=float(payload.get("maximum_step_factor", 64.0)),
+            public_sample_interval_ns=payload.get("public_sample_interval_ns"),
+            shared_time_absolute_tolerance_ns=float(
+                payload.get("shared_time_absolute_tolerance_ns", 1.0e-20)
+            ),
+            shared_time_relative_tolerance=float(
+                payload.get("shared_time_relative_tolerance", 1.0e-12)
+            ),
+            maximum_attempts=int(payload.get("maximum_attempts", 2_000_000)),
+            maximum_accepted_slabs=int(
+                payload.get("maximum_accepted_slabs", 1_000_000)
+            ),
+        )
+    except (TypeError, ValueError) as exc:
+        raise SimulationConfigError(
+            f"Invalid adaptive_pair_return configuration: {exc}"
+        ) from exc
+
+
 def _build_integrator_config(payload: Mapping[str, Any]) -> IntegratorConfig:
     try:
         simulation_type = _parse_simulation_type(payload["simulation_type"])
@@ -1963,6 +2099,9 @@ def _build_integrator_config(payload: Mapping[str, Any]) -> IntegratorConfig:
     )
     magnetic_dipole = _build_magnetic_dipole_config(payload.get("magnetic_dipole"))
     checkpoint = _build_checkpoint_config(payload.get("checkpoint"))
+    adaptive_pair_return = _build_adaptive_pair_return_config(
+        payload.get("adaptive_pair_return")
+    )
     if magnetic_dipole.enabled and pseudo_grid.enabled:
         raise SimulationConfigError(
             "Magnetic-dipole dynamics are not compatible with pseudo-grid spin "
@@ -2002,6 +2141,7 @@ def _build_integrator_config(payload: Mapping[str, Any]) -> IntegratorConfig:
         beamline_geometry=beamline_geometry,
         magnetic_dipole=magnetic_dipole,
         checkpoint=checkpoint,
+        adaptive_pair_return=adaptive_pair_return,
     )
 
 
@@ -3013,6 +3153,7 @@ def run_simulation(request: SimulationRequest) -> tuple:
         beamline_geometry=request.config.beamline_geometry,
         magnetic_dipole=request.config.magnetic_dipole,
         checkpoint=request.config.checkpoint,
+        adaptive_pair_return=request.config.adaptive_pair_return,
     )
 
 

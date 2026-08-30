@@ -57,6 +57,7 @@ from .self_consistency import (
     self_consistent_step,
 )
 from .types import (
+    AdaptivePairReturnConfig,
     BeamlineGeometryConfig,
     CheckpointConfig,
     ChronoMatchingMode,
@@ -2609,6 +2610,7 @@ def retarded_integrator(
     beamline_geometry: Optional[BeamlineGeometryConfig] = None,
     magnetic_dipole: Optional[MagneticDipoleConfig] = None,
     checkpoint: Optional[CheckpointConfig] = None,
+    adaptive_pair_return: Optional[AdaptivePairReturnConfig] = None,
 ) -> Tuple[
     Trajectory,
     Trajectory,
@@ -2757,6 +2759,7 @@ def retarded_integrator(
     macroparticle_smearing = macroparticle_smearing or MacroparticleSmearingConfig()
     magnetic_dipole = magnetic_dipole or MagneticDipoleConfig()
     checkpoint = checkpoint or CheckpointConfig()
+    adaptive_pair_return = adaptive_pair_return or AdaptivePairReturnConfig()
     if magnetic_dipole.exact_retarded_backend == "metal_certified_full_strict":
         from .metal_certified_roots import reset_metal_certified_root_diagnostics
 
@@ -2791,6 +2794,60 @@ def retarded_integrator(
         magnetic_dipole.enabled and magnetic_dipole.source.active
     )
     exact_magnetic_active = bool(rfs_active or dipole_source_active)
+
+    if adaptive_pair_return.enabled:
+        if sim_type is not SimulationType.BUNCH_TO_BUNCH:
+            raise NotImplementedError(
+                "exact-pair adaptive return mode requires BUNCH_TO_BUNCH"
+            )
+        if startup_mode is not StartupMode.INERTIAL_PREHISTORY:
+            raise ValueError(
+                "exact-pair adaptive return mode requires INERTIAL_PREHISTORY"
+            )
+        if not exact_magnetic_active:
+            raise ValueError(
+                "exact-pair adaptive return mode requires exact RFS/dipole dynamics"
+            )
+        if init_driver is None:
+            raise ValueError("exact-pair adaptive return mode requires a driver")
+        if (
+            int(np.asarray(init_rider.get("x", np.zeros(0))).size) != 1
+            or int(np.asarray(init_driver.get("x", np.zeros(0))).size) != 1
+        ):
+            raise NotImplementedError(
+                "exact-pair adaptive return mode currently requires one particle "
+                "per role"
+            )
+        if magnetic_dipole.exact_retarded_update != (
+            "second_order_start_taylor_endpoint"
+        ):
+            raise ValueError(
+                "exact-pair adaptive return mode requires the validated "
+                "second_order_start_taylor_endpoint update"
+            )
+        if adaptive_timestep is not None and adaptive_timestep.enabled:
+            raise ValueError(
+                "exact-pair adaptive return mode cannot be combined with the "
+                "legacy adaptive timestep controller"
+            )
+        if energy_monitor is not None and energy_monitor.enabled:
+            raise NotImplementedError(
+                "exact-pair adaptive return mode does not use the legacy energy "
+                "jump monitor"
+            )
+        if particle_loss.enabled:
+            raise NotImplementedError(
+                "exact-pair adaptive return mode does not yet serialize particle-"
+                "loss scheduler state; disable particle_loss"
+            )
+        if z_cutoff != 0.0:
+            raise NotImplementedError(
+                "exact-pair adaptive return mode does not yet implement z_cutoff"
+            )
+        if not checkpoint.enabled:
+            raise ValueError(
+                "exact-pair adaptive return mode requires resumable checkpointing"
+            )
 
     if checkpoint.enabled:
         if sim_type is not SimulationType.BUNCH_TO_BUNCH:
@@ -3199,6 +3256,54 @@ def retarded_integrator(
     if driver_seed_history is not None:
         for seed_state in driver_seed_history:
             _initialize_magnetic_field_diagnostic(seed_state, external_field)
+
+    if adaptive_pair_return.enabled:
+        if driver_seed_history is None or init_driver is None:
+            raise RuntimeError("exact-pair adaptive driver history was not initialized")
+        compatibility_payload = _checkpoint_json_value(
+            {
+                "checkpoint_kind": "accepted_pair_history",
+                "core_implementation_sha256": _checkpoint_core_implementation_hash(),
+                "requested_public_samples": int(steps),
+                "initial_step_ns": h_step,
+                "wall_z": wall_z,
+                "aperture_radius": aperture_radius,
+                "sim_type": sim_type,
+                "init_rider": init_rider,
+                "init_driver": init_driver,
+                "mean": mean,
+                "cav_spacing": cav_spacing,
+                "z_cutoff": z_cutoff,
+                "z_cutoff_mode": z_cutoff_mode,
+                "self_consistency": self_consistency,
+                "chrono_mode": chrono_mode,
+                "startup_mode": startup_mode,
+                "external_field": external_field,
+                "use_numba": use_numba,
+                "radiation_reaction_mode": radiation_reaction_mode,
+                "magnetic_dipole": magnetic_dipole,
+                "adaptive_pair_return": adaptive_pair_return,
+            }
+        )
+        from .exact_pair_integration import run_exact_pair_adaptive_integrator
+
+        return run_exact_pair_adaptive_integrator(
+            rider_seed=rider_seed_history,
+            driver_seed=driver_seed_history,
+            initial_step_ns=h_step,
+            requested_public_samples=int(steps),
+            aperture_radius_mm=aperture_radius,
+            magnetic_dipole=magnetic_dipole,
+            self_consistency=self_consistency,
+            chrono_mode=chrono_mode,
+            radiation_reaction_mode=radiation_reaction_mode,
+            external_field=external_field,
+            adaptive=adaptive_pair_return,
+            checkpoint=checkpoint,
+            compatibility_payload=cast(dict[str, Any], compatibility_payload),
+            progress_callback=progress_callback,
+            cancel_callback=cancel_callback,
+        )
 
     trajectory: Trajectory = [{} for _ in range(total_steps)]
     trajectory_drv: Trajectory = [{} for _ in range(total_steps)]
@@ -4581,6 +4686,7 @@ def run_integrator(
         beamline_geometry=config.beamline_geometry,
         magnetic_dipole=config.magnetic_dipole,
         checkpoint=config.checkpoint,
+        adaptive_pair_return=config.adaptive_pair_return,
     )
 
 

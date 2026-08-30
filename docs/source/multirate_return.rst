@@ -10,9 +10,10 @@ practical. The experimental return substrate therefore advances one electron
 and one proton to shared lab-time barriers while solving a separate proper-time
 increment for each particle.
 
-This is deliberately a new internal path. It does not reuse the legacy
-adaptive-timestep feature, and no production-integrator, CLI, or GUI option
-selects it yet.
+This is a separate, deliberately narrow production path. It does not reuse the
+legacy adaptive-timestep feature. The CLI, testbed JSON, and GUI expose it as
+**Adaptive exact pair return**, with strict guards that keep unsupported
+particle counts and scheduler combinations out of the solver.
 
 Three independent data cadences
 -------------------------------
@@ -24,10 +25,13 @@ The implementation keeps three concepts separate:
 * An **accepted source-history cadence** retains both the authoritative
   half-step midpoint and endpoint. Exact charge and dipole providers can later
   find light-cone roots anywhere in that accepted piecewise worldline.
-* A **public-output cadence** stores only accepted row indices. It never
+* A **public-selection cadence** stores only accepted row indices. It never
   interpolates or replaces source history. Tests run identical dynamics with
-  different output intervals and require the complete accepted trajectories
-  and controller state to remain bit-for-bit equal.
+  different selection intervals and require the complete accepted trajectories
+  and controller state to remain bit-for-bit equal. The current trajectory
+  return retains every accepted row because radiation, Medina work, and
+  projection diagnostics are per-knot increments; later plot/export code may
+  use the cursor without deleting those increments.
 
 Bounded adaptive window
 -----------------------
@@ -38,7 +42,7 @@ proposal is clipped to the remaining interval. The controller has explicit
 limits on trial attempts and accepted slabs, and a rejection at the smallest
 usable step fails instead of retrying forever.
 
-Public output selects the first active accepted row, accepted knots that cross
+The public-selection cursor marks the first active accepted row, knots that cross
 the requested output cadence, and the final accepted endpoint. Output times
 are therefore real accepted-knot times; they are not synthetic states created
 at an exact plotting schedule.
@@ -63,14 +67,57 @@ token, generation, rewrite epoch, and read-only published arrays are the
 prefix-validity contract. This keeps trial-history preparation append-linear
 over a run instead of quadratic in the accepted knot count.
 
-Remaining validation gate
--------------------------
+Public configuration and guards
+-------------------------------
 
-This substrate is not yet evidence for a return orbit. Before a user-facing
-mode is added, it must reproduce the validated fixed-step first-pass flyby over
-a common interval with converged adaptive tolerances. The comparison must cover
-trajectory, spin constraints, Medina energy terms, mass-shell projection work,
-periapsis and outbound energy, accepted-step distribution, and checkpoint
-restart. Public-output decimation must remain dynamically invisible. Only then
-should CLI/GUI configuration and the long apoapsis/return calculation be
-enabled.
+The testbed/GUI JSON block is:
+
+.. code-block:: json
+
+   {
+     "adaptive_pair_return": {
+       "enabled": true,
+       "target_lab_time_ns": 1.0e-6,
+       "tolerance_scale": 1.0,
+       "minimum_step_factor": 0.015625,
+       "maximum_step_factor": 64.0,
+       "public_sample_interval_ns": null,
+       "shared_time_absolute_tolerance_ns": 1.0e-20,
+       "shared_time_relative_tolerance": 1.0e-12,
+       "maximum_attempts": 2000000,
+       "maximum_accepted_slabs": 1000000
+     }
+   }
+
+``target_lab_time_ns`` is an absolute shared coordinate-time endpoint. The
+configured proper-time step remains the initial controller proposal;
+``minimum_step_factor`` and ``maximum_step_factor`` bound its adaptive range.
+The ordinary ``steps`` value sets the progress scale and default selection
+cadence for this mode, not the number of accepted source-history knots. The
+returned trajectory currently retains all accepted knots so incremental energy
+diagnostics remain summable.
+
+The public runner currently requires all of the following:
+
+* ``BUNCH_TO_BUNCH`` with exactly one rider and one driver;
+* ``INERTIAL_PREHISTORY`` and the second-order accepted-start Taylor endpoint;
+* exact RFS/dipole dynamics and the causal-frozen spin interpolation model;
+* no pseudo-grid, driver train, cavity, smearing, same-bunch space charge,
+  particle-loss scheduler, energy monitor, or legacy adaptive timestep; and
+* a checkpoint directory, because the variable-length causal history is part
+  of the production contract rather than an optional afterthought.
+
+Unsupported combinations fail before integration. The GUI toggle applies the
+startup, endpoint, checkpoint, and legacy-adaptive prerequisites, but it does
+not silently enable magnetic source physics.
+
+Validation status
+-----------------
+
+The public surface was enabled only after the adaptive first-pass trajectory
+reproduced the converged fixed-step flyby within the declared
+``0.025 meV`` numerical budget. Checkpoint interruption/resume and public-output
+decimation are also dynamically invisible in focused tests. This establishes a
+usable solver path; it does **not** establish a stable orbit. A negative
+outbound energy is evidence of first-pass binding only. Apoapsis and a later
+inbound return remain the next physical validation milestones.

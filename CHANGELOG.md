@@ -1,5 +1,12 @@
 # Changelog
 
+- Exposed the checkpointed exact-retarded adaptive pair integrator through the
+  core configuration, direct CLI, testbed JSON, and GUI. The mode advances one
+  rider and one driver on shared lab-time barriers, keeps accepted midpoint
+  source-history knots, flushes the latest joint state on cancellation, and
+  resumes its variable-length controller/history checkpoint. Strict startup,
+  endpoint, physics, particle-count, and scheduler guards fail before a run;
+  the existing fixed-step and legacy adaptive paths remain unchanged.
 - Made causal-frozen spin-history preparation append only the newly accepted
   slope tail in managed prepared-history buffers.  The previous validation
   helper recomputed and recopied the complete accepted prefix on every trial,
@@ -36,11 +43,13 @@
 - Added a separate append-only accepted-pair checkpoint manifest that does not
   require a final adaptive knot count. It stores equal rider/driver history
   chunks plus controller and public-output cursor state, with compatibility
-  hashes and atomic manifest updates. No current CLI/GUI mode selects it yet.
-- Added an isolated shared-lab-time solver for the future $1+1$ exact-retarded
+  hashes and atomic manifest updates. The guarded public adaptive exact-pair
+  mode now selects this format.
+- Added a shared-lab-time solver for the $1+1$ exact-retarded
   return mode. It solves separate rider/driver proper-time increments against
   one coordinate-time target and preflights both growable-history rows before
-  publishing either. It is not yet wired into the production integration loop.
+  publishing either. The guarded adaptive exact-pair mode now wires it into the
+  production integration loop.
 - Added an isolated step-doubling error budget and bounded step controller for
   the future return mode. Position, mechanical momentum, rest spin, and
   slab-summed diagnostics use independent absolute/relative scales. The
@@ -85,7 +94,7 @@
   checkpoint. A focused interrupted/resumed adaptive sequence restores both
   histories and reproduces the next accepted attempt bit-for-bit against the
   uninterrupted path.
-- Added a bounded internal exact-pair adaptive run window. It clips the last
+- Added a bounded exact-pair adaptive run window. It clips the last
   shared-lab-time slab to a declared target, retains every accepted midpoint
   and endpoint in causal source history, and selects public output only by
   accepted row index. Changing the public sampling interval is regression
@@ -93,8 +102,8 @@
   explicitly, irreducible minimum-step rejection cannot loop forever, and the
   variable-length pair checkpoint now reproduces the full run window and its
   output cursor bit-for-bit after interruption. A short charged RFS + Medina +
-  retarded-dipole run exercises the complete internal path. This mode is not
-  yet exposed through the production integrator, CLI, or GUI.
+  retarded-dipole run exercises the complete path. The guarded production
+  integrator, CLI, testbed JSON, and GUI now expose this mode.
 - Made consecutive exact-pair slabs use the same two-root synchronization
   envelope already enforced at joint commit. A pair whose two independently
   solved endpoint times were valid at one shared barrier can no longer fail

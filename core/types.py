@@ -694,6 +694,85 @@ class MagneticDipoleConfig:
 
 
 @dataclass
+class AdaptivePairReturnConfig:
+    """Checkpointable shared-lab-time integration for one exact particle pair.
+
+    The mode is deliberately narrow: one rider and one driver, exact inertial
+    prehistory, causal-frozen spin history, step doubling, and joint pair
+    commits. ``time_step`` remains the initial proper-time guess; the factors
+    below bound the adaptive shared-lab-time slab relative to that value.
+    """
+
+    enabled: bool = False
+    target_lab_time_ns: float | None = None
+    tolerance_scale: float = 1.0
+    minimum_step_factor: float = 1.0 / 64.0
+    maximum_step_factor: float = 64.0
+    public_sample_interval_ns: float | None = None
+    shared_time_absolute_tolerance_ns: float = 1.0e-20
+    shared_time_relative_tolerance: float = 1.0e-12
+    maximum_attempts: int = 2_000_000
+    maximum_accepted_slabs: int = 1_000_000
+
+    def __post_init__(self) -> None:
+        self.enabled = bool(self.enabled)
+        if self.target_lab_time_ns is not None:
+            self.target_lab_time_ns = float(self.target_lab_time_ns)
+        self.tolerance_scale = float(self.tolerance_scale)
+        self.minimum_step_factor = float(self.minimum_step_factor)
+        self.maximum_step_factor = float(self.maximum_step_factor)
+        if self.public_sample_interval_ns is not None:
+            self.public_sample_interval_ns = float(self.public_sample_interval_ns)
+        self.shared_time_absolute_tolerance_ns = float(
+            self.shared_time_absolute_tolerance_ns
+        )
+        self.shared_time_relative_tolerance = float(self.shared_time_relative_tolerance)
+        self.maximum_attempts = int(self.maximum_attempts)
+        self.maximum_accepted_slabs = int(self.maximum_accepted_slabs)
+
+        positive = (
+            ("tolerance_scale", self.tolerance_scale),
+            ("minimum_step_factor", self.minimum_step_factor),
+            ("maximum_step_factor", self.maximum_step_factor),
+        )
+        if any(not np.isfinite(value) or value <= 0.0 for _, value in positive):
+            raise ValueError(
+                "adaptive-pair tolerance and step factors must be finite and positive"
+            )
+        if self.maximum_step_factor < self.minimum_step_factor:
+            raise ValueError(
+                "adaptive-pair maximum_step_factor must not be below the minimum"
+            )
+        if self.enabled and (
+            self.target_lab_time_ns is None
+            or not np.isfinite(self.target_lab_time_ns)
+            or self.target_lab_time_ns <= 0.0
+        ):
+            raise ValueError(
+                "adaptive-pair target_lab_time_ns is required and must be positive"
+            )
+        if self.public_sample_interval_ns is not None and (
+            not np.isfinite(self.public_sample_interval_ns)
+            or self.public_sample_interval_ns <= 0.0
+        ):
+            raise ValueError("adaptive-pair public_sample_interval_ns must be positive")
+        time_tolerances = (
+            self.shared_time_absolute_tolerance_ns,
+            self.shared_time_relative_tolerance,
+        )
+        if any(not np.isfinite(value) or value < 0.0 for value in time_tolerances):
+            raise ValueError(
+                "adaptive-pair shared-time tolerances must be finite and non-negative"
+            )
+        if not any(value > 0.0 for value in time_tolerances):
+            raise ValueError(
+                "adaptive-pair needs a positive absolute or relative time tolerance"
+            )
+        if self.maximum_attempts < 1 or self.maximum_accepted_slabs < 1:
+            raise ValueError("adaptive-pair run limits must be positive")
+
+
+@dataclass
 class IntegratorConfig:
     """Structured configuration for :func:`core.integration_runner.run_integrator`.
 
@@ -766,6 +845,10 @@ class IntegratorConfig:
         Optional fixed-size particle-loss predicates. Lost particles are marked
         dead, keep their trajectory slots, and stop contributing charge after
         the loss step.
+    adaptive_pair_return:
+        Guarded checkpointable shared-lab-time stepping for one exact rider and
+        one exact driver. This is independent of the legacy adaptive-timestep
+        controller.
     """
 
     steps: int
@@ -799,6 +882,9 @@ class IntegratorConfig:
     )
     magnetic_dipole: MagneticDipoleConfig = field(default_factory=MagneticDipoleConfig)
     checkpoint: CheckpointConfig = field(default_factory=lambda: CheckpointConfig())
+    adaptive_pair_return: AdaptivePairReturnConfig = field(
+        default_factory=AdaptivePairReturnConfig
+    )
 
 
 @dataclass
