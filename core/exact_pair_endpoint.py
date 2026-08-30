@@ -78,19 +78,55 @@ def evaluate_exact_endpoint_four_potential(
         )
         potentials[particle_idx] += charge_field.four_potential
         if include_dipole_source:
-            dipole_potential = evaluate_retarded_dipole_potential_native(
-                source_history,
-                event,
-                require_complete_history=True,
-                relative_step=float(source_options.relative_stencil_step),
-                minimum_step_mm=float(source_options.minimum_stencil_step_mm),
-                minimum_separation_mm=float(source_options.minimum_separation_mm),
-                root_tolerance_mm=float(source_options.root_tolerance_mm),
-                max_root_iterations=int(source_options.max_root_iterations),
-                backend=magnetic_dipole.exact_retarded_backend,
-                spin_interpolation_model=spin_interpolation_model,
-            )
-            potentials[particle_idx] += dipole_potential.four_potential
+            if (
+                magnetic_dipole.exact_retarded_backend
+                == "numba_analytic_charge_dipole_response_serial"
+            ):
+                # The accepted endpoint and the following step start must use
+                # the same ordinary potential representation.  Mixing this
+                # analytical A with the nine-event finite-difference endpoint
+                # A creates a q*Delta(A)/c mechanical-momentum jump whenever
+                # an adaptive step is split into two accepted half steps.
+                from .dipole_hertz_jet import (
+                    evaluate_retarded_dipole_field_gradient_hertz_jet_native,
+                )
+
+                dipole_response = (
+                    evaluate_retarded_dipole_field_gradient_hertz_jet_native(
+                        source_history,
+                        event,
+                        require_complete_history=True,
+                        fallback_relative_step=float(
+                            source_options.relative_stencil_step
+                        ),
+                        fallback_minimum_step_mm=float(
+                            source_options.minimum_stencil_step_mm
+                        ),
+                        minimum_separation_mm=float(
+                            source_options.minimum_separation_mm
+                        ),
+                        root_tolerance_mm=float(source_options.root_tolerance_mm),
+                        max_root_iterations=int(source_options.max_root_iterations),
+                        response_kernel="numba_sparse_strict_serial",
+                        fallback_backend="numba_full_strict_serial",
+                        spin_interpolation_model=spin_interpolation_model,
+                    )
+                )
+                potentials[particle_idx] += dipole_response.response.four_potential
+            else:
+                dipole_potential = evaluate_retarded_dipole_potential_native(
+                    source_history,
+                    event,
+                    require_complete_history=True,
+                    relative_step=float(source_options.relative_stencil_step),
+                    minimum_step_mm=float(source_options.minimum_stencil_step_mm),
+                    minimum_separation_mm=float(source_options.minimum_separation_mm),
+                    root_tolerance_mm=float(source_options.root_tolerance_mm),
+                    max_root_iterations=int(source_options.max_root_iterations),
+                    backend=magnetic_dipole.exact_retarded_backend,
+                    spin_interpolation_model=spin_interpolation_model,
+                )
+                potentials[particle_idx] += dipole_potential.four_potential
     if not np.all(np.isfinite(potentials)):
         raise ValueError("exact endpoint four-potential must be finite")
     return potentials

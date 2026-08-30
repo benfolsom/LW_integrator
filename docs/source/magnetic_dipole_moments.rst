@@ -275,8 +275,11 @@ approximation is used.  Because the current spin history is only
 :math:`C^1`, the backend strictly falls back to the full finite-difference
 oracle at segment boundaries, on the mutable final spin segment, for a
 one-knot history, and near a particle-loss wavefront.  Those fallbacks are
-counted in run diagnostics.  Endpoint-potential reconstruction retains its
-smaller strict stencil.
+counted in run diagnostics.  Accepted-endpoint reconstruction uses the same
+analytical Hertz response (or the same declared full-strict fallback) so the
+stored canonical offset agrees with the potential used to decode mechanical
+momentum at the next step start.  The smaller nine-event endpoint stencil is
+retained by the finite-difference backends.
 
 The analytical response is accepted against adjacent-stencil Richardson
 limits, grouped physical trajectory variables, explicit radiation/projection
@@ -306,9 +309,11 @@ there is no automatic or operating-system-specific dispatch.  Explicit
 selection raises a capability error if Numba is unavailable or initial
 compilation fails; it never silently changes the recorded backend.  The
 selection covers the exact charge one-event field, exact charge nine-event
-gradient, dipole nine-event accepted-endpoint potential, and full dipole
-gradient.  The finite-difference centers remain Python-reference evaluations;
-the analytical mode instead uses one center root on smooth segments.
+gradient, dipole accepted-endpoint potential, and full dipole gradient.  The
+finite-difference backends use the nine-event dipole endpoint provider.  The
+finite-difference centers remain Python-reference evaluations; the analytical
+mode instead uses one center root and one consistent Hertz response on smooth
+segments.
 
 ``metal_certified_full_strict`` is an explicit Apple-silicon accelerator
 option for large dipole batches.  Metal receives float32 history and observer

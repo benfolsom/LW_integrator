@@ -1,5 +1,16 @@
 # Changelog
 
+- Made accepted-endpoint canonical recomposition use the same analytical
+  dipole Hertz potential as the following step-start decode when
+  ``numba_analytic_charge_dipole_response_serial`` is selected.  The previous
+  mix of analytical start potential and nine-event finite-difference endpoint
+  potential introduced a step-size-independent ``q*Delta(A)/c`` mechanical-
+  momentum jump in adaptive two-half-step trials.  A saved flyby checkpoint
+  reproduced the defect component by component; matching the potential
+  provider reduced the limiting momentum discrepancy from about ``1.7e-13``
+  to ``1.1e-18`` native momentum and restored normal adaptive step growth.
+  Boundary cases still use the same declared full-strict fallback as the
+  analytical force provider.
 - Added an isolated growable, append-only trajectory-history builder for the
   future exact-retarded multirate integrator. Accepted source-history knots can
   now grow independently of public output capacity while retaining managed

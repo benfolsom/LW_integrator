@@ -331,8 +331,14 @@ one-knot history, and near particle-loss wavefronts.  The provider continuum,
 grouped trajectory, energy-ledger, and common-horizon timestep gates passed;
 the 300-sample stress path measured 1.636 s analytical versus 2.561 s
 full-strict and 11.126 s Python while an unrelated one-core flyby job remained
-active.  Python remains the default, and backend acceptance still does not
-pass the separate full-flyby timestep and projection-energy gates.
+active.  Accepted-endpoint canonical recomposition now obtains its dipole
+potential from the same analytical Hertz response (or its declared
+full-strict fallback) rather than mixing it with the finite-difference
+endpoint stencil.  This consistency is required by adaptive step doubling:
+otherwise the second half-step sees a spurious ``q*Delta(A)/c`` momentum jump
+that does not shrink with the step.  Python remains the default, and backend
+acceptance still does not pass the separate full-flyby timestep and
+projection-energy gates.
 
 Sparse dipole response jet
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
