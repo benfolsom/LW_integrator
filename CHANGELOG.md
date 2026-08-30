@@ -81,6 +81,9 @@
   solved endpoint times were valid at one shared barrier can no longer fail
   immediately as the next slab's starting boundary solely because the start
   check was twice as strict.
+- Expanded irreducible adaptive-step errors with the normalized position,
+  mechanical-momentum, spin, and diagnostic components, so a tolerance floor
+  can be diagnosed without instrumenting or mutating the accepted run.
 
 All notable changes and updates to the LW Integrator project are documented in this file.
 

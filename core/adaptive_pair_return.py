@@ -498,8 +498,14 @@ def run_exact_pair_adaptive_window(
                 attempted_step, attempt_minimum
             )
             if state.current_step_ns >= attempted_step - shrink_tolerance:
+                assessment = result.trial.assessment
                 raise SharedLabTimeError(
-                    "adaptive pair trial was rejected at the minimum usable step"
+                    "adaptive pair trial was rejected at the minimum usable step; "
+                    f"normalized error={assessment.normalized_error:.6e} "
+                    f"(position={assessment.position_error:.6e}, "
+                    f"momentum={assessment.mechanical_momentum_error:.6e}, "
+                    f"spin={assessment.rest_spin_error:.6e}, "
+                    f"diagnostics={assessment.diagnostics_error:.6e})"
                 )
             continue
 

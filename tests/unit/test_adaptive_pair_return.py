@@ -339,13 +339,17 @@ def test_window_fails_when_attempt_budget_is_exhausted() -> None:
 
 
 def test_window_fails_on_irreducible_minimum_step_rejection() -> None:
-    with pytest.raises(SharedLabTimeError, match="minimum usable step"):
+    with pytest.raises(SharedLabTimeError, match="diagnostics=") as caught:
         _run_window(
             public_interval_ns=0.1,
             diagnostic_absolute=1.0e-30,
             target_time_ns=0.2,
             minimum_step_ns=0.2,
         )
+
+    assert "position=" in str(caught.value)
+    assert "momentum=" in str(caught.value)
+    assert "spin=" in str(caught.value)
 
 
 def test_window_writes_complete_checkpoint_with_public_cursor(tmp_path: Path) -> None:
