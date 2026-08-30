@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from core.causal_spin_history import (
+    append_causal_frozen_spin_slopes_in_place,
     append_causal_frozen_spin_slopes_per_ns,
     causal_frozen_spin_slopes_per_ns,
 )
@@ -96,6 +97,53 @@ def test_append_rejects_noncausal_or_corrupt_prefix() -> None:
     previous[1, 0] += 1.0
     with pytest.raises(ValueError, match="causal accepted prefix"):
         append_causal_frozen_spin_slopes_per_ns(previous, spin, time)
+
+
+def test_managed_in_place_append_updates_only_the_constant_size_tail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import core.causal_spin_history as causal_spin_history
+
+    time = np.linspace(0.0, 1.0, 100_001)
+    spin = np.stack(
+        (
+            np.cos(0.7 * time),
+            np.sin(0.7 * time),
+            0.2 * time**2,
+        ),
+        axis=1,
+    )
+    old_count = time.size - 1
+    expected = causal_frozen_spin_slopes_per_ns(spin, time)
+    slopes = np.empty_like(spin)
+    slopes[:old_count] = expected[:old_count]
+    prefix = slopes[:old_count].copy()
+    visited: list[int] = []
+    original = causal_spin_history._causal_slope_at_knot
+
+    def recording_slope(
+        spin_values: np.ndarray,
+        time_values: np.ndarray,
+        knot: int,
+    ) -> np.ndarray:
+        visited.append(knot)
+        return original(spin_values, time_values, knot)
+
+    monkeypatch.setattr(
+        causal_spin_history,
+        "_causal_slope_at_knot",
+        recording_slope,
+    )
+    actual = append_causal_frozen_spin_slopes_in_place(
+        slopes,
+        spin,
+        time,
+        old_count=old_count,
+    )
+
+    assert visited == [old_count]
+    np.testing.assert_array_equal(actual[:old_count], prefix)
+    np.testing.assert_array_equal(actual, expected)
 
 
 def test_rotating_spin_interpolation_has_third_order_interior_convergence() -> None:

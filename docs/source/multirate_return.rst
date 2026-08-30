@@ -56,6 +56,13 @@ It stores the controller and complete public-output cursor with the causal
 history. An interruption after an accepted slab followed by restore produces
 the same later trajectory and output selection as an uninterrupted run.
 
+Causal-frozen spin slopes are stored in geometrically grown prepared-history
+buffers. Appending an accepted knot computes only its local quadratic slope;
+it does not rescan or recopy the frozen prefix. The managed history storage
+token, generation, rewrite epoch, and read-only published arrays are the
+prefix-validity contract. This keeps trial-history preparation append-linear
+over a run instead of quadratic in the accepted knot count.
+
 Remaining validation gate
 -------------------------
 

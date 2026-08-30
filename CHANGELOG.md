@@ -1,5 +1,13 @@
 # Changelog
 
+- Made causal-frozen spin-history preparation append only the newly accepted
+  slope tail in managed prepared-history buffers.  The previous validation
+  helper recomputed and recopied the complete accepted prefix on every trial,
+  making a long adaptive dipole run quadratic in history length even though
+  the causal slope rule is local.  Storage token/generation/rewrite checks and
+  read-only published arrays remain the prefix-validity authority.  A
+  9,216-knot two-step adaptive checkpoint probe is byte-for-byte unchanged and
+  improves from about 2.24 s to 1.03 s after warm compilation.
 - Made accepted-endpoint canonical recomposition use the same analytical
   dipole Hertz potential as the following step-start decode when
   ``numba_analytic_charge_dipole_response_serial`` is selected.  The previous
