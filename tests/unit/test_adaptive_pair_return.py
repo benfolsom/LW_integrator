@@ -359,6 +359,7 @@ def test_optional_attempt_diagnostics_record_each_controller_component() -> None
         record.rest_spin_error,
         record.diagnostics_error,
     )
+    assert record.mechanical_momentum_error_index == (0, 0)
 
 
 def test_attempt_diagnostics_are_disabled_by_default() -> None:

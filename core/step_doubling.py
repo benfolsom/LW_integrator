@@ -68,6 +68,10 @@ class StepDoublingAssessment:
     mechanical_momentum_error: float
     rest_spin_error: float
     diagnostics_error: float
+    position_error_index: tuple[int, ...]
+    mechanical_momentum_error_index: tuple[int, ...]
+    rest_spin_error_index: tuple[int, ...]
+    diagnostics_error_index: tuple[int, ...]
 
 
 @dataclass(frozen=True)
@@ -201,13 +205,13 @@ def _scaled_max_error(
     scale: ErrorScale,
     richardson_denominator: float,
     name: str,
-) -> float:
+) -> tuple[float, tuple[int, ...]]:
     full = _validated_array(full_values, f"full {name}")
     refined = _validated_array(refined_values, f"refined {name}")
     if full.shape != refined.shape:
         raise ValueError(f"full and refined {name} shapes must match")
     if full.size == 0:
-        return 0.0
+        return 0.0, ()
     local_error = np.abs(refined - full) / richardson_denominator
     denominator = scale.absolute + scale.relative * np.maximum(
         np.abs(full), np.abs(refined)
@@ -218,7 +222,11 @@ def _scaled_max_error(
         out=np.zeros_like(local_error),
         where=denominator > 0.0,
     )
-    return float(np.max(normalized))
+    flat_index = int(np.argmax(normalized))
+    maximum_index = tuple(
+        int(value) for value in np.unravel_index(flat_index, full.shape)
+    )
+    return float(normalized[maximum_index]), maximum_index
 
 
 def assess_step_doubling(
@@ -240,28 +248,28 @@ def assess_step_doubling(
     if method_order < 1:
         raise ValueError("method_order must be positive")
     richardson_denominator = float(2**method_order - 1)
-    position_error = _scaled_max_error(
+    position_error, position_error_index = _scaled_max_error(
         full.position_mm,
         refined.position_mm,
         scale=tolerances.position_mm,
         richardson_denominator=richardson_denominator,
         name="position",
     )
-    momentum_error = _scaled_max_error(
+    momentum_error, momentum_error_index = _scaled_max_error(
         full.mechanical_momentum_native,
         refined.mechanical_momentum_native,
         scale=tolerances.mechanical_momentum_native,
         richardson_denominator=richardson_denominator,
         name="mechanical momentum",
     )
-    spin_error = _scaled_max_error(
+    spin_error, spin_error_index = _scaled_max_error(
         full.rest_spin,
         refined.rest_spin,
         scale=tolerances.rest_spin,
         richardson_denominator=richardson_denominator,
         name="rest spin",
     )
-    diagnostics_error = _scaled_max_error(
+    diagnostics_error, diagnostics_error_index = _scaled_max_error(
         full.diagnostics_native,
         refined.diagnostics_native,
         scale=tolerances.diagnostics_native,
@@ -281,6 +289,10 @@ def assess_step_doubling(
         mechanical_momentum_error=momentum_error,
         rest_spin_error=spin_error,
         diagnostics_error=diagnostics_error,
+        position_error_index=position_error_index,
+        mechanical_momentum_error_index=momentum_error_index,
+        rest_spin_error_index=spin_error_index,
+        diagnostics_error_index=diagnostics_error_index,
     )
 
 

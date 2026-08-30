@@ -210,6 +210,10 @@ class AdaptivePairAttemptDiagnostics:
     mechanical_momentum_error: float
     rest_spin_error: float
     diagnostics_error: float
+    position_error_index: tuple[int, ...]
+    mechanical_momentum_error_index: tuple[int, ...]
+    rest_spin_error_index: tuple[int, ...]
+    diagnostics_error_index: tuple[int, ...]
 
 
 def _accepted_pair_time_ns(
@@ -556,6 +560,12 @@ def run_exact_pair_adaptive_window(
                     mechanical_momentum_error=assessment.mechanical_momentum_error,
                     rest_spin_error=assessment.rest_spin_error,
                     diagnostics_error=assessment.diagnostics_error,
+                    position_error_index=assessment.position_error_index,
+                    mechanical_momentum_error_index=(
+                        assessment.mechanical_momentum_error_index
+                    ),
+                    rest_spin_error_index=assessment.rest_spin_error_index,
+                    diagnostics_error_index=assessment.diagnostics_error_index,
                 )
             )
         if not result.accepted:

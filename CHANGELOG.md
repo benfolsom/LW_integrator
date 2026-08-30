@@ -91,6 +91,10 @@
   the attempted shared step and the normalized position, mechanical-momentum,
   spin, and diagnostic errors; the default path retains no trace or added
   per-step storage.
+- Added the role/component index that produced each step-doubling group
+  maximum to the opt-in calibration trace. This distinguishes, for example,
+  an electron $x$-momentum limit from a proton near-rest rounding floor without
+  storing provisional trial states.
 
 All notable changes and updates to the LW Integrator project are documented in this file.
 

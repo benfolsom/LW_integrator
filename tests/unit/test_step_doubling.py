@@ -70,6 +70,7 @@ def test_richardson_denominator_uses_declared_method_order() -> None:
     assert second_order.position_error == pytest.approx(
         first_order.position_error / 3.0
     )
+    assert first_order.position_error_index == (0, 0)
 
 
 def test_each_physical_group_can_reject_independently() -> None:
