@@ -84,6 +84,13 @@
 - Expanded irreducible adaptive-step errors with the normalized position,
   mechanical-momentum, spin, and diagnostic components, so a tolerance floor
   can be diagnosed without instrumenting or mutating the accepted run.
+- Applied the accepted pair's two-root synchronization envelope when entering
+  or resuming a bounded adaptive window. A valid checkpoint boundary is no
+  longer revalidated with a stricter one-root threshold before its next slab.
+- Added an opt-in, read-only adaptive-attempt trace for calibration. It records
+  the attempted shared step and the normalized position, mechanical-momentum,
+  spin, and diagnostic errors; the default path retains no trace or added
+  per-step storage.
 
 All notable changes and updates to the LW Integrator project are documented in this file.
 

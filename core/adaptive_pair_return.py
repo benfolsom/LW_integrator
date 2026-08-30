@@ -196,6 +196,20 @@ class AdaptivePairRunResult:
     rejected_trials: int
     final_time_ns: float
     completed: bool
+    attempt_diagnostics: tuple["AdaptivePairAttemptDiagnostics", ...] = ()
+
+
+@dataclass(frozen=True)
+class AdaptivePairAttemptDiagnostics:
+    """Optional read-only error trace for controller calibration."""
+
+    attempted_step_ns: float
+    accepted: bool
+    normalized_error: float
+    position_error: float
+    mechanical_momentum_error: float
+    rest_spin_error: float
+    diagnostics_error: float
 
 
 def _accepted_pair_time_ns(
@@ -218,6 +232,33 @@ def _accepted_pair_time_ns(
     if abs(values[0] - values[1]) > tolerance_ns:
         raise SharedLabTimeError("accepted rider and driver times are not synchronized")
     return values[0]
+
+
+def _latest_pair_slab_scale_ns(
+    rider_builder: GrowableTrajectoryBuilder,
+    driver_builder: GrowableTrajectoryBuilder,
+) -> float:
+    """Estimate the last full slab from its retained endpoint interval.
+
+    Adaptive acceptance publishes a midpoint and endpoint for every slab, so
+    twice the final stored interval is the previous shared slab size.  The
+    inertial seed also supplies a finite positive interval for the fresh-run
+    boundary.
+    """
+
+    scales: list[float] = []
+    for role, builder in (("rider", rider_builder), ("driver", driver_builder)):
+        times = np.asarray(builder.build_current().t[:, 0], dtype=np.float64)
+        if times.size < 2:
+            scales.append(0.0)
+            continue
+        interval = float(times[-1] - times[-2])
+        if not np.isfinite(interval) or interval <= 0.0:
+            raise SharedLabTimeError(
+                f"accepted {role} history has no positive final time interval"
+            )
+        scales.append(2.0 * interval)
+    return max(scales)
 
 
 def _initial_public_output_state(
@@ -374,6 +415,7 @@ def run_exact_pair_adaptive_window(
     spin_interpolation_model: str = "causal_frozen_c1",
     absolute_time_tolerance_ns: float = 1.0e-18,
     relative_time_tolerance: float = 1.0e-12,
+    record_attempt_diagnostics: bool = False,
 ) -> AdaptivePairRunResult:
     """Advance accepted pair history to a bounded shared lab-time target.
 
@@ -416,10 +458,20 @@ def run_exact_pair_adaptive_window(
     if absolute_time_tolerance_ns == 0.0 and relative_time_tolerance == 0.0:
         raise ValueError("at least one adaptive pair time tolerance must be positive")
 
+    latest_slab_scale_ns = _latest_pair_slab_scale_ns(
+        rider_builder,
+        driver_builder,
+    )
     current_time = _accepted_pair_time_ns(
         rider_builder,
         driver_builder,
-        tolerance_ns=absolute_time_tolerance_ns,
+        tolerance_ns=(
+            2.0
+            * (
+                absolute_time_tolerance_ns
+                + relative_time_tolerance * latest_slab_scale_ns
+            )
+        ),
     )
     requested_window_ns = max(0.0, target_time_ns - current_time)
     completion_tolerance = (
@@ -448,6 +500,7 @@ def run_exact_pair_adaptive_window(
     attempts = 0
     accepted_slabs = 0
     rejected_trials = 0
+    attempt_diagnostics: list[AdaptivePairAttemptDiagnostics] = []
     state = controller_state
     completed = target_time_ns - current_time <= completion_tolerance
 
@@ -492,6 +545,19 @@ def run_exact_pair_adaptive_window(
         )
         attempts += 1
         state = result.controller_state
+        if record_attempt_diagnostics:
+            assessment = result.trial.assessment
+            attempt_diagnostics.append(
+                AdaptivePairAttemptDiagnostics(
+                    attempted_step_ns=attempted_step,
+                    accepted=result.accepted,
+                    normalized_error=assessment.normalized_error,
+                    position_error=assessment.position_error,
+                    mechanical_momentum_error=assessment.mechanical_momentum_error,
+                    rest_spin_error=assessment.rest_spin_error,
+                    diagnostics_error=assessment.diagnostics_error,
+                )
+            )
         if not result.accepted:
             rejected_trials += 1
             shrink_tolerance = np.finfo(np.float64).eps * max(
@@ -553,11 +619,13 @@ def run_exact_pair_adaptive_window(
         rejected_trials=rejected_trials,
         final_time_ns=current_time,
         completed=completed,
+        attempt_diagnostics=tuple(attempt_diagnostics),
     )
 
 
 __all__ = [
     "AdaptivePairAttempt",
+    "AdaptivePairAttemptDiagnostics",
     "AdaptivePairControllerState",
     "AdaptivePairPublicOutputState",
     "AdaptivePairRunResult",

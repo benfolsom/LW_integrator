@@ -328,6 +328,48 @@ def test_rejected_trials_publish_neither_history_nor_output_rows() -> None:
     assert max(result.public_output_state.selected_rows) < rider.accepted_steps
 
 
+def test_optional_attempt_diagnostics_record_each_controller_component() -> None:
+    rider, driver = _pair()
+    result = run_exact_pair_adaptive_window(
+        rider_builder=rider,
+        driver_builder=driver,
+        advance_rider=_advance(2.0),
+        advance_driver=_advance(4.0),
+        controller_state=_controller(),
+        controller_config=StepControllerConfig(method_order=1),
+        tolerances=_tolerances(1.0),
+        target_time_ns=0.2,
+        minimum_step_ns=0.001,
+        maximum_step_ns=1.0,
+        maximum_attempts=10,
+        maximum_accepted_slabs=10,
+        public_sample_interval_ns=0.1,
+        magnetic_dipole=MagneticDipoleConfig(),
+        include_dipole_source=False,
+        record_attempt_diagnostics=True,
+    )
+
+    assert len(result.attempt_diagnostics) == result.attempts
+    record = result.attempt_diagnostics[0]
+    assert record.attempted_step_ns == 0.2
+    assert record.accepted
+    assert record.normalized_error == max(
+        record.position_error,
+        record.mechanical_momentum_error,
+        record.rest_spin_error,
+        record.diagnostics_error,
+    )
+
+
+def test_attempt_diagnostics_are_disabled_by_default() -> None:
+    _, _, result = _run_window(
+        public_interval_ns=0.1,
+        target_time_ns=0.2,
+    )
+
+    assert result.attempt_diagnostics == ()
+
+
 def test_window_fails_when_attempt_budget_is_exhausted() -> None:
     with pytest.raises(SharedLabTimeError, match="maximum trial attempts"):
         _run_window(
@@ -350,6 +392,35 @@ def test_window_fails_on_irreducible_minimum_step_rejection() -> None:
     assert "position=" in str(caught.value)
     assert "momentum=" in str(caught.value)
     assert "spin=" in str(caught.value)
+
+
+def test_window_resume_accepts_the_pair_commit_time_envelope() -> None:
+    rider = GrowableTrajectoryBuilder(1, 1)
+    driver = GrowableTrajectoryBuilder(1, 1)
+    rider.append_step(_state(0.0, -1.0))
+    driver.append_step(_state(1.5e-18, 1.0))
+
+    result = run_exact_pair_adaptive_window(
+        rider_builder=rider,
+        driver_builder=driver,
+        advance_rider=_advance(2.0),
+        advance_driver=_advance(4.0),
+        controller_state=_controller(),
+        controller_config=StepControllerConfig(method_order=1),
+        tolerances=_tolerances(1.0),
+        target_time_ns=0.2,
+        minimum_step_ns=0.001,
+        maximum_step_ns=1.0,
+        maximum_attempts=10,
+        maximum_accepted_slabs=10,
+        public_sample_interval_ns=0.1,
+        magnetic_dipole=MagneticDipoleConfig(),
+        include_dipole_source=False,
+        absolute_time_tolerance_ns=1.0e-18,
+        relative_time_tolerance=0.0,
+    )
+
+    assert result.completed
 
 
 def test_window_writes_complete_checkpoint_with_public_cursor(tmp_path: Path) -> None:
