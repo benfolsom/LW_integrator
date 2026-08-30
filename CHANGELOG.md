@@ -76,6 +76,11 @@
   output cursor bit-for-bit after interruption. A short charged RFS + Medina +
   retarded-dipole run exercises the complete internal path. This mode is not
   yet exposed through the production integrator, CLI, or GUI.
+- Made consecutive exact-pair slabs use the same two-root synchronization
+  envelope already enforced at joint commit. A pair whose two independently
+  solved endpoint times were valid at one shared barrier can no longer fail
+  immediately as the next slab's starting boundary solely because the start
+  check was twice as strict.
 
 All notable changes and updates to the LW Integrator project are documented in this file.
 

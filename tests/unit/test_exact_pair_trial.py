@@ -278,6 +278,47 @@ def test_one_slab_trial_is_unpublished_and_endpoint_finalized() -> None:
         assert "_exact_source_endpoint_rebase_required" not in state
 
 
+def test_next_slab_accepts_the_pair_commit_time_envelope() -> None:
+    rider_builder = GrowableTrajectoryBuilder(2, 1)
+    driver_builder = GrowableTrajectoryBuilder(2, 1)
+    rider_builder.append_step(_state(0.0, -1.0))
+    driver_builder.append_step(_state(1.5e-18, 1.0))
+
+    trial = solve_exact_pair_slab_trial(
+        accepted_rider_history=rider_builder.build_current(),
+        accepted_driver_history=driver_builder.build_current(),
+        advance_rider=_advance(2.0, []),
+        advance_driver=_advance(4.0, []),
+        delta_time_ns=0.2,
+        rider_initial_proper_step_ns=0.1,
+        driver_initial_proper_step_ns=0.05,
+        magnetic_dipole=MagneticDipoleConfig(),
+        include_dipole_source=False,
+    )
+
+    assert trial.pair.synchronization_residual_ns <= 2.0e-18
+
+
+def test_next_slab_rejects_times_outside_the_pair_commit_envelope() -> None:
+    rider_builder = GrowableTrajectoryBuilder(2, 1)
+    driver_builder = GrowableTrajectoryBuilder(2, 1)
+    rider_builder.append_step(_state(0.0, -1.0))
+    driver_builder.append_step(_state(2.1e-18, 1.0))
+
+    with pytest.raises(SharedLabTimeError, match="starts are not synchronized"):
+        solve_exact_pair_slab_trial(
+            accepted_rider_history=rider_builder.build_current(),
+            accepted_driver_history=driver_builder.build_current(),
+            advance_rider=_advance(2.0, []),
+            advance_driver=_advance(4.0, []),
+            delta_time_ns=0.2,
+            rider_initial_proper_step_ns=0.1,
+            driver_initial_proper_step_ns=0.05,
+            magnetic_dipole=MagneticDipoleConfig(),
+            include_dipole_source=False,
+        )
+
+
 def test_second_half_trial_sees_midpoint_overlay_without_publishing_it() -> None:
     rider_builder = _accepted(-1.0)
     driver_builder = _accepted(1.0)

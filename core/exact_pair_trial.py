@@ -232,8 +232,13 @@ def solve_exact_pair_slab_trial(
     )
     rider_start_time = _single_state_time(rider_start, role="rider")
     driver_start_time = _single_state_time(driver_start, role="driver")
-    time_tolerance = float(absolute_tolerance_ns) + float(relative_tolerance) * max(
-        abs(rider_start_time), abs(driver_start_time)
+    # Each endpoint root may lie one solver tolerance to either side of the
+    # shared target.  The pair commit consequently accepts a two-tolerance
+    # rider/driver separation.  Apply that same envelope at the next slab
+    # boundary so a valid committed pair cannot become an invalid start.
+    time_tolerance = 2.0 * (
+        float(absolute_tolerance_ns)
+        + float(relative_tolerance) * max(abs(rider_start_time), abs(driver_start_time))
     )
     if abs(rider_start_time - driver_start_time) > time_tolerance:
         raise SharedLabTimeError("rider and driver trial starts are not synchronized")
