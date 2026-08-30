@@ -59,7 +59,7 @@ from typing import Hashable, Sequence, cast
 import numpy as np
 
 from .causal_spin_history import (
-    append_causal_frozen_spin_slopes_per_ns,
+    append_causal_frozen_spin_slopes_in_place,
     causal_frozen_spin_slopes_per_ns,
 )
 from .constants import C_MMNS
@@ -404,14 +404,14 @@ def _append_source_spin_slopes_per_ns(
     spin = source._rest_spin_buffer[:count]
     slopes = source._slope_buffer
     if spin_interpolation_model == _CAUSAL_FROZEN_C1_SPIN_INTERPOLATION:
-        extended = append_causal_frozen_spin_slopes_per_ns(
-            source.rest_spin_derivative_per_ns,
+        extended = append_causal_frozen_spin_slopes_in_place(
+            slopes,
             spin,
             combined_time_ns,
+            old_count=old_count,
         )
-        slopes[:count] = extended
         source.rest_spin = spin
-        source.rest_spin_derivative_per_ns = slopes[:count]
+        source.rest_spin_derivative_per_ns = extended
         return
     if count < 2:
         slopes[:count] = 0.0

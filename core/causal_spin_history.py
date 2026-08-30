@@ -125,7 +125,76 @@ def append_causal_frozen_spin_slopes_per_ns(
     return slopes
 
 
+def append_causal_frozen_spin_slopes_in_place(
+    slope_buffer: np.ndarray,
+    rest_spin: np.ndarray,
+    time_ns: np.ndarray,
+    *,
+    old_count: int,
+) -> np.ndarray:
+    """Append only the causal slope tail in a managed prepared-history buffer.
+
+    Unlike :func:`append_causal_frozen_spin_slopes_per_ns`, this helper does
+    not revalidate or recopy the accepted prefix.  It is restricted to the
+    append-aware prepared-history cache, whose storage token, generation,
+    rewrite epoch, read-only public arrays, and transactional eviction already
+    establish that the prefix is the one used to create ``slope_buffer``.
+    Only the new spin/time tail and the two predecessor knots needed by the
+    local quadratic rule are inspected, so one accepted knot costs ``O(1)`` in
+    history length.
+
+    A one-knot slope is an unqueryable zero placeholder.  When the second knot
+    arrives, both first-segment endpoints are set to the same secant.  Every
+    later append writes only the newly accepted knot's slope.
+    """
+
+    spin = np.asarray(rest_spin, dtype=np.float64)
+    time = np.asarray(time_ns, dtype=np.float64)
+    slopes = np.asarray(slope_buffer)
+    previous_count = int(old_count)
+    if spin.ndim != 2 or spin.shape[1] < 1:
+        raise ValueError("rest_spin must have shape [knots, components]")
+    if time.shape != (spin.shape[0],):
+        raise ValueError("time_ns must have one value per spin knot")
+    if slopes.ndim != 2 or slopes.shape[1:] != spin.shape[1:]:
+        raise ValueError("slope_buffer must match the spin component shape")
+    if slopes.dtype != np.float64:
+        raise ValueError("slope_buffer must use float64 storage")
+    if slopes.shape[0] < spin.shape[0]:
+        raise ValueError("slope_buffer must have capacity for every spin knot")
+    if previous_count < 0 or previous_count > spin.shape[0]:
+        raise ValueError("old_count must lie within the spin-history length")
+
+    local_start = max(0, previous_count - 2)
+    if not np.all(np.isfinite(spin[local_start:])) or not np.all(
+        np.isfinite(time[local_start:])
+    ):
+        raise ValueError("appended spin history and time_ns must be finite")
+    if time.size > max(1, local_start + 1) and np.any(
+        np.diff(time[local_start:]) <= 0.0
+    ):
+        raise ValueError("appended spin-history times must be strictly increasing")
+
+    new_count = int(spin.shape[0])
+    if new_count == previous_count:
+        return slopes[:new_count]
+    if new_count == 1:
+        slopes[0] = 0.0
+        return slopes[:new_count]
+    if previous_count <= 1:
+        first = _causal_slope_at_knot(spin, time, 0)
+        slopes[0] = first
+        slopes[1] = first
+        start = 2
+    else:
+        start = previous_count
+    for knot in range(start, new_count):
+        slopes[knot] = _causal_slope_at_knot(spin, time, knot)
+    return slopes[:new_count]
+
+
 __all__ = [
+    "append_causal_frozen_spin_slopes_in_place",
     "append_causal_frozen_spin_slopes_per_ns",
     "causal_frozen_spin_slopes_per_ns",
 ]
