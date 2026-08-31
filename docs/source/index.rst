@@ -47,6 +47,7 @@ If you are new to the project, start with the **Overview** and **Quick start** p
    magnetic_dipole_moments
    radiation_reaction_plan
    radiation_flux_oracle
+   spin_self_force_oracle
    self_consistency
    adaptive_timestep
    recent_changes

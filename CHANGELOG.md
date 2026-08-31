@@ -130,6 +130,15 @@ All notable changes and updates to the LW Integrator project are documented in t
 
 ### Experimental Magnetic Dipole Moments (August 2026)
 
+- Added a diagnostic native-unit translation of Jakobsen's covariant
+  point-particle self-force through first order in spin and magnetization.  It
+  reports the charge ALD term and the linear ``q mu``/``q S`` correction,
+  including the derivative of the moving body-frame cross product, but does
+  not alter production trajectories.  Tests cover the rest-frame reduction,
+  the Medina charge coefficient, Lorentz covariance, force orthogonality,
+  neutral and static ``g=2`` limits.  Pure ``mu^2`` recoil, reduction of the
+  higher worldline derivatives, and bound-field balance remain explicit
+  acceptance gates.
 - Added a diagnostic radiation-flux oracle that samples the independent
   retarded charge and intrinsic-dipole fields on a sphere and integrates
   outward electromagnetic energy, linear momentum, and angular momentum.  It
