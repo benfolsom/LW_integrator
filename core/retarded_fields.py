@@ -22,6 +22,7 @@ of scope for this layer.
 
 from __future__ import annotations
 
+from copy import copy
 from dataclasses import dataclass, field as dataclass_field
 from math import comb
 from typing import Sequence, cast
@@ -36,9 +37,16 @@ from .prepared_history_cache import (
     history_storage_capacity,
 )
 from .rfs import electromagnetic_field_tensor_native
-from .types import IndexedTrajectoryArrays, Trajectory, TrajectoryArrays
+from .types import (
+    IndexedTrajectoryArrays,
+    Trajectory,
+    TrajectoryArrays,
+    TrialTrajectoryHistory,
+)
 
-TrajectoryHistory = Trajectory | TrajectoryArrays | IndexedTrajectoryArrays
+TrajectoryHistory = (
+    Trajectory | TrajectoryArrays | IndexedTrajectoryArrays | TrialTrajectoryHistory
+)
 
 _DEFAULT_ROOT_TOLERANCE_MM = 1.0e-21
 _DEFAULT_MAX_ROOT_ITERATIONS = 96
@@ -219,7 +227,9 @@ def _legacy_constant(history: Trajectory, field_name: str) -> np.ndarray:
 
 
 def _require_current_history_storage(history: TrajectoryHistory) -> None:
-    if isinstance(history, IndexedTrajectoryArrays):
+    if isinstance(history, TrialTrajectoryHistory):
+        history.base.require_current_storage()
+    elif isinstance(history, IndexedTrajectoryArrays):
         history.base.require_current_storage()
     elif isinstance(history, TrajectoryArrays):
         history.require_current_storage()
@@ -227,6 +237,8 @@ def _require_current_history_storage(history: TrajectoryHistory) -> None:
 
 def _history_matrix(history: TrajectoryHistory, field_name: str) -> np.ndarray:
     _require_current_history_storage(history)
+    if isinstance(history, TrialTrajectoryHistory):
+        raise TypeError("trial history must use the prepared overlay path")
     if isinstance(history, IndexedTrajectoryArrays):
         start = int(history.start_step)
         values = np.asarray(getattr(history.base, field_name), dtype=float)[start:]
@@ -238,6 +250,8 @@ def _history_matrix(history: TrajectoryHistory, field_name: str) -> np.ndarray:
 
 def _history_constant(history: TrajectoryHistory, field_name: str) -> np.ndarray:
     _require_current_history_storage(history)
+    if isinstance(history, TrialTrajectoryHistory):
+        return np.asarray(getattr(history.base, field_name), dtype=float)
     if isinstance(history, IndexedTrajectoryArrays):
         return np.asarray(history.constant(field_name), dtype=float)
     if isinstance(history, TrajectoryArrays):
@@ -247,6 +261,8 @@ def _history_constant(history: TrajectoryHistory, field_name: str) -> np.ndarray
 
 def _history_dead(history: TrajectoryHistory, shape: tuple[int, int]) -> np.ndarray:
     _require_current_history_storage(history)
+    if isinstance(history, TrialTrajectoryHistory):
+        raise TypeError("trial history must use the prepared overlay path")
     if isinstance(history, IndexedTrajectoryArrays):
         start = int(history.start_step)
         dead = np.asarray(history.base.dead, dtype=bool)[start:]
@@ -369,6 +385,8 @@ def _history_matrix_slice(
 
     _require_current_history_storage(history)
     start = int(start_step)
+    if isinstance(history, TrialTrajectoryHistory):
+        raise TypeError("trial history must use the prepared overlay path")
     if isinstance(history, IndexedTrajectoryArrays):
         global_start = int(history.start_step) + start
         values = np.asarray(getattr(history.base, field_name), dtype=float)[
@@ -387,6 +405,8 @@ def _history_dead_slice(
 ) -> np.ndarray:
     _require_current_history_storage(history)
     start = int(start_step)
+    if isinstance(history, TrialTrajectoryHistory):
+        raise TypeError("trial history must use the prepared overlay path")
     if isinstance(history, IndexedTrajectoryArrays):
         global_start = int(history.start_step) + start
         dead = np.asarray(history.base.dead, dtype=bool)[
@@ -494,6 +514,72 @@ def _append_history_arrays(
     previous.beta_prime_per_mm = previous._beta_prime_buffer[:new_stop]
     previous.dead = previous._dead_buffer[:new_stop]
     return previous
+
+
+def _append_history_array_tail(
+    previous: _HistoryArrays,
+    tail: _HistoryArrays,
+) -> tuple[_HistoryArrays, int]:
+    """Return a private prepared-array clone extended by a tiny trial tail."""
+
+    old_stop = int(previous.time_ns.shape[0])
+    tail_count = int(tail.time_ns.shape[0])
+    if tail_count not in {1, 2}:
+        raise ValueError("prepared trial tail must contain one or two rows")
+    if tail.n_sources != previous.n_sources:
+        raise ValueError("trial source particle count changed")
+    if not np.array_equal(tail.charge_native, previous.charge_native):
+        raise ValueError("trial source charge changed")
+
+    extended = copy(previous)
+    new_stop = old_stop + tail_count
+    existing_capacity = (
+        0 if extended._time_buffer is None else int(extended._time_buffer.shape[0])
+    )
+    extended._maximum_capacity = max(
+        new_stop,
+        int(extended._maximum_capacity or old_stop),
+    )
+    if existing_capacity < new_stop:
+        _reserve_history_arrays(
+            extended,
+            max(new_stop, max(8, 2 * existing_capacity)),
+            maximum_capacity=extended._maximum_capacity,
+        )
+    assert extended._time_buffer is not None
+    assert extended._position_buffer is not None
+    assert extended._beta_buffer is not None
+    assert extended._beta_prime_buffer is not None
+    assert extended._dead_buffer is not None
+    extended._time_buffer[old_stop:new_stop] = tail.time_ns
+    extended._position_buffer[old_stop:new_stop] = tail.position_mm
+    extended._beta_buffer[old_stop:new_stop] = tail.beta
+    extended._beta_prime_buffer[old_stop:new_stop] = tail.beta_prime_per_mm
+    extended._dead_buffer[old_stop:new_stop] = tail.dead
+    extended.time_ns = extended._time_buffer[:new_stop]
+    extended.position_mm = extended._position_buffer[:new_stop]
+    extended.beta = extended._beta_buffer[:new_stop]
+    extended.beta_prime_per_mm = extended._beta_prime_buffer[:new_stop]
+    extended.dead = extended._dead_buffer[:new_stop]
+    return extended, old_stop
+
+
+def _prepare_trial_history(
+    history: TrialTrajectoryHistory,
+    excluded_source_indices: Sequence[int],
+) -> _PreparedHistory:
+    """Extend cached accepted charge history without publishing trial knots."""
+
+    accepted = _prepare_history(history.base, excluded_source_indices)
+    tail_arrays = _extract_history(list(history.tail))
+    arrays, old_stop = _append_history_array_tail(accepted.arrays, tail_arrays)
+    sources: dict[int, _PreparedSourceHistory] = {}
+    for source_index, source in accepted.sources.items():
+        trial_source = copy(source)
+        trial_source._maximum_capacity = arrays._maximum_capacity
+        _append_prepared_source_history(trial_source, arrays, old_stop)
+        sources[source_index] = trial_source
+    return _PreparedHistory(arrays=arrays, sources=sources)
 
 
 def _quintic_worldline_sample(
@@ -778,6 +864,8 @@ def _prepare_history(
 ) -> _PreparedHistory:
     """Prepare charged histories, extending a safe builder-backed cache."""
 
+    if isinstance(history, TrialTrajectoryHistory):
+        return _prepare_trial_history(history, excluded_source_indices)
     excluded = tuple(sorted({int(index) for index in excluded_source_indices}))
     return _CHARGE_PREPARED_HISTORY_CACHE.prepare(
         history,
@@ -1328,15 +1416,15 @@ def _evaluate_prepared_charge_batch_numba_roots_exact_serial(
                 separation_vector_mm=(
                     event_position_mm[event_index] - source_position_mm
                 ),
-                source_beta=source_beta,
-                source_beta_prime_per_mm=source_beta_prime,
+                source_beta=cast(Sequence[float], source_beta),
+                source_beta_prime_per_mm=cast(Sequence[float], source_beta_prime),
             )
             potential = lienard_wiechert_charge_potential_native(
                 charge_native=float(arrays.charge_native[source_index]),
                 separation_vector_mm=(
                     event_position_mm[event_index] - source_position_mm
                 ),
-                source_beta=source_beta,
+                source_beta=cast(Sequence[float], source_beta),
             )
             electric_total += electric
             magnetic_total += magnetic

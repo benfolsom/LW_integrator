@@ -59,6 +59,55 @@ def test_cli_direct_checkpoint_flags_build_core_config(tmp_path: Path) -> None:
     assert request.config.checkpoint.interval_seconds == pytest.approx(60.0)
 
 
+def test_cli_direct_adaptive_pair_flags_build_core_config(tmp_path: Path) -> None:
+    config_path = tmp_path / "run.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "steps": 16,
+                "time_step": 1.0e-3,
+                "wall_position": 0.0,
+                "aperture_radius": 1.0,
+                "simulation_type": "bunch-to-bunch",
+                "startup_mode": "inertial-prehistory",
+                "particle_loss": {"enabled": False},
+                "rider": {},
+                "driver": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    checkpoint_path = tmp_path / "capture.checkpoint"
+
+    request = cli.build_request(
+        cli.parse_args(
+            [
+                "--config",
+                str(config_path),
+                "--checkpoint-dir",
+                str(checkpoint_path),
+                "--adaptive-pair-return",
+                "--adaptive-pair-target-time-ns",
+                "2.5",
+                "--adaptive-pair-tolerance-scale",
+                "0.5",
+                "--adaptive-pair-maximum-step-factor",
+                "32",
+                "--adaptive-pair-shared-time-absolute-tolerance-ns",
+                "2e-20",
+            ]
+        )
+    )
+
+    adaptive = request.config.adaptive_pair_return
+    assert adaptive.enabled is True
+    assert adaptive.target_lab_time_ns == pytest.approx(2.5)
+    assert adaptive.tolerance_scale == pytest.approx(0.5)
+    assert adaptive.maximum_step_factor == pytest.approx(32.0)
+    assert adaptive.shared_time_absolute_tolerance_ns == pytest.approx(2.0e-20)
+    assert request.config.checkpoint.directory == str(checkpoint_path)
+
+
 def test_cli_testbed_resume_flag_overrides_loaded_checkpoint(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -2210,6 +2259,7 @@ class TestCliRuntimeHelpers:
         )
         assert captured["magnetic_dipole"] is request.config.magnetic_dipole
         assert captured["checkpoint"] is request.config.checkpoint
+        assert captured["adaptive_pair_return"] is request.config.adaptive_pair_return
 
     def test_run_simulation_applies_auto_duration_when_enabled(self, monkeypatch):
         request = cli.build_request(

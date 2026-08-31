@@ -79,3 +79,29 @@ interruptible.  The GUI **Cancel** action flushes the latest complete joint
 rider/driver step before stopping.  A terminal interrupt, hard process kill,
 or machine loss during one expensive step returns to the most recent committed
 manifest boundary.
+
+Variable-length exact-pair checkpoint
+-------------------------------------
+
+The exact-retarded adaptive pair path has a second checkpoint format for a
+variable number of accepted electron--proton history knots. It
+stores equal rider and driver chunks together with the adaptive-controller
+state and the sparse public-output cursor. A focused interrupted/resumed run
+reproduces the uninterrupted accepted histories, controller, and output-row
+selection bit-for-bit.
+
+Enable it in a testbed configuration with ``adaptive_pair_return.enabled`` or
+on the direct CLI with ``--adaptive-pair-return``. A direct CLI launch also
+needs ``--adaptive-pair-target-time-ns`` and ``--checkpoint-dir``. The GUI
+control **Adaptive exact pair return** enables checkpointing and exposes the
+target time, tolerance scale, step-factor bounds, and shared-time tolerances.
+
+For this format, ``checkpoint.interval_steps`` counts accepted history knots,
+including refined midpoints and endpoints, rather than fixed outer-loop steps.
+The wall-clock interval retains its ordinary meaning. GUI/CLI cancellation
+flushes the latest jointly accepted pair before raising the cancellation
+signal; rejected trials are never checkpointed.
+
+The fixed-step options documented above continue to use the original
+maintained format. See :doc:`multirate_return` for the strict mode guards and
+the separation between accepted source history and public output.

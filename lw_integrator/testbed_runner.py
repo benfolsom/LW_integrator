@@ -47,6 +47,7 @@ from core.particle_status import (
 from core.self_consistency import canonicalize_self_consistency_mode
 from core.species import list_species
 from core.types import (
+    AdaptivePairReturnConfig,
     BeamlineGeometryConfig,
     CavityExitConfig,
     CheckpointConfig,
@@ -271,6 +272,16 @@ class SimulationOptions:
     checkpoint_resume_from: Optional[Path] = None
     checkpoint_interval_steps: int = 1000
     checkpoint_interval_seconds: float = 900.0
+    adaptive_pair_return_enabled: bool = False
+    adaptive_pair_target_lab_time_ns: Optional[float] = None
+    adaptive_pair_tolerance_scale: float = 1.0
+    adaptive_pair_minimum_step_factor: float = 1.0 / 64.0
+    adaptive_pair_maximum_step_factor: float = 64.0
+    adaptive_pair_public_sample_interval_ns: Optional[float] = None
+    adaptive_pair_shared_time_absolute_tolerance_ns: float = 1.0e-20
+    adaptive_pair_shared_time_relative_tolerance: float = 1.0e-12
+    adaptive_pair_maximum_attempts: int = 2_000_000
+    adaptive_pair_maximum_accepted_slabs: int = 1_000_000
     manual_particle_config_enabled: bool = False
     rider_params: Dict[str, Any] = field(
         default_factory=lambda: dict(DEFAULT_RIDER_PARAMS)
@@ -536,6 +547,38 @@ class SimulationOptions:
             and self.checkpoint_interval_seconds == 0.0
         ):
             raise ValueError("checkpointing needs a positive interval")
+        adaptive_pair = AdaptivePairReturnConfig(
+            enabled=self.adaptive_pair_return_enabled,
+            target_lab_time_ns=self.adaptive_pair_target_lab_time_ns,
+            tolerance_scale=self.adaptive_pair_tolerance_scale,
+            minimum_step_factor=self.adaptive_pair_minimum_step_factor,
+            maximum_step_factor=self.adaptive_pair_maximum_step_factor,
+            public_sample_interval_ns=self.adaptive_pair_public_sample_interval_ns,
+            shared_time_absolute_tolerance_ns=(
+                self.adaptive_pair_shared_time_absolute_tolerance_ns
+            ),
+            shared_time_relative_tolerance=(
+                self.adaptive_pair_shared_time_relative_tolerance
+            ),
+            maximum_attempts=self.adaptive_pair_maximum_attempts,
+            maximum_accepted_slabs=self.adaptive_pair_maximum_accepted_slabs,
+        )
+        self.adaptive_pair_return_enabled = adaptive_pair.enabled
+        self.adaptive_pair_target_lab_time_ns = adaptive_pair.target_lab_time_ns
+        self.adaptive_pair_tolerance_scale = adaptive_pair.tolerance_scale
+        self.adaptive_pair_minimum_step_factor = adaptive_pair.minimum_step_factor
+        self.adaptive_pair_maximum_step_factor = adaptive_pair.maximum_step_factor
+        self.adaptive_pair_public_sample_interval_ns = (
+            adaptive_pair.public_sample_interval_ns
+        )
+        self.adaptive_pair_shared_time_absolute_tolerance_ns = (
+            adaptive_pair.shared_time_absolute_tolerance_ns
+        )
+        self.adaptive_pair_shared_time_relative_tolerance = (
+            adaptive_pair.shared_time_relative_tolerance
+        )
+        self.adaptive_pair_maximum_attempts = adaptive_pair.maximum_attempts
+        self.adaptive_pair_maximum_accepted_slabs = adaptive_pair.maximum_accepted_slabs
         self.chrono_interpolate = bool(
             self.chrono_interpolate or self.self_consistency_chrono_interpolate
         )
@@ -605,6 +648,24 @@ class SimulationOptions:
                 ),
                 "interval_steps": self.checkpoint_interval_steps,
                 "interval_seconds": self.checkpoint_interval_seconds,
+            },
+            "adaptive_pair_return": {
+                "enabled": self.adaptive_pair_return_enabled,
+                "target_lab_time_ns": self.adaptive_pair_target_lab_time_ns,
+                "tolerance_scale": self.adaptive_pair_tolerance_scale,
+                "minimum_step_factor": self.adaptive_pair_minimum_step_factor,
+                "maximum_step_factor": self.adaptive_pair_maximum_step_factor,
+                "public_sample_interval_ns": (
+                    self.adaptive_pair_public_sample_interval_ns
+                ),
+                "shared_time_absolute_tolerance_ns": (
+                    self.adaptive_pair_shared_time_absolute_tolerance_ns
+                ),
+                "shared_time_relative_tolerance": (
+                    self.adaptive_pair_shared_time_relative_tolerance
+                ),
+                "maximum_attempts": self.adaptive_pair_maximum_attempts,
+                "maximum_accepted_slabs": (self.adaptive_pair_maximum_accepted_slabs),
             },
             "manual_particle_config_enabled": self.manual_particle_config_enabled,
             "rider_params": dict(self.rider_params),
@@ -883,6 +944,10 @@ class SimulationOptions:
         )
         checkpoint_raw = payload.get("checkpoint")
         checkpoint_payload = checkpoint_raw if isinstance(checkpoint_raw, dict) else {}
+        adaptive_pair_raw = payload.get("adaptive_pair_return")
+        adaptive_pair_payload = (
+            adaptive_pair_raw if isinstance(adaptive_pair_raw, dict) else {}
+        )
 
         canonical_backend_present = (
             "magnetic_dipole_exact_retarded_backend" in payload
@@ -1310,6 +1375,43 @@ class SimulationOptions:
                     "interval_seconds",
                     payload.get("checkpoint_interval_seconds", 900.0),
                 )
+            ),
+            adaptive_pair_return_enabled=bool(
+                adaptive_pair_payload.get(
+                    "enabled", payload.get("adaptive_pair_return_enabled", False)
+                )
+            ),
+            adaptive_pair_target_lab_time_ns=(
+                float(adaptive_pair_payload["target_lab_time_ns"])
+                if adaptive_pair_payload.get("target_lab_time_ns") not in {None, ""}
+                else None
+            ),
+            adaptive_pair_tolerance_scale=float(
+                adaptive_pair_payload.get("tolerance_scale", 1.0)
+            ),
+            adaptive_pair_minimum_step_factor=float(
+                adaptive_pair_payload.get("minimum_step_factor", 1.0 / 64.0)
+            ),
+            adaptive_pair_maximum_step_factor=float(
+                adaptive_pair_payload.get("maximum_step_factor", 64.0)
+            ),
+            adaptive_pair_public_sample_interval_ns=(
+                float(adaptive_pair_payload["public_sample_interval_ns"])
+                if adaptive_pair_payload.get("public_sample_interval_ns")
+                not in {None, ""}
+                else None
+            ),
+            adaptive_pair_shared_time_absolute_tolerance_ns=float(
+                adaptive_pair_payload.get("shared_time_absolute_tolerance_ns", 1.0e-20)
+            ),
+            adaptive_pair_shared_time_relative_tolerance=float(
+                adaptive_pair_payload.get("shared_time_relative_tolerance", 1.0e-12)
+            ),
+            adaptive_pair_maximum_attempts=int(
+                adaptive_pair_payload.get("maximum_attempts", 2_000_000)
+            ),
+            adaptive_pair_maximum_accepted_slabs=int(
+                adaptive_pair_payload.get("maximum_accepted_slabs", 1_000_000)
             ),
             manual_particle_config_enabled=_bool(
                 "manual_particle_config_enabled", False
@@ -3033,6 +3135,22 @@ def run_testbed(
         interval_steps=options.checkpoint_interval_steps,
         interval_seconds=options.checkpoint_interval_seconds,
     )
+    adaptive_pair_return_config = AdaptivePairReturnConfig(
+        enabled=options.adaptive_pair_return_enabled,
+        target_lab_time_ns=options.adaptive_pair_target_lab_time_ns,
+        tolerance_scale=options.adaptive_pair_tolerance_scale,
+        minimum_step_factor=options.adaptive_pair_minimum_step_factor,
+        maximum_step_factor=options.adaptive_pair_maximum_step_factor,
+        public_sample_interval_ns=options.adaptive_pair_public_sample_interval_ns,
+        shared_time_absolute_tolerance_ns=(
+            options.adaptive_pair_shared_time_absolute_tolerance_ns
+        ),
+        shared_time_relative_tolerance=(
+            options.adaptive_pair_shared_time_relative_tolerance
+        ),
+        maximum_attempts=options.adaptive_pair_maximum_attempts,
+        maximum_accepted_slabs=options.adaptive_pair_maximum_accepted_slabs,
+    )
 
     # Start a fresh testbed log for each run so GUI and CLI single runs can
     # save the exact debug session instead of guessing the latest file later.
@@ -3085,6 +3203,14 @@ def run_testbed(
             f"{checkpoint_config.resume_from or checkpoint_config.directory} "
             f"(every {checkpoint_config.interval_steps} steps or "
             f"{checkpoint_config.interval_seconds:g} s)"
+        )
+    if adaptive_pair_return_config.enabled:
+        _log(
+            "  Exact-pair adaptive return: ENABLED "
+            f"(target={adaptive_pair_return_config.target_lab_time_ns:g} ns, "
+            f"tolerance scale={adaptive_pair_return_config.tolerance_scale:g}, "
+            f"step factors={adaptive_pair_return_config.minimum_step_factor:g}.."
+            f"{adaptive_pair_return_config.maximum_step_factor:g})"
         )
     if options.driver_train_enabled and sim_type == SimulationType.BUNCH_TO_BUNCH:
         _log(
@@ -3272,6 +3398,7 @@ def run_testbed(
             beamline_geometry=beamline_geometry_config,
             magnetic_dipole=magnetic_dipole_config,
             checkpoint=checkpoint_config,
+            adaptive_pair_return=adaptive_pair_return_config,
         )
         # Unpack: rider_traj, driver_traj, rider_soa, driver_soa, localization
         core_traj_rider = _integrator_return[0]

@@ -984,6 +984,88 @@ def test_endpoint_charge_root_options_match_start_and_preflight_policy(
         assert calls[-1]["backend"] == "numba_full_strict_serial"
 
 
+def test_analytic_endpoint_uses_matching_dipole_hertz_potential(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import core.dipole_hertz_jet as dipole_hertz_jet
+    import core.retarded_dipole_fields as dipole_fields
+    import core.retarded_fields as charge_fields
+
+    analytic_potential = np.array((0.25, -0.5, 0.75, -1.0))
+    analytic_calls: list[dict[str, object]] = []
+
+    monkeypatch.setattr(
+        charge_fields,
+        "evaluate_retarded_charge_field_native",
+        lambda *args, **kwargs: SimpleNamespace(four_potential=np.zeros(4)),
+    )
+
+    def reject_finite_difference_endpoint(*args, **kwargs):
+        raise AssertionError("analytical endpoint must not use finite-difference A")
+
+    monkeypatch.setattr(
+        dipole_fields,
+        "evaluate_retarded_dipole_potential_native",
+        reject_finite_difference_endpoint,
+    )
+
+    def fake_analytic(*args, **kwargs):
+        del args
+        analytic_calls.append(dict(kwargs))
+        return SimpleNamespace(
+            response=SimpleNamespace(four_potential=analytic_potential.copy())
+        )
+
+    monkeypatch.setattr(
+        dipole_hertz_jet,
+        "evaluate_retarded_dipole_field_gradient_hertz_jet_native",
+        fake_analytic,
+    )
+    observer = {
+        "x": np.array([1.0]),
+        "y": np.array([2.0]),
+        "z": np.array([3.0]),
+        "t": np.array([4.0]),
+        "_exact_source_endpoint_rebase_required": np.array([True]),
+    }
+    particle = MagneticDipoleParticleConfig(species="proton")
+    magnetic = MagneticDipoleConfig(
+        enabled=True,
+        spin_precession_enabled=True,
+        exact_retarded_backend=("numba_analytic_charge_dipole_response_serial"),
+        source=DipoleSourceConfig(
+            model="covariant_retarded_point",
+            relative_stencil_step=2.0e-4,
+            minimum_stencil_step_mm=3.0e-15,
+            minimum_separation_mm=4.0e-15,
+            root_tolerance_mm=5.0e-20,
+            max_root_iterations=73,
+        ),
+        rider=particle,
+        driver=particle,
+    )
+
+    actual = _evaluate_exact_endpoint_four_potential(
+        observer,
+        [],
+        magnetic_dipole=magnetic,
+        include_dipole_source=True,
+        spin_interpolation_model="causal_frozen_c1",
+    )
+
+    np.testing.assert_array_equal(actual, analytic_potential[np.newaxis, :])
+    assert len(analytic_calls) == 1
+    call = analytic_calls[0]
+    assert call["response_kernel"] == "numba_sparse_strict_serial"
+    assert call["fallback_backend"] == "numba_full_strict_serial"
+    assert call["fallback_relative_step"] == 2.0e-4
+    assert call["fallback_minimum_step_mm"] == 3.0e-15
+    assert call["minimum_separation_mm"] == 4.0e-15
+    assert call["root_tolerance_mm"] == 5.0e-20
+    assert call["max_root_iterations"] == 73
+    assert call["spin_interpolation_model"] == "causal_frozen_c1"
+
+
 def test_inertial_preflight_forwards_shared_exact_retarded_backend(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

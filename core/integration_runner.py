@@ -23,6 +23,11 @@ from .equations import (
     _canonicalize_radiation_reaction_mode,
     retarded_equations_of_motion,
 )
+from .exact_pair_endpoint import (
+    discard_exact_source_endpoint_scratch as _discard_exact_source_endpoint_scratch,
+    evaluate_exact_endpoint_four_potential as _evaluate_exact_endpoint_four_potential,
+    finalize_exact_source_canonical_pair_states,
+)
 from .images import generate_conducting_image, generate_switching_image
 from .particle_status import (
     all_particles_dead,
@@ -52,6 +57,7 @@ from .self_consistency import (
     self_consistent_step,
 )
 from .types import (
+    AdaptivePairReturnConfig,
     BeamlineGeometryConfig,
     CheckpointConfig,
     ChronoMatchingMode,
@@ -1071,138 +1077,6 @@ def _apply_inertial_canonical_rebase(
         state["dipole_source_canonical_ready"] = np.ones(particle_count, dtype=bool)
 
 
-def _evaluate_exact_endpoint_four_potential(
-    observer_state: ParticleState,
-    source_history: Trajectory | TrajectoryArrays,
-    *,
-    magnetic_dipole: MagneticDipoleConfig,
-    include_dipole_source: bool,
-) -> np.ndarray:
-    """Evaluate ``A_charge + A_dipole`` at accepted observer endpoints."""
-
-    from .retarded_fields import (
-        ObserverEvent,
-        evaluate_retarded_charge_field_native,
-    )
-
-    if include_dipole_source:
-        from .retarded_dipole_fields import (
-            evaluate_retarded_dipole_potential_native,
-        )
-
-    particle_count = len(np.asarray(observer_state.get("x", [])))
-    potentials = np.zeros((particle_count, 4), dtype=float)
-    required = np.asarray(
-        observer_state.get(
-            "_exact_source_endpoint_rebase_required",
-            np.zeros(particle_count, dtype=bool),
-        ),
-        dtype=bool,
-    )
-    if required.shape != (particle_count,):
-        raise ValueError("exact endpoint rebase mask must match particle count")
-
-    source_options = magnetic_dipole.source
-    charge_root_tolerance_mm = (
-        float(source_options.root_tolerance_mm) if include_dipole_source else 1.0e-21
-    )
-    charge_max_root_iterations = (
-        int(source_options.max_root_iterations) if include_dipole_source else 96
-    )
-    for particle_idx in np.flatnonzero(required):
-        event = ObserverEvent(
-            time_ns=float(observer_state["t"][particle_idx]),
-            position_mm=(
-                float(observer_state["x"][particle_idx]),
-                float(observer_state["y"][particle_idx]),
-                float(observer_state["z"][particle_idx]),
-            ),
-        )
-        charge_field = evaluate_retarded_charge_field_native(
-            source_history,
-            event,
-            require_complete_history=True,
-            root_tolerance_mm=charge_root_tolerance_mm,
-            max_root_iterations=charge_max_root_iterations,
-            backend=magnetic_dipole.exact_retarded_backend,
-        )
-        potentials[particle_idx] += charge_field.four_potential
-        if include_dipole_source:
-            dipole_potential = evaluate_retarded_dipole_potential_native(
-                source_history,
-                event,
-                require_complete_history=True,
-                relative_step=float(source_options.relative_stencil_step),
-                minimum_step_mm=float(source_options.minimum_stencil_step_mm),
-                minimum_separation_mm=float(source_options.minimum_separation_mm),
-                root_tolerance_mm=float(source_options.root_tolerance_mm),
-                max_root_iterations=int(source_options.max_root_iterations),
-                backend=magnetic_dipole.exact_retarded_backend,
-            )
-            potentials[particle_idx] += dipole_potential.four_potential
-    if not np.all(np.isfinite(potentials)):
-        raise ValueError("exact endpoint four-potential must be finite")
-    return potentials
-
-
-def _replace_exact_source_endpoint_potential(
-    state: ParticleState,
-    endpoint_four_potential: np.ndarray,
-) -> None:
-    """Replace the saved start-event ``qA/c`` offset by the endpoint offset."""
-
-    from .canonical_momentum import replace_canonical_potential_native
-
-    particle_count = len(np.asarray(state.get("x", [])))
-    start = np.asarray(
-        state.get("_exact_source_start_four_potential", np.empty((0, 4))),
-        dtype=float,
-    )
-    required = np.asarray(
-        state.get("_exact_source_endpoint_rebase_required", np.zeros(0, dtype=bool)),
-        dtype=bool,
-    )
-    endpoint = np.asarray(endpoint_four_potential, dtype=float)
-    if start.shape != (particle_count, 4):
-        raise ValueError("exact start four-potential must have shape [particles, 4]")
-    if required.shape != (particle_count,):
-        raise ValueError("exact endpoint rebase mask must match particle count")
-    if endpoint.shape != (particle_count, 4):
-        raise ValueError("exact endpoint four-potential must have shape [particles, 4]")
-    if not np.all(np.isfinite(start)) or not np.all(np.isfinite(endpoint)):
-        raise ValueError("exact canonical endpoint potentials must be finite")
-
-    charges = np.asarray(
-        state.get("q_observer", state.get("q", np.zeros(particle_count))),
-        dtype=float,
-    )
-    if charges.shape != (particle_count,) or not np.all(np.isfinite(charges)):
-        raise ValueError("observer charge must be finite and match particle count")
-    component_keys = ("Pt", "Px", "Py", "Pz")
-    for particle_idx in np.flatnonzero(required):
-        temporary = np.asarray(
-            [state[key][particle_idx] for key in component_keys], dtype=float
-        )
-        finalized = replace_canonical_potential_native(
-            temporary,
-            start[particle_idx],
-            endpoint[particle_idx],
-            charge_native=float(charges[particle_idx]),
-        )
-        for component_index, key in enumerate(component_keys):
-            state[key][particle_idx] = finalized[component_index]
-
-    state.pop("_exact_source_start_four_potential", None)
-    state.pop("_exact_source_endpoint_rebase_required", None)
-
-
-def _discard_exact_source_endpoint_scratch(state: ParticleState) -> None:
-    """Remove private endpoint handoff data from a terminal failed state."""
-
-    state.pop("_exact_source_start_four_potential", None)
-    state.pop("_exact_source_endpoint_rebase_required", None)
-
-
 def _finalize_exact_source_canonical_pair(
     *,
     step: int,
@@ -1223,20 +1097,18 @@ def _finalize_exact_source_canonical_pair(
 
     rider_history = rider_builder.build_partial(step + 1)
     driver_history = driver_builder.build_partial(step + 1)
-    rider_endpoint = _evaluate_exact_endpoint_four_potential(
-        rider_state,
-        driver_history,
+    finalized_rider, finalized_driver = finalize_exact_source_canonical_pair_states(
+        rider_state=rider_state,
+        driver_state=driver_state,
+        rider_endpoint_history=rider_history,
+        driver_endpoint_history=driver_history,
         magnetic_dipole=magnetic_dipole,
         include_dipole_source=include_dipole_source,
     )
-    driver_endpoint = _evaluate_exact_endpoint_four_potential(
-        driver_state,
-        rider_history,
-        magnetic_dipole=magnetic_dipole,
-        include_dipole_source=include_dipole_source,
-    )
-    _replace_exact_source_endpoint_potential(rider_state, rider_endpoint)
-    _replace_exact_source_endpoint_potential(driver_state, driver_endpoint)
+    rider_state.clear()
+    rider_state.update(finalized_rider)
+    driver_state.clear()
+    driver_state.update(finalized_driver)
     rider_builder.set_canonical_momentum_step(step, rider_state)
     driver_builder.set_canonical_momentum_step(step, driver_state)
 
@@ -2738,6 +2610,7 @@ def retarded_integrator(
     beamline_geometry: Optional[BeamlineGeometryConfig] = None,
     magnetic_dipole: Optional[MagneticDipoleConfig] = None,
     checkpoint: Optional[CheckpointConfig] = None,
+    adaptive_pair_return: Optional[AdaptivePairReturnConfig] = None,
 ) -> Tuple[
     Trajectory,
     Trajectory,
@@ -2886,6 +2759,7 @@ def retarded_integrator(
     macroparticle_smearing = macroparticle_smearing or MacroparticleSmearingConfig()
     magnetic_dipole = magnetic_dipole or MagneticDipoleConfig()
     checkpoint = checkpoint or CheckpointConfig()
+    adaptive_pair_return = adaptive_pair_return or AdaptivePairReturnConfig()
     if magnetic_dipole.exact_retarded_backend == "metal_certified_full_strict":
         from .metal_certified_roots import reset_metal_certified_root_diagnostics
 
@@ -2920,6 +2794,60 @@ def retarded_integrator(
         magnetic_dipole.enabled and magnetic_dipole.source.active
     )
     exact_magnetic_active = bool(rfs_active or dipole_source_active)
+
+    if adaptive_pair_return.enabled:
+        if sim_type is not SimulationType.BUNCH_TO_BUNCH:
+            raise NotImplementedError(
+                "exact-pair adaptive return mode requires BUNCH_TO_BUNCH"
+            )
+        if startup_mode is not StartupMode.INERTIAL_PREHISTORY:
+            raise ValueError(
+                "exact-pair adaptive return mode requires INERTIAL_PREHISTORY"
+            )
+        if not exact_magnetic_active:
+            raise ValueError(
+                "exact-pair adaptive return mode requires exact RFS/dipole dynamics"
+            )
+        if init_driver is None:
+            raise ValueError("exact-pair adaptive return mode requires a driver")
+        if (
+            int(np.asarray(init_rider.get("x", np.zeros(0))).size) != 1
+            or int(np.asarray(init_driver.get("x", np.zeros(0))).size) != 1
+        ):
+            raise NotImplementedError(
+                "exact-pair adaptive return mode currently requires one particle "
+                "per role"
+            )
+        if magnetic_dipole.exact_retarded_update != (
+            "second_order_start_taylor_endpoint"
+        ):
+            raise ValueError(
+                "exact-pair adaptive return mode requires the validated "
+                "second_order_start_taylor_endpoint update"
+            )
+        if adaptive_timestep is not None and adaptive_timestep.enabled:
+            raise ValueError(
+                "exact-pair adaptive return mode cannot be combined with the "
+                "legacy adaptive timestep controller"
+            )
+        if energy_monitor is not None and energy_monitor.enabled:
+            raise NotImplementedError(
+                "exact-pair adaptive return mode does not use the legacy energy "
+                "jump monitor"
+            )
+        if particle_loss.enabled:
+            raise NotImplementedError(
+                "exact-pair adaptive return mode does not yet serialize particle-"
+                "loss scheduler state; disable particle_loss"
+            )
+        if z_cutoff != 0.0:
+            raise NotImplementedError(
+                "exact-pair adaptive return mode does not yet implement z_cutoff"
+            )
+        if not checkpoint.enabled:
+            raise ValueError(
+                "exact-pair adaptive return mode requires resumable checkpointing"
+            )
 
     if checkpoint.enabled:
         if sim_type is not SimulationType.BUNCH_TO_BUNCH:
@@ -3328,6 +3256,54 @@ def retarded_integrator(
     if driver_seed_history is not None:
         for seed_state in driver_seed_history:
             _initialize_magnetic_field_diagnostic(seed_state, external_field)
+
+    if adaptive_pair_return.enabled:
+        if driver_seed_history is None or init_driver is None:
+            raise RuntimeError("exact-pair adaptive driver history was not initialized")
+        compatibility_payload = _checkpoint_json_value(
+            {
+                "checkpoint_kind": "accepted_pair_history",
+                "core_implementation_sha256": _checkpoint_core_implementation_hash(),
+                "requested_public_samples": int(steps),
+                "initial_step_ns": h_step,
+                "wall_z": wall_z,
+                "aperture_radius": aperture_radius,
+                "sim_type": sim_type,
+                "init_rider": init_rider,
+                "init_driver": init_driver,
+                "mean": mean,
+                "cav_spacing": cav_spacing,
+                "z_cutoff": z_cutoff,
+                "z_cutoff_mode": z_cutoff_mode,
+                "self_consistency": self_consistency,
+                "chrono_mode": chrono_mode,
+                "startup_mode": startup_mode,
+                "external_field": external_field,
+                "use_numba": use_numba,
+                "radiation_reaction_mode": radiation_reaction_mode,
+                "magnetic_dipole": magnetic_dipole,
+                "adaptive_pair_return": adaptive_pair_return,
+            }
+        )
+        from .exact_pair_integration import run_exact_pair_adaptive_integrator
+
+        return run_exact_pair_adaptive_integrator(
+            rider_seed=rider_seed_history,
+            driver_seed=driver_seed_history,
+            initial_step_ns=h_step,
+            requested_public_samples=int(steps),
+            aperture_radius_mm=aperture_radius,
+            magnetic_dipole=magnetic_dipole,
+            self_consistency=self_consistency,
+            chrono_mode=chrono_mode,
+            radiation_reaction_mode=radiation_reaction_mode,
+            external_field=external_field,
+            adaptive=adaptive_pair_return,
+            checkpoint=checkpoint,
+            compatibility_payload=cast(dict[str, Any], compatibility_payload),
+            progress_callback=progress_callback,
+            cancel_callback=cancel_callback,
+        )
 
     trajectory: Trajectory = [{} for _ in range(total_steps)]
     trajectory_drv: Trajectory = [{} for _ in range(total_steps)]
@@ -4710,6 +4686,7 @@ def run_integrator(
         beamline_geometry=config.beamline_geometry,
         magnetic_dipole=config.magnetic_dipole,
         checkpoint=config.checkpoint,
+        adaptive_pair_return=config.adaptive_pair_return,
     )
 
 

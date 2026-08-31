@@ -1114,6 +1114,40 @@ class IntegratorGUIConfigMixin:
         )
         self.checkpoint_interval_steps_var.set(options.checkpoint_interval_steps)
         self.checkpoint_interval_seconds_var.set(options.checkpoint_interval_seconds)
+        self.adaptive_pair_return_enabled_var.set(options.adaptive_pair_return_enabled)
+        self.adaptive_pair_target_lab_time_ns_var.set(
+            ""
+            if options.adaptive_pair_target_lab_time_ns is None
+            else str(options.adaptive_pair_target_lab_time_ns)
+        )
+        self.adaptive_pair_tolerance_scale_var.set(
+            options.adaptive_pair_tolerance_scale
+        )
+        self.adaptive_pair_minimum_step_factor_var.set(
+            options.adaptive_pair_minimum_step_factor
+        )
+        self.adaptive_pair_maximum_step_factor_var.set(
+            options.adaptive_pair_maximum_step_factor
+        )
+        self.adaptive_pair_public_sample_interval_ns_var.set(
+            ""
+            if options.adaptive_pair_public_sample_interval_ns is None
+            else str(options.adaptive_pair_public_sample_interval_ns)
+        )
+        self.adaptive_pair_shared_time_absolute_tolerance_ns_var.set(
+            options.adaptive_pair_shared_time_absolute_tolerance_ns
+        )
+        self.adaptive_pair_shared_time_relative_tolerance_var.set(
+            options.adaptive_pair_shared_time_relative_tolerance
+        )
+        self.adaptive_pair_maximum_attempts_var.set(
+            options.adaptive_pair_maximum_attempts
+        )
+        self.adaptive_pair_maximum_accepted_slabs_var.set(
+            options.adaptive_pair_maximum_accepted_slabs
+        )
+        if hasattr(self, "_toggle_adaptive_pair_return_controls"):
+            self._toggle_adaptive_pair_return_controls()
 
         default_species_label = self._species_label_by_key.get(
             "custom", next(iter(self._species_by_label))
@@ -1132,6 +1166,15 @@ class IntegratorGUIConfigMixin:
             self.driver_param_vars[name].set(driver_value)
         for name in CORE_PARAM_DEFAULTS:
             self.core_param_vars[name].set(options.core_params[name])
+
+        # Loading an enabled adaptive-pair configuration must apply the same
+        # validated prerequisites as clicking the checkbox. The BooleanVar
+        # trace fires earlier, before the general core-parameter loop above,
+        # so repeat the semantic toggle after those values are populated.
+        if options.adaptive_pair_return_enabled and hasattr(
+            self, "_on_adaptive_pair_return_toggle"
+        ):
+            self._on_adaptive_pair_return_toggle()
 
         z_cutoff_val = options.core_params.get("z_cutoff", 0.0)
         self.z_cutoff_enabled_var.set(z_cutoff_val != 0.0)
@@ -1340,6 +1383,43 @@ class IntegratorGUIConfigMixin:
             checkpoint_interval_seconds=float(
                 self.checkpoint_interval_seconds_var.get()
             ),
+            adaptive_pair_return_enabled=bool(
+                self.adaptive_pair_return_enabled_var.get()
+            ),
+            adaptive_pair_target_lab_time_ns=(
+                _parse_gui_optional_float_lenient(
+                    self.adaptive_pair_target_lab_time_ns_var.get()
+                )
+            ),
+            adaptive_pair_tolerance_scale=float(
+                self.adaptive_pair_tolerance_scale_var.get()
+            ),
+            adaptive_pair_minimum_step_factor=float(
+                self.adaptive_pair_minimum_step_factor_var.get()
+            ),
+            adaptive_pair_maximum_step_factor=float(
+                self.adaptive_pair_maximum_step_factor_var.get()
+            ),
+            adaptive_pair_public_sample_interval_ns=(
+                _parse_gui_optional_float_lenient(
+                    self.adaptive_pair_public_sample_interval_ns_var.get()
+                )
+            ),
+            adaptive_pair_shared_time_absolute_tolerance_ns=float(
+                self.adaptive_pair_shared_time_absolute_tolerance_ns_var.get()
+            ),
+            adaptive_pair_shared_time_relative_tolerance=float(
+                self.adaptive_pair_shared_time_relative_tolerance_var.get()
+            ),
+            adaptive_pair_maximum_attempts=int(
+                self.adaptive_pair_maximum_attempts_var.get()
+            ),
+            adaptive_pair_maximum_accepted_slabs=int(
+                self.adaptive_pair_maximum_accepted_slabs_var.get()
+            ),
+            particle_loss_enabled=(
+                False if self.adaptive_pair_return_enabled_var.get() else True
+            ),
             manual_particle_config_enabled=manual_particle_config_enabled,
             image_subcharge_count=int(self.image_subcharge_var.get()),
             use_image_weighting=bool(self.image_weighting_var.get()),
@@ -1412,7 +1492,10 @@ class IntegratorGUIConfigMixin:
                 self.adaptive_timestep_halt_on_jump_var.get()
             ),
             energy_monitor_debug=False,
-            adaptive_timestep_enabled=bool(self.adaptive_timestep_enabled_var.get()),
+            adaptive_timestep_enabled=bool(
+                self.adaptive_timestep_enabled_var.get()
+                and not self.adaptive_pair_return_enabled_var.get()
+            ),
             adaptive_timestep_threshold=float(
                 self.adaptive_timestep_threshold_var.get()
             ),

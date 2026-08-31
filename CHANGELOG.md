@@ -1,5 +1,129 @@
 # Changelog
 
+- Exposed the checkpointed exact-retarded adaptive pair integrator through the
+  core configuration, direct CLI, testbed JSON, and GUI. The mode advances one
+  rider and one driver on shared lab-time barriers, keeps accepted midpoint
+  source-history knots, flushes the latest joint state on cancellation, and
+  resumes its variable-length controller/history checkpoint. Strict startup,
+  endpoint, physics, particle-count, and scheduler guards fail before a run;
+  the existing fixed-step and legacy adaptive paths remain unchanged.
+- Made causal-frozen spin-history preparation append only the newly accepted
+  slope tail in managed prepared-history buffers.  The previous validation
+  helper recomputed and recopied the complete accepted prefix on every trial,
+  making a long adaptive dipole run quadratic in history length even though
+  the causal slope rule is local.  Storage token/generation/rewrite checks and
+  read-only published arrays remain the prefix-validity authority.  A
+  9,216-knot two-step adaptive checkpoint probe is byte-for-byte unchanged and
+  improves from about 2.24 s to 1.03 s after warm compilation.
+- Made accepted-endpoint canonical recomposition use the same analytical
+  dipole Hertz potential as the following step-start decode when
+  ``numba_analytic_charge_dipole_response_serial`` is selected.  The previous
+  mix of analytical start potential and nine-event finite-difference endpoint
+  potential introduced a step-size-independent ``q*Delta(A)/c`` mechanical-
+  momentum jump in adaptive two-half-step trials.  A saved flyby checkpoint
+  reproduced the defect component by component; matching the potential
+  provider reduced the limiting momentum discrepancy from about ``1.7e-13``
+  to ``1.1e-18`` native momentum and restored normal adaptive step growth.
+  Boundary cases still use the same declared full-strict fallback as the
+  analytical force provider.
+- Added an isolated growable, append-only trajectory-history builder for the
+  future exact-retarded multirate integrator. Accepted source-history knots can
+  now grow independently of public output capacity while retaining managed
+  read-only views, explicit stale-view invalidation at geometric reallocations,
+  and append-aware charge/dipole provider caching. The fixed-step solver does
+  not use this builder yet, so existing trajectories are unchanged.
+- Added a pure causal-frozen $C^1$ rest-spin slope oracle for the future
+  multirate dipole history. It uses only accepted past knots, preserves every
+  queryable slope under future appends, and is not yet selected by production
+  field providers.
+- Extended the existing immutable checkpoint-row format to restore growable
+  accepted histories in contiguous blocks. The current checkpoint manifest
+  still requires a declared fixed total and does not yet persist an adaptive
+  controller; this is storage-format validation, not adaptive restart support.
+- Added a separate append-only accepted-pair checkpoint manifest that does not
+  require a final adaptive knot count. It stores equal rider/driver history
+  chunks plus controller and public-output cursor state, with compatibility
+  hashes and atomic manifest updates. The guarded public adaptive exact-pair
+  mode now selects this format.
+- Added a shared-lab-time solver for the $1+1$ exact-retarded
+  return mode. It solves separate rider/driver proper-time increments against
+  one coordinate-time target and preflights both growable-history rows before
+  publishing either. The guarded adaptive exact-pair mode now wires it into the
+  production integration loop.
+- Added an isolated step-doubling error budget and bounded step controller for
+  the future return mode. Position, mechanical momentum, rest spin, and
+  slab-summed diagnostics use independent absolute/relative scales. The
+  complete RFS-plus-Medina path remains conservatively first order until an
+  end-to-end refinement study proves otherwise.
+- Added an immutable one- or two-row trial-history overlay for exact charge and
+  dipole providers. It extends a private shallow clone of cached accepted
+  history, so a full or half-step trial can expose provisional light-cone
+  segments without publishing rejected knots. It shares existing prepared
+  prefix buffers and copies them only at an amortized geometric-capacity
+  boundary. Dipole overlays hard-require the causal-frozen spin model; the
+  centered fixed-step default is rejected because appending would revise its
+  tail.
+- Added an internal equations-of-motion seam that separates the exact provider
+  source history from legacy chronology and gating history. Future half-step
+  trials can keep the accepted chronology view while giving charge and dipole
+  providers an immutable provisional overlay. Existing callers do not pass
+  the seam and retain their previous behavior.
+- Added a non-production transactional exact-pair slab adapter. It solves the
+  rider and driver proper steps against one lab-time barrier, exposes a prior
+  trial midpoint only through immutable provider history, evaluates both
+  endpoint potentials before changing either canonical state, and publishes
+  nothing until a later acceptance layer explicitly commits the pair.
+- Composed the exact-pair slab into unpublished full-step and two-half-step
+  paths. The componentwise acceptance state reconstructs gauge-independent
+  mechanical momentum and sums radiation, Medina, cross-field, and projection
+  increments over both refined half steps; the accepted-history builders stay
+  unchanged regardless of the provisional decision.
+- Added a joint two-row acceptance gate for the refined midpoint and endpoint.
+  Both rider/driver sequences and both capacity expansions are preflighted
+  before publication; rejected trials and ordinary validation failures append
+  no history, while the one-full-step comparison path is never committed.
+- Added hard health gates above the adaptive error norm. A trial containing a
+  particle death, Medina impulse cap, negative/invalid far-radiated energy, or
+  an unexpected charged-particle Medina derivative-readiness transition is
+  never eligible for commit even when its scaled local error is below one.
+- Added a checkpointable scalar adaptive-attempt controller for the internal
+  exact-pair path. Healthy accepted attempts commit the refined midpoint and
+  endpoint, ordinary error failures shrink without publication, Medina caps
+  force a smaller retry, and non-recoverable health failures abort explicitly.
+- Added strict controller serialization for the variable-length accepted-pair
+  checkpoint. A focused interrupted/resumed adaptive sequence restores both
+  histories and reproduces the next accepted attempt bit-for-bit against the
+  uninterrupted path.
+- Added a bounded exact-pair adaptive run window. It clips the last
+  shared-lab-time slab to a declared target, retains every accepted midpoint
+  and endpoint in causal source history, and selects public output only by
+  accepted row index. Changing the public sampling interval is regression
+  tested not to change dynamics. Attempt and accepted-slab limits fail
+  explicitly, irreducible minimum-step rejection cannot loop forever, and the
+  variable-length pair checkpoint now reproduces the full run window and its
+  output cursor bit-for-bit after interruption. A short charged RFS + Medina +
+  retarded-dipole run exercises the complete path. The guarded production
+  integrator, CLI, testbed JSON, and GUI now expose this mode.
+- Made consecutive exact-pair slabs use the same two-root synchronization
+  envelope already enforced at joint commit. A pair whose two independently
+  solved endpoint times were valid at one shared barrier can no longer fail
+  immediately as the next slab's starting boundary solely because the start
+  check was twice as strict.
+- Expanded irreducible adaptive-step errors with the normalized position,
+  mechanical-momentum, spin, and diagnostic components, so a tolerance floor
+  can be diagnosed without instrumenting or mutating the accepted run.
+- Applied the accepted pair's two-root synchronization envelope when entering
+  or resuming a bounded adaptive window. A valid checkpoint boundary is no
+  longer revalidated with a stricter one-root threshold before its next slab.
+- Added an opt-in, read-only adaptive-attempt trace for calibration. It records
+  the attempted shared step and the normalized position, mechanical-momentum,
+  spin, and diagnostic errors; the default path retains no trace or added
+  per-step storage.
+- Added the role/component index that produced each step-doubling group
+  maximum to the opt-in calibration trace. This distinguishes, for example,
+  an electron $x$-momentum limit from a proton near-rest rounding floor without
+  storing provisional trial states.
+
 All notable changes and updates to the LW Integrator project are documented in this file.
 
 ## v0.8.5 — August 2026
