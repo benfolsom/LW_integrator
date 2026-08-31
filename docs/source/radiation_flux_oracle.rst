@@ -75,8 +75,8 @@ is separated into:
 The three sectors add algebraically to the result obtained from the total
 field.
 
-Two-layer design
-----------------
+Three-layer design
+------------------
 
 ``integrate_radiation_sphere_flux_native`` accepts fields already sampled on
 a sphere.  This pure layer tests the Poynting-vector, Maxwell-stress, sector,
@@ -87,6 +87,21 @@ It evaluates the maintained retarded charge and magnetic-dipole providers at
 each angular point and then calls the pure integrator.  Its default ``python``
 backend is intentionally explicit.  Faster exact-retarded backends can be
 selected for larger diagnostics, but must be compared with the Python result.
+
+``integrate_radiation_sphere_flux_history_native`` is the pure time-integration
+layer.  It accepts an ordered series of results for one fixed sphere and uses
+the trapezoidal rule on an arbitrary strictly increasing observation-time
+grid.  It returns transported energy, linear momentum, and angular momentum
+for every field sector.  It also retains the observation interval, the
+retarded-time envelope when available, and the largest provider light-cone
+residual.
+
+The time integral is still a surface-flux result, not a recoil force or
+impulse.  Closing a conservation law against particle work or impulse requires
+the change in bound, Schott-like field energy and momentum over the same source
+interval.  Radius comparisons must shift their observation windows so that
+the retarded-time envelopes match; integrating the same coordinate-time
+window at two radii generally compares different emitted wavefronts.
 
 The current implementation is diagnostic-only: it is not called by the
 equations of motion, Medina radiation reaction, checkpoint scheduler, CLI, or
@@ -125,10 +140,12 @@ far-field limit of the retarded moving-dipole solution [Heras1998]_,
 to better than one part per million at both tested radii.  The
 :math:`q\mu` benchmark has zero integrated interference power and approaches
 the expected directional momentum flux as the sphere is enlarged.  This
-validates the first energy- and linear-momentum-flux milestone.  A
-provider-level angular-momentum radiation benchmark, time-integrated Schott
-accounting, and application to an archived flyby remain later acceptance
-steps.
+validates the first energy- and linear-momentum-flux milestone.  The maintained
+tests also show that time-integrated outgoing-wave energy is invariant under a
+radius change when the observation window is shifted to cover the same source
+times.  A provider-level angular-momentum radiation benchmark, identification
+of the bound/Schott contribution, and application to an archived flyby remain
+later acceptance steps.
 
 References
 ----------

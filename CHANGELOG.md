@@ -16,7 +16,11 @@ All notable changes and updates to the LW Integrator project are documented in t
   origin, and the oscillating-magnetic-dipole power law.  Provider-level tests
   reproduce Larmor charge power, rotating-dipole power, and the far-zone
   charge--dipole interference momentum while checking matched-retarded-time
-  radius convergence.
+  radius convergence.  A pure follow-up layer integrates an irregularly
+  sampled flux history in time, preserving the sector split and provider
+  diagnostics.  It deliberately reports transported field quantities rather
+  than labeling them as recoil before the bound/Schott field change is
+  accounted for.
 
 - Added the opt-in exact-retarded translation update
   ``second_order_start_taylor_endpoint``.  It evaluates the ordinary charge

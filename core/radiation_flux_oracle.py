@@ -222,6 +222,120 @@ class RadiationSphereFluxResult:
         )
 
 
+@dataclass(frozen=True)
+class IntegratedElectromagneticFluxSector:
+    """Time-integrated transport in one quadratic field sector.
+
+    ``energy_native`` is the energy crossing the sphere,
+    ``momentum_native`` is the transported linear momentum, and
+    ``angular_momentum_native`` is the transported angular momentum over the
+    observation interval.
+    """
+
+    energy_native: float
+    momentum_native: np.ndarray
+    angular_momentum_native: np.ndarray
+
+    def __post_init__(self) -> None:
+        energy = float(self.energy_native)
+        if not np.isfinite(energy):
+            raise ValueError("energy_native must be finite")
+        object.__setattr__(self, "energy_native", energy)
+        object.__setattr__(
+            self,
+            "momentum_native",
+            _readonly_array(
+                self.momentum_native,
+                shape=(3,),
+                name="momentum_native",
+            ),
+        )
+        object.__setattr__(
+            self,
+            "angular_momentum_native",
+            _readonly_array(
+                self.angular_momentum_native,
+                shape=(3,),
+                name="angular_momentum_native",
+            ),
+        )
+
+
+@dataclass(frozen=True)
+class RadiationSphereFluxIntegralResult:
+    """Trapezoidal time integral of flux through one fixed sphere.
+
+    This is transported field energy and momentum, not a recoil impulse.  A
+    comparison with particle work or impulse must separately include any
+    change in bound (Schott-like) field energy and momentum.
+    """
+
+    q_squared: IntegratedElectromagneticFluxSector
+    q_mu_interference: IntegratedElectromagneticFluxSector
+    mu_squared: IntegratedElectromagneticFluxSector
+    total: IntegratedElectromagneticFluxSector
+    observation_time_interval_ns: tuple[float, float]
+    sphere_center_mm: np.ndarray
+    angular_momentum_origin_mm: np.ndarray
+    radius_mm: float
+    sample_count: int
+    quadrature_sample_count: int
+    maximum_charge_light_cone_residual_mm: float | None = None
+    maximum_dipole_light_cone_residual_mm: float | None = None
+    charge_retarded_time_envelope_ns: tuple[float, float] | None = None
+    dipole_retarded_time_envelope_ns: tuple[float, float] | None = None
+
+    def __post_init__(self) -> None:
+        interval = tuple(float(value) for value in self.observation_time_interval_ns)
+        if len(interval) != 2 or not np.all(np.isfinite(interval)):
+            raise ValueError(
+                "observation_time_interval_ns must contain two finite values"
+            )
+        if interval[1] <= interval[0]:
+            raise ValueError("observation_time_interval_ns must have positive duration")
+        radius = float(self.radius_mm)
+        if not np.isfinite(radius) or radius <= 0.0:
+            raise ValueError("radius_mm must be finite and positive")
+        if int(self.sample_count) < 2:
+            raise ValueError("sample_count must be at least two")
+        if int(self.quadrature_sample_count) <= 0:
+            raise ValueError("quadrature_sample_count must be positive")
+        for name in (
+            "maximum_charge_light_cone_residual_mm",
+            "maximum_dipole_light_cone_residual_mm",
+        ):
+            value = getattr(self, name)
+            if value is not None and (not np.isfinite(value) or value < 0.0):
+                raise ValueError(f"{name} must be finite and nonnegative")
+        for name in (
+            "charge_retarded_time_envelope_ns",
+            "dipole_retarded_time_envelope_ns",
+        ):
+            value = getattr(self, name)
+            if value is None:
+                continue
+            if len(value) != 2 or not np.all(np.isfinite(value)):
+                raise ValueError(f"{name} must contain two finite values")
+            if value[0] > value[1]:
+                raise ValueError(f"{name} must be ordered from minimum to maximum")
+        object.__setattr__(self, "observation_time_interval_ns", interval)
+        object.__setattr__(self, "radius_mm", radius)
+        object.__setattr__(
+            self,
+            "sphere_center_mm",
+            _readonly_array(self.sphere_center_mm, shape=(3,), name="sphere_center_mm"),
+        )
+        object.__setattr__(
+            self,
+            "angular_momentum_origin_mm",
+            _readonly_array(
+                self.angular_momentum_origin_mm,
+                shape=(3,),
+                name="angular_momentum_origin_mm",
+            ),
+        )
+
+
 def _field_samples(value: np.ndarray, *, sample_count: int, name: str) -> np.ndarray:
     return _readonly_array(value, shape=(sample_count, 3), name=name)
 
@@ -298,6 +412,148 @@ def _sum_sectors(*sectors: ElectromagneticFluxSector) -> ElectromagneticFluxSect
         ),
         angular_momentum_rate_native=np.sum(
             [sector.angular_momentum_rate_native for sector in sectors], axis=0
+        ),
+    )
+
+
+def _sum_integrated_sectors(
+    *sectors: IntegratedElectromagneticFluxSector,
+) -> IntegratedElectromagneticFluxSector:
+    return IntegratedElectromagneticFluxSector(
+        energy_native=sum(sector.energy_native for sector in sectors),
+        momentum_native=np.sum([sector.momentum_native for sector in sectors], axis=0),
+        angular_momentum_native=np.sum(
+            [sector.angular_momentum_native for sector in sectors], axis=0
+        ),
+    )
+
+
+def _trapezoidal_integral(values: np.ndarray, times_ns: np.ndarray) -> np.ndarray:
+    intervals = np.diff(times_ns)
+    reshape = (intervals.size,) + (1,) * (values.ndim - 1)
+    return np.asarray(
+        np.sum(
+            0.5 * (values[:-1] + values[1:]) * intervals.reshape(reshape),
+            axis=0,
+        ),
+        dtype=float,
+    )
+
+
+def _integrate_sector_history(
+    sectors: Sequence[ElectromagneticFluxSector],
+    times_ns: np.ndarray,
+) -> IntegratedElectromagneticFluxSector:
+    energy_rates = np.asarray(
+        [sector.energy_rate_native for sector in sectors], dtype=float
+    )
+    momentum_rates = np.asarray(
+        [sector.momentum_rate_native for sector in sectors], dtype=float
+    )
+    angular_rates = np.asarray(
+        [sector.angular_momentum_rate_native for sector in sectors], dtype=float
+    )
+    return IntegratedElectromagneticFluxSector(
+        energy_native=float(_trapezoidal_integral(energy_rates, times_ns)),
+        momentum_native=_trapezoidal_integral(momentum_rates, times_ns),
+        angular_momentum_native=_trapezoidal_integral(angular_rates, times_ns),
+    )
+
+
+def _retarded_time_envelope(
+    samples: Sequence[RadiationSphereFluxResult],
+    attribute: str,
+) -> tuple[float, float] | None:
+    ranges = [getattr(sample, attribute) for sample in samples]
+    if any(value is None for value in ranges):
+        return None
+    complete_ranges = cast(list[tuple[float, float]], ranges)
+    return (
+        min(value[0] for value in complete_ranges),
+        max(value[1] for value in complete_ranges),
+    )
+
+
+def integrate_radiation_sphere_flux_history_native(
+    samples: Sequence[RadiationSphereFluxResult],
+) -> RadiationSphereFluxIntegralResult:
+    """Integrate an ordered flux history over observation time.
+
+    Samples must describe the same fixed sphere, angular quadrature size, and
+    angular-momentum origin.  Observation times may be irregular but must be
+    strictly increasing.  Radius-comparison studies must shift observation
+    windows so that they cover the same retarded source-time interval.
+    """
+
+    history = tuple(samples)
+    if len(history) < 2:
+        raise ValueError("at least two flux samples are required")
+    first = history[0]
+    times = np.asarray([sample.observation_time_ns for sample in history], dtype=float)
+    if not np.all(np.isfinite(times)) or np.any(np.diff(times) <= 0.0):
+        raise ValueError("flux sample observation times must be finite and increasing")
+    for sample in history[1:]:
+        if sample.radius_mm != first.radius_mm:
+            raise ValueError("all flux samples must use the same sphere radius")
+        if not np.array_equal(sample.sphere_center_mm, first.sphere_center_mm):
+            raise ValueError("all flux samples must use the same sphere center")
+        if not np.array_equal(
+            sample.angular_momentum_origin_mm,
+            first.angular_momentum_origin_mm,
+        ):
+            raise ValueError(
+                "all flux samples must use the same angular-momentum origin"
+            )
+        if sample.quadrature_sample_count != first.quadrature_sample_count:
+            raise ValueError("all flux samples must use the same quadrature size")
+
+    q_squared = _integrate_sector_history(
+        [sample.q_squared for sample in history], times
+    )
+    q_mu = _integrate_sector_history(
+        [sample.q_mu_interference for sample in history], times
+    )
+    mu_squared = _integrate_sector_history(
+        [sample.mu_squared for sample in history], times
+    )
+    charge_residual = _maximum_absolute_finite(
+        np.asarray(
+            [
+                sample.maximum_charge_light_cone_residual_mm
+                for sample in history
+                if sample.maximum_charge_light_cone_residual_mm is not None
+            ],
+            dtype=float,
+        )
+    )
+    dipole_residual = _maximum_absolute_finite(
+        np.asarray(
+            [
+                sample.maximum_dipole_light_cone_residual_mm
+                for sample in history
+                if sample.maximum_dipole_light_cone_residual_mm is not None
+            ],
+            dtype=float,
+        )
+    )
+    return RadiationSphereFluxIntegralResult(
+        q_squared=q_squared,
+        q_mu_interference=q_mu,
+        mu_squared=mu_squared,
+        total=_sum_integrated_sectors(q_squared, q_mu, mu_squared),
+        observation_time_interval_ns=(float(times[0]), float(times[-1])),
+        sphere_center_mm=first.sphere_center_mm,
+        angular_momentum_origin_mm=first.angular_momentum_origin_mm,
+        radius_mm=first.radius_mm,
+        sample_count=len(history),
+        quadrature_sample_count=first.quadrature_sample_count,
+        maximum_charge_light_cone_residual_mm=charge_residual,
+        maximum_dipole_light_cone_residual_mm=dipole_residual,
+        charge_retarded_time_envelope_ns=_retarded_time_envelope(
+            history, "charge_retarded_time_range_ns"
+        ),
+        dipole_retarded_time_envelope_ns=_retarded_time_envelope(
+            history, "dipole_retarded_time_range_ns"
         ),
     )
 
@@ -554,9 +810,12 @@ def evaluate_retarded_radiation_sphere_native(
 
 __all__ = [
     "ElectromagneticFluxSector",
+    "IntegratedElectromagneticFluxSector",
+    "RadiationSphereFluxIntegralResult",
     "RadiationSphereFluxResult",
     "RadiationSphereQuadrature",
     "evaluate_retarded_radiation_sphere_native",
     "gauss_legendre_sphere_quadrature",
+    "integrate_radiation_sphere_flux_history_native",
     "integrate_radiation_sphere_flux_native",
 ]
