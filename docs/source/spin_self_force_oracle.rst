@@ -138,15 +138,22 @@ The focused tests presently establish:
   expression.
 
 A first independent conservation benchmark uses a charge oscillating along
-one axis and a prescribed magnetization oscillating along a perpendicular
-axis in the slow-motion limit.  Physical spin is set to zero, selecting the
-paper's generic magnetization/susceptibility term.  The interval is one full
-period, so the local total derivative returns to its initial value, and the
-spin-specific radiative-field correction in the paper's supplemental Eq. (33)
-is absent.  The maintained Maxwell-stress integrator independently evaluates
-the cross term of the standard electric- and magnetic-dipole radiation fields.
-The local impulse and outward :math:`q\mu` momentum are equal and opposite at
-both tested angular quadratures.
+one axis while its fixed-magnitude intrinsic spin and moment rotate in the
+perpendicular plane.  The acceleration and charge radiative electric field
+are collinear in this geometry, so the spin-specific radiative-field
+correction in the paper's supplemental Eq. (33) vanishes geometrically.  The
+interval is one full period, so the remaining local total derivative returns
+to its initial value.  The maintained Maxwell-stress integrator independently
+evaluates the cross term of the standard electric- and magnetic-dipole
+radiation fields.  The local impulse and outward :math:`q\mu` momentum are
+equal and opposite at both tested angular quadratures.
+
+A slower provider-level version constructs the complete retarded charge and
+dipole fields from the same periodic history.  At 400- and 800-mm spheres, its
+radiative momentum agrees with the opposite local impulse within the declared
+convergence tolerance.  An additional transverse finite-radius term decreases
+by two when the radius doubles, identifying the expected :math:`1/R`
+bound-field transport rather than far radiation.
 
 Production use is intentionally blocked.  The unreduced equation contains
 four-snap and spin/moment derivatives.  A production model must specify how
@@ -158,10 +165,11 @@ Villarroel [Villarroel1975]_ shows explicitly that the radiated momentum and
 the local force differ by a total derivative and an additional radiative-field
 term, so far flux alone is not the instantaneous local force.
 
-The next conservation test must retain nonzero fixed-magnitude physical spin
-and use the fully retarded providers.  It must account explicitly for every
-term in supplemental Eq. (33), rather than assuming that the simple periodic
-magnetization cancellation applies.
+The next conservation test must use a geometry in which the spin-specific
+radiative-field term is nonzero, and then a nonperiodic interval whose total
+derivative has a nonzero boundary change.  Those tests must account explicitly
+for every term in supplemental Eq. (33), rather than eliminating them by
+geometry or periodicity.
 
 References
 ----------

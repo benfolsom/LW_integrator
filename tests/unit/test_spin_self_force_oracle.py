@@ -228,10 +228,11 @@ def test_periodic_low_speed_q_mu_impulse_balances_independent_sphere_flux(
     """Close one periodic q-mu impulse without assuming a far-power formula.
 
     This is the leading slow-motion limit of a charge oscillating on x while
-    a prescribed magnetization oscillates on y.  Setting physical spin to
-    zero selects Jakobsen's generic magnetization/susceptibility term and
-    removes the supplemental spin--radiative-field correction.  The local
-    total derivative returns to its initial value after one period.
+    its fixed-magnitude intrinsic spin and moment rotate in the yz plane.  The
+    acceleration and charge radiative electric field are collinear, so the
+    supplemental spin--radiative-field correction vanishes geometrically.
+    The remaining local total derivative returns to its initial value after
+    one period.
 
     The outward momentum is obtained independently: construct the standard
     electric- and magnetic-dipole radiation fields on a sphere, then let the
@@ -239,6 +240,8 @@ def test_periodic_low_speed_q_mu_impulse_balances_independent_sphere_flux(
     """
 
     charge = 0.8
+    mass = 1.0
+    g_factor = 2.3
     position_amplitude_mm = 0.03
     moment_amplitude_native = 1.4e-8
     angular_frequency_per_ns = 1.7
@@ -261,36 +264,38 @@ def test_periodic_low_speed_q_mu_impulse_balances_independent_sphere_flux(
         acceleration_x = -position_amplitude_mm * angular_frequency_per_ns**2 * cosine
         jerk_x = position_amplitude_mm * angular_frequency_per_ns**3 * sine
         snap_x = position_amplitude_mm * angular_frequency_per_ns**4 * cosine
-        moment_y = moment_amplitude_native * cosine
-        moment_derivative_y = -moment_amplitude_native * angular_frequency_per_ns * sine
-        moment_second_derivative_y = (
-            -moment_amplitude_native * angular_frequency_per_ns**2 * cosine
+        moment = moment_amplitude_native * np.array((0.0, cosine, sine))
+        moment_derivative = (
+            moment_amplitude_native
+            * angular_frequency_per_ns
+            * np.array((0.0, -sine, cosine))
         )
+        moment_second_derivative = (
+            -moment_amplitude_native
+            * angular_frequency_per_ns**2
+            * np.array((0.0, cosine, sine))
+        )
+        spin_scale = 2.0 * mass * C_MMNS / (g_factor * charge)
+        spin = spin_scale * moment
+        spin_derivative = spin_scale * moment_derivative
 
         local = _evaluate(
             charge_native=charge,
-            mass_amu=1.0,
+            mass_amu=mass,
             four_acceleration_mm_ns2=(0.0, acceleration_x, 0.0, 0.0),
             four_jerk_mm_ns3=(0.0, jerk_x, 0.0, 0.0),
             four_snap_mm_ns4=(0.0, snap_x, 0.0, 0.0),
-            spin_four_vector_native=np.zeros(4),
-            spin_four_derivative_native=np.zeros(4),
-            magnetic_moment_four_vector_native=(0.0, 0.0, moment_y, 0.0),
-            magnetic_moment_four_derivative_native=(
-                0.0,
-                0.0,
-                moment_derivative_y,
-                0.0,
-            ),
+            spin_four_vector_native=np.r_[0.0, spin],
+            spin_four_derivative_native=np.r_[0.0, spin_derivative],
+            magnetic_moment_four_vector_native=np.r_[0.0, moment],
+            magnetic_moment_four_derivative_native=np.r_[0.0, moment_derivative],
         )
         reaction_force_z[index] = local.linear_spin_self_force_native[3]
 
         electric_dipole_second_derivative = np.array(
             (charge * acceleration_x, 0.0, 0.0)
         )
-        magnetic_dipole_second_derivative = np.array(
-            (0.0, moment_second_derivative_y, 0.0)
-        )
+        magnetic_dipole_second_derivative = moment_second_derivative
         charge_electric = np.cross(
             directions,
             np.cross(

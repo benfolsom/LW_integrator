@@ -138,10 +138,13 @@ All notable changes and updates to the LW Integrator project are documented in t
   the Medina charge coefficient, Lorentz covariance, force orthogonality,
   neutral and static ``g=2`` limits.  Pure ``mu^2`` recoil, reduction of the
   higher worldline derivatives, and bound-field balance remain explicit
-  acceptance gates.  A periodic low-speed magnetization benchmark now closes
-  the local linear-spin impulse against an independent Maxwell-stress
-  evaluation of outward ``q mu`` momentum at two angular quadratures; the
-  fixed-magnitude intrinsic-spin and fully retarded comparisons remain open.
+  acceptance gates.  A periodic fixed-magnitude intrinsic-spin benchmark now
+  closes the local linear-spin impulse against both an independent
+  Maxwell-stress evaluation of outward ``q mu`` momentum and the complete
+  retarded charge/dipole providers.  A transverse finite-radius term decreases
+  as ``1/R`` while the radiative component is radius invariant.  General
+  nonzero-boundary and nonvanishing spin--radiative-field comparisons remain
+  open.
 - Added a diagnostic radiation-flux oracle that samples the independent
   retarded charge and intrinsic-dipole fields on a sphere and integrates
   outward electromagnetic energy, linear momentum, and angular momentum.  It
