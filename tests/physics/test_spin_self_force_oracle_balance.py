@@ -14,6 +14,7 @@ from core.radiation_flux_oracle import (
     integrate_radiation_sphere_flux_history_native,
 )
 from core.spin_self_force_oracle import (
+    evaluate_jakobsen_intrinsic_spin_radiation_balance_native,
     evaluate_jakobsen_linear_spin_self_force_native,
 )
 
@@ -200,3 +201,196 @@ def test_fully_retarded_periodic_intrinsic_spin_flux_balances_local_impulse() ->
     assert local_impulse[2] + radial_results[1].momentum_native[2] == (
         pytest.approx(0.0, abs=3.0e-6 * expected_outward_z)
     )
+
+
+@pytest.mark.slow
+def test_circular_intrinsic_spin_energy_requires_radiative_field_correction() -> None:
+    """Close the nonzero supplemental Eq. (33) term against retarded flux.
+
+    A charge moves uniformly on a circle while its intrinsic spin and moment
+    remain aligned with the normal to the orbit.  This is the motion produced
+    by a uniform magnetic field with aligned spin, so the translational and
+    spin histories satisfy the leading external equations of motion.  Unlike
+    the linear-oscillation test above, ``S.[A x J]`` is nonzero.
+
+    The projected self-force alone therefore does not balance the radiated
+    q-mu energy.  Adding Jakobsen's radiative-field *balance term* does.  The
+    latter is not an additional mechanical force.
+    """
+
+    charge = 0.8
+    mass = 1.0
+    g_factor = 2.3
+    orbit_radius_mm = 0.03
+    angular_frequency_per_ns = 1.7
+    moment_native = 1.4e-8
+    period_ns = 2.0 * math.pi / angular_frequency_per_ns
+    beta_magnitude = orbit_radius_mm * angular_frequency_per_ns / C_MMNS
+    gamma = 1.0 / math.sqrt(1.0 - beta_magnitude**2)
+    spin_magnitude = 2.0 * mass * C_MMNS * moment_native / (g_factor * charge)
+
+    def state(time_ns: float) -> tuple[np.ndarray, ...]:
+        phase = angular_frequency_per_ns * time_ns
+        radial = np.array((math.cos(phase), math.sin(phase), 0.0))
+        tangent = np.array((-math.sin(phase), math.cos(phase), 0.0))
+        velocity = orbit_radius_mm * angular_frequency_per_ns * tangent
+        four_velocity = np.r_[gamma * C_MMNS, gamma * velocity]
+        four_acceleration = np.r_[
+            0.0,
+            -(gamma**2) * orbit_radius_mm * angular_frequency_per_ns**2 * radial,
+        ]
+        four_jerk = np.r_[
+            0.0,
+            -(gamma**3) * orbit_radius_mm * angular_frequency_per_ns**3 * tangent,
+        ]
+        four_snap = np.r_[
+            0.0,
+            gamma**4 * orbit_radius_mm * angular_frequency_per_ns**4 * radial,
+        ]
+        return radial, tangent, four_velocity, four_acceleration, four_jerk, four_snap
+
+    history = []
+    for time_ns in np.linspace(-0.2 * period_ns, 1.2 * period_ns, 1601):
+        radial, tangent, _, _, _, _ = state(float(time_ns))
+        history.append(
+            {
+                "t": np.array([time_ns]),
+                "x": np.array([orbit_radius_mm * radial[0]]),
+                "y": np.array([orbit_radius_mm * radial[1]]),
+                "z": np.array([0.0]),
+                "bx": np.array([beta_magnitude * tangent[0]]),
+                "by": np.array([beta_magnitude * tangent[1]]),
+                "bz": np.array([0.0]),
+                "bdotx": np.array(
+                    [
+                        -orbit_radius_mm
+                        * angular_frequency_per_ns**2
+                        * radial[0]
+                        / C_MMNS**2
+                    ]
+                ),
+                "bdoty": np.array(
+                    [
+                        -orbit_radius_mm
+                        * angular_frequency_per_ns**2
+                        * radial[1]
+                        / C_MMNS**2
+                    ]
+                ),
+                "bdotz": np.array([0.0]),
+                "q": np.array([charge]),
+                "q_source": np.array([charge]),
+                "spin_x": np.array([0.0]),
+                "spin_y": np.array([0.0]),
+                "spin_z": np.array([1.0]),
+                "magnetic_moment_native": np.array([moment_native]),
+                "magnetic_dipole_active": np.array([1.0]),
+                "_dead_particles": np.array([False]),
+            }
+        )
+
+    source_times = np.linspace(0.0, period_ns, 65)
+    self_force_energy_rates = np.empty(source_times.size)
+    balance_energy_rates = np.empty(source_times.size)
+    outward_radiated_energy_rates = np.empty(source_times.size)
+    bound_momenta = np.empty((source_times.size, 4))
+    for index, time_ns in enumerate(source_times):
+        _, _, four_velocity, four_acceleration, four_jerk, four_snap = state(
+            float(time_ns)
+        )
+        local = evaluate_jakobsen_intrinsic_spin_radiation_balance_native(
+            charge_native=charge,
+            mass_amu=mass,
+            g_factor=g_factor,
+            four_velocity_mm_ns=four_velocity,
+            four_acceleration_mm_ns2=four_acceleration,
+            four_jerk_mm_ns3=four_jerk,
+            four_snap_mm_ns4=four_snap,
+            spin_four_vector_native=(0.0, 0.0, 0.0, spin_magnitude),
+            spin_four_derivative_native=np.zeros(4),
+            spin_four_second_derivative_native=np.zeros(4),
+        )
+        self_force_energy_rates[index] = (
+            C_MMNS * local.self_force.linear_spin_self_force_native[0] / gamma
+        )
+        balance_energy_rates[index] = (
+            C_MMNS
+            * local.self_force.linear_spin_radiative_balance_rate_native[0]
+            / gamma
+        )
+        outward_radiated_energy_rates[index] = (
+            C_MMNS * local.outward_radiated_momentum_rate_native[0] / gamma
+        )
+        bound_momenta[index] = local.bound_field_momentum_native
+        scale = max(
+            np.linalg.norm(local.self_force.linear_spin_radiative_balance_rate_native),
+            np.finfo(float).tiny,
+        )
+        assert np.linalg.norm(local.balance_residual_native) < 2.0e-13 * scale
+
+    intervals = np.diff(source_times)
+    self_force_work = float(
+        np.sum(
+            0.5
+            * (self_force_energy_rates[:-1] + self_force_energy_rates[1:])
+            * intervals
+        )
+    )
+    local_balance_energy = float(
+        np.sum(0.5 * (balance_energy_rates[:-1] + balance_energy_rates[1:]) * intervals)
+    )
+    direct_outward_energy = float(
+        np.sum(
+            0.5
+            * (outward_radiated_energy_rates[:-1] + outward_radiated_energy_rates[1:])
+            * intervals
+        )
+    )
+    assert self_force_work < 0.0
+    assert local_balance_energy < self_force_work
+    assert direct_outward_energy == pytest.approx(
+        -local_balance_energy,
+        rel=3.0e-15,
+    )
+    np.testing.assert_allclose(
+        bound_momenta[-1],
+        bound_momenta[0],
+        rtol=0.0,
+        atol=2.0e-14 * np.linalg.norm(bound_momenta[0]),
+    )
+
+    quadrature = gauss_legendre_sphere_quadrature(
+        polar_order=3,
+        azimuthal_order=6,
+    )
+    outward_energies = []
+    for radius_mm in (400.0, 800.0):
+        samples = [
+            evaluate_retarded_radiation_sphere_native(
+                quadrature=quadrature,
+                observation_time_ns=source_time_ns + radius_mm / C_MMNS,
+                sphere_center_mm=(0.0, 0.0, 0.0),
+                radius_mm=radius_mm,
+                charge_history=history,
+                dipole_history=history,
+                source_identities=("circular-intrinsic-source",),
+                dipole_stencil_step_mm=0.04,
+                backend="python",
+            )
+            for source_time_ns in np.linspace(0.0, period_ns, 17)
+        ]
+        outward = integrate_radiation_sphere_flux_history_native(
+            samples
+        ).q_mu_interference.energy_native
+        outward_energies.append(outward)
+        assert outward > 0.0
+        assert outward == pytest.approx(direct_outward_energy, rel=2.0e-6)
+        assert local_balance_energy + outward == pytest.approx(
+            0.0,
+            abs=2.0e-6 * outward,
+        )
+        # The projected mechanical self-force alone misses most of the
+        # interference energy in this geometry.
+        assert abs(self_force_work + outward) > 0.8 * outward
+
+    assert outward_energies[1] == pytest.approx(outward_energies[0], rel=3.0e-6)

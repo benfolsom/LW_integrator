@@ -95,7 +95,8 @@ def _orthogonal_projection(vector: np.ndarray, four_velocity: np.ndarray) -> np.
 class JakobsenLinearSpinSelfForceResult:
     """Transparent decomposition of the point-particle self-force oracle.
 
-    All returned four-forces have native ``amu mm/ns^2`` units.  The
+    All returned four-force or four-momentum-rate arrays have native
+    ``amu mm/ns^2`` units.  The
     ``magnetization_bracket_native`` arrays are the corresponding quantities
     before multiplication by ``2 q/(3 c^4)``; their units are
     ``native_charge mm^2/ns^4``.
@@ -104,6 +105,12 @@ class JakobsenLinearSpinSelfForceResult:
     self-torque correction vanishes at the perturbative order retained by the
     paper.  This does not claim that a finite source has no higher-order or
     ``mu**2`` self-torque.
+
+    ``spin_radiative_field_balance_correction_native`` is not an additional
+    mechanical force.  It is the term that accompanies the projected
+    self-force when supplemental Eq. (33) compares it with instantaneous
+    radiated four-momentum.  It is parallel to the four-velocity and is kept
+    separate from ``linear_spin_self_force_native`` for that reason.
     """
 
     intrinsic_subtracted_moment_native: np.ndarray
@@ -112,6 +119,9 @@ class JakobsenLinearSpinSelfForceResult:
     magnetization_bracket_native: np.ndarray
     projected_magnetization_bracket_native: np.ndarray
     linear_spin_self_force_native: np.ndarray
+    spin_radiative_field_coupling_scalar_native: float
+    spin_radiative_field_balance_correction_native: np.ndarray
+    linear_spin_radiative_balance_rate_native: np.ndarray
     charge_ald_self_force_native: np.ndarray
     total_self_force_through_linear_spin_native: np.ndarray
     linear_spin_self_torque_native: np.ndarray
@@ -119,6 +129,30 @@ class JakobsenLinearSpinSelfForceResult:
     four_velocity_dot_total_force_native: float
     spin_orthogonality_residual_native: float
     magnetic_moment_orthogonality_residual_native: float
+
+
+@dataclass(frozen=True)
+class JakobsenIntrinsicSpinRadiationBalanceResult:
+    """Intrinsic-spin decomposition of supplemental Eq. (33).
+
+    ``self_force`` contains the projected mechanical force and the separate
+    radiative-field balance correction.  ``radiated_particle_momentum_rate``
+    is the instantaneous loss rate of particle four-momentum; its negative is
+    the outward radiated four-momentum rate.  ``bound_field_momentum`` is the
+    reversible, Schott-like near-field momentum whose proper-time derivative
+    completes the local identity.
+
+    This result applies only to the intrinsic no-susceptibility relation
+    ``M = g q S/(2 m c)``.  None of its balance-only terms are additional
+    mechanical forces.
+    """
+
+    self_force: JakobsenLinearSpinSelfForceResult
+    bound_field_momentum_native: np.ndarray
+    bound_field_momentum_derivative_native: np.ndarray
+    radiated_particle_momentum_rate_native: np.ndarray
+    outward_radiated_momentum_rate_native: np.ndarray
+    balance_residual_native: np.ndarray
 
 
 def evaluate_jakobsen_linear_spin_self_force_native(
@@ -152,7 +186,18 @@ def evaluate_jakobsen_linear_spin_self_force_native(
     The derivative acts on both vectors *and* the body-frame velocity used in
     the cross product.  The function expands that derivative exactly.  It
     also returns ``(2 q^2 / 3 c^3) P J`` as an independent charge-ALD unit and
-    sign check.  No reduction of order is performed.
+    sign check.
+
+    Supplemental Eq. (33) compares the projected mechanical self-force with
+    radiated four-momentum.  In native Gaussian units its additional local
+    radiative-field term is
+
+    ``Delta_rad = (q/(m c^3)) (u/c) S.[A x E_rad]``,
+
+    where ``E_rad=(2q/(3c^3)) P J`` is the leading charge radiative field.
+    The returned ``linear_spin_radiative_balance_rate_native`` is
+    ``F_qS + Delta_rad``.  ``Delta_rad`` is a balance term, not a mechanical
+    force to apply to the particle.  No reduction of order is performed.
     """
 
     charge = float(charge_native)
@@ -207,9 +252,24 @@ def evaluate_jakobsen_linear_spin_self_force_native(
 
     spin_prefactor = 2.0 * charge / (3.0 * C_MMNS**4)
     linear_spin_force = spin_prefactor * projected_bracket
-    charge_ald_force = (
-        2.0 * charge**2 / (3.0 * C_MMNS**3) * _orthogonal_projection(jerk, velocity)
+    projected_jerk = _orthogonal_projection(jerk, velocity)
+    charge_radiative_electric_field = 2.0 * charge / (3.0 * C_MMNS**3) * projected_jerk
+    radiative_field_cross = _body_frame_cross(
+        acceleration,
+        charge_radiative_electric_field,
+        normalized_velocity,
     )
+    radiative_field_coupling_scalar = _minkowski_dot(spin, radiative_field_cross)
+    radiative_field_balance_correction = (
+        charge
+        / (mass * C_MMNS**3)
+        * normalized_velocity
+        * radiative_field_coupling_scalar
+    )
+    linear_spin_radiative_balance_rate = (
+        linear_spin_force + radiative_field_balance_correction
+    )
+    charge_ald_force = 2.0 * charge**2 / (3.0 * C_MMNS**3) * projected_jerk
     total_force = charge_ald_force + linear_spin_force
 
     return JakobsenLinearSpinSelfForceResult(
@@ -219,6 +279,11 @@ def evaluate_jakobsen_linear_spin_self_force_native(
         magnetization_bracket_native=bracket,
         projected_magnetization_bracket_native=projected_bracket,
         linear_spin_self_force_native=linear_spin_force,
+        spin_radiative_field_coupling_scalar_native=(radiative_field_coupling_scalar),
+        spin_radiative_field_balance_correction_native=(
+            radiative_field_balance_correction
+        ),
+        linear_spin_radiative_balance_rate_native=(linear_spin_radiative_balance_rate),
         charge_ald_self_force_native=charge_ald_force,
         total_self_force_through_linear_spin_native=total_force,
         linear_spin_self_torque_native=np.zeros(4, dtype=float),
@@ -231,7 +296,141 @@ def evaluate_jakobsen_linear_spin_self_force_native(
     )
 
 
+def evaluate_jakobsen_intrinsic_spin_radiation_balance_native(
+    *,
+    charge_native: float,
+    mass_amu: float,
+    g_factor: float,
+    four_velocity_mm_ns: VectorLike,
+    four_acceleration_mm_ns2: VectorLike,
+    four_jerk_mm_ns3: VectorLike,
+    four_snap_mm_ns4: VectorLike,
+    spin_four_vector_native: VectorLike,
+    spin_four_derivative_native: VectorLike,
+    spin_four_second_derivative_native: VectorLike,
+) -> JakobsenIntrinsicSpinRadiationBalanceResult:
+    """Evaluate the intrinsic-spin momentum balance in supplemental Eq. (33).
+
+    The published supplement uses ``v^mu`` only in this equation; comparison
+    with its definitions and dimensions identifies it as the normalized
+    four-velocity ``u^mu/c``.  This implementation uses the paper's
+    intrinsic relation ``M=g q S/(2mc)`` and converts the complete identity
+    from rationalized natural units to native Gaussian units.
+
+    The identity is
+
+    ``F_qS + Delta_rad = Pdot_rad,particle + dB_bound/dtau``.
+
+    ``Pdot_rad,particle`` is negative when positive four-momentum leaves the
+    particle.  The function evaluates its two terms directly rather than
+    defining it by the balance residual, so the returned residual is a real
+    algebra and unit check.
+    """
+
+    charge = float(charge_native)
+    mass = float(mass_amu)
+    g_value = float(g_factor)
+    if not np.isfinite(charge):
+        raise ValueError("charge_native must be finite")
+    if not np.isfinite(mass) or mass <= 0.0:
+        raise ValueError("mass_amu must be finite and positive")
+    if not np.isfinite(g_value):
+        raise ValueError("g_factor must be finite")
+
+    velocity = _four_vector(four_velocity_mm_ns, name="four_velocity_mm_ns")
+    acceleration = _four_vector(
+        four_acceleration_mm_ns2, name="four_acceleration_mm_ns2"
+    )
+    jerk = _four_vector(four_jerk_mm_ns3, name="four_jerk_mm_ns3")
+    snap = _four_vector(four_snap_mm_ns4, name="four_snap_mm_ns4")
+    spin = _four_vector(spin_four_vector_native, name="spin_four_vector_native")
+    spin_derivative = _four_vector(
+        spin_four_derivative_native, name="spin_four_derivative_native"
+    )
+    spin_second_derivative = _four_vector(
+        spin_four_second_derivative_native,
+        name="spin_four_second_derivative_native",
+    )
+    normalized_velocity = velocity / C_MMNS
+    normalized_velocity_derivative = acceleration / C_MMNS
+
+    intrinsic_coefficient = g_value * charge / (2.0 * mass * C_MMNS)
+    self_force = evaluate_jakobsen_linear_spin_self_force_native(
+        charge_native=charge,
+        mass_amu=mass,
+        four_velocity_mm_ns=velocity,
+        four_acceleration_mm_ns2=acceleration,
+        four_jerk_mm_ns3=jerk,
+        four_snap_mm_ns4=snap,
+        spin_four_vector_native=spin,
+        spin_four_derivative_native=spin_derivative,
+        magnetic_moment_four_vector_native=intrinsic_coefficient * spin,
+        magnetic_moment_four_derivative_native=(
+            intrinsic_coefficient * spin_derivative
+        ),
+    )
+
+    acceleration_cross_spin_derivative = _body_frame_cross(
+        acceleration, spin_derivative, normalized_velocity
+    )
+    jerk_cross_spin = _body_frame_cross(jerk, spin, normalized_velocity)
+    bound_prefactor = charge**2 / (3.0 * mass * C_MMNS**5)
+    bound_momentum = bound_prefactor * (
+        g_value * acceleration_cross_spin_derivative + (g_value - 2.0) * jerk_cross_spin
+    )
+
+    acceleration_cross_spin_derivative_rate = (
+        _body_frame_cross(jerk, spin_derivative, normalized_velocity)
+        + _body_frame_cross(acceleration, spin_second_derivative, normalized_velocity)
+        + _body_frame_cross(
+            acceleration,
+            spin_derivative,
+            normalized_velocity_derivative,
+        )
+    )
+    jerk_cross_spin_rate = (
+        _body_frame_cross(snap, spin, normalized_velocity)
+        + _body_frame_cross(jerk, spin_derivative, normalized_velocity)
+        + _body_frame_cross(jerk, spin, normalized_velocity_derivative)
+    )
+    bound_momentum_derivative = bound_prefactor * (
+        g_value * acceleration_cross_spin_derivative_rate
+        + (g_value - 2.0) * jerk_cross_spin_rate
+    )
+
+    acceleration_cross_jerk = _body_frame_cross(acceleration, jerk, normalized_velocity)
+    spin_acceleration_jerk_scalar = _minkowski_dot(spin, acceleration_cross_jerk)
+    radiated_particle_momentum_rate = (
+        charge**2
+        * g_value
+        / (3.0 * mass)
+        * (
+            normalized_velocity * spin_acceleration_jerk_scalar / C_MMNS**6
+            + _body_frame_cross(
+                spin_second_derivative,
+                acceleration,
+                normalized_velocity,
+            )
+            / C_MMNS**5
+        )
+    )
+    balance_residual = self_force.linear_spin_radiative_balance_rate_native - (
+        radiated_particle_momentum_rate + bound_momentum_derivative
+    )
+
+    return JakobsenIntrinsicSpinRadiationBalanceResult(
+        self_force=self_force,
+        bound_field_momentum_native=bound_momentum,
+        bound_field_momentum_derivative_native=bound_momentum_derivative,
+        radiated_particle_momentum_rate_native=radiated_particle_momentum_rate,
+        outward_radiated_momentum_rate_native=-radiated_particle_momentum_rate,
+        balance_residual_native=balance_residual,
+    )
+
+
 __all__ = [
+    "JakobsenIntrinsicSpinRadiationBalanceResult",
     "JakobsenLinearSpinSelfForceResult",
+    "evaluate_jakobsen_intrinsic_spin_radiation_balance_native",
     "evaluate_jakobsen_linear_spin_self_force_native",
 ]

@@ -13,6 +13,7 @@ from core.radiation_flux_oracle import (
 )
 from core.rfs import MINKOWSKI_METRIC
 from core.spin_self_force_oracle import (
+    evaluate_jakobsen_intrinsic_spin_radiation_balance_native,
     evaluate_jakobsen_linear_spin_self_force_native,
 )
 
@@ -119,6 +120,115 @@ def test_derivative_includes_change_of_the_body_frame() -> None:
     np.testing.assert_array_equal(result.projected_magnetization_bracket_native, 0.0)
 
 
+def test_circular_motion_has_nonzero_radiative_field_balance_correction() -> None:
+    """Exercise the supplemental Eq. (33) term that is not a force.
+
+    Uniform circular motion with spin normal to the orbit has
+    ``S.[A x J] != 0``.  The balance correction must consequently be nonzero
+    and parallel to the four-velocity, unlike the projected mechanical
+    self-force.
+    """
+
+    charge = 0.8
+    mass = 1.0
+    orbit_radius = 0.03
+    angular_frequency = 1.7
+    speed = orbit_radius * angular_frequency
+    beta = speed / C_MMNS
+    gamma = 1.0 / math.sqrt(1.0 - beta**2)
+    spin_magnitude = 0.6
+    velocity = np.array((gamma * C_MMNS, 0.0, gamma * speed, 0.0))
+    acceleration = np.array(
+        (0.0, -(gamma**2) * orbit_radius * angular_frequency**2, 0.0, 0.0)
+    )
+    jerk = np.array((0.0, 0.0, -(gamma**3) * orbit_radius * angular_frequency**3, 0.0))
+
+    result = _evaluate(
+        charge_native=charge,
+        mass_amu=mass,
+        four_velocity_mm_ns=velocity,
+        four_acceleration_mm_ns2=acceleration,
+        four_jerk_mm_ns3=jerk,
+        spin_four_vector_native=(0.0, 0.0, 0.0, spin_magnitude),
+        spin_four_derivative_native=np.zeros(4),
+        magnetic_moment_four_vector_native=np.zeros(4),
+        magnetic_moment_four_derivative_native=np.zeros(4),
+    )
+
+    expected_coupling = (
+        -2.0
+        * charge
+        * spin_magnitude
+        * gamma**6
+        * orbit_radius**2
+        * angular_frequency**5
+        / (3.0 * C_MMNS**3)
+    )
+    expected_correction = (
+        charge / (mass * C_MMNS**3) * (velocity / C_MMNS) * expected_coupling
+    )
+    assert result.spin_radiative_field_coupling_scalar_native == pytest.approx(
+        expected_coupling,
+        rel=4.0e-15,
+    )
+    np.testing.assert_allclose(
+        result.spin_radiative_field_balance_correction_native,
+        expected_correction,
+        rtol=4.0e-15,
+        atol=0.0,
+    )
+    np.testing.assert_allclose(
+        result.linear_spin_radiative_balance_rate_native,
+        result.linear_spin_self_force_native + expected_correction,
+        rtol=0.0,
+        atol=0.0,
+    )
+
+
+def test_intrinsic_spin_radiation_identity_closes_with_bound_momentum() -> None:
+    """Check every term of supplemental Eq. (33) independently."""
+
+    acceleration_spatial = np.array((0.2, -0.1, 0.3))
+    spin_spatial = np.array((0.6, -0.4, 0.2))
+    spin_derivative_spatial = np.array((-0.3, 0.5, 0.1))
+    acceleration = np.r_[0.0, acceleration_spatial]
+    jerk = np.r_[
+        float(acceleration_spatial @ acceleration_spatial) / C_MMNS,
+        (0.4, 0.5, -0.2),
+    ]
+    spin = np.r_[0.0, spin_spatial]
+    spin_derivative = np.r_[
+        float(acceleration_spatial @ spin_spatial) / C_MMNS,
+        spin_derivative_spatial,
+    ]
+
+    result = evaluate_jakobsen_intrinsic_spin_radiation_balance_native(
+        charge_native=0.8,
+        mass_amu=1.4,
+        g_factor=2.3,
+        four_velocity_mm_ns=(C_MMNS, 0.0, 0.0, 0.0),
+        four_acceleration_mm_ns2=acceleration,
+        four_jerk_mm_ns3=jerk,
+        four_snap_mm_ns4=(0.0, -0.7, 0.9, 0.6),
+        spin_four_vector_native=spin,
+        spin_four_derivative_native=spin_derivative,
+        spin_four_second_derivative_native=(0.0, 0.2, -0.6, 0.4),
+    )
+
+    scale = max(
+        np.linalg.norm(result.self_force.linear_spin_radiative_balance_rate_native),
+        np.linalg.norm(result.radiated_particle_momentum_rate_native),
+        np.linalg.norm(result.bound_field_momentum_derivative_native),
+        np.finfo(float).tiny,
+    )
+    assert np.linalg.norm(result.balance_residual_native) < 2.0e-14 * scale
+    np.testing.assert_array_equal(
+        result.outward_radiated_momentum_rate_native,
+        -result.radiated_particle_momentum_rate_native,
+    )
+    assert np.linalg.norm(result.bound_field_momentum_native) > 0.0
+
+
 def test_charge_ald_coefficient_matches_medina_in_instantaneous_rest_frame() -> None:
     mass = 1.9
     charge = -0.7
@@ -175,6 +285,8 @@ def test_result_is_covariant_under_a_constant_lorentz_boost() -> None:
         "magnetization_bracket_native",
         "projected_magnetization_bracket_native",
         "linear_spin_self_force_native",
+        "spin_radiative_field_balance_correction_native",
+        "linear_spin_radiative_balance_rate_native",
         "charge_ald_self_force_native",
         "total_self_force_through_linear_spin_native",
     ):
@@ -212,6 +324,11 @@ def test_neutral_moment_has_no_linear_or_charge_self_force() -> None:
     result = _evaluate(charge_native=0.0)
 
     np.testing.assert_array_equal(result.linear_spin_self_force_native, 0.0)
+    assert result.spin_radiative_field_coupling_scalar_native == 0.0
+    np.testing.assert_array_equal(
+        result.spin_radiative_field_balance_correction_native, 0.0
+    )
+    np.testing.assert_array_equal(result.linear_spin_radiative_balance_rate_native, 0.0)
     np.testing.assert_array_equal(result.charge_ald_self_force_native, 0.0)
     np.testing.assert_array_equal(
         result.total_self_force_through_linear_spin_native, 0.0

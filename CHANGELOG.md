@@ -142,9 +142,15 @@ All notable changes and updates to the LW Integrator project are documented in t
   closes the local linear-spin impulse against both an independent
   Maxwell-stress evaluation of outward ``q mu`` momentum and the complete
   retarded charge/dipole providers.  A transverse finite-radius term decreases
-  as ``1/R`` while the radiative component is radius invariant.  General
-  nonzero-boundary and nonvanishing spin--radiative-field comparisons remain
-  open.
+  as ``1/R`` while the radiative component is radius invariant.  A second,
+  dynamically consistent circular-orbit benchmark makes the supplemental
+  spin--radiative-field term nonzero and closes the complete retarded
+  interference energy to about two parts per million.  The oracle now reports
+  that balance-only term separately from the mechanical force, plus the
+  intrinsic-spin radiated loss and reversible bound-field momentum of
+  supplemental Eq. (33).  An arbitrary-state test closes the full local
+  identity without periodic cancellation.  A matched-null-boundary
+  nonperiodic provider comparison and reduction of order remain open.
 - Added a diagnostic radiation-flux oracle that samples the independent
   retarded charge and intrinsic-dipole fields on a sphere and integrates
   outward electromagnetic energy, linear momentum, and angular momentum.  It

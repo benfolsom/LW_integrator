@@ -122,6 +122,69 @@ The returned self-torque correction is exactly zero.  This records the result
 at the order calculated by Jakobsen; it is not a claim that all finite-size or
 higher-order self-torques vanish.
 
+Radiated momentum is not the mechanical force
+----------------------------------------------
+
+The expanded supplement to the published paper compares the local
+self-force with Villarroel's instantaneous radiated four-momentum.  Its
+Eq. (33) uses :math:`v^\mu` without separately defining that symbol.  The
+main text consistently uses :math:`\dot z^\mu` for four-velocity; its
+dimensions and the balance test below identify :math:`v^\mu` here with the
+normalized four-velocity :math:`\bar u^\mu=u^\mu/c`.  No erratum or later
+arXiv revision was found as of August 2026.  The implementation records this
+interpretation explicitly rather than silently changing notation.
+
+The leading charge radiative electric field is
+
+.. math::
+
+   E_{\rm rad}^\mu={2q\over3c^3}P^\mu{}_{\nu}J^\nu .
+
+The additional term on the local side of the radiated-momentum identity is
+
+.. math::
+
+   \Delta_{\rm rad}^\mu
+   ={q\over mc^3}\bar u^\mu
+     \left[S\cdot(A\times E_{\rm rad})\right].
+
+This term is parallel to the four-velocity.  It is therefore **not** another
+mechanical force to apply to a fixed-mass particle.  It belongs only to the
+comparison between local reaction and transported field momentum.
+
+For an intrinsic moment with no susceptibility,
+:math:`M=gqS/(2mc)`, the complete native-unit identity is
+
+.. math::
+
+   F_{qS}^\mu+\Delta_{\rm rad}^\mu
+   =\dot P_{\rm rad,particle}^\mu
+    +{dB_{\rm bound}^\mu\over d\tau},
+
+where positive outward radiation is
+:math:`-\dot P_{\rm rad,particle}^\mu` and
+
+.. math::
+
+   B_{\rm bound}^\mu
+   ={q^2\over3mc^5}
+   \left[g(A\times\dot S)^\mu
+   +(g-2)(J\times S)^\mu\right],
+
+.. math::
+
+   \dot P_{\rm rad,particle}^\mu
+   ={q^2g\over3m}
+   \left{
+   {\bar u^\mu[S\cdot(A\times J)]\over c^6}
+   +{(\ddot S\times A)^\mu\over c^5}
+   \right}.
+
+``evaluate_jakobsen_intrinsic_spin_radiation_balance_native`` evaluates the
+radiated term and the proper-time derivative of the bound momentum directly.
+It does not define one by subtracting the other, so its residual checks the
+signs, powers of :math:`c`, and moving-frame derivatives independently.
+
 Validation and remaining gates
 ------------------------------
 
@@ -155,6 +218,26 @@ convergence tolerance.  An additional transverse finite-radius term decreases
 by two when the radius doubles, identifying the expected :math:`1/R`
 bound-field transport rather than far radiation.
 
+A second provider-level benchmark uses uniform circular motion with the spin
+and moment aligned normal to the orbit.  This is the leading motion generated
+by a uniform magnetic field with aligned spin, rather than an arbitrary
+prescribed spin history.  Here :math:`S\cdot(A\times J)` is nonzero.  The
+projected mechanical self-force by itself accounts for only part of the
+outward charge--moment interference energy.  After adding
+:math:`\Delta_{\rm rad}`, the local loss agrees with the complete retarded
+provider flux to about two parts per million at both tested radii.  The
+direct Villarroel/Jakobsen radiated-loss expression gives the same result,
+and the bound momentum returns to its initial value after one orbit.
+
+An arbitrary-state unit test also closes
+:math:`F_{qS}+\Delta_{\rm rad}=\dot P_{\rm rad,particle}+\dot B_{\rm bound}`
+without relying on periodic cancellation.  This establishes the local
+nonperiodic algebra, but it is not yet a nonperiodic provider-flux test.
+Ordinary equal-observation-time sphere samples correspond to slightly
+different source-time endpoints in different directions.  A rigorous
+nonperiodic provider comparison therefore needs a null-boundary integration
+that matches one source interval over the entire sphere.
+
 Production use is intentionally blocked.  The unreduced equation contains
 four-snap and spin/moment derivatives.  A production model must specify how
 those derivatives are obtained without introducing runaway solutions, and it
@@ -165,11 +248,10 @@ Villarroel [Villarroel1975]_ shows explicitly that the radiated momentum and
 the local force differ by a total derivative and an additional radiative-field
 term, so far flux alone is not the instantaneous local force.
 
-The next conservation test must use a geometry in which the spin-specific
-radiative-field term is nonzero, and then a nonperiodic interval whose total
-derivative has a nonzero boundary change.  Those tests must account explicitly
-for every term in supplemental Eq. (33), rather than eliminating them by
-geometry or periodicity.
+The next conservation milestone is that null-boundary, nonperiodic provider
+comparison with a nonzero change in :math:`B_{\rm bound}`.  Only after that
+should the unreduced higher derivatives be replaced by external-force
+derivatives for a production-safe reduced-order model.
 
 References
 ----------
