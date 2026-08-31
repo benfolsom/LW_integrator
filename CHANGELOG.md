@@ -154,7 +154,12 @@ All notable changes and updates to the LW Integrator project are documented in t
   every retarded root, applies the per-ray observation/source-time Jacobian,
   and extrapolates three radii to null infinity.  The small spatial components
   close within two percent while the energy closes more tightly.  Reduction
-  of order remains open.
+  of order now has a diagnostic sampled oracle: it differentiates a short
+  leading, non-self proper-time stencil, reports a velocity/acceleration
+  consistency residual, exactly recovers irregular-grid polynomials, and
+  converges at fourth order to the unreduced circular benchmark.  It uses a
+  centered future stencil and is not a production force; an analytical or
+  causal accepted-history implementation remains open.
 - Added a diagnostic radiation-flux oracle that samples the independent
   retarded charge and intrinsic-dipole fields on a sphere and integrates
   outward electromagnetic energy, linear momentum, and angular momentum.  It

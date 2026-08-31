@@ -246,6 +246,39 @@ local impulse plus the nonzero bound-field endpoint change within two percent
 in the small spatial components.  The much larger energy component closes
 more tightly.
 
+Sampled reduction-of-order oracle
+---------------------------------
+
+``evaluate_sampled_intrinsic_spin_reduction_native`` is the first diagnostic
+bridge from the high-derivative formula to a causal production model.  Its
+inputs are a short proper-time stencil of leading-order four-velocity,
+**non-self** four-acceleration, and physical spin.  The non-self qualifier is
+the reduction-of-order rule: the already-small self-reaction term is evaluated
+on the ordinary lower-order motion, rather than being allowed to create new
+independent acceleration modes.
+
+The helper reconstructs jerk, snap, and the first two spin derivatives with
+arbitrary-node finite-difference weights, then calls the intrinsic-spin
+balance oracle.  It also differentiates the velocity samples and reports the
+difference from the supplied center acceleration.  A nonzero residual warns
+that the sampled leading trajectory is internally inconsistent.  Center
+values are subtracted before every differentiation so the nearly constant
+temporal velocity near :math:`c` is not damaged by subtracting large weighted
+numbers.
+
+This helper is intentionally **not** the production algorithm.  Its centered
+stencil uses future samples, and numerical differentiation is less attractive
+than the analytical potential/response jets already used by the exact
+provider.  It supplies a reference target for a later causal implementation.
+Tests recover polynomial derivatives on an irregular grid and show
+fourth-order convergence to the exact circular-orbit self-force when the
+proper-time spacing is halved.
+
+The nested result still reports the charge ALD term for comparison, but a
+future production caller must retain the existing Medina charge reaction and
+apply only the new linear-spin contribution.  Adding both charge terms would
+double count the :math:`q^2` sector.
+
 Production use is intentionally blocked.  The unreduced equation contains
 four-snap and spin/moment derivatives.  A production model must specify how
 those derivatives are obtained without introducing runaway solutions, and it
@@ -256,12 +289,13 @@ Villarroel [Villarroel1975]_ shows explicitly that the radiated momentum and
 the local force differ by a total derivative and an additional radiative-field
 term, so far flux alone is not the instantaneous local force.
 
-The next conservation milestone is reduction of order: replace the unreduced
-higher derivatives by derivatives of the non-self external force and spin
-evolution, then compare the reduced result with the unreduced oracle under a
-controlled slow-reaction expansion.  Production injection remains blocked
-until that comparison converges and the existing Medina charge term is shown
-to enter exactly once.
+The next milestone is to obtain the same derivative contractions from the
+analytical non-self RFS response, or from a separately validated causal
+accepted-history stencil, without future samples.  Compare that causal result
+with both the sampled reduction oracle and the unreduced circular benchmark
+under a controlled slow-reaction expansion.  Production injection remains
+blocked until the comparison converges and the existing Medina charge term is
+shown to enter exactly once.
 
 References
 ----------
