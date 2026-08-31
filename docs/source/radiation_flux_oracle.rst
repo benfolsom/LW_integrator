@@ -75,8 +75,8 @@ is separated into:
 The three sectors add algebraically to the result obtained from the total
 field.
 
-Three-layer design
-------------------
+Four-layer design
+-----------------
 
 ``integrate_radiation_sphere_flux_native`` accepts fields already sampled on
 a sphere.  This pure layer tests the Poynting-vector, Maxwell-stress, sector,
@@ -102,6 +102,21 @@ the change in bound, Schott-like field energy and momentum over the same source
 interval.  Radius comparisons must shift their observation windows so that
 the retarded-time envelopes match; integrating the same coordinate-time
 window at two radii generally compares different emitted wavefronts.
+
+``evaluate_radiation_reaction_balance_native`` is the accounting layer for a
+proposed local self-reaction law.  With outward flux positive, it reports the
+residual of
+
+.. math::
+
+   \Delta Q_{\rm mechanical}
+   + Q_{\rm outward}
+   + \Delta Q_{\rm bound},
+
+for energy and linear momentum, and optionally for angular momentum.  The
+function does not infer a missing bound term or decide that a residual is
+small enough.  It makes the sign convention and missing inputs explicit so a
+model can be tested under numerical refinement.
 
 The current implementation is diagnostic-only: it is not called by the
 equations of motion, Medina radiation reaction, checkpoint scheduler, CLI, or
@@ -143,9 +158,31 @@ the expected directional momentum flux as the sphere is enlarged.  This
 validates the first energy- and linear-momentum-flux milestone.  The maintained
 tests also show that time-integrated outgoing-wave energy is invariant under a
 radius change when the observation window is shifted to cover the same source
-times.  A provider-level angular-momentum radiation benchmark, identification
-of the bound/Schott contribution, and application to an archived flyby remain
-later acceptance steps.
+times.  For a circularly rotating rest-frame moment,
+
+.. math::
+
+   \boldsymbol\mu(t)=\mu_0(\cos\omega t,\sin\omega t,0),
+
+the provider reproduces both the power above and the emitted angular momentum
+
+.. math::
+
+   \dot J_z={P_\mu\over\omega}
+   ={2\mu_0^2\omega^3\over3c^3}
+
+to better than one part per million at both tested radii.  This validates the
+first provider-level angular-momentum benchmark for the symmetric-stress
+quantity.
+
+The generic balance layer is separately checked against Medina's charge-only
+bound energy and momentum.  The residual decreases quadratically when the
+time spacing is halved, as expected for trapezoidal integration.  This checks
+the accounting signs and the known charge-sector Schott term; it is not yet an
+independent sphere-versus-local comparison for a magnetic self-force.
+Identification of the magnetic bound contribution, comparison with a
+finite-size self-torque, and application to an archived flyby remain later
+acceptance steps.
 
 References
 ----------

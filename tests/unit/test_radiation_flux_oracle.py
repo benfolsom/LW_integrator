@@ -5,10 +5,13 @@ from collections.abc import Callable
 import numpy as np
 import pytest
 
-from core.constants import C_MMNS, ELEMENTARY_CHARGE
+from core.constants import C_MMNS, ELECTRON_MASS_AMU, ELEMENTARY_CHARGE
+from core.medina_radiation_reaction import compute_medina_radiation_reaction
 from core.radiation_flux_oracle import (
     ElectromagneticFluxSector,
+    IntegratedElectromagneticFluxSector,
     RadiationSphereFluxResult,
+    evaluate_radiation_reaction_balance_native,
     evaluate_retarded_radiation_sphere_native,
     gauss_legendre_sphere_quadrature,
     integrate_radiation_sphere_flux_history_native,
@@ -52,6 +55,18 @@ def _sum_flux_sectors(
         angular_momentum_rate_native=np.sum(
             [sector.angular_momentum_rate_native for sector in sectors], axis=0
         ),
+    )
+
+
+def _trapezoidal_test_integral(values: np.ndarray, times_ns: np.ndarray) -> np.ndarray:
+    intervals = np.diff(times_ns)
+    reshape = (intervals.size,) + (1,) * (values.ndim - 1)
+    return np.asarray(
+        np.sum(
+            0.5 * (values[:-1] + values[1:]) * intervals.reshape(reshape),
+            axis=0,
+        ),
+        dtype=float,
     )
 
 
@@ -321,6 +336,123 @@ def test_flux_history_rejects_inconsistent_geometry_and_time_order() -> None:
         )
 
 
+def test_balance_accounting_closes_energy_momentum_and_angular_momentum() -> None:
+    outward = IntegratedElectromagneticFluxSector(
+        energy_native=5.0,
+        momentum_native=np.array((2.0, -3.0, 4.0)),
+        angular_momentum_native=np.array((7.0, 11.0, -13.0)),
+    )
+    bound_momentum = np.array((-0.5, 0.25, 1.5))
+    mechanical_impulse = -outward.momentum_native - bound_momentum
+    bound_angular = np.array((1.0, -2.0, 3.0))
+    mechanical_angular = -outward.angular_momentum_native - bound_angular
+
+    result = evaluate_radiation_reaction_balance_native(
+        outward_flux=outward,
+        mechanical_work_native=-3.5,
+        mechanical_impulse_native=mechanical_impulse,
+        bound_field_energy_change_native=-1.5,
+        bound_field_momentum_change_native=bound_momentum,
+        mechanical_angular_momentum_change_native=mechanical_angular,
+        bound_field_angular_momentum_change_native=bound_angular,
+    )
+
+    assert result.energy_residual_native == 0.0
+    np.testing.assert_array_equal(result.momentum_residual_native, 0.0)
+    np.testing.assert_array_equal(result.angular_momentum_residual_native, 0.0)
+    assert not result.momentum_residual_native.flags.writeable
+
+    with pytest.raises(ValueError, match="supplied together"):
+        evaluate_radiation_reaction_balance_native(
+            outward_flux=outward,
+            mechanical_work_native=-3.5,
+            mechanical_impulse_native=mechanical_impulse,
+            bound_field_energy_change_native=-1.5,
+            bound_field_momentum_change_native=bound_momentum,
+            mechanical_angular_momentum_change_native=mechanical_angular,
+        )
+
+
+def test_medina_bound_terms_close_charge_energy_and_momentum_balance() -> None:
+    duration_ns = 0.37
+    angular_frequency_per_ns = 2.0 * np.pi
+    acceleration_amplitude_mm_ns2 = 1.0
+    residuals = []
+
+    for sample_count in (257, 513):
+        times_ns = np.linspace(0.0, duration_ns, sample_count)
+        reaction_powers = np.empty(sample_count)
+        reaction_forces = np.empty((sample_count, 3))
+        radiated_powers = np.empty(sample_count)
+        radiated_momentum_rates = np.empty((sample_count, 3))
+        cross_energies = np.empty(sample_count)
+        cross_momenta = np.empty((sample_count, 3))
+
+        for index, time_ns in enumerate(times_ns):
+            phase = angular_frequency_per_ns * time_ns
+            acceleration_x = acceleration_amplitude_mm_ns2 * np.sin(phase)
+            acceleration_derivative_x = (
+                acceleration_amplitude_mm_ns2 * angular_frequency_per_ns * np.cos(phase)
+            )
+            velocity_x = (
+                acceleration_amplitude_mm_ns2
+                / angular_frequency_per_ns
+                * (1.0 - np.cos(phase))
+            )
+            beta_x = velocity_x / C_MMNS
+            gamma = 1.0 / np.sqrt(1.0 - beta_x**2)
+            gamma_derivative = gamma**3 * beta_x * acceleration_x / C_MMNS
+            force_x = ELECTRON_MASS_AMU * gamma**3 * acceleration_x
+            force_derivative_x = ELECTRON_MASS_AMU * (
+                3.0 * gamma**2 * gamma_derivative * acceleration_x
+                + gamma**3 * acceleration_derivative_x
+            )
+            medina = compute_medina_radiation_reaction(
+                external_force=(force_x, 0.0, 0.0),
+                external_force_time_derivative=(force_derivative_x, 0.0, 0.0),
+                beta=(beta_x, 0.0, 0.0),
+                acceleration=(acceleration_x, 0.0, 0.0),
+                gamma=gamma,
+                mass=ELECTRON_MASS_AMU,
+                charge=ELEMENTARY_CHARGE,
+                coordinate_dt=0.0,
+            )
+            reaction_powers[index] = medina.reaction_power
+            reaction_forces[index] = medina.radiation_reaction_force
+            radiated_powers[index] = medina.far_radiated_power
+            radiated_momentum_rates[index] = medina.radiated_momentum_rate
+            cross_energies[index] = medina.cross_field_energy
+            cross_momenta[index] = medina.cross_field_momentum
+
+        outward = IntegratedElectromagneticFluxSector(
+            energy_native=float(_trapezoidal_test_integral(radiated_powers, times_ns)),
+            momentum_native=_trapezoidal_test_integral(
+                radiated_momentum_rates, times_ns
+            ),
+            angular_momentum_native=np.zeros(3),
+        )
+        balance = evaluate_radiation_reaction_balance_native(
+            outward_flux=outward,
+            mechanical_work_native=float(
+                _trapezoidal_test_integral(reaction_powers, times_ns)
+            ),
+            mechanical_impulse_native=_trapezoidal_test_integral(
+                reaction_forces, times_ns
+            ),
+            bound_field_energy_change_native=(cross_energies[-1] - cross_energies[0]),
+            bound_field_momentum_change_native=(cross_momenta[-1] - cross_momenta[0]),
+        )
+        residuals.append(
+            max(
+                abs(balance.energy_residual_native),
+                float(np.linalg.norm(balance.momentum_residual_native) * C_MMNS),
+            )
+        )
+
+    assert residuals[1] < residuals[0] / 3.9
+    assert residuals[1] < 2.0e-18
+
+
 def test_oscillating_magnetic_dipole_radiation_matches_gaussian_power() -> None:
     radius_mm = 4.7
     moment_second_derivative = np.array((0.0, 0.0, 2.4))
@@ -479,6 +611,7 @@ def test_retarded_rotating_dipole_flux_matches_far_zone_power() -> None:
     expected_power = (
         2.0 * (moment_native * angular_frequency_per_ns**2) ** 2 / (3.0 * C_MMNS**3)
     )
+    expected_angular_momentum_rate = expected_power / angular_frequency_per_ns
     measured = []
     for radius_mm in (100.0, 400.0):
         result = evaluate_retarded_radiation_sphere_native(
@@ -493,6 +626,15 @@ def test_retarded_rotating_dipole_flux_matches_far_zone_power() -> None:
         measured.append(result.mu_squared.energy_rate_native)
         assert result.mu_squared.energy_rate_native == pytest.approx(
             expected_power, rel=1.0e-6
+        )
+        np.testing.assert_allclose(
+            result.mu_squared.angular_momentum_rate_native[:2],
+            0.0,
+            atol=2.0e-18,
+        )
+        assert result.mu_squared.angular_momentum_rate_native[2] == pytest.approx(
+            expected_angular_momentum_rate,
+            rel=1.0e-6,
         )
         assert result.maximum_dipole_light_cone_residual_mm is not None
         assert result.maximum_dipole_light_cone_residual_mm < 1.0e-13

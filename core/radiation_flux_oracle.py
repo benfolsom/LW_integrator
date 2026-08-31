@@ -336,6 +336,72 @@ class RadiationSphereFluxIntegralResult:
         )
 
 
+@dataclass(frozen=True)
+class RadiationReactionBalanceResult:
+    """Conservation residual for a proposed local self-reaction model.
+
+    The sign convention is
+
+    ``mechanical change + outward flux + bound-field change = residual``.
+
+    A consistent model approaches zero residual under time, sphere-radius,
+    angular-quadrature, and source-model refinement.  Angular momentum is
+    optional because the current charge-only Medina model supplies bound
+    energy and momentum but not a complete intrinsic-dipole self-torque.
+    """
+
+    outward_flux: IntegratedElectromagneticFluxSector
+    mechanical_work_native: float
+    mechanical_impulse_native: np.ndarray
+    bound_field_energy_change_native: float
+    bound_field_momentum_change_native: np.ndarray
+    energy_residual_native: float
+    momentum_residual_native: np.ndarray
+    mechanical_angular_momentum_change_native: np.ndarray | None = None
+    bound_field_angular_momentum_change_native: np.ndarray | None = None
+    angular_momentum_residual_native: np.ndarray | None = None
+
+    def __post_init__(self) -> None:
+        for name in (
+            "mechanical_work_native",
+            "bound_field_energy_change_native",
+            "energy_residual_native",
+        ):
+            value = float(getattr(self, name))
+            if not np.isfinite(value):
+                raise ValueError(f"{name} must be finite")
+            object.__setattr__(self, name, value)
+        for name in (
+            "mechanical_impulse_native",
+            "bound_field_momentum_change_native",
+            "momentum_residual_native",
+        ):
+            object.__setattr__(
+                self,
+                name,
+                _readonly_array(getattr(self, name), shape=(3,), name=name),
+            )
+        angular_names = (
+            "mechanical_angular_momentum_change_native",
+            "bound_field_angular_momentum_change_native",
+            "angular_momentum_residual_native",
+        )
+        angular_values = [getattr(self, name) for name in angular_names]
+        if any(value is None for value in angular_values) and not all(
+            value is None for value in angular_values
+        ):
+            raise ValueError(
+                "angular-momentum balance values must be all set or all None"
+            )
+        for name, value in zip(angular_names, angular_values):
+            if value is not None:
+                object.__setattr__(
+                    self,
+                    name,
+                    _readonly_array(value, shape=(3,), name=name),
+                )
+
+
 def _field_samples(value: np.ndarray, *, sample_count: int, name: str) -> np.ndarray:
     return _readonly_array(value, shape=(sample_count, 3), name=name)
 
@@ -555,6 +621,80 @@ def integrate_radiation_sphere_flux_history_native(
         dipole_retarded_time_envelope_ns=_retarded_time_envelope(
             history, "dipole_retarded_time_range_ns"
         ),
+    )
+
+
+def evaluate_radiation_reaction_balance_native(
+    *,
+    outward_flux: IntegratedElectromagneticFluxSector,
+    mechanical_work_native: float,
+    mechanical_impulse_native: Sequence[float],
+    bound_field_energy_change_native: float,
+    bound_field_momentum_change_native: Sequence[float],
+    mechanical_angular_momentum_change_native: Sequence[float] | None = None,
+    bound_field_angular_momentum_change_native: Sequence[float] | None = None,
+) -> RadiationReactionBalanceResult:
+    """Compare a local reaction ledger with independently measured flux.
+
+    This function performs accounting only.  It does not infer a missing
+    bound-field term, manufacture a recoil force, or decide that a residual is
+    sufficiently small.  Those are model- and convergence-study decisions.
+    """
+
+    mechanical_work = float(mechanical_work_native)
+    bound_energy_change = float(bound_field_energy_change_native)
+    if not np.isfinite(mechanical_work) or not np.isfinite(bound_energy_change):
+        raise ValueError("energy balance inputs must be finite")
+    mechanical_impulse = _readonly_array(
+        np.asarray(mechanical_impulse_native, dtype=float),
+        shape=(3,),
+        name="mechanical_impulse_native",
+    )
+    bound_momentum_change = _readonly_array(
+        np.asarray(bound_field_momentum_change_native, dtype=float),
+        shape=(3,),
+        name="bound_field_momentum_change_native",
+    )
+
+    if (mechanical_angular_momentum_change_native is None) != (
+        bound_field_angular_momentum_change_native is None
+    ):
+        raise ValueError(
+            "mechanical and bound angular-momentum changes must be supplied together"
+        )
+    mechanical_angular: np.ndarray | None = None
+    bound_angular: np.ndarray | None = None
+    angular_residual: np.ndarray | None = None
+    if mechanical_angular_momentum_change_native is not None:
+        mechanical_angular = _readonly_array(
+            np.asarray(mechanical_angular_momentum_change_native, dtype=float),
+            shape=(3,),
+            name="mechanical_angular_momentum_change_native",
+        )
+        bound_angular = _readonly_array(
+            np.asarray(bound_field_angular_momentum_change_native, dtype=float),
+            shape=(3,),
+            name="bound_field_angular_momentum_change_native",
+        )
+        angular_residual = (
+            mechanical_angular + outward_flux.angular_momentum_native + bound_angular
+        )
+
+    return RadiationReactionBalanceResult(
+        outward_flux=outward_flux,
+        mechanical_work_native=mechanical_work,
+        mechanical_impulse_native=mechanical_impulse,
+        bound_field_energy_change_native=bound_energy_change,
+        bound_field_momentum_change_native=bound_momentum_change,
+        energy_residual_native=(
+            mechanical_work + outward_flux.energy_native + bound_energy_change
+        ),
+        momentum_residual_native=(
+            mechanical_impulse + outward_flux.momentum_native + bound_momentum_change
+        ),
+        mechanical_angular_momentum_change_native=mechanical_angular,
+        bound_field_angular_momentum_change_native=bound_angular,
+        angular_momentum_residual_native=angular_residual,
     )
 
 
@@ -811,9 +951,11 @@ def evaluate_retarded_radiation_sphere_native(
 __all__ = [
     "ElectromagneticFluxSector",
     "IntegratedElectromagneticFluxSector",
+    "RadiationReactionBalanceResult",
     "RadiationSphereFluxIntegralResult",
     "RadiationSphereFluxResult",
     "RadiationSphereQuadrature",
+    "evaluate_radiation_reaction_balance_native",
     "evaluate_retarded_radiation_sphere_native",
     "gauss_legendre_sphere_quadrature",
     "integrate_radiation_sphere_flux_history_native",
