@@ -151,6 +151,80 @@ self-torque benchmark was incorrect.  A neutral intrinsic dipole still needs
 a separate finite-size source model before a :math:`\mu^2` local self-torque
 can be certified.
 
+Exact harmonic shell response
+-----------------------------
+
+``evaluate_harmonic_spinning_shell_response_native`` implements the exact
+single-frequency response of the same uniformly charged shell derived by
+Mansuripur and Jakobsen [Mansuripur2020]_.  This is the next bridge between the
+local shell torque and the independently measured :math:`\mu^2` energy flux.
+For
+
+.. math::
+
+   \Omega(t)=\operatorname{Re}[\Omega_0e^{-i\omega t}],
+   \qquad x={\omega R\over c},
+
+define :math:`g(x)=\sin x-x\cos x`.  The exact response coefficient is
+
+.. math::
+
+   \Gamma(\omega)={Z_0q^2\over6\pi}
+   {g(x)\over x^2}(1-i x)e^{i x},
+
+and the complex self-torque amplitude is
+
+.. math::
+
+   T_{\rm self,0}=i\Gamma(\omega)\Omega_0.
+
+The cycle-averaged outward power is evaluated separately as
+
+.. math::
+
+   \langle P_{\rm out}\rangle
+   ={Z_0q^2|\Omega_0|^2\over12\pi}
+   {g(x)^2\over x^2}.
+
+The maintained test verifies the energy balance
+
+.. math::
+
+   {1\over2}\operatorname{Re}
+   \left[T_{\rm self,0}\Omega_0^*\right]
+   +\langle P_{\rm out}\rangle=0.
+
+The paper absorbs a factor of :math:`\mu_0` into its magnetic-moment symbol.
+The implementation instead returns the ordinary moment used by the
+integrator,
+
+.. math::
+
+   \mu_{\rm amp}={qR^2\Omega_0\over3},
+
+in native moment units.  This makes its point-size power directly comparable
+with the radiation-sphere provider.  The finite-size correction relative to
+that point result is
+
+.. math::
+
+   {P_{\rm shell}\over P_{\rm point}}
+   =\left[{3(\sin x-x\cos x)\over x^3}\right]^2.
+
+The code evaluates these expressions with small-:math:`x` series that avoid
+subtracting nearly equal sine and cosine terms.  It also reports the shell's
+maximum equatorial speed divided by :math:`c`; the underlying shell motion is
+nonrelativistic even though the external LW integrator supports relativistic
+translation.
+
+This exact frequency-domain result is still an oracle, not a production
+self-torque.  It assumes one fixed rotation axis and one prescribed harmonic
+frequency.  The present milestone checks power balance, the point-dipole
+sphere-flux limit, and convergence to the Bonga--Poisson--Yang slow-variation
+series.  A pole/impulse-response calculation is still required to reproduce
+the paper's causality result, and a neutral intrinsic moment still requires an
+explicit neutral finite-size source or an effective-theory matching step.
+
 Required convergence checks
 ---------------------------
 
@@ -220,11 +294,15 @@ the surface calculation.
 
 The finite-shell analytic ledger now closes at floating-point precision for a
 prescribed harmonic moment, and its local expansion verifies the expected
-shell-radius scaling of the reversible and radiation-sensitive pieces.  This
-establishes the finite-size :math:`q\mu` bookkeeping oracle.  Direct comparison
-with retarded provider flux, a nonzero-boundary charge interval,
-identification of the pure :math:`\mu^2` bound contribution, and application
-to an archived flyby remain later acceptance steps.
+shell-radius scaling of the reversible and radiation-sensitive pieces.  The
+exact harmonic response independently closes mean self-torque work against
+outward power, its point limit matches the Maxwell-stress sphere oracle, and
+its low-frequency torque converges to the local shell series.  Together these
+establish the finite-size shell bookkeeping benchmark across the
+:math:`q\mu` angular and :math:`\mu^2` energy channels.  A nonzero-boundary
+charge interval, impulse-response causality, identification of the pure
+:math:`\mu^2` bound contribution, and application to an archived flyby remain
+later acceptance steps.
 
 References
 ----------
@@ -245,3 +323,9 @@ References
    (2020), `doi:10.1103/PhysRevD.101.044013
    <https://doi.org/10.1103/PhysRevD.101.044013>`_, `arXiv:1911.04514
    <https://arxiv.org/abs/1911.04514>`_.
+
+.. [Mansuripur2020] M. Mansuripur and P. K. Jakobsen, "Electromagnetic
+   radiation and the self torque of an oscillating magnetic dipole,"
+   *Proceedings of SPIE* **11462**, 114620W (2020),
+   `doi:10.1117/12.2569137 <https://doi.org/10.1117/12.2569137>`_,
+   `arXiv:2008.11264 <https://arxiv.org/abs/2008.11264>`_.

@@ -161,7 +161,15 @@ All notable changes and updates to the LW Integrator project are documented in t
   change sign between retarded and advanced boundary conditions.  This
   corrects an earlier roadmap ambiguity: the charged-shell calculation is a
   ``q mu`` benchmark, not a pure ``mu^2`` self-torque law, and remains outside
-  production dynamics.
+  production dynamics.  Added the exact Mansuripur--Jakobsen harmonic response
+  of that finite charged shell.  It reports the complex self-torque,
+  cycle-averaged self-work and outward power, ordinary magnetic-moment
+  amplitude, finite-size form factor, and surface-speed check.  Tests close
+  torque work against radiation, match the point-size limit to an independent
+  Maxwell-stress sphere flux, and recover the Bonga--Poisson--Yang local
+  derivative expansion as ``omega R/c`` decreases.  This remains a
+  diagnostic fixed-axis harmonic model; causality and a neutral intrinsic
+  moment require later, separate validation.
 
 - Added the opt-in exact-retarded translation update
   ``second_order_start_taylor_endpoint``.  It evaluates the ordinary charge

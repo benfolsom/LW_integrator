@@ -1,4 +1,4 @@
-"""Finite-size spinning-shell angular-momentum oracle.
+"""Finite-size spinning-shell angular-momentum and harmonic-response oracles.
 
 This module implements the slow-variation expansion derived by Bonga,
 Poisson, and Yang for a uniformly charged, infinitesimally thin spherical
@@ -12,6 +12,17 @@ self-torque and it is not applied by the equations of motion.  In particular,
 the benchmark is linear in charge and magnetic moment, so it belongs to the
 ``q mu`` interference sector.  It must not be described as a pure ``mu^2``
 magnetic-dipole self-reaction law.
+
+The exact harmonic response follows Mansuripur and Jakobsen,
+
+    https://doi.org/10.1117/12.2569137
+    https://arxiv.org/abs/2008.11264
+
+for the same uniformly charged shell.  Their symbol for magnetic moment
+includes a factor of vacuum permeability.  This module instead returns the
+ordinary SI/native magnetic moment used throughout the integrator, so that
+the point-dipole power can be compared directly with the radiation-sphere
+oracle.
 
 Inputs use the solver's native units.  ``moment_derivatives_native[n]`` means
 the ``n``th coordinate-time derivative of the signed axial magnetic moment,
@@ -35,8 +46,14 @@ from .magnetic_dipole import (
 )
 
 _C_M_S = C_MMNS * 1.0e6
-_MU_0_SI = 1.256_637_061_27e-6
+# The native Gaussian-to-SI field bridge is defined with exact c and the
+# conventional pre-2019 SI electromagnetic relation.  Use its corresponding
+# permeability here so native sphere flux and SI shell formulas describe the
+# same unit system.  The modern measured mu_0 differs by about 1.3e-10.
+_MU_0_SI = 4.0 * np.pi * 1.0e-7
 _NS_PER_S = 1.0e9
+_Z_0_SI = _MU_0_SI * _C_M_S
+_NATIVE_POWER_UNIT_W = NATIVE_ENERGY_UNIT_J * _NS_PER_S
 
 # Coefficients in Eqs. (33), (36), and (42), indexed by the even power of
 # tau=R/c retained in the finite-size expansion.
@@ -119,6 +136,163 @@ class SpinningShellLocalTorqueResult:
     time_symmetric_torque_native: float
     radiation_reaction_torque_native: float
     shell_light_crossing_time_ns: float
+
+
+@dataclass(frozen=True)
+class HarmonicSpinningShellResponseResult:
+    r"""Exact frequency-domain response of one uniformly charged shell.
+
+    ``radiation_reaction_coefficient_native`` is the complex coefficient
+    :math:`\Gamma` in Mansuripur--Jakobsen Eq. (18), expressed in native
+    action units.  With the convention
+    :math:`\Omega(t)=\operatorname{Re}[\Omega_0e^{-i\omega t}]`, the complex
+    self-torque amplitude is :math:`i\Gamma\Omega_0`.
+
+    The real part of :math:`\Gamma` is in phase quadrature with the angular
+    velocity and represents reversible electromagnetic inertia.  Its
+    imaginary part produces the negative mean self-work that balances the
+    outward radiated power.
+    """
+
+    dimensionless_frequency: float
+    maximum_surface_beta: float
+    magnetic_moment_amplitude_native: complex
+    radiation_reaction_coefficient_native: complex
+    self_torque_amplitude_native: complex
+    average_self_torque_work_rate_native: float
+    radiated_power_native: float
+    point_dipole_radiated_power_native: float
+    finite_size_power_ratio: float
+    average_power_balance_residual_native: float
+
+
+def _finite_complex(value: complex, *, name: str) -> complex:
+    result = complex(value)
+    if not np.isfinite(result.real) or not np.isfinite(result.imag):
+        raise ValueError(f"{name} must have finite real and imaginary parts")
+    return result
+
+
+def _sin_minus_x_cos_over_x_cubed(value: float) -> float:
+    """Return ``(sin(x) - x*cos(x))/x**3`` without small-x cancellation."""
+
+    x = float(value)
+    if abs(x) < 1.0e-3:
+        x2 = x * x
+        return (
+            1.0 / 3.0
+            + x2
+            * (
+                -1.0 / 30.0
+                + x2
+                * (
+                    1.0 / 840.0
+                    + x2 * (-1.0 / 45360.0 + x2 / 3991680.0)
+                )
+            )
+        )
+    return (np.sin(x) - x * np.cos(x)) / x**3
+
+
+def evaluate_harmonic_spinning_shell_response_native(
+    *,
+    charge_native: float,
+    shell_radius_mm: float,
+    drive_angular_frequency_per_ns: float,
+    angular_velocity_amplitude_per_ns: complex,
+) -> HarmonicSpinningShellResponseResult:
+    """Evaluate the exact harmonic self-torque and power of a charged shell.
+
+    This implements Mansuripur--Jakobsen Eqs. (13), (15), and (18).  The
+    shell rotates about a fixed axis with complex angular-velocity amplitude
+    ``angular_velocity_amplitude_per_ns`` and real positive drive frequency.
+    Complex amplitudes use the time convention ``exp(-i*omega*t)``.
+
+    The shell model is nonrelativistic internally.  ``maximum_surface_beta``
+    is returned so callers can reject an angular-velocity amplitude for which
+    the equator would approach the speed of light.  The function itself does
+    not impose a problem-specific cutoff.
+
+    ``radiated_power_native`` and ``average_self_torque_work_rate_native``
+    are independently evaluated from the far-field power and the complex
+    self-torque.  Their sum is the reported balance residual.
+    """
+
+    charge_c = _charge_coulomb(charge_native)
+    radius_m = _positive_length_m(shell_radius_mm, name="shell_radius_mm")
+    frequency_per_ns = float(drive_angular_frequency_per_ns)
+    if not np.isfinite(frequency_per_ns) or frequency_per_ns <= 0.0:
+        raise ValueError("drive_angular_frequency_per_ns must be finite and positive")
+    angular_velocity_per_ns = _finite_complex(
+        angular_velocity_amplitude_per_ns,
+        name="angular_velocity_amplitude_per_ns",
+    )
+
+    frequency_per_s = frequency_per_ns * _NS_PER_S
+    angular_velocity_per_s = angular_velocity_per_ns * _NS_PER_S
+    x = frequency_per_s * radius_m / _C_M_S
+    g_over_x_cubed = _sin_minus_x_cos_over_x_cubed(x)
+
+    # Eq. (18), written as g(x)/x^2 = x*g(x)/x^3.  This form retains the
+    # correct point limit without subtracting nearly equal sin/cos terms.
+    gamma_prefactor_si = _Z_0_SI * charge_c**2 / (6.0 * np.pi)
+    cosine_sine_factor = np.cos(x) + x * np.sin(x)
+    gamma_si = gamma_prefactor_si * (
+        x * g_over_x_cubed * cosine_sine_factor
+        + 1.0j * x**4 * g_over_x_cubed**2
+    )
+    self_torque_amplitude_si = 1.0j * gamma_si * angular_velocity_per_s
+
+    # The paper's moment includes mu_0.  The standard SI moment needed by the
+    # integrator is q R^2 Omega / 3, in A m^2 = J/T.
+    moment_amplitude_si = charge_c * radius_m**2 * angular_velocity_per_s / 3.0
+    moment_native_per_si = 1.0 / magnetic_moment_native_to_j_per_t(1.0)
+    moment_amplitude_native = moment_amplitude_si * moment_native_per_si
+
+    radiated_power_si = (
+        _Z_0_SI
+        * charge_c**2
+        * abs(angular_velocity_per_s) ** 2
+        / (12.0 * np.pi)
+        * x**4
+        * g_over_x_cubed**2
+    )
+    point_power_si = (
+        _MU_0_SI
+        * abs(moment_amplitude_si) ** 2
+        * frequency_per_s**4
+        / (12.0 * np.pi * _C_M_S**3)
+    )
+    # Algebraically this is 0.5*Re(T_0*conj(Omega_0)).  Evaluating that
+    # product directly can subtract the much larger reversible quadrature
+    # components when Omega_0 carries an arbitrary complex phase.
+    average_self_work_si = (
+        -0.5 * gamma_si.imag * abs(angular_velocity_per_s) ** 2
+    )
+
+    radiated_power_native = radiated_power_si / _NATIVE_POWER_UNIT_W
+    self_work_native = average_self_work_si / _NATIVE_POWER_UNIT_W
+    point_power_native = point_power_si / _NATIVE_POWER_UNIT_W
+    return HarmonicSpinningShellResponseResult(
+        dimensionless_frequency=x,
+        maximum_surface_beta=(
+            abs(angular_velocity_per_s) * radius_m / _C_M_S
+        ),
+        magnetic_moment_amplitude_native=moment_amplitude_native,
+        radiation_reaction_coefficient_native=(
+            gamma_si / NATIVE_ACTION_UNIT_J_S
+        ),
+        self_torque_amplitude_native=(
+            self_torque_amplitude_si / NATIVE_ENERGY_UNIT_J
+        ),
+        average_self_torque_work_rate_native=self_work_native,
+        radiated_power_native=radiated_power_native,
+        point_dipole_radiated_power_native=point_power_native,
+        finite_size_power_ratio=(3.0 * g_over_x_cubed) ** 2,
+        average_power_balance_residual_native=(
+            self_work_native + radiated_power_native
+        ),
+    )
 
 
 def evaluate_spinning_shell_angular_balance_native(
@@ -254,8 +428,10 @@ def evaluate_spinning_shell_local_self_torque_native(
 
 
 __all__ = [
+    "HarmonicSpinningShellResponseResult",
     "SpinningShellAngularBalanceResult",
     "SpinningShellLocalTorqueResult",
+    "evaluate_harmonic_spinning_shell_response_native",
     "evaluate_spinning_shell_angular_balance_native",
     "evaluate_spinning_shell_local_self_torque_native",
 ]

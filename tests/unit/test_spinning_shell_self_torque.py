@@ -6,7 +6,12 @@ import numpy as np
 import pytest
 
 from core.constants import C_MMNS, ELEMENTARY_CHARGE
+from core.radiation_flux_oracle import (
+    gauss_legendre_sphere_quadrature,
+    integrate_radiation_sphere_flux_native,
+)
 from core.spinning_shell_self_torque import (
+    evaluate_harmonic_spinning_shell_response_native,
     evaluate_spinning_shell_angular_balance_native,
     evaluate_spinning_shell_local_self_torque_native,
 )
@@ -134,4 +139,152 @@ def test_shell_oracle_rejects_invalid_geometry_and_derivatives() -> None:
             charge_native=ELEMENTARY_CHARGE,
             shell_radius_mm=1.0,
             current_moment_derivatives_native=np.zeros(8),
+        )
+
+
+@pytest.mark.parametrize("dimensionless_frequency", (1.0e-5, 0.1, 1.0, 3.0))
+def test_exact_harmonic_shell_self_work_balances_radiated_power(
+    dimensionless_frequency: float,
+) -> None:
+    radius_mm = 0.7
+    frequency_per_ns = dimensionless_frequency * C_MMNS / radius_mm
+    angular_velocity_per_ns = (0.02 - 0.01j) * C_MMNS / radius_mm
+
+    result = evaluate_harmonic_spinning_shell_response_native(
+        charge_native=-ELEMENTARY_CHARGE,
+        shell_radius_mm=radius_mm,
+        drive_angular_frequency_per_ns=frequency_per_ns,
+        angular_velocity_amplitude_per_ns=angular_velocity_per_ns,
+    )
+
+    assert result.dimensionless_frequency == pytest.approx(
+        dimensionless_frequency, rel=2.0e-16
+    )
+    assert result.maximum_surface_beta == pytest.approx(
+        abs(0.02 - 0.01j), rel=2.0e-16
+    )
+    assert result.radiated_power_native > 0.0
+    assert result.average_self_torque_work_rate_native < 0.0
+    assert result.average_self_torque_work_rate_native == pytest.approx(
+        -result.radiated_power_native,
+        rel=3.0e-14,
+        abs=0.0,
+    )
+    assert abs(result.average_power_balance_residual_native) < (
+        3.0e-14 * result.radiated_power_native
+    )
+
+
+def test_exact_shell_point_limit_matches_independent_sphere_flux() -> None:
+    radius_mm = 0.7
+    dimensionless_frequency = 0.02
+    frequency_per_ns = dimensionless_frequency * C_MMNS / radius_mm
+    response = evaluate_harmonic_spinning_shell_response_native(
+        charge_native=ELEMENTARY_CHARGE,
+        shell_radius_mm=radius_mm,
+        drive_angular_frequency_per_ns=frequency_per_ns,
+        angular_velocity_amplitude_per_ns=0.01 * C_MMNS / radius_mm,
+    )
+
+    # At the phase of maximum moment acceleration, the point-dipole sphere
+    # flux is twice its cycle average.  This is an independent Maxwell-stress
+    # calculation, not the shell power formula evaluated a second way.
+    quadrature = gauss_legendre_sphere_quadrature(polar_order=24, azimuthal_order=48)
+    directions = quadrature.directions
+    moment_second_derivative = np.array(
+        (
+            0.0,
+            0.0,
+            response.magnetic_moment_amplitude_native.real * frequency_per_ns**2,
+        )
+    )
+    magnetic = np.cross(
+        directions,
+        np.cross(
+            directions,
+            np.broadcast_to(moment_second_derivative, directions.shape),
+        ),
+    ) / (C_MMNS**2 * 5.0)
+    electric = -np.cross(directions, magnetic)
+    zeros = np.zeros_like(electric)
+    sphere = integrate_radiation_sphere_flux_native(
+        quadrature=quadrature,
+        radius_mm=5.0,
+        charge_electric_field_native=zeros,
+        charge_magnetic_field_native=zeros,
+        dipole_electric_field_native=electric,
+        dipole_magnetic_field_native=magnetic,
+    )
+    sphere_average_power = 0.5 * sphere.mu_squared.energy_rate_native
+
+    assert response.point_dipole_radiated_power_native == pytest.approx(
+        sphere_average_power,
+        rel=3.0e-14,
+    )
+    assert response.radiated_power_native / sphere_average_power == pytest.approx(
+        response.finite_size_power_ratio,
+        rel=3.0e-14,
+    )
+    assert response.finite_size_power_ratio == pytest.approx(
+        1.0,
+        rel=1.0e-4,
+    )
+
+
+def test_exact_shell_reduces_to_bonga_radiation_torque_at_low_frequency() -> None:
+    charge_native = -ELEMENTARY_CHARGE
+    radius_mm = 0.7
+    surface_beta = 0.01
+    angular_velocity_per_ns = surface_beta * C_MMNS / radius_mm
+    relative_errors = []
+
+    for dimensionless_frequency in (0.2, 0.1):
+        frequency_per_ns = dimensionless_frequency * C_MMNS / radius_mm
+        exact = evaluate_harmonic_spinning_shell_response_native(
+            charge_native=charge_native,
+            shell_radius_mm=radius_mm,
+            drive_angular_frequency_per_ns=frequency_per_ns,
+            angular_velocity_amplitude_per_ns=angular_velocity_per_ns,
+        )
+        local = evaluate_spinning_shell_local_self_torque_native(
+            charge_native=charge_native,
+            shell_radius_mm=radius_mm,
+            current_moment_derivatives_native=_harmonic_derivatives(
+                moment_native=exact.magnetic_moment_amplitude_native.real,
+                angular_frequency_per_ns=frequency_per_ns,
+                time_ns=0.0,
+            ),
+        )
+
+        exact_in_phase_torque = exact.self_torque_amplitude_native.real
+        assert exact_in_phase_torque < 0.0
+        assert local.radiation_reaction_torque_native < 0.0
+        relative_errors.append(
+            abs(
+                local.radiation_reaction_torque_native - exact_in_phase_torque
+            )
+            / abs(exact_in_phase_torque)
+        )
+
+    # Bonga's retained x^4, x^6, and x^8 dissipative terms are the beginning
+    # of the exact harmonic response.  The first omitted relative term is
+    # O(x^6), so halving x should reduce this error by about 64.
+    assert relative_errors[1] < relative_errors[0] / 50.0
+    assert relative_errors[1] < 1.0e-9
+
+
+def test_exact_harmonic_shell_rejects_invalid_inputs() -> None:
+    with pytest.raises(ValueError, match="positive"):
+        evaluate_harmonic_spinning_shell_response_native(
+            charge_native=ELEMENTARY_CHARGE,
+            shell_radius_mm=1.0,
+            drive_angular_frequency_per_ns=0.0,
+            angular_velocity_amplitude_per_ns=1.0,
+        )
+    with pytest.raises(ValueError, match="finite"):
+        evaluate_harmonic_spinning_shell_response_native(
+            charge_native=ELEMENTARY_CHARGE,
+            shell_radius_mm=1.0,
+            drive_angular_frequency_per_ns=1.0,
+            angular_velocity_amplitude_per_ns=complex(np.nan, 0.0),
         )
