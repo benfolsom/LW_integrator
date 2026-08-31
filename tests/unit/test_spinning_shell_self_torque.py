@@ -5,13 +5,15 @@ import math
 import numpy as np
 import pytest
 
-from core.constants import C_MMNS, ELEMENTARY_CHARGE
+from core.constants import C_MMNS, ELECTRON_MASS_AMU, ELEMENTARY_CHARGE
 from core.radiation_flux_oracle import (
     gauss_legendre_sphere_quadrature,
     integrate_radiation_sphere_flux_native,
 )
 from core.spinning_shell_self_torque import (
+    count_harmonic_spinning_shell_transfer_poles_native,
     evaluate_harmonic_spinning_shell_response_native,
+    evaluate_harmonic_spinning_shell_transfer_native,
     evaluate_spinning_shell_angular_balance_native,
     evaluate_spinning_shell_local_self_torque_native,
 )
@@ -287,4 +289,117 @@ def test_exact_harmonic_shell_rejects_invalid_inputs() -> None:
             shell_radius_mm=1.0,
             drive_angular_frequency_per_ns=1.0,
             angular_velocity_amplitude_per_ns=complex(np.nan, 0.0),
+        )
+
+
+def test_complex_transfer_matches_exact_real_frequency_response() -> None:
+    radius_mm = 0.7
+    dimensionless_frequency = 0.02
+    frequency_per_ns = dimensionless_frequency * C_MMNS / radius_mm
+    response = evaluate_harmonic_spinning_shell_response_native(
+        charge_native=-ELEMENTARY_CHARGE,
+        shell_radius_mm=radius_mm,
+        drive_angular_frequency_per_ns=frequency_per_ns,
+        angular_velocity_amplitude_per_ns=1.0,
+    )
+    transfer = evaluate_harmonic_spinning_shell_transfer_native(
+        charge_native=-ELEMENTARY_CHARGE,
+        shell_radius_mm=radius_mm,
+        shell_mass_amu=ELECTRON_MASS_AMU,
+        friction_coefficient_native=0.0,
+        complex_angular_frequency_per_ns=frequency_per_ns,
+    )
+
+    assert transfer.dimensionless_complex_frequency == pytest.approx(
+        dimensionless_frequency,
+        rel=2.0e-16,
+    )
+    assert transfer.radiation_reaction_coefficient_native == pytest.approx(
+        response.radiation_reaction_coefficient_native,
+        rel=2.0e-14,
+    )
+    assert transfer.mechanical_moment_of_inertia_kg_m2 > 0.0
+    assert transfer.angular_velocity_per_torque_native == pytest.approx(
+        1.0j / transfer.denominator_native,
+        rel=0.0,
+        abs=0.0,
+    )
+
+
+def test_argument_principle_distinguishes_exact_and_truncated_causality() -> None:
+    common = {
+        "charge_native": -ELEMENTARY_CHARGE,
+        "shell_radius_mm": 1.0e-6,
+        "shell_mass_amu": ELECTRON_MASS_AMU,
+        "friction_coefficient_native": 0.0,
+    }
+    exact_counts = []
+    for bound in (100.0, 200.0, 400.0):
+        exact_counts.append(
+            count_harmonic_spinning_shell_transfer_poles_native(
+                real_dimensionless_bounds=(-bound, bound),
+                imaginary_dimensionless_bounds=(1.0e-4, bound),
+                response_model="exact",
+                samples_per_edge=2048,
+                **common,
+            )
+        )
+
+    approximate_counts = []
+    for samples_per_edge in (1024, 2048):
+        approximate_counts.append(
+            count_harmonic_spinning_shell_transfer_poles_native(
+                real_dimensionless_bounds=(-200.0, 200.0),
+                imaginary_dimensionless_bounds=(1.0e-4, 200.0),
+                response_model="small_radius_truncation",
+                samples_per_edge=samples_per_edge,
+                **common,
+            )
+        )
+
+    for exact in exact_counts:
+        assert exact.zero_count == 0
+        assert exact.winding_rounding_residual < 1.0e-12
+        assert exact.minimum_denominator_magnitude_native > 0.0
+    for approximate in approximate_counts:
+        assert approximate.zero_count == 2
+        assert approximate.winding_rounding_residual < 1.0e-12
+        assert approximate.minimum_denominator_magnitude_native > 0.0
+
+
+def test_argument_principle_finds_exact_response_poles_below_real_axis() -> None:
+    result = count_harmonic_spinning_shell_transfer_poles_native(
+        charge_native=-ELEMENTARY_CHARGE,
+        shell_radius_mm=1.0e-6,
+        shell_mass_amu=ELECTRON_MASS_AMU,
+        friction_coefficient_native=0.0,
+        real_dimensionless_bounds=(-20.0, 20.0),
+        imaginary_dimensionless_bounds=(-20.0, -1.0e-4),
+        samples_per_edge=2048,
+        response_model="exact",
+    )
+
+    assert result.zero_count == 13
+    assert result.winding_rounding_residual < 1.0e-12
+
+
+def test_transfer_and_pole_count_reject_invalid_controls() -> None:
+    with pytest.raises(ValueError, match="response_model"):
+        evaluate_harmonic_spinning_shell_transfer_native(
+            charge_native=ELEMENTARY_CHARGE,
+            shell_radius_mm=1.0,
+            shell_mass_amu=ELECTRON_MASS_AMU,
+            friction_coefficient_native=0.0,
+            complex_angular_frequency_per_ns=1.0,
+            response_model="unknown",
+        )
+    with pytest.raises(ValueError, match="at least 16"):
+        count_harmonic_spinning_shell_transfer_poles_native(
+            charge_native=ELEMENTARY_CHARGE,
+            shell_radius_mm=1.0,
+            shell_mass_amu=ELECTRON_MASS_AMU,
+            friction_coefficient_native=0.0,
+            real_dimensionless_bounds=(-1.0, 1.0),
+            imaginary_dimensionless_bounds=(0.1, 1.0),
+            samples_per_edge=8,
         )

@@ -221,9 +221,41 @@ This exact frequency-domain result is still an oracle, not a production
 self-torque.  It assumes one fixed rotation axis and one prescribed harmonic
 frequency.  The present milestone checks power balance, the point-dipole
 sphere-flux limit, and convergence to the Bonga--Poisson--Yang slow-variation
-series.  A pole/impulse-response calculation is still required to reproduce
-the paper's causality result, and a neutral intrinsic moment still requires an
-explicit neutral finite-size source or an effective-theory matching step.
+series.
+
+``evaluate_harmonic_spinning_shell_transfer_native`` extends the same exact
+coefficient to complex frequency and evaluates the mechanical transfer
+function
+
+.. math::
+
+   {\Omega_0\over T_0}
+   ={i\over I\omega+\Gamma(\omega)+i\beta},
+   \qquad I={2\over3}mR^2.
+
+A pole of this response in the upper half of the complex-:math:`\omega` plane
+would produce a nonzero impulse response before the applied torque.  The
+companion ``count_harmonic_spinning_shell_transfer_poles_native`` uses
+Cauchy's argument principle to count denominator zeros inside one explicitly
+declared rectangle.  It evaluates the complete complex response, including
+the reversible part of :math:`\Gamma`; discarding that apparently
+inertia-like part changes the pole structure.
+
+For the paper's electron-mass, electron-charge, 1-nm shell with zero ordinary
+friction, the maintained test finds no exact-response poles in three expanding
+upper-half-plane boxes reaching :math:`|\operatorname{Re}x|=400` and
+:math:`\operatorname{Im}x=400`, where :math:`x=\omega R/c`.  The same counter
+finds two upper-half-plane poles when Eq. (19), the small-radius derivative
+truncation, replaces the exact response.  It also finds thirteen exact poles
+in a smaller lower-half-plane box, demonstrating that the zero upper count is
+not a counter that simply misses all roots.  Both the contour density and box
+size are varied in the tests.
+
+This is strong finite-window causality evidence and reproduces the contrast in
+Mansuripur--Jakobsen Fig. 2.  It is not a mathematical proof over the entire
+unbounded upper half-plane, and the time-domain impulse response has not yet
+been reconstructed.  A neutral intrinsic moment still requires the paper's
+explicit neutral two-shell source or an effective-theory matching step.
 
 Required convergence checks
 ---------------------------
@@ -297,12 +329,14 @@ prescribed harmonic moment, and its local expansion verifies the expected
 shell-radius scaling of the reversible and radiation-sensitive pieces.  The
 exact harmonic response independently closes mean self-torque work against
 outward power, its point limit matches the Maxwell-stress sphere oracle, and
-its low-frequency torque converges to the local shell series.  Together these
+its low-frequency torque converges to the local shell series.  The first
+complex-frequency pole-count test also reproduces the exact-versus-truncated
+causality distinction in expanding finite search windows.  Together these
 establish the finite-size shell bookkeeping benchmark across the
 :math:`q\mu` angular and :math:`\mu^2` energy channels.  A nonzero-boundary
-charge interval, impulse-response causality, identification of the pure
-:math:`\mu^2` bound contribution, and application to an archived flyby remain
-later acceptance steps.
+charge interval, time-domain impulse reconstruction, identification of the
+pure :math:`\mu^2` bound contribution, and application to an archived flyby
+remain later acceptance steps.
 
 References
 ----------

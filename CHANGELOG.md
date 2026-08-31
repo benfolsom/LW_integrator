@@ -169,7 +169,13 @@ All notable changes and updates to the LW Integrator project are documented in t
   Maxwell-stress sphere flux, and recover the Bonga--Poisson--Yang local
   derivative expansion as ``omega R/c`` decreases.  This remains a
   diagnostic fixed-axis harmonic model; causality and a neutral intrinsic
-  moment require later, separate validation.
+  moment require later, separate validation.  Added the exact complex-frequency
+  transfer function and a finite-rectangle Cauchy argument-principle pole
+  counter.  For the paper's 1-nm electron shell, expanding upper-half-plane
+  searches find no poles with the exact response but find two with the known
+  acausal small-radius truncation; a lower-half-plane control finds thirteen
+  exact poles.  This is finite-window causality evidence, not yet a global
+  proof or a reconstructed time-domain impulse response.
 
 - Added the opt-in exact-retarded translation update
   ``second_order_start_taylor_endpoint``.  It evaluates the ordinary charge

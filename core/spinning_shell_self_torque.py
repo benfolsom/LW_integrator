@@ -38,7 +38,7 @@ from typing import Sequence
 import numpy as np
 
 from .constants import C_MMNS, ELEMENTARY_CHARGE
-from .external_fields import ELEMENTARY_CHARGE_COULOMB
+from .external_fields import AMU_KG, ELEMENTARY_CHARGE_COULOMB
 from .magnetic_dipole import (
     NATIVE_ACTION_UNIT_J_S,
     NATIVE_ENERGY_UNIT_J,
@@ -166,6 +166,37 @@ class HarmonicSpinningShellResponseResult:
     average_power_balance_residual_native: float
 
 
+@dataclass(frozen=True)
+class HarmonicSpinningShellTransferResult:
+    """Complex-frequency shell transfer function at one frequency."""
+
+    response_model: str
+    complex_angular_frequency_per_ns: complex
+    dimensionless_complex_frequency: complex
+    mechanical_moment_of_inertia_kg_m2: float
+    radiation_reaction_coefficient_native: complex
+    denominator_native: complex
+    angular_velocity_per_torque_native: complex
+
+
+@dataclass(frozen=True)
+class HarmonicSpinningShellPoleCountResult:
+    """Argument-principle zero count inside one dimensionless rectangle.
+
+    Zeros of the transfer-function denominator are poles of the response.
+    The result certifies only the finite rectangle supplied by the caller.
+    """
+
+    response_model: str
+    real_dimensionless_bounds: tuple[float, float]
+    imaginary_dimensionless_bounds: tuple[float, float]
+    samples_per_edge: int
+    zero_count: int
+    winding_number: float
+    winding_rounding_residual: float
+    minimum_denominator_magnitude_native: float
+
+
 def _finite_complex(value: complex, *, name: str) -> complex:
     result = complex(value)
     if not np.isfinite(result.real) or not np.isfinite(result.imag):
@@ -177,7 +208,7 @@ def _sin_minus_x_cos_over_x_cubed(value: float) -> float:
     """Return ``(sin(x) - x*cos(x))/x**3`` without small-x cancellation."""
 
     x = float(value)
-    if abs(x) < 1.0e-3:
+    if abs(x) < 0.25:
         x2 = x * x
         return (
             1.0 / 3.0
@@ -192,6 +223,225 @@ def _sin_minus_x_cos_over_x_cubed(value: float) -> float:
             )
         )
     return (np.sin(x) - x * np.cos(x)) / x**3
+
+
+def _exact_radiation_reaction_shape(value: complex) -> complex:
+    """Return the analytic dimensionless factor multiplying ``Z0*q^2/6pi``."""
+
+    z = complex(value)
+    if abs(z) < 0.25:
+        # Taylor series of
+        # (sin(z)-z*cos(z))*(1-i*z)*exp(i*z)/z^2.  Retaining both the
+        # reversible and dissipative terms is essential for the pole test.
+        return (
+            z / 3.0
+            + 2.0 * z**3 / 15.0
+            + 1.0j * z**4 / 9.0
+            - 2.0 * z**5 / 35.0
+            - 1.0j * z**6 / 45.0
+            + 4.0 * z**7 / 567.0
+            + 1.0j * z**8 / 525.0
+            - 2.0 * z**9 / 4455.0
+            - 4.0j * z**10 / 42525.0
+            + 4.0 * z**11 / 225225.0
+            + 2.0j * z**12 / 654885.0
+            - 4.0 * z**13 / 8292375.0
+            - 1.0j * z**14 / 14189175.0
+        )
+    return (
+        0.5
+        * (1.0 - 1.0j * z)
+        / z**2
+        * ((1.0j - z) - (1.0j + z) * np.exp(2.0j * z))
+    )
+
+
+def _approximate_radiation_reaction_shape(value: complex) -> complex:
+    """Return the small-radius truncation in Mansuripur--Jakobsen Eq. (19)."""
+
+    z = complex(value)
+    return (z + 2.0 * z**3 / 5.0 + 1.0j * z**4 / 3.0) / 3.0
+
+
+def _radiation_reaction_coefficient_si(
+    *,
+    charge_coulomb: float,
+    dimensionless_frequency: complex,
+    response_model: str,
+) -> complex:
+    if response_model == "exact":
+        shape = _exact_radiation_reaction_shape(dimensionless_frequency)
+    elif response_model == "small_radius_truncation":
+        shape = _approximate_radiation_reaction_shape(dimensionless_frequency)
+    else:
+        raise ValueError(
+            "response_model must be 'exact' or 'small_radius_truncation'"
+        )
+    return _Z_0_SI * charge_coulomb**2 / (6.0 * np.pi) * shape
+
+
+def _positive_mass_kg(value_amu: float) -> float:
+    value = float(value_amu)
+    if not np.isfinite(value) or value <= 0.0:
+        raise ValueError("shell_mass_amu must be finite and positive")
+    return value * AMU_KG
+
+
+def evaluate_harmonic_spinning_shell_transfer_native(
+    *,
+    charge_native: float,
+    shell_radius_mm: float,
+    shell_mass_amu: float,
+    friction_coefficient_native: float,
+    complex_angular_frequency_per_ns: complex,
+    response_model: str = "exact",
+) -> HarmonicSpinningShellTransferResult:
+    """Evaluate Mansuripur--Jakobsen Eq. (17) at complex frequency.
+
+    ``friction_coefficient_native`` has native action units because its
+    product with angular velocity is a torque.  The exact transfer is
+
+    ``Omega_0/T_0 = i / (I*omega + Gamma(omega) + i*beta)``.
+
+    ``small_radius_truncation`` is retained only as a diagnostic control: the
+    paper shows that it introduces upper-half-plane poles and therefore an
+    acausal impulse response even where it approximates real-frequency values.
+    """
+
+    charge_c = _charge_coulomb(charge_native)
+    radius_m = _positive_length_m(shell_radius_mm, name="shell_radius_mm")
+    mass_kg = _positive_mass_kg(shell_mass_amu)
+    friction_native = float(friction_coefficient_native)
+    if not np.isfinite(friction_native) or friction_native < 0.0:
+        raise ValueError("friction_coefficient_native must be finite and nonnegative")
+    frequency_per_ns = _finite_complex(
+        complex_angular_frequency_per_ns,
+        name="complex_angular_frequency_per_ns",
+    )
+    frequency_per_s = frequency_per_ns * _NS_PER_S
+    dimensionless_frequency = frequency_per_s * radius_m / _C_M_S
+    gamma_si = _radiation_reaction_coefficient_si(
+        charge_coulomb=charge_c,
+        dimensionless_frequency=dimensionless_frequency,
+        response_model=response_model,
+    )
+    moment_of_inertia = 2.0 * mass_kg * radius_m**2 / 3.0
+    denominator_si = (
+        moment_of_inertia * frequency_per_s
+        + gamma_si
+        + 1.0j * friction_native * NATIVE_ACTION_UNIT_J_S
+    )
+    denominator_native = denominator_si / NATIVE_ACTION_UNIT_J_S
+    transfer_native = (
+        complex(np.inf, np.inf)
+        if denominator_native == 0.0
+        else 1.0j / denominator_native
+    )
+    return HarmonicSpinningShellTransferResult(
+        response_model=response_model,
+        complex_angular_frequency_per_ns=frequency_per_ns,
+        dimensionless_complex_frequency=dimensionless_frequency,
+        mechanical_moment_of_inertia_kg_m2=moment_of_inertia,
+        radiation_reaction_coefficient_native=(
+            gamma_si / NATIVE_ACTION_UNIT_J_S
+        ),
+        denominator_native=denominator_native,
+        angular_velocity_per_torque_native=transfer_native,
+    )
+
+
+def _strict_bounds(
+    value: Sequence[float], *, name: str
+) -> tuple[float, float]:
+    bounds = np.asarray(value, dtype=float)
+    if bounds.shape != (2,) or not np.all(np.isfinite(bounds)):
+        raise ValueError(f"{name} must contain two finite values")
+    lower, upper = (float(entry) for entry in bounds)
+    if lower >= upper:
+        raise ValueError(f"{name} must be strictly increasing")
+    return lower, upper
+
+
+def count_harmonic_spinning_shell_transfer_poles_native(
+    *,
+    charge_native: float,
+    shell_radius_mm: float,
+    shell_mass_amu: float,
+    friction_coefficient_native: float,
+    real_dimensionless_bounds: Sequence[float],
+    imaginary_dimensionless_bounds: Sequence[float],
+    samples_per_edge: int = 2048,
+    response_model: str = "exact",
+) -> HarmonicSpinningShellPoleCountResult:
+    """Count transfer-function poles inside one complex-frequency rectangle.
+
+    The implementation applies Cauchy's argument principle to the analytic
+    transfer denominator.  The contour is sampled counterclockwise.  Callers
+    must repeat the calculation with denser contour sampling and expanding
+    rectangles before interpreting a zero count as causality evidence.
+    """
+
+    real_lower, real_upper = _strict_bounds(
+        real_dimensionless_bounds, name="real_dimensionless_bounds"
+    )
+    imaginary_lower, imaginary_upper = _strict_bounds(
+        imaginary_dimensionless_bounds, name="imaginary_dimensionless_bounds"
+    )
+    sample_count = int(samples_per_edge)
+    if sample_count < 16:
+        raise ValueError("samples_per_edge must be at least 16")
+
+    unit_interval = np.arange(sample_count, dtype=float) / sample_count
+    bottom = (real_lower + (real_upper - real_lower) * unit_interval) + (
+        1.0j * imaginary_lower
+    )
+    right = real_upper + 1.0j * (
+        imaginary_lower
+        + (imaginary_upper - imaginary_lower) * unit_interval
+    )
+    top = (real_upper - (real_upper - real_lower) * unit_interval) + (
+        1.0j * imaginary_upper
+    )
+    left = real_lower + 1.0j * (
+        imaginary_upper
+        - (imaginary_upper - imaginary_lower) * unit_interval
+    )
+    contour = np.concatenate((bottom, right, top, left))
+
+    radius_m = _positive_length_m(shell_radius_mm, name="shell_radius_mm")
+    frequencies_per_ns = contour * _C_M_S / radius_m / _NS_PER_S
+    denominators = np.asarray(
+        [
+            evaluate_harmonic_spinning_shell_transfer_native(
+                charge_native=charge_native,
+                shell_radius_mm=shell_radius_mm,
+                shell_mass_amu=shell_mass_amu,
+                friction_coefficient_native=friction_coefficient_native,
+                complex_angular_frequency_per_ns=frequency,
+                response_model=response_model,
+            ).denominator_native
+            for frequency in frequencies_per_ns
+        ],
+        dtype=complex,
+    )
+    if not np.all(np.isfinite(denominators)):
+        raise ValueError("transfer denominator became nonfinite on the contour")
+    closed = np.concatenate((denominators, denominators[:1]))
+    phase = np.unwrap(np.angle(closed))
+    winding = float((phase[-1] - phase[0]) / (2.0 * np.pi))
+    zero_count = int(np.rint(winding))
+    return HarmonicSpinningShellPoleCountResult(
+        response_model=response_model,
+        real_dimensionless_bounds=(real_lower, real_upper),
+        imaginary_dimensionless_bounds=(imaginary_lower, imaginary_upper),
+        samples_per_edge=sample_count,
+        zero_count=zero_count,
+        winding_number=winding,
+        winding_rounding_residual=abs(winding - zero_count),
+        minimum_denominator_magnitude_native=float(
+            np.min(np.abs(denominators))
+        ),
+    )
 
 
 def evaluate_harmonic_spinning_shell_response_native(
@@ -429,9 +679,13 @@ def evaluate_spinning_shell_local_self_torque_native(
 
 __all__ = [
     "HarmonicSpinningShellResponseResult",
+    "HarmonicSpinningShellPoleCountResult",
+    "HarmonicSpinningShellTransferResult",
     "SpinningShellAngularBalanceResult",
     "SpinningShellLocalTorqueResult",
+    "count_harmonic_spinning_shell_transfer_poles_native",
     "evaluate_harmonic_spinning_shell_response_native",
+    "evaluate_harmonic_spinning_shell_transfer_native",
     "evaluate_spinning_shell_angular_balance_native",
     "evaluate_spinning_shell_local_self_torque_native",
 ]
