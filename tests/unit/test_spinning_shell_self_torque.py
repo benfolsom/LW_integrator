@@ -6,6 +6,8 @@ import numpy as np
 import pytest
 
 from core.constants import C_MMNS, ELECTRON_MASS_AMU, ELEMENTARY_CHARGE
+from core.external_fields import AMU_KG
+from core.magnetic_dipole import NATIVE_ACTION_UNIT_J_S
 from core.radiation_flux_oracle import (
     gauss_legendre_sphere_quadrature,
     integrate_radiation_sphere_flux_native,
@@ -16,6 +18,7 @@ from core.spinning_shell_self_torque import (
     evaluate_harmonic_spinning_shell_transfer_native,
     evaluate_spinning_shell_angular_balance_native,
     evaluate_spinning_shell_local_self_torque_native,
+    reconstruct_harmonic_spinning_shell_impulse_response_native,
 )
 
 
@@ -402,4 +405,124 @@ def test_transfer_and_pole_count_reject_invalid_controls() -> None:
             real_dimensionless_bounds=(-1.0, 1.0),
             imaginary_dimensionless_bounds=(0.1, 1.0),
             samples_per_edge=8,
+        )
+
+
+def _friction_for_dimensionless_damping(
+    *, shell_radius_mm: float, dimensionless_friction: float
+) -> float:
+    radius_m = shell_radius_mm * 1.0e-3
+    inertia = (
+        2.0
+        * ELECTRON_MASS_AMU
+        * AMU_KG
+        * radius_m**2
+        / 3.0
+    )
+    inertial_action_si = inertia * (C_MMNS * 1.0e6) / radius_m
+    return (
+        dimensionless_friction
+        * inertial_action_si
+        / NATIVE_ACTION_UNIT_J_S
+    )
+
+
+def test_exact_impulse_response_converges_to_zero_before_impulse() -> None:
+    radius_mm = 1.0e-6
+    friction = _friction_for_dimensionless_damping(
+        shell_radius_mm=radius_mm,
+        dimensionless_friction=0.1,
+    )
+    times = np.array((-0.2, -0.1, -0.05, -0.02, -0.01, 0.01, 0.05, 0.2))
+    common = {
+        "charge_native": -ELEMENTARY_CHARGE,
+        "shell_radius_mm": radius_mm,
+        "shell_mass_amu": ELECTRON_MASS_AMU,
+        "friction_coefficient_native": friction,
+        "dimensionless_times": times,
+        "response_model": "exact",
+    }
+    coarse = reconstruct_harmonic_spinning_shell_impulse_response_native(
+        max_abs_dimensionless_frequency=200.0,
+        frequency_sample_count=20001,
+        **common,
+    )
+    fine = reconstruct_harmonic_spinning_shell_impulse_response_native(
+        max_abs_dimensionless_frequency=400.0,
+        frequency_sample_count=40001,
+        **common,
+    )
+
+    assert coarse.inertial_reference_subtracted
+    assert fine.inertial_reference_subtracted
+    assert fine.dimensionless_friction == pytest.approx(0.1, rel=2.0e-16)
+    assert coarse.maximum_preimpulse_absolute_response < 2.0e-9
+    assert fine.maximum_preimpulse_absolute_response < 1.0e-9
+    np.testing.assert_allclose(
+        fine.normalized_angular_velocity_response[times > 0.0],
+        coarse.normalized_angular_velocity_response[times > 0.0],
+        rtol=0.0,
+        atol=2.0e-9,
+    )
+    assert fine.maximum_imaginary_residual < 2.0e-14
+    assert not fine.dimensionless_times.flags.writeable
+    assert not fine.normalized_angular_velocity_response.flags.writeable
+
+
+def test_truncated_impulse_response_retains_converged_preimpulse_signal() -> None:
+    radius_mm = 1.0e-6
+    friction = _friction_for_dimensionless_damping(
+        shell_radius_mm=radius_mm,
+        dimensionless_friction=0.1,
+    )
+    times = np.array((-0.2, -0.1, -0.05, -0.02, -0.01, -0.005, 0.02, 0.1))
+    common = {
+        "charge_native": -ELEMENTARY_CHARGE,
+        "shell_radius_mm": radius_mm,
+        "shell_mass_amu": ELECTRON_MASS_AMU,
+        "friction_coefficient_native": friction,
+        "dimensionless_times": times,
+        "response_model": "small_radius_truncation",
+    }
+    coarse = reconstruct_harmonic_spinning_shell_impulse_response_native(
+        max_abs_dimensionless_frequency=400.0,
+        frequency_sample_count=80001,
+        **common,
+    )
+    fine = reconstruct_harmonic_spinning_shell_impulse_response_native(
+        max_abs_dimensionless_frequency=800.0,
+        frequency_sample_count=160001,
+        **common,
+    )
+
+    assert not fine.inertial_reference_subtracted
+    assert fine.maximum_preimpulse_absolute_response > 0.3
+    np.testing.assert_allclose(
+        fine.normalized_angular_velocity_response,
+        coarse.normalized_angular_velocity_response,
+        rtol=0.0,
+        atol=5.0e-3,
+    )
+    assert fine.maximum_imaginary_residual < 2.0e-14
+
+
+def test_impulse_response_rejects_zero_friction_and_even_grid() -> None:
+    common = {
+        "charge_native": ELEMENTARY_CHARGE,
+        "shell_radius_mm": 1.0,
+        "shell_mass_amu": ELECTRON_MASS_AMU,
+        "dimensionless_times": (-0.1, 0.1),
+        "max_abs_dimensionless_frequency": 10.0,
+    }
+    with pytest.raises(ValueError, match="positive"):
+        reconstruct_harmonic_spinning_shell_impulse_response_native(
+            friction_coefficient_native=0.0,
+            frequency_sample_count=257,
+            **common,
+        )
+    with pytest.raises(ValueError, match="odd"):
+        reconstruct_harmonic_spinning_shell_impulse_response_native(
+            friction_coefficient_native=1.0,
+            frequency_sample_count=258,
+            **common,
         )

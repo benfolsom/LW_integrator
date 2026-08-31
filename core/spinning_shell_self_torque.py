@@ -197,6 +197,29 @@ class HarmonicSpinningShellPoleCountResult:
     minimum_denominator_magnitude_native: float
 
 
+@dataclass(frozen=True)
+class HarmonicSpinningShellImpulseResponseResult:
+    """Finite-window reconstruction of the normalized impulse response.
+
+    The response is ``I*Omega(t)/L_impulse``, where ``L_impulse`` is the
+    applied torque impulse.  Time is reported as the dimensionless variable
+    ``c*t/R``.  A bare rigid shell without self-field effects would therefore
+    respond as ``exp(-b*c*t/R)`` for positive time, with
+    ``b=beta*R/(I*c)``.
+    """
+
+    response_model: str
+    dimensionless_times: np.ndarray
+    normalized_angular_velocity_response: np.ndarray
+    maximum_imaginary_residual: float
+    maximum_preimpulse_absolute_response: float
+    max_abs_dimensionless_frequency: float
+    frequency_sample_count: int
+    dimensionless_frequency_step: float
+    dimensionless_friction: float
+    inertial_reference_subtracted: bool
+
+
 def _finite_complex(value: complex, *, name: str) -> complex:
     result = complex(value)
     if not np.isfinite(result.real) or not np.isfinite(result.imag):
@@ -444,6 +467,136 @@ def count_harmonic_spinning_shell_transfer_poles_native(
     )
 
 
+def reconstruct_harmonic_spinning_shell_impulse_response_native(
+    *,
+    charge_native: float,
+    shell_radius_mm: float,
+    shell_mass_amu: float,
+    friction_coefficient_native: float,
+    dimensionless_times: Sequence[float],
+    max_abs_dimensionless_frequency: float,
+    frequency_sample_count: int,
+    response_model: str = "exact",
+) -> HarmonicSpinningShellImpulseResponseResult:
+    """Numerically invert the finite-shell transfer function.
+
+    The transform convention is the paper's ``exp(-i*omega*t)`` inverse.
+    Positive mechanical friction is required so the response has no
+    adjustable zero-frequency constant.  For the exact model, the known bare
+    rigid-shell response is subtracted in frequency space and restored
+    analytically in time; this removes the slowly converging Fourier
+    representation of the instantaneous inertial jump.  The small-radius
+    truncation falls as ``1/omega**4`` and is integrated directly.
+
+    This is a finite-window numerical diagnostic.  Causality claims require
+    convergence in both frequency limit and sampling density.
+    """
+
+    times = np.asarray(dimensionless_times, dtype=float)
+    if times.ndim != 1 or times.size == 0 or not np.all(np.isfinite(times)):
+        raise ValueError("dimensionless_times must be a nonempty finite vector")
+    frequency_limit = float(max_abs_dimensionless_frequency)
+    if not np.isfinite(frequency_limit) or frequency_limit <= 0.0:
+        raise ValueError(
+            "max_abs_dimensionless_frequency must be finite and positive"
+        )
+    sample_count = int(frequency_sample_count)
+    if sample_count < 257 or sample_count % 2 == 0:
+        raise ValueError("frequency_sample_count must be odd and at least 257")
+
+    radius_m = _positive_length_m(shell_radius_mm, name="shell_radius_mm")
+    mass_kg = _positive_mass_kg(shell_mass_amu)
+    friction_native = float(friction_coefficient_native)
+    if not np.isfinite(friction_native) or friction_native <= 0.0:
+        raise ValueError("friction_coefficient_native must be finite and positive")
+    moment_of_inertia = 2.0 * mass_kg * radius_m**2 / 3.0
+    inertial_action_si = moment_of_inertia * _C_M_S / radius_m
+    inertial_action_native = inertial_action_si / NATIVE_ACTION_UNIT_J_S
+    dimensionless_friction = friction_native / inertial_action_native
+
+    dimensionless_frequencies = np.linspace(
+        -frequency_limit,
+        frequency_limit,
+        sample_count,
+    )
+    frequency_step = float(
+        dimensionless_frequencies[1] - dimensionless_frequencies[0]
+    )
+    frequencies_per_ns = (
+        dimensionless_frequencies
+        * _C_M_S
+        / radius_m
+        / _NS_PER_S
+    )
+    denominators = np.asarray(
+        [
+            evaluate_harmonic_spinning_shell_transfer_native(
+                charge_native=charge_native,
+                shell_radius_mm=shell_radius_mm,
+                shell_mass_amu=shell_mass_amu,
+                friction_coefficient_native=friction_native,
+                complex_angular_frequency_per_ns=frequency,
+                response_model=response_model,
+            ).denominator_native
+            for frequency in frequencies_per_ns
+        ],
+        dtype=complex,
+    )
+    if not np.all(np.isfinite(denominators)) or np.any(denominators == 0.0):
+        raise ValueError("transfer denominator is singular or nonfinite on the grid")
+    dimensionless_transfer = 1.0j * inertial_action_native / denominators
+
+    subtract_inertial = response_model == "exact"
+    if subtract_inertial:
+        inertial_transfer = 1.0j / (
+            dimensionless_frequencies + 1.0j * dimensionless_friction
+        )
+        numerical_transfer = dimensionless_transfer - inertial_transfer
+    else:
+        numerical_transfer = dimensionless_transfer
+
+    complex_response = np.empty(times.size, dtype=complex)
+    for index, dimensionless_time in enumerate(times):
+        integrand = numerical_transfer * np.exp(
+            -1.0j * dimensionless_frequencies * dimensionless_time
+        )
+        integral = frequency_step * (
+            0.5 * integrand[0]
+            + np.sum(integrand[1:-1])
+            + 0.5 * integrand[-1]
+        ) / (2.0 * np.pi)
+        if subtract_inertial:
+            if dimensionless_time > 0.0:
+                integral += np.exp(
+                    -dimensionless_friction * dimensionless_time
+                )
+            elif dimensionless_time == 0.0:
+                integral += 0.5
+        complex_response[index] = integral
+
+    response = np.asarray(complex_response.real, dtype=float)
+    response.setflags(write=False)
+    times = times.copy()
+    times.setflags(write=False)
+    preimpulse = response[times < 0.0]
+    return HarmonicSpinningShellImpulseResponseResult(
+        response_model=response_model,
+        dimensionless_times=times,
+        normalized_angular_velocity_response=response,
+        maximum_imaginary_residual=float(
+            np.max(np.abs(complex_response.imag))
+        ),
+        maximum_preimpulse_absolute_response=(
+            float(np.max(np.abs(preimpulse))) if preimpulse.size else 0.0
+        ),
+        max_abs_dimensionless_frequency=frequency_limit,
+        frequency_sample_count=sample_count,
+        dimensionless_frequency_step=frequency_step,
+        dimensionless_friction=dimensionless_friction,
+        inertial_reference_subtracted=subtract_inertial,
+    )
+
+
 def evaluate_harmonic_spinning_shell_response_native(
     *,
     charge_native: float,
@@ -678,6 +831,7 @@ def evaluate_spinning_shell_local_self_torque_native(
 
 
 __all__ = [
+    "HarmonicSpinningShellImpulseResponseResult",
     "HarmonicSpinningShellResponseResult",
     "HarmonicSpinningShellPoleCountResult",
     "HarmonicSpinningShellTransferResult",
@@ -688,4 +842,5 @@ __all__ = [
     "evaluate_harmonic_spinning_shell_transfer_native",
     "evaluate_spinning_shell_angular_balance_native",
     "evaluate_spinning_shell_local_self_torque_native",
+    "reconstruct_harmonic_spinning_shell_impulse_response_native",
 ]

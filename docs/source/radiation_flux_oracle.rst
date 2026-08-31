@@ -251,11 +251,29 @@ in a smaller lower-half-plane box, demonstrating that the zero upper count is
 not a counter that simply misses all roots.  Both the contour density and box
 size are varied in the tests.
 
-This is strong finite-window causality evidence and reproduces the contrast in
-Mansuripur--Jakobsen Fig. 2.  It is not a mathematical proof over the entire
-unbounded upper half-plane, and the time-domain impulse response has not yet
-been reconstructed.  A neutral intrinsic moment still requires the paper's
-explicit neutral two-shell source or an effective-theory matching step.
+``reconstruct_harmonic_spinning_shell_impulse_response_native`` performs the
+complementary time-domain check.  It reports the normalized response
+:math:`I\Omega(t)/L_{\rm impulse}` as a function of :math:`ct/R`.  For the
+exact model it subtracts the known bare-inertia transfer function before the
+finite Fourier integral and restores its causal exponential analytically.
+This avoids mistaking the slowly converging Fourier representation of the
+instantaneous mechanical velocity jump for a pre-impulse signal.  The
+small-radius truncation falls sufficiently rapidly at high frequency to be
+integrated directly.
+
+With dimensionless mechanical friction
+:math:`\beta R/(Ic)=0.1`, the exact 1-nm electron shell has a maximum sampled
+pre-impulse response below :math:`10^{-9}` at both tested frequency limits.
+The truncated control retains a converged pre-impulse response above 0.3.
+Increasing the exact frequency limit from 200 to 400 and the truncated limit
+from 400 to 800, while retaining a dimensionless frequency spacing of 0.01,
+leaves the post-impulse response stable within the maintained tolerances.
+
+The pole count and time reconstruction together provide strong numerical
+causality evidence and reproduce the contrast in Mansuripur--Jakobsen Fig. 2.
+They are not a mathematical proof over the entire unbounded upper half-plane.
+A neutral intrinsic moment still requires the paper's explicit neutral
+two-shell source or an effective-theory matching step.
 
 Required convergence checks
 ---------------------------
@@ -330,13 +348,13 @@ shell-radius scaling of the reversible and radiation-sensitive pieces.  The
 exact harmonic response independently closes mean self-torque work against
 outward power, its point limit matches the Maxwell-stress sphere oracle, and
 its low-frequency torque converges to the local shell series.  The first
-complex-frequency pole-count test also reproduces the exact-versus-truncated
-causality distinction in expanding finite search windows.  Together these
-establish the finite-size shell bookkeeping benchmark across the
-:math:`q\mu` angular and :math:`\mu^2` energy channels.  A nonzero-boundary
-charge interval, time-domain impulse reconstruction, identification of the
-pure :math:`\mu^2` bound contribution, and application to an archived flyby
-remain later acceptance steps.
+complex-frequency pole-count and refined impulse-response tests reproduce the
+exact-versus-truncated causality distinction.  Together these establish the
+finite-size shell bookkeeping benchmark across the :math:`q\mu` angular and
+:math:`\mu^2` energy channels.  A nonzero-boundary charge interval, explicit
+neutral-source matching, identification of the pure :math:`\mu^2` bound
+contribution, and application to an archived flyby remain later acceptance
+steps.
 
 References
 ----------

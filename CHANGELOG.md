@@ -175,7 +175,10 @@ All notable changes and updates to the LW Integrator project are documented in t
   searches find no poles with the exact response but find two with the known
   acausal small-radius truncation; a lower-half-plane control finds thirteen
   exact poles.  This is finite-window causality evidence, not yet a global
-  proof or a reconstructed time-domain impulse response.
+  proof.  Added a refined inverse-Fourier impulse-response diagnostic that
+  subtracts and analytically restores the bare-inertia jump.  The exact model's
+  sampled pre-impulse response converges below ``1e-9`` in normalized units,
+  while the truncated control retains a converged signal above ``0.3``.
 
 - Added the opt-in exact-retarded translation update
   ``second_order_start_taylor_endpoint``.  It evaluates the ordinary charge
