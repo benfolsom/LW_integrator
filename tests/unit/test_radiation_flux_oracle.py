@@ -166,6 +166,53 @@ def _accelerated_charge_history(
     return result
 
 
+def _harmonic_charge_kinematics(
+    time_ns: float,
+    *,
+    amplitude_mm: float,
+    angular_frequency_per_ns: float,
+) -> tuple[float, float, float, float]:
+    phase = angular_frequency_per_ns * time_ns
+    position = amplitude_mm * np.cos(phase)
+    velocity = -amplitude_mm * angular_frequency_per_ns * np.sin(phase)
+    acceleration = -amplitude_mm * angular_frequency_per_ns**2 * np.cos(phase)
+    jerk = amplitude_mm * angular_frequency_per_ns**3 * np.sin(phase)
+    return float(position), float(velocity), float(acceleration), float(jerk)
+
+
+def _harmonic_charge_history(
+    *,
+    times_ns: np.ndarray,
+    amplitude_mm: float,
+    angular_frequency_per_ns: float,
+) -> list[dict[str, np.ndarray]]:
+    result = []
+    for time_ns in times_ns:
+        position, velocity, acceleration, _ = _harmonic_charge_kinematics(
+            float(time_ns),
+            amplitude_mm=amplitude_mm,
+            angular_frequency_per_ns=angular_frequency_per_ns,
+        )
+        result.append(
+            {
+                "t": np.array([time_ns]),
+                "x": np.array([position]),
+                "y": np.array([0.0]),
+                "z": np.array([0.0]),
+                "bx": np.array([velocity / C_MMNS]),
+                "by": np.array([0.0]),
+                "bz": np.array([0.0]),
+                "bdotx": np.array([acceleration / C_MMNS**2]),
+                "bdoty": np.array([0.0]),
+                "bdotz": np.array([0.0]),
+                "q": np.array([ELEMENTARY_CHARGE]),
+                "q_source": np.array([ELEMENTARY_CHARGE]),
+                "_dead_particles": np.array([False]),
+            }
+        )
+    return result
+
+
 def test_gauss_legendre_sphere_integrates_basic_angular_moments() -> None:
     quadrature = gauss_legendre_sphere_quadrature(polar_order=8, azimuthal_order=16)
 
@@ -683,6 +730,99 @@ def test_retarded_accelerated_charge_flux_matches_larmor_power() -> None:
     # The finite-radius bound-field momentum flux falls as 1/R.  The emitted
     # radiation pattern at this instantaneous rest event has zero net momentum.
     assert momentum_x[0] / momentum_x[1] == pytest.approx(10.0, rel=1.0e-10)
+
+
+def test_periodic_charge_sphere_flux_closes_medina_cycle_balance() -> None:
+    amplitude_mm = 0.02
+    angular_frequency_per_ns = 2.0 * np.pi
+    period_ns = 1.0
+    source_times_ns = np.linspace(0.0, period_ns, 33)
+    history = _harmonic_charge_history(
+        times_ns=np.linspace(-0.25, 1.25, 751),
+        amplitude_mm=amplitude_mm,
+        angular_frequency_per_ns=angular_frequency_per_ns,
+    )
+    reaction_powers = np.empty(source_times_ns.size)
+    reaction_forces = np.empty((source_times_ns.size, 3))
+    radiated_powers = np.empty(source_times_ns.size)
+    cross_energies = np.empty(source_times_ns.size)
+    cross_momenta = np.empty((source_times_ns.size, 3))
+
+    for index, source_time_ns in enumerate(source_times_ns):
+        _, velocity, acceleration, jerk = _harmonic_charge_kinematics(
+            float(source_time_ns),
+            amplitude_mm=amplitude_mm,
+            angular_frequency_per_ns=angular_frequency_per_ns,
+        )
+        beta_x = velocity / C_MMNS
+        gamma = 1.0 / np.sqrt(1.0 - beta_x**2)
+        gamma_derivative = gamma**3 * beta_x * acceleration / C_MMNS
+        force_x = ELECTRON_MASS_AMU * gamma**3 * acceleration
+        force_derivative_x = ELECTRON_MASS_AMU * (
+            3.0 * gamma**2 * gamma_derivative * acceleration + gamma**3 * jerk
+        )
+        medina = compute_medina_radiation_reaction(
+            external_force=(force_x, 0.0, 0.0),
+            external_force_time_derivative=(force_derivative_x, 0.0, 0.0),
+            beta=(beta_x, 0.0, 0.0),
+            acceleration=(acceleration, 0.0, 0.0),
+            gamma=gamma,
+            mass=ELECTRON_MASS_AMU,
+            charge=ELEMENTARY_CHARGE,
+            coordinate_dt=0.0,
+        )
+        reaction_powers[index] = medina.reaction_power
+        reaction_forces[index] = medina.radiation_reaction_force
+        radiated_powers[index] = medina.far_radiated_power
+        cross_energies[index] = medina.cross_field_energy
+        cross_momenta[index] = medina.cross_field_momentum
+
+    reaction_work = float(_trapezoidal_test_integral(reaction_powers, source_times_ns))
+    reaction_impulse = _trapezoidal_test_integral(reaction_forces, source_times_ns)
+    medina_radiated_energy = float(
+        _trapezoidal_test_integral(radiated_powers, source_times_ns)
+    )
+    bound_energy_change = cross_energies[-1] - cross_energies[0]
+    bound_momentum_change = cross_momenta[-1] - cross_momenta[0]
+    assert bound_energy_change == pytest.approx(0.0, abs=1.0e-32)
+    np.testing.assert_allclose(bound_momentum_change, 0.0, atol=1.0e-30)
+
+    quadrature = gauss_legendre_sphere_quadrature(polar_order=3, azimuthal_order=6)
+    sphere_integrals = []
+    for radius_mm in (20.0, 80.0):
+        sphere_samples = [
+            evaluate_retarded_radiation_sphere_native(
+                quadrature=quadrature,
+                observation_time_ns=source_time_ns + radius_mm / C_MMNS,
+                sphere_center_mm=(0.0, 0.0, 0.0),
+                radius_mm=radius_mm,
+                charge_history=history,
+            )
+            for source_time_ns in source_times_ns
+        ]
+        sphere_integral = integrate_radiation_sphere_flux_history_native(sphere_samples)
+        sphere_integrals.append(sphere_integral)
+        assert sphere_integral.q_squared.energy_native == pytest.approx(
+            medina_radiated_energy,
+            rel=5.0e-10,
+        )
+        balance = evaluate_radiation_reaction_balance_native(
+            outward_flux=sphere_integral.q_squared,
+            mechanical_work_native=reaction_work,
+            mechanical_impulse_native=reaction_impulse,
+            bound_field_energy_change_native=bound_energy_change,
+            bound_field_momentum_change_native=bound_momentum_change,
+        )
+        assert abs(balance.energy_residual_native) < 5.0e-10 * medina_radiated_energy
+        assert (
+            np.linalg.norm(balance.momentum_residual_native) * C_MMNS
+            < 5.0e-8 * medina_radiated_energy
+        )
+
+    assert sphere_integrals[1].q_squared.energy_native == pytest.approx(
+        sphere_integrals[0].q_squared.energy_native,
+        rel=5.0e-10,
+    )
 
 
 def test_charge_dipole_interference_momentum_reaches_far_zone_limit() -> None:

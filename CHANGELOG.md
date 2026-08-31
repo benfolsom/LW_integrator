@@ -149,7 +149,11 @@ All notable changes and updates to the LW Integrator project are documented in t
   sign convention.  Tests close Medina's known charge-sector bound energy and
   momentum under timestep refinement and reproduce the angular momentum
   emitted by a circularly rotating magnetic dipole, while leaving magnetic
-  recoil and self-torque unimplemented.
+  recoil and self-torque unimplemented.  A complete-period harmonic-charge
+  benchmark independently evaluates retarded sphere flux at two radii and
+  closes it against Medina reaction work; the periodic bound field returns to
+  its initial value, so this check does not hide an inferred Schott boundary
+  term.
 
 - Added the opt-in exact-retarded translation update
   ``second_order_start_taylor_endpoint``.  It evaluates the ordinary charge

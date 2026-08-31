@@ -178,11 +178,20 @@ quantity.
 The generic balance layer is separately checked against Medina's charge-only
 bound energy and momentum.  The residual decreases quadratically when the
 time spacing is halved, as expected for trapezoidal integration.  This checks
-the accounting signs and the known charge-sector Schott term; it is not yet an
-independent sphere-versus-local comparison for a magnetic self-force.
-Identification of the magnetic bound contribution, comparison with a
-finite-size self-torque, and application to an archived flyby remain later
-acceptance steps.
+the accounting signs and the known charge-sector Schott term.
+
+An independent end-to-end charge benchmark drives the retarded provider with
+one complete period of harmonic motion.  The source state and its bound field
+return to their initial values, so the net Schott boundary change is zero.
+Sphere-flux integration at 20 and 80 mm agrees with Medina's integrated far
+energy and closes reaction work plus outward energy to within the maintained
+``5e-10`` relative tolerance.  This establishes the complete-period
+sphere-versus-local route without assuming the local far-radiation value in
+the surface calculation.
+
+A nonzero-boundary charge interval, identification of the magnetic bound
+contribution, comparison with a finite-size self-torque, and application to an
+archived flyby remain later acceptance steps.
 
 References
 ----------
