@@ -137,6 +137,17 @@ The focused tests presently establish:
 * the static :math:`g=2` intrinsic-moment cancellation in the retained local
   expression.
 
+A first independent conservation benchmark uses a charge oscillating along
+one axis and a prescribed magnetization oscillating along a perpendicular
+axis in the slow-motion limit.  Physical spin is set to zero, selecting the
+paper's generic magnetization/susceptibility term.  The interval is one full
+period, so the local total derivative returns to its initial value, and the
+spin-specific radiative-field correction in the paper's supplemental Eq. (33)
+is absent.  The maintained Maxwell-stress integrator independently evaluates
+the cross term of the standard electric- and magnetic-dipole radiation fields.
+The local impulse and outward :math:`q\mu` momentum are equal and opposite at
+both tested angular quadratures.
+
 Production use is intentionally blocked.  The unreduced equation contains
 four-snap and spin/moment derivatives.  A production model must specify how
 those derivatives are obtained without introducing runaway solutions, and it
@@ -146,6 +157,11 @@ bound-field, or Schott-like, change.  Jakobsen's supplemental comparison to
 Villarroel [Villarroel1975]_ shows explicitly that the radiated momentum and
 the local force differ by a total derivative and an additional radiative-field
 term, so far flux alone is not the instantaneous local force.
+
+The next conservation test must retain nonzero fixed-magnitude physical spin
+and use the fully retarded providers.  It must account explicitly for every
+term in supplemental Eq. (33), rather than assuming that the simple periodic
+magnetization cancellation applies.
 
 References
 ----------
