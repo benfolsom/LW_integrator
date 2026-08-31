@@ -16,6 +16,7 @@ from core.spinning_shell_self_torque import (
     count_harmonic_spinning_shell_transfer_poles_native,
     evaluate_harmonic_spinning_shell_response_native,
     evaluate_harmonic_spinning_shell_transfer_native,
+    evaluate_neutral_counterrotating_shell_response_native,
     evaluate_spinning_shell_angular_balance_native,
     evaluate_spinning_shell_local_self_torque_native,
     reconstruct_harmonic_spinning_shell_impulse_response_native,
@@ -525,4 +526,62 @@ def test_impulse_response_rejects_zero_friction_and_even_grid() -> None:
             friction_coefficient_native=1.0,
             frequency_sample_count=258,
             **common,
+        )
+
+
+def test_neutral_counterrotating_shells_cancel_charge_and_add_moment() -> None:
+    radius_mm = 0.7
+    frequency_per_ns = 0.1 * C_MMNS / radius_mm
+    angular_velocity_per_ns = (0.01 + 0.004j) * C_MMNS / radius_mm
+    neutral = evaluate_neutral_counterrotating_shell_response_native(
+        internal_charge_magnitude_native=ELEMENTARY_CHARGE,
+        total_shell_mass_amu=ELECTRON_MASS_AMU,
+        shell_radius_mm=radius_mm,
+        drive_angular_frequency_per_ns=frequency_per_ns,
+        angular_velocity_amplitude_per_ns=angular_velocity_per_ns,
+    )
+    charged_parameterization = evaluate_harmonic_spinning_shell_response_native(
+        charge_native=ELEMENTARY_CHARGE,
+        shell_radius_mm=radius_mm,
+        drive_angular_frequency_per_ns=frequency_per_ns,
+        angular_velocity_amplitude_per_ns=angular_velocity_per_ns,
+    )
+
+    assert sum(neutral.shell_charges_native) == 0.0
+    assert neutral.net_charge_native == 0.0
+    assert sum(neutral.shell_masses_amu) == pytest.approx(
+        ELECTRON_MASS_AMU,
+        rel=0.0,
+        abs=0.0,
+    )
+    assert neutral.shell_angular_velocity_amplitudes_per_ns == (
+        angular_velocity_per_ns,
+        -angular_velocity_per_ns,
+    )
+    assert neutral.shell_magnetic_moment_amplitudes_native[0] == pytest.approx(
+        neutral.shell_magnetic_moment_amplitudes_native[1],
+        rel=0.0,
+        abs=0.0,
+    )
+    assert neutral.total_magnetic_moment_amplitude_native == pytest.approx(
+        sum(neutral.shell_magnetic_moment_amplitudes_native),
+        rel=0.0,
+        abs=0.0,
+    )
+    assert neutral.total_magnetic_moment_amplitude_native == pytest.approx(
+        charged_parameterization.magnetic_moment_amplitude_native,
+        rel=0.0,
+        abs=0.0,
+    )
+    assert neutral.effective_one_shell_response == charged_parameterization
+
+
+def test_neutral_counterrotating_shell_rejects_nonpositive_internal_charge() -> None:
+    with pytest.raises(ValueError, match="positive"):
+        evaluate_neutral_counterrotating_shell_response_native(
+            internal_charge_magnitude_native=0.0,
+            total_shell_mass_amu=ELECTRON_MASS_AMU,
+            shell_radius_mm=1.0,
+            drive_angular_frequency_per_ns=1.0,
+            angular_velocity_amplitude_per_ns=1.0,
         )

@@ -272,8 +272,40 @@ leaves the post-impulse response stable within the maintained tolerances.
 The pole count and time reconstruction together provide strong numerical
 causality evidence and reproduce the contrast in Mansuripur--Jakobsen Fig. 2.
 They are not a mathematical proof over the entire unbounded upper half-plane.
-A neutral intrinsic moment still requires the paper's explicit neutral
-two-shell source or an effective-theory matching step.
+
+Neutral counter-rotating shell construction
+-------------------------------------------
+
+``evaluate_neutral_counterrotating_shell_response_native`` records the
+paper's explicit charge-neutral realization.  Two nearly coincident shells
+carry charges :math:`(+q/2,-q/2)`, masses :math:`(m/2,m/2)`, and angular
+velocities :math:`(+\Omega,-\Omega)`.  Their net electric charge is zero, but
+the charge-current products have the same sign, so the two magnetic moments
+add:
+
+.. math::
+
+   \mu_{+}+\mu_{-}={qR^2\Omega\over3}.
+
+Mansuripur and Jakobsen show that the collective equation of motion retains
+the one-shell form with parameters :math:`q`, :math:`m`, and :math:`\Omega`.
+The result object makes that equivalence explicit while preserving both
+internal charges and rotations.  Tests verify exact charge cancellation,
+equal per-shell moment contributions, the total moment, and equality with the
+effective one-shell harmonic response.
+
+This resolves an important sector distinction.  The external electric
+monopole vanishes, so a charge--moment flux formed from *net* charge times
+total moment cancels.  The varying total moment and its :math:`\mu^2` radiated
+power survive.  The local torque also survives because the neutral source
+contains oppositely moving internal charges; it is not obtained by inserting
+``charge_native=0`` into the charged-shell formula.
+
+This construction is a specific finite-size neutral-current model, not a
+universal structureless point-dipole law.  Its response still depends on the
+internal charge and radius used to realize a given magnetic moment.  Matching
+that dependence to an intrinsic-particle effective theory remains necessary
+before production use.
 
 Required convergence checks
 ---------------------------
@@ -352,7 +384,7 @@ complex-frequency pole-count and refined impulse-response tests reproduce the
 exact-versus-truncated causality distinction.  Together these establish the
 finite-size shell bookkeeping benchmark across the :math:`q\mu` angular and
 :math:`\mu^2` energy channels.  A nonzero-boundary charge interval, explicit
-neutral-source matching, identification of the pure :math:`\mu^2` bound
+intrinsic-particle matching, identification of the pure :math:`\mu^2` bound
 contribution, and application to an archived flyby remain later acceptance
 steps.
 

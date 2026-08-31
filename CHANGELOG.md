@@ -178,7 +178,12 @@ All notable changes and updates to the LW Integrator project are documented in t
   proof.  Added a refined inverse-Fourier impulse-response diagnostic that
   subtracts and analytically restores the bare-inertia jump.  The exact model's
   sampled pre-impulse response converges below ``1e-9`` in normalized units,
-  while the truncated control retains a converged signal above ``0.3``.
+  while the truncated control retains a converged signal above ``0.3``.  Added
+  an explicit neutral counter-rotating two-shell source description.  Its
+  opposite charges cancel net charge, its opposite rotations make the two
+  magnetic moments add, and its collective harmonic response matches the
+  paper's effective one-shell equation.  The neutral result remains a
+  finite-size internal-current model, not a universal point-dipole law.
 
 - Added the opt-in exact-retarded translation update
   ``second_order_start_taylor_endpoint``.  It evaluates the ordinary charge

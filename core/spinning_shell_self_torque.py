@@ -220,6 +220,27 @@ class HarmonicSpinningShellImpulseResponseResult:
     inertial_reference_subtracted: bool
 
 
+@dataclass(frozen=True)
+class NeutralCounterRotatingShellResponseResult:
+    """Explicit neutral two-shell realization of the harmonic source.
+
+    The two nearly coincident shells carry charges ``(+q/2, -q/2)`` and
+    rotate with amplitudes ``(+Omega, -Omega)``.  Their net charge vanishes,
+    while their ordinary magnetic moments have the same sign and add.
+    Mansuripur--Jakobsen show that the collective equation of motion is the
+    same as for their one-shell parameterization using ``q``, total mass, and
+    ``Omega``.
+    """
+
+    shell_charges_native: tuple[float, float]
+    shell_masses_amu: tuple[float, float]
+    shell_angular_velocity_amplitudes_per_ns: tuple[complex, complex]
+    shell_magnetic_moment_amplitudes_native: tuple[complex, complex]
+    net_charge_native: float
+    total_magnetic_moment_amplitude_native: complex
+    effective_one_shell_response: HarmonicSpinningShellResponseResult
+
+
 def _finite_complex(value: complex, *, name: str) -> complex:
     result = complex(value)
     if not np.isfinite(result.real) or not np.isfinite(result.imag):
@@ -597,6 +618,56 @@ def reconstruct_harmonic_spinning_shell_impulse_response_native(
     )
 
 
+def evaluate_neutral_counterrotating_shell_response_native(
+    *,
+    internal_charge_magnitude_native: float,
+    total_shell_mass_amu: float,
+    shell_radius_mm: float,
+    drive_angular_frequency_per_ns: float,
+    angular_velocity_amplitude_per_ns: complex,
+) -> NeutralCounterRotatingShellResponseResult:
+    """Evaluate the paper's neutral, counter-rotating two-shell construction.
+
+    ``internal_charge_magnitude_native`` is the paper's positive parameter
+    ``q``; each shell carries half that magnitude with opposite sign.  This
+    function does not pretend that the neutral object is a structureless point
+    dipole.  It records the internal charges, masses, rotations, and moments,
+    then evaluates the exact collective response through the equivalence
+    derived immediately after Mansuripur--Jakobsen Eq. (19).
+    """
+
+    charge_magnitude = float(internal_charge_magnitude_native)
+    if not np.isfinite(charge_magnitude) or charge_magnitude <= 0.0:
+        raise ValueError(
+            "internal_charge_magnitude_native must be finite and positive"
+        )
+    _positive_mass_kg(total_shell_mass_amu)
+    angular_velocity = _finite_complex(
+        angular_velocity_amplitude_per_ns,
+        name="angular_velocity_amplitude_per_ns",
+    )
+    response = evaluate_harmonic_spinning_shell_response_native(
+        charge_native=charge_magnitude,
+        shell_radius_mm=shell_radius_mm,
+        drive_angular_frequency_per_ns=drive_angular_frequency_per_ns,
+        angular_velocity_amplitude_per_ns=angular_velocity,
+    )
+    half_moment = 0.5 * response.magnetic_moment_amplitude_native
+    half_mass = 0.5 * float(total_shell_mass_amu)
+    return NeutralCounterRotatingShellResponseResult(
+        shell_charges_native=(0.5 * charge_magnitude, -0.5 * charge_magnitude),
+        shell_masses_amu=(half_mass, half_mass),
+        shell_angular_velocity_amplitudes_per_ns=(
+            angular_velocity,
+            -angular_velocity,
+        ),
+        shell_magnetic_moment_amplitudes_native=(half_moment, half_moment),
+        net_charge_native=0.0,
+        total_magnetic_moment_amplitude_native=(2.0 * half_moment),
+        effective_one_shell_response=response,
+    )
+
+
 def evaluate_harmonic_spinning_shell_response_native(
     *,
     charge_native: float,
@@ -835,11 +906,13 @@ __all__ = [
     "HarmonicSpinningShellResponseResult",
     "HarmonicSpinningShellPoleCountResult",
     "HarmonicSpinningShellTransferResult",
+    "NeutralCounterRotatingShellResponseResult",
     "SpinningShellAngularBalanceResult",
     "SpinningShellLocalTorqueResult",
     "count_harmonic_spinning_shell_transfer_poles_native",
     "evaluate_harmonic_spinning_shell_response_native",
     "evaluate_harmonic_spinning_shell_transfer_native",
+    "evaluate_neutral_counterrotating_shell_response_native",
     "evaluate_spinning_shell_angular_balance_native",
     "evaluate_spinning_shell_local_self_torque_native",
     "reconstruct_harmonic_spinning_shell_impulse_response_native",
