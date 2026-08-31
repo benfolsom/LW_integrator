@@ -149,8 +149,12 @@ All notable changes and updates to the LW Integrator project are documented in t
   that balance-only term separately from the mechanical force, plus the
   intrinsic-spin radiated loss and reversible bound-field momentum of
   supplemental Eq. (33).  An arbitrary-state test closes the full local
-  identity without periodic cancellation.  A matched-null-boundary
-  nonperiodic provider comparison and reduction of order remain open.
+  identity without periodic cancellation.  A matched-light-cone nonperiodic
+  provider test now makes the bound-momentum endpoint change nonzero, verifies
+  every retarded root, applies the per-ray observation/source-time Jacobian,
+  and extrapolates three radii to null infinity.  The small spatial components
+  close within two percent while the energy closes more tightly.  Reduction
+  of order remains open.
 - Added a diagnostic radiation-flux oracle that samples the independent
   retarded charge and intrinsic-dipole fields on a sphere and integrates
   outward electromagnetic energy, linear momentum, and angular momentum.  It

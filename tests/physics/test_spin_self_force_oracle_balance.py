@@ -12,7 +12,10 @@ from core.radiation_flux_oracle import (
     evaluate_retarded_radiation_sphere_native,
     gauss_legendre_sphere_quadrature,
     integrate_radiation_sphere_flux_history_native,
+    integrate_radiation_sphere_flux_native,
 )
+from core.retarded_dipole_fields import evaluate_retarded_dipole_field_gradient_native
+from core.retarded_fields import ObserverEvent, evaluate_retarded_charge_field_native
 from core.spin_self_force_oracle import (
     evaluate_jakobsen_intrinsic_spin_radiation_balance_native,
     evaluate_jakobsen_linear_spin_self_force_native,
@@ -103,6 +106,90 @@ def _local_linear_spin_impulse(
         0.5 * (forces[:-1] + forces[1:]) * intervals[:, np.newaxis],
         axis=0,
     )
+
+
+def _circular_intrinsic_state(
+    time_ns: float,
+    *,
+    orbit_radius_mm: float,
+    angular_frequency_per_ns: float,
+    gamma: float,
+) -> tuple[np.ndarray, ...]:
+    phase = angular_frequency_per_ns * time_ns
+    radial = np.array((math.cos(phase), math.sin(phase), 0.0))
+    tangent = np.array((-math.sin(phase), math.cos(phase), 0.0))
+    velocity = orbit_radius_mm * angular_frequency_per_ns * tangent
+    four_velocity = np.r_[gamma * C_MMNS, gamma * velocity]
+    four_acceleration = np.r_[
+        0.0,
+        -(gamma**2) * orbit_radius_mm * angular_frequency_per_ns**2 * radial,
+    ]
+    four_jerk = np.r_[
+        0.0,
+        -(gamma**3) * orbit_radius_mm * angular_frequency_per_ns**3 * tangent,
+    ]
+    four_snap = np.r_[
+        0.0,
+        gamma**4 * orbit_radius_mm * angular_frequency_per_ns**4 * radial,
+    ]
+    return radial, tangent, four_velocity, four_acceleration, four_jerk, four_snap
+
+
+def _circular_intrinsic_source_history(
+    *,
+    times_ns: np.ndarray,
+    charge_native: float,
+    magnetic_moment_native: float,
+    orbit_radius_mm: float,
+    angular_frequency_per_ns: float,
+) -> list[dict[str, np.ndarray]]:
+    beta_magnitude = orbit_radius_mm * angular_frequency_per_ns / C_MMNS
+    gamma = 1.0 / math.sqrt(1.0 - beta_magnitude**2)
+    history = []
+    for time_ns in times_ns:
+        radial, tangent, _, _, _, _ = _circular_intrinsic_state(
+            float(time_ns),
+            orbit_radius_mm=orbit_radius_mm,
+            angular_frequency_per_ns=angular_frequency_per_ns,
+            gamma=gamma,
+        )
+        history.append(
+            {
+                "t": np.array([time_ns]),
+                "x": np.array([orbit_radius_mm * radial[0]]),
+                "y": np.array([orbit_radius_mm * radial[1]]),
+                "z": np.array([0.0]),
+                "bx": np.array([beta_magnitude * tangent[0]]),
+                "by": np.array([beta_magnitude * tangent[1]]),
+                "bz": np.array([0.0]),
+                "bdotx": np.array(
+                    [
+                        -orbit_radius_mm
+                        * angular_frequency_per_ns**2
+                        * radial[0]
+                        / C_MMNS**2
+                    ]
+                ),
+                "bdoty": np.array(
+                    [
+                        -orbit_radius_mm
+                        * angular_frequency_per_ns**2
+                        * radial[1]
+                        / C_MMNS**2
+                    ]
+                ),
+                "bdotz": np.array([0.0]),
+                "q": np.array([charge_native]),
+                "q_source": np.array([charge_native]),
+                "spin_x": np.array([0.0]),
+                "spin_y": np.array([0.0]),
+                "spin_z": np.array([1.0]),
+                "magnetic_moment_native": np.array([magnetic_moment_native]),
+                "magnetic_dipole_active": np.array([1.0]),
+                "_dead_particles": np.array([False]),
+            }
+        )
+    return history
 
 
 @pytest.mark.slow
@@ -229,65 +316,13 @@ def test_circular_intrinsic_spin_energy_requires_radiative_field_correction() ->
     gamma = 1.0 / math.sqrt(1.0 - beta_magnitude**2)
     spin_magnitude = 2.0 * mass * C_MMNS * moment_native / (g_factor * charge)
 
-    def state(time_ns: float) -> tuple[np.ndarray, ...]:
-        phase = angular_frequency_per_ns * time_ns
-        radial = np.array((math.cos(phase), math.sin(phase), 0.0))
-        tangent = np.array((-math.sin(phase), math.cos(phase), 0.0))
-        velocity = orbit_radius_mm * angular_frequency_per_ns * tangent
-        four_velocity = np.r_[gamma * C_MMNS, gamma * velocity]
-        four_acceleration = np.r_[
-            0.0,
-            -(gamma**2) * orbit_radius_mm * angular_frequency_per_ns**2 * radial,
-        ]
-        four_jerk = np.r_[
-            0.0,
-            -(gamma**3) * orbit_radius_mm * angular_frequency_per_ns**3 * tangent,
-        ]
-        four_snap = np.r_[
-            0.0,
-            gamma**4 * orbit_radius_mm * angular_frequency_per_ns**4 * radial,
-        ]
-        return radial, tangent, four_velocity, four_acceleration, four_jerk, four_snap
-
-    history = []
-    for time_ns in np.linspace(-0.2 * period_ns, 1.2 * period_ns, 1601):
-        radial, tangent, _, _, _, _ = state(float(time_ns))
-        history.append(
-            {
-                "t": np.array([time_ns]),
-                "x": np.array([orbit_radius_mm * radial[0]]),
-                "y": np.array([orbit_radius_mm * radial[1]]),
-                "z": np.array([0.0]),
-                "bx": np.array([beta_magnitude * tangent[0]]),
-                "by": np.array([beta_magnitude * tangent[1]]),
-                "bz": np.array([0.0]),
-                "bdotx": np.array(
-                    [
-                        -orbit_radius_mm
-                        * angular_frequency_per_ns**2
-                        * radial[0]
-                        / C_MMNS**2
-                    ]
-                ),
-                "bdoty": np.array(
-                    [
-                        -orbit_radius_mm
-                        * angular_frequency_per_ns**2
-                        * radial[1]
-                        / C_MMNS**2
-                    ]
-                ),
-                "bdotz": np.array([0.0]),
-                "q": np.array([charge]),
-                "q_source": np.array([charge]),
-                "spin_x": np.array([0.0]),
-                "spin_y": np.array([0.0]),
-                "spin_z": np.array([1.0]),
-                "magnetic_moment_native": np.array([moment_native]),
-                "magnetic_dipole_active": np.array([1.0]),
-                "_dead_particles": np.array([False]),
-            }
-        )
+    history = _circular_intrinsic_source_history(
+        times_ns=np.linspace(-0.2 * period_ns, 1.2 * period_ns, 1601),
+        charge_native=charge,
+        magnetic_moment_native=moment_native,
+        orbit_radius_mm=orbit_radius_mm,
+        angular_frequency_per_ns=angular_frequency_per_ns,
+    )
 
     source_times = np.linspace(0.0, period_ns, 65)
     self_force_energy_rates = np.empty(source_times.size)
@@ -295,8 +330,18 @@ def test_circular_intrinsic_spin_energy_requires_radiative_field_correction() ->
     outward_radiated_energy_rates = np.empty(source_times.size)
     bound_momenta = np.empty((source_times.size, 4))
     for index, time_ns in enumerate(source_times):
-        _, _, four_velocity, four_acceleration, four_jerk, four_snap = state(
-            float(time_ns)
+        (
+            _,
+            _,
+            four_velocity,
+            four_acceleration,
+            four_jerk,
+            four_snap,
+        ) = _circular_intrinsic_state(
+            float(time_ns),
+            orbit_radius_mm=orbit_radius_mm,
+            angular_frequency_per_ns=angular_frequency_per_ns,
+            gamma=gamma,
         )
         local = evaluate_jakobsen_intrinsic_spin_radiation_balance_native(
             charge_native=charge,
@@ -394,3 +439,182 @@ def test_circular_intrinsic_spin_energy_requires_radiative_field_correction() ->
         assert abs(self_force_work + outward) > 0.8 * outward
 
     assert outward_energies[1] == pytest.approx(outward_energies[0], rel=3.0e-6)
+
+
+@pytest.mark.slow
+def test_nonperiodic_bound_momentum_closes_on_matched_light_cones() -> None:
+    """Resolve a nonzero bound-momentum change at null infinity.
+
+    The interval is one quarter of the circular orbit.  For every angular
+    ray and source time, the observer time is chosen so the exact retarded
+    event is that source time.  Multiplication by
+    ``dt_observer/dt_source = 1-n.beta`` then integrates one common emission
+    interval over the sphere instead of one common observer-time interval.
+
+    Finite-radius momentum is dominated by reversible near-field transport.
+    A quadratic extrapolation in ``1/R`` isolates the constant radiative
+    term and is compared with the local self-force plus the explicitly
+    nonzero bound-field endpoint change.
+    """
+
+    charge = 0.8
+    mass = 1.0
+    g_factor = 2.3
+    orbit_radius_mm = 0.03
+    angular_frequency_per_ns = 50.0
+    moment_native = 1.4e-8
+    period_ns = 2.0 * math.pi / angular_frequency_per_ns
+    beta_magnitude = orbit_radius_mm * angular_frequency_per_ns / C_MMNS
+    gamma = 1.0 / math.sqrt(1.0 - beta_magnitude**2)
+    spin_magnitude = 2.0 * mass * C_MMNS * moment_native / (g_factor * charge)
+    history = _circular_intrinsic_source_history(
+        times_ns=np.linspace(-0.25 * period_ns, 1.25 * period_ns, 1537),
+        charge_native=charge,
+        magnetic_moment_native=moment_native,
+        orbit_radius_mm=orbit_radius_mm,
+        angular_frequency_per_ns=angular_frequency_per_ns,
+    )
+
+    # Integrate the local side finely because it nearly cancels the much
+    # larger endpoint change in bound momentum.
+    local_times = np.linspace(0.0, 0.25 * period_ns, 1025)
+    local_rates = np.empty((local_times.size, 4))
+    bound_momenta = np.empty((local_times.size, 4))
+    for index, source_time_ns in enumerate(local_times):
+        (
+            _,
+            _,
+            four_velocity,
+            four_acceleration,
+            four_jerk,
+            four_snap,
+        ) = _circular_intrinsic_state(
+            float(source_time_ns),
+            orbit_radius_mm=orbit_radius_mm,
+            angular_frequency_per_ns=angular_frequency_per_ns,
+            gamma=gamma,
+        )
+        local = evaluate_jakobsen_intrinsic_spin_radiation_balance_native(
+            charge_native=charge,
+            mass_amu=mass,
+            g_factor=g_factor,
+            four_velocity_mm_ns=four_velocity,
+            four_acceleration_mm_ns2=four_acceleration,
+            four_jerk_mm_ns3=four_jerk,
+            four_snap_mm_ns4=four_snap,
+            spin_four_vector_native=(0.0, 0.0, 0.0, spin_magnitude),
+            spin_four_derivative_native=np.zeros(4),
+            spin_four_second_derivative_native=np.zeros(4),
+        )
+        local_rates[index] = (
+            local.self_force.linear_spin_radiative_balance_rate_native / gamma
+        )
+        bound_momenta[index] = local.bound_field_momentum_native
+
+    local_intervals = np.diff(local_times)
+    local_impulse = np.sum(
+        0.5 * (local_rates[:-1] + local_rates[1:]) * local_intervals[:, np.newaxis],
+        axis=0,
+    )
+    bound_change = bound_momenta[-1] - bound_momenta[0]
+    expected_outward_four_momentum = bound_change - local_impulse
+    assert np.linalg.norm(bound_change[1:]) > (
+        1.0e3 * np.linalg.norm(expected_outward_four_momentum[1:])
+    )
+
+    quadrature = gauss_legendre_sphere_quadrature(
+        polar_order=3,
+        azimuthal_order=6,
+    )
+    source_times = np.linspace(0.0, 0.25 * period_ns, 17)
+    radii = np.array((400.0, 800.0, 1600.0))
+    radial_outward_four_momenta = []
+    for radius_mm in radii:
+        source_parameterized_samples = []
+        for source_time_ns in source_times:
+            radial, tangent, _, _, _, _ = _circular_intrinsic_state(
+                float(source_time_ns),
+                orbit_radius_mm=orbit_radius_mm,
+                angular_frequency_per_ns=angular_frequency_per_ns,
+                gamma=gamma,
+            )
+            source_position = orbit_radius_mm * radial
+            source_beta = beta_magnitude * tangent
+            charge_electric = np.empty((quadrature.sample_count, 3))
+            charge_magnetic = np.empty((quadrature.sample_count, 3))
+            dipole_electric = np.empty((quadrature.sample_count, 3))
+            dipole_magnetic = np.empty((quadrature.sample_count, 3))
+            time_jacobian = np.empty(quadrature.sample_count)
+            for sample_index, direction in enumerate(quadrature.directions):
+                observer_position = radius_mm * direction
+                separation = observer_position - source_position
+                distance = float(np.linalg.norm(separation))
+                source_to_observer = separation / distance
+                observer_event = ObserverEvent(
+                    time_ns=float(source_time_ns + distance / C_MMNS),
+                    position_mm=tuple(float(value) for value in observer_position),
+                )
+                charge_result = evaluate_retarded_charge_field_native(
+                    history,
+                    observer_event,
+                    require_complete_history=True,
+                )
+                dipole_result = evaluate_retarded_dipole_field_gradient_native(
+                    history,
+                    observer_event,
+                    source_identities=("nonperiodic-circular-source",),
+                    require_complete_history=True,
+                    stencil_step_mm=0.04,
+                    backend="python",
+                )
+                charge_electric[sample_index] = charge_result.electric_field_native
+                charge_magnetic[sample_index] = charge_result.magnetic_field_native
+                dipole_electric[sample_index] = dipole_result.electric_field_native
+                dipole_magnetic[sample_index] = dipole_result.magnetic_field_native
+                time_jacobian[sample_index] = 1.0 - float(
+                    source_to_observer @ source_beta
+                )
+                assert charge_result.retarded_time_ns[0] == pytest.approx(
+                    source_time_ns,
+                    abs=1.0e-14,
+                )
+                assert dipole_result.hertz.retarded_time_ns[0] == pytest.approx(
+                    source_time_ns,
+                    abs=1.0e-14,
+                )
+
+            source_parameterized_samples.append(
+                integrate_radiation_sphere_flux_native(
+                    quadrature=quadrature,
+                    radius_mm=radius_mm,
+                    charge_electric_field_native=charge_electric,
+                    charge_magnetic_field_native=charge_magnetic,
+                    dipole_electric_field_native=dipole_electric,
+                    dipole_magnetic_field_native=dipole_magnetic,
+                    observation_time_ns=float(source_time_ns),
+                    sample_time_jacobian=time_jacobian,
+                )
+            )
+
+        outward = integrate_radiation_sphere_flux_history_native(
+            source_parameterized_samples
+        ).q_mu_interference
+        radial_outward_four_momenta.append(
+            np.r_[outward.energy_native / C_MMNS, outward.momentum_native]
+        )
+
+    radial_values = np.asarray(radial_outward_four_momenta)
+    inverse_radius = 1.0 / radii
+    null_infinity = np.array(
+        [
+            np.polyfit(inverse_radius, radial_values[:, component], 2)[-1]
+            for component in range(4)
+        ]
+    )
+    np.testing.assert_allclose(
+        null_infinity[:3],
+        expected_outward_four_momentum[:3],
+        rtol=2.0e-2,
+        atol=2.0e-6 * abs(expected_outward_four_momentum[0]),
+    )
+    assert abs(null_infinity[3]) < 1.0e-12 * abs(null_infinity[0])

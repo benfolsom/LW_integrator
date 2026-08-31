@@ -81,6 +81,11 @@ Four-layer design
 ``integrate_radiation_sphere_flux_native`` accepts fields already sampled on
 a sphere.  This pure layer tests the Poynting-vector, Maxwell-stress, sector,
 and angular-momentum accounting without invoking a retarded-field solver.
+Its optional ``sample_time_jacobian`` supports a matched-light-cone
+parameterization.  Each angular ray may then be sampled at the observation
+time whose retarded root is one declared source time, while the factor
+:math:`dt_{\rm obs}/dt_{\rm source}` converts the surface flux to a rate per
+source time.  The ordinary path omits this argument and is unchanged.
 
 ``evaluate_retarded_radiation_sphere_native`` is the reference sampling layer.
 It evaluates the maintained retarded charge and magnetic-dipole providers at
@@ -102,6 +107,23 @@ the change in bound, Schott-like field energy and momentum over the same source
 interval.  Radius comparisons must shift their observation windows so that
 the retarded-time envelopes match; integrating the same coordinate-time
 window at two radii generally compares different emitted wavefronts.
+
+For a nonperiodic moving source, one constant observation time is not enough
+to match source endpoints over the whole sphere: different angular rays have
+different light-travel distances.  The maintained intrinsic-spin test uses
+
+.. math::
+
+   t_{\rm obs}(\mathbf n,t_s)
+   =t_s+{|R\mathbf n-\mathbf z(t_s)|\over c},
+   \qquad
+   {dt_{\rm obs}\over dt_s}=1-\mathbf n_{\rm ret}\cdot\boldsymbol\beta.
+
+It verifies every returned retarded root against :math:`t_s`, applies this
+Jacobian per angular sample, and extrapolates the finite-radius result in
+:math:`1/R`.  This is the matched null-boundary construction needed to compare
+one common nonperiodic source interval with a local bound-field endpoint
+change.
 
 ``evaluate_radiation_reaction_balance_native`` is the accounting layer for a
 proposed local self-reaction law.  With outward flux positive, it reports the

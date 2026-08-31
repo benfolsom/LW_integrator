@@ -272,6 +272,63 @@ def test_uniform_outgoing_spherical_wave_has_expected_energy_flux() -> None:
     assert result.mu_squared.energy_rate_native == 0.0
 
 
+def test_source_time_jacobian_scales_each_angular_flux_sample() -> None:
+    """A matched-light-cone Jacobian changes the integration parameter only."""
+
+    quadrature = gauss_legendre_sphere_quadrature(polar_order=4, azimuthal_order=8)
+    electric, magnetic = _outgoing_transverse_fields(
+        quadrature.directions,
+        amplitude=0.7,
+    )
+    zeros = _zero_fields(quadrature.sample_count)
+    reference = integrate_radiation_sphere_flux_native(
+        quadrature=quadrature,
+        radius_mm=3.0,
+        charge_electric_field_native=electric,
+        charge_magnetic_field_native=magnetic,
+        dipole_electric_field_native=zeros,
+        dipole_magnetic_field_native=zeros,
+    )
+    reparameterized = integrate_radiation_sphere_flux_native(
+        quadrature=quadrature,
+        radius_mm=3.0,
+        charge_electric_field_native=electric,
+        charge_magnetic_field_native=magnetic,
+        dipole_electric_field_native=zeros,
+        dipole_magnetic_field_native=zeros,
+        sample_time_jacobian=np.full(quadrature.sample_count, 2.5),
+    )
+
+    assert reparameterized.q_squared.energy_rate_native == pytest.approx(
+        2.5 * reference.q_squared.energy_rate_native
+    )
+    np.testing.assert_allclose(
+        reparameterized.q_squared.momentum_rate_native,
+        2.5 * reference.q_squared.momentum_rate_native,
+        atol=2.0e-14,
+    )
+    with pytest.raises(ValueError, match="one value"):
+        integrate_radiation_sphere_flux_native(
+            quadrature=quadrature,
+            radius_mm=3.0,
+            charge_electric_field_native=electric,
+            charge_magnetic_field_native=magnetic,
+            dipole_electric_field_native=zeros,
+            dipole_magnetic_field_native=zeros,
+            sample_time_jacobian=(1.0,),
+        )
+    with pytest.raises(ValueError, match="finite positive"):
+        integrate_radiation_sphere_flux_native(
+            quadrature=quadrature,
+            radius_mm=3.0,
+            charge_electric_field_native=electric,
+            charge_magnetic_field_native=magnetic,
+            dipole_electric_field_native=zeros,
+            dipole_magnetic_field_native=zeros,
+            sample_time_jacobian=np.zeros(quadrature.sample_count),
+        )
+
+
 def test_flux_history_integrates_irregular_linear_samples_exactly() -> None:
     times_ns = np.array((0.0, 0.07, 0.31, 0.8, 1.4))
     samples = [_linear_flux_sample(float(time_ns)) for time_ns in times_ns]
@@ -911,9 +968,7 @@ def test_axial_moment_q_mu_flux_matches_point_limit_of_spinning_shell() -> None:
             [
                 moment_amplitude_native
                 * angular_frequency_per_ns**order
-                * np.cos(
-                    angular_frequency_per_ns * time_ns + order * np.pi / 2.0
-                )
+                * np.cos(angular_frequency_per_ns * time_ns + order * np.pi / 2.0)
                 for order in range(9)
             ]
         )
@@ -925,8 +980,7 @@ def test_axial_moment_q_mu_flux_matches_point_limit_of_spinning_shell() -> None:
             (
                 0.0,
                 0.0,
-                moment_amplitude_native
-                * np.cos(angular_frequency_per_ns * time_ns),
+                moment_amplitude_native * np.cos(angular_frequency_per_ns * time_ns),
             )
         ),
         times_ns=np.linspace(-0.15, 0.15, 601),

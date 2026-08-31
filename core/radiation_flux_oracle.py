@@ -709,12 +709,21 @@ def integrate_radiation_sphere_flux_native(
     observation_time_ns: float = 0.0,
     sphere_center_mm: Sequence[float] = (0.0, 0.0, 0.0),
     angular_momentum_origin_mm: Sequence[float] | None = None,
+    sample_time_jacobian: Sequence[float] | np.ndarray | None = None,
 ) -> RadiationSphereFluxResult:
     """Integrate Maxwell energy, momentum, and angular-momentum flux.
 
     The result is split into the charge-only ``q_squared`` sector, the signed
     charge--dipole interference sector, and the dipole-only ``mu_squared``
     sector.  This split is algebraic: their sum is the flux of the total field.
+
+    ``sample_time_jacobian`` is normally omitted.  It is provided for a
+    matched-light-cone parameterization in which each angular ray is sampled
+    at a different observation time but all rays share one source-time
+    parameter.  Its entries are ``dt_observation/dt_source`` and multiply the
+    corresponding surface weights.  This converts the returned rate from an
+    observation-time rate to a source-time-parameterized rate without changing
+    the Maxwell-stress calculation.
     """
 
     radius = float(radius_mm)
@@ -751,7 +760,17 @@ def integrate_radiation_sphere_flux_native(
         sample_count=count,
         name="dipole_magnetic_field_native",
     )
-    surface_weights = radius**2 * quadrature.solid_angle_weights
+    if sample_time_jacobian is None:
+        time_jacobian = np.ones(count, dtype=float)
+    else:
+        time_jacobian = np.asarray(sample_time_jacobian, dtype=float)
+        if time_jacobian.shape != (count,):
+            raise ValueError(
+                "sample_time_jacobian must have one value per quadrature sample"
+            )
+        if not np.all(np.isfinite(time_jacobian)) or np.any(time_jacobian <= 0.0):
+            raise ValueError("sample_time_jacobian must contain finite positive values")
+    surface_weights = radius**2 * quadrature.solid_angle_weights * time_jacobian
     sample_positions = center[np.newaxis, :] + radius * quadrature.directions
     lever_arms = sample_positions - origin[np.newaxis, :]
 

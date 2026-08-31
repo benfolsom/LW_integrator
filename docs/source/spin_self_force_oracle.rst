@@ -231,12 +231,20 @@ and the bound momentum returns to its initial value after one orbit.
 
 An arbitrary-state unit test also closes
 :math:`F_{qS}+\Delta_{\rm rad}=\dot P_{\rm rad,particle}+\dot B_{\rm bound}`
-without relying on periodic cancellation.  This establishes the local
-nonperiodic algebra, but it is not yet a nonperiodic provider-flux test.
-Ordinary equal-observation-time sphere samples correspond to slightly
-different source-time endpoints in different directions.  A rigorous
-nonperiodic provider comparison therefore needs a null-boundary integration
-that matches one source interval over the entire sphere.
+without relying on periodic cancellation.
+
+The provider-level nonperiodic test is now also complete.  It selects one
+quarter of a faster circular orbit, for which the endpoint change in spatial
+bound momentum is more than one thousand times the small radiative momentum.
+Each angular ray is evaluated at the observation time whose retarded event is
+the declared source time, with the exact
+:math:`dt_{\rm obs}/dt_{\rm source}=1-\mathbf n_{\rm ret}\cdot\boldsymbol\beta`
+Jacobian.  The finite-radius momentum is intentionally dominated by
+near-field transport.  A quadratic extrapolation in :math:`1/R` over three
+radii recovers the constant radiative four-momentum and closes it against the
+local impulse plus the nonzero bound-field endpoint change within two percent
+in the small spatial components.  The much larger energy component closes
+more tightly.
 
 Production use is intentionally blocked.  The unreduced equation contains
 four-snap and spin/moment derivatives.  A production model must specify how
@@ -248,10 +256,12 @@ Villarroel [Villarroel1975]_ shows explicitly that the radiated momentum and
 the local force differ by a total derivative and an additional radiative-field
 term, so far flux alone is not the instantaneous local force.
 
-The next conservation milestone is that null-boundary, nonperiodic provider
-comparison with a nonzero change in :math:`B_{\rm bound}`.  Only after that
-should the unreduced higher derivatives be replaced by external-force
-derivatives for a production-safe reduced-order model.
+The next conservation milestone is reduction of order: replace the unreduced
+higher derivatives by derivatives of the non-self external force and spin
+evolution, then compare the reduced result with the unreduced oracle under a
+controlled slow-reaction expansion.  Production injection remains blocked
+until that comparison converges and the existing Medina charge term is shown
+to enter exactly once.
 
 References
 ----------
