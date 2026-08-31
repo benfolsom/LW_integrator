@@ -6,6 +6,18 @@ All notable changes and updates to the LW Integrator project are documented in t
 
 ### Experimental Magnetic Dipole Moments (August 2026)
 
+- Added a diagnostic radiation-flux oracle that samples the independent
+  retarded charge and intrinsic-dipole fields on a sphere and integrates
+  outward electromagnetic energy, linear momentum, and angular momentum.  It
+  reports the charge-only, signed charge--dipole interference, dipole-only,
+  and total sectors separately.  The oracle does not feed a force or torque
+  back into the trajectory.  Pure flux tests cover the Gaussian Poynting
+  vector and Maxwell stress, sector closure, change of angular-momentum
+  origin, and the oscillating-magnetic-dipole power law.  Provider-level tests
+  reproduce Larmor charge power, rotating-dipole power, and the far-zone
+  charge--dipole interference momentum while checking matched-retarded-time
+  radius convergence.
+
 - Added the opt-in exact-retarded translation update
   ``second_order_start_taylor_endpoint``.  It evaluates the ordinary charge
   and dipole-source Lorentz force and its proper-time derivative at the same
