@@ -17,6 +17,9 @@ from core.radiation_flux_oracle import (
     integrate_radiation_sphere_flux_history_native,
     integrate_radiation_sphere_flux_native,
 )
+from core.spinning_shell_self_torque import (
+    evaluate_spinning_shell_angular_balance_native,
+)
 
 
 def _zero_fields(sample_count: int) -> np.ndarray:
@@ -894,3 +897,84 @@ def test_charge_dipole_interference_momentum_reaches_far_zone_limit() -> None:
     # The leading finite-radius correction decreases by four on radius doubling
     # for this symmetric prescribed-source benchmark.
     assert relative_errors[0] / relative_errors[1] == pytest.approx(4.0, rel=2.0e-3)
+
+
+def test_axial_moment_q_mu_flux_matches_point_limit_of_spinning_shell() -> None:
+    charge_native = 1.3
+    moment_amplitude_native = 2.0
+    angular_frequency_per_ns = 5.0
+    emission_time_ns = 2.5e-4
+    shell_radius_mm = 1.0e-3
+
+    def moment_derivatives(time_ns: float) -> np.ndarray:
+        return np.asarray(
+            [
+                moment_amplitude_native
+                * angular_frequency_per_ns**order
+                * np.cos(
+                    angular_frequency_per_ns * time_ns + order * np.pi / 2.0
+                )
+                for order in range(9)
+            ]
+        )
+
+    history = _static_charge_dipole_history(
+        charge_native=charge_native,
+        moment_native=1.0,
+        spin_function=lambda time_ns: np.array(
+            (
+                0.0,
+                0.0,
+                moment_amplitude_native
+                * np.cos(angular_frequency_per_ns * time_ns),
+            )
+        ),
+        times_ns=np.linspace(-0.15, 0.15, 601),
+    )
+    quadrature = gauss_legendre_sphere_quadrature(polar_order=4, azimuthal_order=8)
+    relative_errors = []
+
+    for observation_radius_mm in (400.0, 800.0):
+        observation_time_ns = emission_time_ns + observation_radius_mm / C_MMNS
+        provider_flux = evaluate_retarded_radiation_sphere_native(
+            quadrature=quadrature,
+            observation_time_ns=observation_time_ns,
+            sphere_center_mm=(0.0, 0.0, 0.0),
+            radius_mm=observation_radius_mm,
+            charge_history=history,
+            dipole_history=history,
+            source_identities=("axial-moment",),
+            dipole_stencil_step_mm=0.04,
+        )
+        shell = evaluate_spinning_shell_angular_balance_native(
+            charge_native=charge_native,
+            shell_radius_mm=shell_radius_mm,
+            observation_radius_mm=observation_radius_mm,
+            shell_retarded_moment_derivatives_native=moment_derivatives(
+                observation_time_ns - shell_radius_mm / C_MMNS
+            ),
+            observation_retarded_moment_derivatives_native=moment_derivatives(
+                emission_time_ns
+            ),
+        )
+        expected = shell.outward_angular_momentum_rate_native
+
+        np.testing.assert_allclose(
+            provider_flux.q_mu_interference.angular_momentum_rate_native[:2],
+            0.0,
+            atol=3.0e-21,
+        )
+        assert provider_flux.q_mu_interference.angular_momentum_rate_native[
+            2
+        ] == pytest.approx(expected, rel=2.0e-4)
+        relative_errors.append(
+            abs(
+                provider_flux.q_mu_interference.angular_momentum_rate_native[2]
+                / expected
+                - 1.0
+            )
+        )
+
+    # The point provider approaches the small-shell result with a leading
+    # finite-observation-radius correction proportional to 1/r0 here.
+    assert relative_errors[0] / relative_errors[1] == pytest.approx(2.0, rel=2.0e-2)

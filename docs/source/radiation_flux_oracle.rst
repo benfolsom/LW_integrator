@@ -122,6 +122,35 @@ The current implementation is diagnostic-only: it is not called by the
 equations of motion, Medina radiation reaction, checkpoint scheduler, CLI, or
 GUI.
 
+Finite spinning-shell benchmark
+-------------------------------
+
+``evaluate_spinning_shell_angular_balance_native`` implements the
+slow-variation expansion for a uniformly charged, infinitesimally thin
+spherical shell derived by Bonga, Poisson, and Yang [Bonga2018]_.  It reports
+the shell's electromagnetic self-torque, outward angular-momentum flux,
+near-field and wave-zone angular momentum, and the residual of
+
+.. math::
+
+   {dJ_{\rm field}\over dt}+N_{\rm outward}+T_{\rm self}=0.
+
+The inputs are a signed axial magnetic moment and its first eight time
+derivatives, evaluated at the two retarded source times required by the
+finite-shell calculation.  A companion function evaluates the current-time
+self-torque and separates its time-symmetric and radiation-sensitive terms.
+This distinction matters physically: the largest self-torque terms store and
+return field angular momentum or alter electromagnetic inertia.  They do not
+represent irreversible radiation reaction.  The first radiation-sensitive
+term is proportional to the fourth time derivative of the moment.
+
+This benchmark is proportional to charge times magnetic moment.  It therefore
+tests the :math:`q\mu` interference sector, **not** the pure :math:`\mu^2`
+sector.  The earlier roadmap description of this paper as a pure magnetic
+self-torque benchmark was incorrect.  A neutral intrinsic dipole still needs
+a separate finite-size source model before a :math:`\mu^2` local self-torque
+can be certified.
+
 Required convergence checks
 ---------------------------
 
@@ -189,9 +218,13 @@ energy and closes reaction work plus outward energy to within the maintained
 sphere-versus-local route without assuming the local far-radiation value in
 the surface calculation.
 
-A nonzero-boundary charge interval, identification of the magnetic bound
-contribution, comparison with a finite-size self-torque, and application to an
-archived flyby remain later acceptance steps.
+The finite-shell analytic ledger now closes at floating-point precision for a
+prescribed harmonic moment, and its local expansion verifies the expected
+shell-radius scaling of the reversible and radiation-sensitive pieces.  This
+establishes the finite-size :math:`q\mu` bookkeeping oracle.  Direct comparison
+with retarded provider flux, a nonzero-boundary charge interval,
+identification of the pure :math:`\mu^2` bound contribution, and application
+to an archived flyby remain later acceptance steps.
 
 References
 ----------

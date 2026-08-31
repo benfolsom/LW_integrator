@@ -153,7 +153,15 @@ All notable changes and updates to the LW Integrator project are documented in t
   benchmark independently evaluates retarded sphere flux at two radii and
   closes it against Medina reaction work; the periodic bound field returns to
   its initial value, so this check does not hide an inferred Schott boundary
-  term.
+  term.  Added the Bonga--Poisson--Yang finite spinning-shell oracle for the
+  signed charge--moment (``q mu``) angular-momentum sector.  It independently
+  reports shell self-torque, outward angular-momentum flux, near- and wave-zone
+  field angular momentum, and conservation residual.  A companion result
+  separates reversible electromagnetic-inertia terms from the terms that
+  change sign between retarded and advanced boundary conditions.  This
+  corrects an earlier roadmap ambiguity: the charged-shell calculation is a
+  ``q mu`` benchmark, not a pure ``mu^2`` self-torque law, and remains outside
+  production dynamics.
 
 - Added the opt-in exact-retarded translation update
   ``second_order_start_taylor_endpoint``.  It evaluates the ordinary charge
