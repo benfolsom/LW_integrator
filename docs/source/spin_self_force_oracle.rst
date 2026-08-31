@@ -266,13 +266,47 @@ values are subtracted before every differentiation so the nearly constant
 temporal velocity near :math:`c` is not damaged by subtracting large weighted
 numbers.
 
-This helper is intentionally **not** the production algorithm.  Its centered
+The centered helper is intentionally **not** the production algorithm.  Its
 stencil uses future samples, and numerical differentiation is less attractive
 than the analytical potential/response jets already used by the exact
 provider.  It supplies a reference target for a later causal implementation.
 Tests recover polynomial derivatives on an irregular grid and show
 fourth-order convergence to the exact circular-orbit self-force when the
 proper-time spacing is halved.
+
+``evaluate_causal_sampled_intrinsic_spin_reduction_native`` supplies the next
+reference step.  It evaluates at the newest of six or more accepted samples,
+so it never reads a future state.  Six samples make its second derivatives
+fourth-order on a uniformly refined smooth trajectory.  Unequal proper-time
+spacing is supported, and the result reports the condition number of the
+scaled finite-difference system so a badly clustered step history is visible
+rather than silently trusted.  Polynomial and circular tests confirm exact
+endpoint differentiation and fourth-order convergence, respectively.
+
+This backward helper is still not connected to the live integrator.  A
+production caller must store only accepted leading-order states, preserve the
+stencil across checkpoints, and prevent rejected nonlinear or adaptive trials
+from entering it.  Those state-management requirements are as important as
+the derivative formula itself.
+
+For the intrinsic relation :math:`M=gqS/(2mc)`, the mechanical linear-spin
+bracket can be written schematically as
+
+.. math::
+
+   {q\over mc}\left[
+     (g-1)(J\mathbin{\times}\dot S)_{u/c}
+     +{g-2\over2}
+       \left((K\mathbin{\times}S)_{u/c}
+       +\epsilon^\mu{}_{\nu\rho\sigma}
+        J^\nu S^\rho {A^\sigma\over c}\right)
+   \right].
+
+Thus the snap :math:`K` enters with :math:`g-2`, which is about
+:math:`2.3\times10^{-3}` for an electron.  The term is retained for rigor and
+reported separately through the existing oracle decomposition; its small
+coefficient is a reason to measure its numerical importance, not permission
+to delete it silently.
 
 The nested result still reports the charge ALD term for comparison, but a
 future production caller must retain the existing Medina charge reaction and
@@ -289,13 +323,16 @@ Villarroel [Villarroel1975]_ shows explicitly that the radiated momentum and
 the local force differ by a total derivative and an additional radiative-field
 term, so far flux alone is not the instantaneous local force.
 
-The next milestone is to obtain the same derivative contractions from the
-analytical non-self RFS response, or from a separately validated causal
-accepted-history stencil, without future samples.  Compare that causal result
-with both the sampled reduction oracle and the unreduced circular benchmark
-under a controlled slow-reaction expansion.  Production injection remains
-blocked until the comparison converges and the existing Medina charge term is
-shown to enter exactly once.
+The next milestone is to compare the now-implemented backward reference with
+derivative contractions from the analytical non-self RFS response.  The
+ordinary Lorentz-force derivative uses the available first field derivative.
+The magnetic-moment force already contains that derivative, so its derivative
+and the worldline snap require selected second and third field derivatives.
+Calculate only the contractions used by the self-force rather than building
+complete higher-rank field tensors.  Production injection remains blocked
+until the analytical and causal routes converge, accepted-history lifecycle
+tests pass, and the existing Medina charge term is shown to enter exactly
+once.
 
 References
 ----------

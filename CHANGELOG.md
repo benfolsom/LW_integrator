@@ -158,8 +158,12 @@ All notable changes and updates to the LW Integrator project are documented in t
   leading, non-self proper-time stencil, reports a velocity/acceleration
   consistency residual, exactly recovers irregular-grid polynomials, and
   converges at fourth order to the unreduced circular benchmark.  It uses a
-  centered future stencil and is not a production force; an analytical or
-  causal accepted-history implementation remains open.
+  centered future stencil and is not a production force.  A companion
+  six-sample backward oracle now evaluates at the newest accepted state,
+  supports unequal proper-time spacing, reports stencil conditioning, and
+  converges at fourth order on the circular benchmark.  It remains diagnostic
+  until accepted-only history, checkpoint, and rejected-trial isolation are
+  wired and validated.
 - Added a diagnostic radiation-flux oracle that samples the independent
   retarded charge and intrinsic-dipole fields on a sphere and integrates
   outward electromagnetic energy, linear momentum, and angular momentum.  It

@@ -64,6 +64,11 @@ class SampledIntrinsicSpinReductionResult:
     """Five-or-more-sample leading-order reconstruction and local balance."""
 
     center_index: int
+    evaluation_proper_time_ns: float
+    sample_time_span_ns: float
+    stencil_kind: str
+    uses_future_samples: bool
+    scaled_vandermonde_condition_number: float
     first_derivative_weights_per_ns: np.ndarray
     second_derivative_weights_per_ns2: np.ndarray
     reconstructed_four_jerk_mm_ns3: np.ndarray
@@ -74,7 +79,7 @@ class SampledIntrinsicSpinReductionResult:
     radiation_balance: JakobsenIntrinsicSpinRadiationBalanceResult
 
 
-def evaluate_sampled_intrinsic_spin_reduction_native(
+def _evaluate_sampled_intrinsic_spin_reduction_native(
     *,
     proper_times_ns: Sequence[float] | np.ndarray,
     four_velocity_samples_mm_ns: ArrayLike,
@@ -83,34 +88,24 @@ def evaluate_sampled_intrinsic_spin_reduction_native(
     charge_native: float,
     mass_amu: float,
     g_factor: float,
-    center_index: int | None = None,
+    center_index: int,
+    minimum_sample_count: int,
+    stencil_kind: str,
+    require_samples_on_both_sides: bool,
 ) -> SampledIntrinsicSpinReductionResult:
-    """Evaluate linear-spin self-reaction from a non-self trajectory stencil.
-
-    The samples must describe the leading ordinary motion: prescribed forces,
-    charge Lorentz response, and RFS dipole response may be included, but no
-    Medina or magnetic self-reaction contribution may be present.  This is the
-    order-reduction rule: every derivative inside the already-small
-    self-reaction term is evaluated on the lower-order dynamics.
-
-    At least five strictly increasing proper-time samples are required.  The
-    default center is the middle sample.  Arbitrary spacing is supported, but
-    the center must have samples on both sides.  The returned
-    ``velocity_derivative_residual`` compares the derivative reconstructed
-    from the velocity samples with the supplied center acceleration; it is a
-    diagnostic of an inconsistent stencil rather than an automatic repair.
-    """
-
     times = np.asarray(proper_times_ns, dtype=float)
-    if times.ndim != 1 or times.size < 5:
-        raise ValueError("proper_times_ns must contain at least five values")
+    if times.ndim != 1 or times.size < minimum_sample_count:
+        raise ValueError(
+            "proper_times_ns must contain at least " f"{minimum_sample_count} values"
+        )
     if not np.all(np.isfinite(times)) or np.any(np.diff(times) <= 0.0):
         raise ValueError("proper_times_ns must be finite and strictly increasing")
-    if center_index is None:
-        center = times.size // 2
-    else:
-        center = int(center_index)
-    if center <= 0 or center >= times.size - 1:
+    center = int(center_index)
+    if center < 0:
+        center += times.size
+    if center < 0 or center >= times.size:
+        raise ValueError("center_index must select one supplied sample")
+    if require_samples_on_both_sides and (center <= 0 or center >= times.size - 1):
         raise ValueError("center_index must have samples on both sides")
 
     velocities = _sample_matrix(
@@ -138,6 +133,12 @@ def evaluate_sampled_intrinsic_spin_reduction_native(
         times,
         center_index=center,
         derivative_order=2,
+    )
+    offsets = times - times[center]
+    normalized_offsets = offsets / float(np.max(np.abs(offsets)))
+    powers = np.arange(times.size, dtype=float)[:, np.newaxis]
+    scaled_vandermonde_condition = float(
+        np.linalg.cond(normalized_offsets[np.newaxis, :] ** powers)
     )
     # Every derivative annihilates a constant.  Subtract the center value
     # explicitly so a nearly constant temporal component of four-velocity
@@ -180,6 +181,11 @@ def evaluate_sampled_intrinsic_spin_reduction_native(
 
     return SampledIntrinsicSpinReductionResult(
         center_index=center,
+        evaluation_proper_time_ns=float(times[center]),
+        sample_time_span_ns=float(times[-1] - times[0]),
+        stencil_kind=stencil_kind,
+        uses_future_samples=bool(center < times.size - 1),
+        scaled_vandermonde_condition_number=scaled_vandermonde_condition,
         first_derivative_weights_per_ns=first_weights,
         second_derivative_weights_per_ns2=second_weights,
         reconstructed_four_jerk_mm_ns3=reconstructed_jerk,
@@ -193,7 +199,98 @@ def evaluate_sampled_intrinsic_spin_reduction_native(
     )
 
 
+def evaluate_sampled_intrinsic_spin_reduction_native(
+    *,
+    proper_times_ns: Sequence[float] | np.ndarray,
+    four_velocity_samples_mm_ns: ArrayLike,
+    non_self_four_acceleration_samples_mm_ns2: ArrayLike,
+    physical_spin_four_samples_native: ArrayLike,
+    charge_native: float,
+    mass_amu: float,
+    g_factor: float,
+    center_index: int | None = None,
+) -> SampledIntrinsicSpinReductionResult:
+    """Evaluate a centered linear-spin reduction reference.
+
+    The samples must describe the leading ordinary motion: prescribed forces,
+    charge Lorentz response, and RFS dipole response may be included, but no
+    Medina or magnetic self-reaction contribution may be present.  This is the
+    order-reduction rule: every derivative inside the already-small
+    self-reaction term is evaluated on the lower-order dynamics.
+
+    At least five strictly increasing proper-time samples are required.  The
+    default center is the middle sample.  Arbitrary spacing is supported, but
+    the center must have samples on both sides.  The returned
+    ``velocity_derivative_residual`` compares the derivative reconstructed
+    from the velocity samples with the supplied center acceleration; it is a
+    diagnostic of an inconsistent stencil rather than an automatic repair.
+    """
+
+    times = np.asarray(proper_times_ns, dtype=float)
+    if times.ndim != 1 or times.size < 5:
+        raise ValueError("proper_times_ns must contain at least five values")
+    center = times.size // 2 if center_index is None else int(center_index)
+    return _evaluate_sampled_intrinsic_spin_reduction_native(
+        proper_times_ns=times,
+        four_velocity_samples_mm_ns=four_velocity_samples_mm_ns,
+        non_self_four_acceleration_samples_mm_ns2=(
+            non_self_four_acceleration_samples_mm_ns2
+        ),
+        physical_spin_four_samples_native=physical_spin_four_samples_native,
+        charge_native=charge_native,
+        mass_amu=mass_amu,
+        g_factor=g_factor,
+        center_index=center,
+        minimum_sample_count=5,
+        stencil_kind="centered_reference",
+        require_samples_on_both_sides=True,
+    )
+
+
+def evaluate_causal_sampled_intrinsic_spin_reduction_native(
+    *,
+    proper_times_ns: Sequence[float] | np.ndarray,
+    four_velocity_samples_mm_ns: ArrayLike,
+    non_self_four_acceleration_samples_mm_ns2: ArrayLike,
+    physical_spin_four_samples_native: ArrayLike,
+    charge_native: float,
+    mass_amu: float,
+    g_factor: float,
+) -> SampledIntrinsicSpinReductionResult:
+    """Evaluate the reduced force at the newest accepted leading-order sample.
+
+    This one-sided reference uses six or more strictly increasing proper-time
+    samples and evaluates all derivatives at the last sample.  It therefore
+    reads no future state.  Six samples make the second-derivative
+    reconstruction fourth-order on a uniformly refined smooth trajectory;
+    arbitrary accepted-step spacing is supported.
+
+    The function is still diagnostic.  A production caller must prove that
+    every sample is an accepted non-self state, persist the required history
+    through checkpoints, and ensure rejected nonlinear or adaptive trials can
+    never enter the stencil.  The returned scaled-Vandermonde condition number
+    flags clustered or irregular sample times that may amplify roundoff.
+    """
+
+    return _evaluate_sampled_intrinsic_spin_reduction_native(
+        proper_times_ns=proper_times_ns,
+        four_velocity_samples_mm_ns=four_velocity_samples_mm_ns,
+        non_self_four_acceleration_samples_mm_ns2=(
+            non_self_four_acceleration_samples_mm_ns2
+        ),
+        physical_spin_four_samples_native=physical_spin_four_samples_native,
+        charge_native=charge_native,
+        mass_amu=mass_amu,
+        g_factor=g_factor,
+        center_index=-1,
+        minimum_sample_count=6,
+        stencil_kind="backward_accepted_history",
+        require_samples_on_both_sides=False,
+    )
+
+
 __all__ = [
     "SampledIntrinsicSpinReductionResult",
+    "evaluate_causal_sampled_intrinsic_spin_reduction_native",
     "evaluate_sampled_intrinsic_spin_reduction_native",
 ]
