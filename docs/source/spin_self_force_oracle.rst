@@ -546,6 +546,18 @@ linear :math:`q\mu` self-force nor the pure :math:`\mu^2` reaction. Before
 promotion, unequal adaptive step sequences must be shown to remain below the
 declared conditioning limit without weakening that guard.
 
+A bounded test now varies accepted intervals smoothly by 20 percent.
+Incremental publication and one-pass reconstruction produce the same frozen
+coefficients bit-for-bit, while the worst spin-fit condition number remains
+below ``1e4`` compared with the fail-closed ``1e5`` limit. A factor-of-ten
+cadence discontinuity still fails before either trajectory is published.
+
+The current immutable object copies its accepted sample arrays whenever a new
+sample is appended. That makes it a clear correctness oracle, but gives
+quadratic construction cost over a long run. It must not be selected by live
+dynamics until a growable store can preflight both particle roles, publish the
+new rows and coefficients atomically, and checkpoint only the appended tail.
+
 The next milestone is numerical validation of this live route trace.  Compare
 the analytical, causal, and centered-reference values on weak smooth motion;
 measure phase error at route transitions and conditioning under unequal

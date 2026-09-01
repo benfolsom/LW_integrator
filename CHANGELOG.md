@@ -13,6 +13,12 @@
   reuses those exact coefficients and reproduces the provider response
   bit-for-bit. This remains an explicit internal validation surface, is not
   selected by the equations of motion, and applies no self-reaction force.
+- Bounded nonuniform accepted-step tests now vary the causal source cadence
+  smoothly by 20 percent and reproduce incrementally frozen coefficients
+  bit-for-bit from a one-pass reconstruction. The immutable validation object
+  still copies its full sample arrays on append and is therefore explicitly
+  not the production long-history store; live selection waits for a growable,
+  transaction-safe implementation.
 - Added the first isolated production-state layer for a causal ``C5`` source
   history.  Accepted position, velocity, acceleration, and unit-spin samples
   now produce immutable degree-eleven worldline and stereographic-spin

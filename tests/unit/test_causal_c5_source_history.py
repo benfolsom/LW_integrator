@@ -15,9 +15,7 @@ from core.dipole_hertz_jet import evaluate_causal_c5_dipole_hertz_response_nativ
 from core.retarded_fields import ObserverEvent
 
 
-def _accepted_sample(index: int, step_ns: float = 0.002) -> dict[str, object]:
-    nominal = float(index) * step_ns
-    time = nominal + 0.04 * step_ns * math.sin(0.71 * index)
+def _accepted_sample_at_time(time: float) -> dict[str, object]:
     angular_frequency = 7.0
     position = np.asarray(
         (
@@ -57,6 +55,12 @@ def _accepted_sample(index: int, step_ns: float = 0.002) -> dict[str, object]:
         "beta_prime_per_mm": acceleration / C_MMNS**2,
         "rest_spin": spin,
     }
+
+
+def _accepted_sample(index: int, step_ns: float = 0.002) -> dict[str, object]:
+    nominal = float(index) * step_ns
+    time = nominal + 0.04 * step_ns * math.sin(0.71 * index)
+    return _accepted_sample_at_time(time)
 
 
 def _history(count: int) -> CausalC5SourceHistory:
@@ -211,6 +215,41 @@ def test_checkpoint_roundtrip_preserves_frozen_coefficients_bitwise() -> None:
         np.testing.assert_array_equal(
             actual.spin_window_indices,
             expected.spin_window_indices,
+        )
+
+
+def test_bounded_nonuniform_cadence_matches_incremental_history_bitwise() -> None:
+    increments = 0.002 * (
+        1.0 + 0.2 * np.sin(0.73 * np.arange(40, dtype=np.float64))
+    )
+    times = np.concatenate((np.zeros(1), np.cumsum(increments)))
+    samples = tuple(_accepted_sample_at_time(float(time)) for time in times)
+    incremental = CausalC5SourceHistory.empty()
+    for sample in samples:
+        incremental = incremental.append_accepted(**sample)
+
+    batch = CausalC5SourceHistory.from_accepted_samples(
+        time_ns=times,
+        position_mm=np.asarray([sample["position_mm"] for sample in samples]),
+        beta=np.asarray([sample["beta"] for sample in samples]),
+        beta_prime_per_mm=np.asarray(
+            [sample["beta_prime_per_mm"] for sample in samples]
+        ),
+        rest_spin=np.asarray([sample["rest_spin"] for sample in samples]),
+    )
+
+    assert len(batch.frozen_segments) == len(incremental.frozen_segments)
+    assert max(
+        segment.spin_condition_number for segment in batch.frozen_segments
+    ) < 1.0e4
+    for expected, actual in zip(incremental.frozen_segments, batch.frozen_segments):
+        np.testing.assert_array_equal(
+            actual.position_coefficients_mm,
+            expected.position_coefficients_mm,
+        )
+        np.testing.assert_array_equal(
+            actual.rest_spin_stereographic_coefficients,
+            expected.rest_spin_stereographic_coefficients,
         )
 
 
