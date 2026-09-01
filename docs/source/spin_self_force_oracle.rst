@@ -385,13 +385,21 @@ bitwise lifecycle validation, not yet the final large-particle storage format.
 A production checkpoint should place these arrays in the existing append-only
 binary chunks and retain only compact readiness metadata in JSON.
 
-This object is intentionally not connected to the retarded provider or the
-equations of motion yet.  The next integration step must prove that rejected
-adaptive trials publish no segment, that accepted fixed and adaptive histories
-select the same frozen segment at the same source time, and that an
-interrupted/resumed run reproduces the uninterrupted response.  Until those
-tests pass, the current production provider and all applied forces are
-unchanged.
+An isolated one-source adapter now solves an observer light cone only across
+the frozen time range.  It uses binary knot bracketing and safeguarded Newton
+steps on the degree-eleven worldline, then supplies that same segment and its
+stereographic spin polynomial to the generic Hertz jet.  A root before the
+first ready segment or in the unready tail raises the named history error.
+Checkpoint restore reproduces :math:`A`, :math:`F`, and :math:`\partial F`
+bit-for-bit at the same event.
+
+This adapter is intentionally not selected by production multi-source
+dispatch or the equations of motion yet.  The next integration step must
+prove that rejected adaptive trials publish no segment, that accepted fixed
+and adaptive histories select the same frozen segment at the same source
+time, and that an interrupted/resumed run reproduces the uninterrupted
+response.  Until those tests pass, the current production provider and all
+applied forces are unchanged.
 
 ``AcceptedIntrinsicSpinReductionHistory`` is the first state-lifecycle layer
 for the boundary route.  It retains only the newest six accepted proper-time

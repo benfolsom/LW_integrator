@@ -26,6 +26,7 @@ from .constants import C_MMNS
 from .rfs import fields_from_tensor_native
 
 if TYPE_CHECKING:
+    from .causal_c5_source_history import CausalC5SourceHistory
     from .retarded_dipole_fields import (
         RetardedDipoleFieldGradientResult,
         RetardedDipoleResponseGradientResult,
@@ -1224,10 +1225,53 @@ def evaluate_retarded_dipole_field_gradient_hertz_jet_native(
     )
 
 
+def evaluate_causal_c5_dipole_hertz_response_native(
+    history: "CausalC5SourceHistory",
+    observer_event: "ObserverEvent",
+    *,
+    magnetic_moment_native: float,
+    root_tolerance_mm: float = 1.0e-21,
+    max_root_iterations: int = 96,
+    minimum_separation_mm: float = 1.0e-15,
+) -> DipoleHertzResponseJetResult:
+    """Evaluate one source from its causally frozen $C^5$ history.
+
+    This is an isolated provider adapter, not production dispatch.  It refuses
+    an observer light cone outside the ready segment range, solves the root on
+    the frozen degree-eleven worldline, and feeds the matching stereographic
+    spin polynomial into the generic Hertz jet.
+    """
+
+    root = history.solve_retarded_root(
+        observer_time_ns=float(observer_event.time_ns),
+        observer_position_mm=observer_event.position_mm,
+        root_tolerance_mm=root_tolerance_mm,
+        max_root_iterations=max_root_iterations,
+        minimum_separation_mm=minimum_separation_mm,
+    )
+    segment = root.segment
+    return polynomial_dipole_hertz_response_jet_native(
+        observer_time_ns=float(observer_event.time_ns),
+        observer_position_mm=observer_event.position_mm,
+        magnetic_moment_native=magnetic_moment_native,
+        segment_start_time_ns=segment.start_time_ns,
+        segment_duration_ns=segment.duration_ns,
+        position_coefficients_mm=segment.position_coefficients_mm,
+        rest_spin_coefficients=None,
+        rest_spin_stereographic_coefficients=(
+            segment.rest_spin_stereographic_coefficients
+        ),
+        rest_spin_stereographic_frame=segment.stereographic_frame,
+        preserved_rest_spin_magnitude=None,
+        retarded_time_ns=root.retarded_time_ns,
+    )
+
+
 __all__ = [
     "DipoleHertzJetProviderResult",
     "DipoleHertzResponseJetResult",
     "DipoleHertzSparseResponseJetResult",
+    "evaluate_causal_c5_dipole_hertz_response_native",
     "evaluate_retarded_dipole_field_gradient_hertz_jet_native",
     "polynomial_dipole_hertz_response_jet_native",
     "quintic_dipole_hertz_response_jet_native",

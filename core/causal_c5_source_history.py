@@ -246,6 +246,43 @@ def _spin_chart_derivatives_at_knot(
 
 
 @dataclass(frozen=True)
+class CausalC5RetardedRoot:
+    """One light-cone root resolved entirely inside a frozen segment."""
+
+    segment: "FrozenC5SourceSegment"
+    retarded_time_ns: float
+    source_position_mm: np.ndarray
+    source_beta: np.ndarray
+    separation_mm: float
+    residual_mm: float
+
+    def __post_init__(self) -> None:
+        time = float(self.retarded_time_ns)
+        separation = float(self.separation_mm)
+        residual = float(self.residual_mm)
+        if not np.isfinite(time) or not np.isfinite(residual):
+            raise ValueError("retarded root time and residual must be finite")
+        if not np.isfinite(separation) or separation <= 0.0:
+            raise ValueError("retarded root separation must be finite and positive")
+        object.__setattr__(self, "retarded_time_ns", time)
+        object.__setattr__(self, "separation_mm", separation)
+        object.__setattr__(self, "residual_mm", residual)
+        object.__setattr__(
+            self,
+            "source_position_mm",
+            _readonly_array(
+                self.source_position_mm,
+                shape=(3,),
+                name="source_position_mm",
+            ),
+        )
+        beta = _readonly_array(self.source_beta, shape=(3,), name="source_beta")
+        if float(beta @ beta) >= 1.0:
+            raise ValueError("retarded source beta magnitude must be below one")
+        object.__setattr__(self, "source_beta", beta)
+
+
+@dataclass(frozen=True)
 class FrozenC5SourceSegment:
     """One immutable accepted source segment ready for retarded queries."""
 
@@ -324,6 +361,27 @@ class FrozenC5SourceSegment:
     @property
     def end_time_ns(self) -> float:
         return self.start_time_ns + self.duration_ns
+
+    def position_velocity_at(
+        self, source_time_ns: float
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Evaluate the frozen worldline and coordinate velocity."""
+
+        time = float(source_time_ns)
+        if not np.isfinite(time) or not (
+            self.start_time_ns <= time <= self.end_time_ns
+        ):
+            raise ValueError("source time lies outside the frozen C5 segment")
+        fraction = (time - self.start_time_ns) / self.duration_ns
+        position = np.zeros(3, dtype=np.float64)
+        velocity = np.zeros(3, dtype=np.float64)
+        for power, coefficient in enumerate(self.position_coefficients_mm):
+            position += coefficient * fraction**power
+            if power:
+                velocity += (
+                    power * coefficient * fraction ** (power - 1) / self.duration_ns
+                )
+        return position, velocity
 
     def to_checkpoint_payload(self) -> dict[str, object]:
         return {
@@ -620,6 +678,127 @@ class CausalC5SourceHistory:
             "no causally frozen C5 source segment covers the requested time"
         )
 
+    def solve_retarded_root(
+        self,
+        *,
+        observer_time_ns: float,
+        observer_position_mm: Sequence[float],
+        root_tolerance_mm: float = 1.0e-21,
+        max_root_iterations: int = 96,
+        minimum_separation_mm: float = 1.0e-15,
+    ) -> CausalC5RetardedRoot:
+        """Solve one observer light cone using only the ready segment range."""
+
+        observer_time = float(observer_time_ns)
+        observer_position = _readonly_array(
+            observer_position_mm,
+            shape=(3,),
+            name="observer_position_mm",
+        )
+        tolerance = float(root_tolerance_mm)
+        iterations = int(max_root_iterations)
+        minimum_separation = float(minimum_separation_mm)
+        if not np.isfinite(observer_time):
+            raise ValueError("observer_time_ns must be finite")
+        if not np.isfinite(tolerance) or tolerance <= 0.0:
+            raise ValueError("root_tolerance_mm must be finite and positive")
+        if iterations < 1:
+            raise ValueError("max_root_iterations must be positive")
+        if not np.isfinite(minimum_separation) or minimum_separation <= 0.0:
+            raise ValueError("minimum_separation_mm must be finite and positive")
+        if not self.frozen_segments:
+            raise CausalC5HistoryUnavailableError(
+                "causal C5 source history has no ready light-cone segment"
+            )
+
+        first_knot = self.frozen_segments[0].left_knot_index
+        final_knot = self.frozen_segments[-1].left_knot_index + 1
+
+        def knot_residual(knot: int) -> float:
+            separation = float(
+                np.linalg.norm(observer_position - self.position_mm[knot])
+            )
+            return C_MMNS * (observer_time - float(self.time_ns[knot])) - separation
+
+        first_residual = knot_residual(first_knot)
+        final_residual = knot_residual(final_knot)
+        if first_residual < 0.0:
+            raise CausalC5HistoryUnavailableError(
+                "observer light cone predates the first frozen C5 segment"
+            )
+        if final_residual > 0.0:
+            raise CausalC5HistoryUnavailableError(
+                "observer light cone reaches an unready future C5 segment"
+            )
+
+        lower_knot = first_knot
+        upper_knot = final_knot
+        while upper_knot - lower_knot > 1:
+            middle = (lower_knot + upper_knot) // 2
+            if knot_residual(middle) > 0.0:
+                lower_knot = middle
+            else:
+                upper_knot = middle
+        lower_time = float(self.time_ns[lower_knot])
+        upper_time = float(self.time_ns[upper_knot])
+        lower_residual = knot_residual(lower_knot)
+        upper_residual = knot_residual(upper_knot)
+
+        if abs(lower_residual) <= tolerance:
+            root_time = lower_time
+        elif abs(upper_residual) <= tolerance:
+            root_time = upper_time
+        else:
+            root_time = lower_time - lower_residual * (upper_time - lower_time) / (
+                upper_residual - lower_residual
+            )
+            for _iteration in range(iterations):
+                bracket_segment = self.frozen_segments[lower_knot - first_knot]
+                source_position, source_velocity = bracket_segment.position_velocity_at(
+                    root_time
+                )
+                displacement = observer_position - source_position
+                separation = float(np.linalg.norm(displacement))
+                if separation <= minimum_separation:
+                    raise ValueError(
+                        "observer is within minimum_separation_mm of the C5 source"
+                    )
+                residual = C_MMNS * (observer_time - root_time) - separation
+                if abs(residual) <= tolerance:
+                    break
+                if residual > 0.0:
+                    lower_time = root_time
+                    lower_residual = residual
+                else:
+                    upper_time = root_time
+                    upper_residual = residual
+                direction = displacement / separation
+                derivative = -C_MMNS + float(direction @ source_velocity)
+                candidate = root_time - residual / derivative
+                if not lower_time < candidate < upper_time:
+                    candidate = 0.5 * (lower_time + upper_time)
+                if candidate == root_time:
+                    break
+                root_time = candidate
+
+        segment = self.segment_at(root_time)
+        source_position, source_velocity = segment.position_velocity_at(root_time)
+        displacement = observer_position - source_position
+        separation = float(np.linalg.norm(displacement))
+        if separation <= minimum_separation:
+            raise ValueError(
+                "observer is within minimum_separation_mm of the C5 source"
+            )
+        residual = C_MMNS * (observer_time - root_time) - separation
+        return CausalC5RetardedRoot(
+            segment=segment,
+            retarded_time_ns=root_time,
+            source_position_mm=source_position,
+            source_beta=source_velocity / C_MMNS,
+            separation_mm=separation,
+            residual_mm=residual,
+        )
+
     def to_checkpoint_payload(self) -> dict[str, object]:
         return {
             "schema_version": _CHECKPOINT_SCHEMA_VERSION,
@@ -678,6 +857,7 @@ class CausalC5SourceHistory:
 
 __all__ = [
     "CausalC5HistoryUnavailableError",
+    "CausalC5RetardedRoot",
     "CausalC5SourceHistory",
     "FrozenC5SourceSegment",
 ]

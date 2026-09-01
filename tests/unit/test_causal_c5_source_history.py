@@ -11,6 +11,8 @@ from core.causal_c5_source_history import (
     CausalC5SourceHistory,
 )
 from core.constants import C_MMNS
+from core.dipole_hertz_jet import evaluate_causal_c5_dipole_hertz_response_native
+from core.retarded_fields import ObserverEvent
 
 
 def _accepted_sample(index: int, step_ns: float = 0.002) -> dict[str, object]:
@@ -222,3 +224,117 @@ def test_fixed_stereographic_chart_pole_fails_closed() -> None:
     sample["rest_spin"] = (0.0, 0.0, -1.0)
     with pytest.raises(CausalC5HistoryUnavailableError, match="chart pole"):
         history.append_accepted(**sample)
+
+
+def test_frozen_worldline_solves_its_own_light_cone() -> None:
+    history = _history(20)
+    segment = history.frozen_segments[1]
+    expected_time = segment.start_time_ns + 0.37 * segment.duration_ns
+    source_position, _velocity = segment.position_velocity_at(expected_time)
+    displacement = np.asarray((1.2, -0.4, 0.3))
+    observer_position = source_position + displacement
+    event = ObserverEvent(
+        expected_time + float(np.linalg.norm(displacement)) / C_MMNS,
+        tuple(observer_position),
+    )
+    root = history.solve_retarded_root(
+        observer_time_ns=event.time_ns,
+        observer_position_mm=event.position_mm,
+    )
+    np.testing.assert_allclose(
+        root.retarded_time_ns,
+        expected_time,
+        rtol=0.0,
+        atol=2.0e-18,
+    )
+    assert root.segment is segment
+    assert abs(root.residual_mm) < 2.0e-14
+    response = evaluate_causal_c5_dipole_hertz_response_native(
+        history,
+        event,
+        magnetic_moment_native=-0.7,
+    )
+    np.testing.assert_allclose(
+        response.retarded_time_ns,
+        expected_time,
+        rtol=0.0,
+        atol=2.0e-18,
+    )
+    assert np.all(np.isfinite(response.four_potential))
+    assert np.all(np.isfinite(response.partial_f))
+
+
+def test_checkpoint_restore_reproduces_c5_hertz_response() -> None:
+    history = _history(20)
+    segment = history.frozen_segments[1]
+    root_time = segment.start_time_ns + 0.41 * segment.duration_ns
+    source_position, _velocity = segment.position_velocity_at(root_time)
+    observer_position = source_position + np.asarray((0.8, 0.2, -0.1))
+    event = ObserverEvent(
+        root_time + float(np.linalg.norm(observer_position - source_position)) / C_MMNS,
+        tuple(observer_position),
+    )
+    restored = CausalC5SourceHistory.from_checkpoint_payload(
+        json.loads(json.dumps(history.to_checkpoint_payload(), allow_nan=False))
+    )
+    expected = evaluate_causal_c5_dipole_hertz_response_native(
+        history,
+        event,
+        magnetic_moment_native=0.3,
+    )
+    actual = evaluate_causal_c5_dipole_hertz_response_native(
+        restored,
+        event,
+        magnetic_moment_native=0.3,
+    )
+    for name in ("four_potential", "partial_a", "field_tensor", "partial_f"):
+        np.testing.assert_array_equal(getattr(actual, name), getattr(expected, name))
+
+
+def test_light_cone_in_unready_tail_fails_closed() -> None:
+    history = _history(20)
+    source_time = float(history.time_ns[-1])
+    source_position = history.position_mm[-1]
+    event = ObserverEvent(
+        source_time + 1.0 / C_MMNS, tuple(source_position + (1, 0, 0))
+    )
+    with pytest.raises(CausalC5HistoryUnavailableError, match="unready future"):
+        history.solve_retarded_root(
+            observer_time_ns=event.time_ns,
+            observer_position_mm=event.position_mm,
+        )
+
+
+def test_relativistic_frozen_worldline_root_is_not_a_slow_speed_approximation() -> None:
+    beta = np.asarray((0.81, -0.13, 0.07))
+    history = CausalC5SourceHistory.empty()
+    for index in range(20):
+        time = -0.03 + index * 0.001
+        angle = 14.0 * time
+        history = history.append_accepted(
+            time_ns=time,
+            position_mm=C_MMNS * beta * time,
+            beta=beta,
+            beta_prime_per_mm=(0.0, 0.0, 0.0),
+            rest_spin=(
+                math.sin(0.6) * math.cos(angle),
+                math.sin(0.6) * math.sin(angle),
+                math.cos(0.6),
+            ),
+        )
+    segment = history.frozen_segments[1]
+    expected_time = segment.start_time_ns + 0.63 * segment.duration_ns
+    source_position, _velocity = segment.position_velocity_at(expected_time)
+    displacement = np.asarray((-0.5, 1.1, 0.4))
+    observer_position = source_position + displacement
+    root = history.solve_retarded_root(
+        observer_time_ns=(expected_time + float(np.linalg.norm(displacement)) / C_MMNS),
+        observer_position_mm=observer_position,
+    )
+    np.testing.assert_allclose(
+        root.retarded_time_ns,
+        expected_time,
+        rtol=0.0,
+        atol=5.0e-18,
+    )
+    np.testing.assert_allclose(root.source_beta, beta, rtol=0.0, atol=4.0e-14)

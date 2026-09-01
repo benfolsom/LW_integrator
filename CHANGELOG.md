@@ -8,9 +8,12 @@
   lower-smoothness fallback; future appends cannot mutate published
   coefficients; fixed chart-pole and ``1e5`` conditioning guards fail closed;
   and a strict checkpoint payload preserves samples, readiness, windows, and
-  coefficients bit-for-bit.  This state is not yet connected to the retarded
-  provider or equations of motion, so trajectories and self-reaction remain
-  unchanged.
+  coefficients bit-for-bit.  An isolated one-source adapter now solves the
+  light cone wholly inside the ready degree-eleven worldline and feeds the
+  matching stereographic segment into the generic Hertz jet; checkpoint
+  restore reproduces the complete response bit-for-bit.  It is not selected
+  by production multi-source dispatch or the equations of motion, so
+  trajectories and self-reaction remain unchanged.
 - Added a validation-only polynomial dipole-Hertz response jet.  Offline
   studies can now differentiate smoother worldline and rest-spin polynomial
   segments through the same covariant retarded-potential algebra used by the
