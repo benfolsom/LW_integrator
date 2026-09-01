@@ -11,8 +11,12 @@ from core.spin_self_force_oracle import (
 )
 from core.spin_self_force_reduction_oracle import (
     evaluate_causal_sampled_intrinsic_spin_reduction_native,
+    evaluate_potential_directional_intrinsic_spin_reduction_native,
     evaluate_sampled_intrinsic_spin_reduction_native,
 )
+from core.rfs import electromagnetic_field_tensor_native
+
+_SIGNS = np.asarray((1.0, -1.0, -1.0, -1.0), dtype=float)
 
 
 def test_irregular_stencil_reconstructs_polynomial_leading_dynamics() -> None:
@@ -306,6 +310,95 @@ def test_causal_circular_reduction_converges_at_fourth_order() -> None:
 
     assert errors[0] / errors[1] > 14.0
     assert errors[1] / errors[2] > 14.0
+
+
+def test_potential_directional_reduction_matches_exact_circular_oracle() -> None:
+    charge = 0.8
+    mass = 1.0
+    g_factor = 2.3
+    invariant_spin = 0.6
+    orbit_radius = 0.03
+    angular_frequency = 1.7
+    beta = orbit_radius * angular_frequency / C_MMNS
+    gamma = 1.0 / math.sqrt(1.0 - beta**2)
+    spin = np.array((0.0, 0.0, 0.0, 1.0))
+    velocity, acceleration, jerk, snap = _circular_state(
+        0.0,
+        orbit_radius_mm=orbit_radius,
+        angular_frequency_per_ns=angular_frequency,
+        gamma=gamma,
+    )
+    magnetic_field_z = -mass * C_MMNS * gamma * angular_frequency / charge
+    field = electromagnetic_field_tensor_native(
+        (0.0, 0.0, 0.0),
+        (0.0, 0.0, magnetic_field_z),
+    )
+    partial_a = 0.5 * _SIGNS[:, np.newaxis] * field
+    zero_hessian = np.zeros((4, 4, 4))
+
+    result = evaluate_potential_directional_intrinsic_spin_reduction_native(
+        four_velocity_mm_ns=velocity,
+        normalized_spin_four_vector=spin,
+        partial_a=partial_a,
+        partial2_a=zero_hessian,
+        partial3_a_along_velocity=zero_hessian,
+        partial3_a_along_acceleration=zero_hessian,
+        partial4_a_along_velocity_twice=zero_hessian,
+        charge_native=charge,
+        mass_amu=mass,
+        invariant_spin_native=invariant_spin,
+        g_factor=g_factor,
+    )
+    exact = evaluate_jakobsen_intrinsic_spin_radiation_balance_native(
+        charge_native=charge,
+        mass_amu=mass,
+        g_factor=g_factor,
+        four_velocity_mm_ns=velocity,
+        four_acceleration_mm_ns2=acceleration,
+        four_jerk_mm_ns3=jerk,
+        four_snap_mm_ns4=snap,
+        spin_four_vector_native=invariant_spin * spin,
+        spin_four_derivative_native=np.zeros(4),
+        spin_four_second_derivative_native=np.zeros(4),
+    )
+
+    np.testing.assert_allclose(
+        result.leading_dynamics.four_acceleration,
+        acceleration,
+        rtol=4.0e-15,
+        atol=1.0e-16,
+    )
+    np.testing.assert_allclose(
+        result.leading_dynamics.four_jerk,
+        jerk,
+        rtol=6.0e-15,
+        atol=1.0e-15,
+    )
+    np.testing.assert_allclose(
+        result.leading_dynamics.four_snap,
+        snap,
+        rtol=8.0e-15,
+        atol=1.0e-14,
+    )
+    np.testing.assert_array_equal(
+        result.leading_dynamics.normalized_spin_first_derivative,
+        0.0,
+    )
+    np.testing.assert_array_equal(
+        result.leading_dynamics.normalized_spin_second_derivative,
+        0.0,
+    )
+    np.testing.assert_allclose(
+        result.radiation_balance.self_force.linear_spin_self_force_native,
+        exact.self_force.linear_spin_self_force_native,
+        rtol=1.0e-14,
+        atol=1.0e-25,
+    )
+    assert result.intrinsic_magnetic_moment_native == pytest.approx(
+        g_factor * charge * invariant_spin / (2.0 * mass * C_MMNS),
+        rel=0.0,
+        abs=0.0,
+    )
 
 
 def test_reduction_rejects_bad_time_and_shape_inputs() -> None:

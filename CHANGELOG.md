@@ -163,7 +163,12 @@ All notable changes and updates to the LW Integrator project are documented in t
   supports unequal proper-time spacing, reports stencil conditioning, and
   converges at fourth order on the circular benchmark.  It remains diagnostic
   until accepted-only history, checkpoint, and rejected-trial isolation are
-  wired and validated.
+  wired and validated.  A potential-only analytical bridge now computes the
+  same leading acceleration, jerk, snap, and spin derivatives without
+  materializing electric/magnetic fields or complete higher-rank potential
+  tensors.  It consumes only the third- and fourth-derivative contractions
+  along velocity and acceleration that the reduced self-force actually uses;
+  retarded-provider generation of those contractions remains open.
 - Added a diagnostic radiation-flux oracle that samples the independent
   retarded charge and intrinsic-dipole fields on a sphere and integrates
   outward electromagnetic energy, linear momentum, and angular momentum.  It

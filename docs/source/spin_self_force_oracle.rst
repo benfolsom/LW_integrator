@@ -289,6 +289,33 @@ stencil across checkpoints, and prevent rejected nonlinear or adaptive trials
 from entering it.  Those state-management requirements are as important as
 the derivative formula itself.
 
+Potential-only analytical bridge
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``evaluate_potential_directional_intrinsic_spin_reduction_native`` provides
+the complementary local analytical route.  Starting from derivatives of the
+ordinary Maxwell four-potential, it calculates the leading RFS acceleration,
+jerk, snap, and first two spin derivatives, then evaluates the intrinsic-spin
+self-force balance.  It does not construct electric or magnetic three-fields,
+the electromagnetic field tensor, or its full gradient.
+
+The magnetic-moment force already contains second derivatives of the
+potential.  Its first and second proper-time derivatives would conventionally
+require complete third- and fourth-derivative potential tensors.  Most of
+those components are never consumed.  The bridge instead accepts only three
+Hessian-shaped contractions: the third derivative along velocity, the third
+derivative along acceleration, and the fourth derivative along velocity
+twice.  This reduces the higher-order input from a general rank-five array to
+the directional information actually used by the equations.
+
+The analytical chain rule is exact in a homogeneous-field benchmark.  In a
+time-varying polynomial potential with nonzero magnetic-moment response, it
+agrees with an independently integrated local trajectory and centered
+derivative check below :math:`10^{-12}` in the combined derivative norm.  The
+remaining provider task is to calculate these three contractions directly
+from the retarded charge and dipole potential jets, with smooth-segment and
+boundary fallback rules analogous to the existing response provider.
+
 For the intrinsic relation :math:`M=gqS/(2mc)`, the mechanical linear-spin
 bracket can be written schematically as
 
@@ -323,16 +350,13 @@ Villarroel [Villarroel1975]_ shows explicitly that the radiated momentum and
 the local force differ by a total derivative and an additional radiative-field
 term, so far flux alone is not the instantaneous local force.
 
-The next milestone is to compare the now-implemented backward reference with
-derivative contractions from the analytical non-self RFS response.  The
-ordinary Lorentz-force derivative uses the available first field derivative.
-The magnetic-moment force already contains that derivative, so its derivative
-and the worldline snap require selected second and third field derivatives.
-Calculate only the contractions used by the self-force rather than building
-complete higher-rank field tensors.  Production injection remains blocked
-until the analytical and causal routes converge, accepted-history lifecycle
-tests pass, and the existing Medina charge term is shown to enter exactly
-once.
+The next milestone is to make the retarded provider return the analytical
+directional contractions consumed by this bridge.  Compare that end-to-end
+provider result with the backward accepted-history reference at smooth
+events, and require explicit fallback at history or spin-segment boundaries.
+Production injection remains blocked until the analytical and causal routes
+converge, accepted-history lifecycle tests pass, and the existing Medina
+charge term is shown to enter exactly once.
 
 References
 ----------

@@ -21,9 +21,14 @@ from typing import Sequence, Union
 
 import numpy as np
 
+from .constants import C_MMNS
 from .spin_self_force_oracle import (
     JakobsenIntrinsicSpinRadiationBalanceResult,
     evaluate_jakobsen_intrinsic_spin_radiation_balance_native,
+)
+from .potential_jet_rfs import (
+    PotentialDirectionalRFSReductionJet,
+    potential_directional_rfs_reduction_jet_native,
 )
 
 
@@ -76,6 +81,15 @@ class SampledIntrinsicSpinReductionResult:
     reconstructed_spin_four_derivative_native: np.ndarray
     reconstructed_spin_four_second_derivative_native: np.ndarray
     velocity_derivative_residual_mm_ns2: np.ndarray
+    radiation_balance: JakobsenIntrinsicSpinRadiationBalanceResult
+
+
+@dataclass(frozen=True)
+class PotentialDirectionalIntrinsicSpinReductionResult:
+    """Potential-only leading dynamics and reduced intrinsic-spin balance."""
+
+    intrinsic_magnetic_moment_native: float
+    leading_dynamics: PotentialDirectionalRFSReductionJet
     radiation_balance: JakobsenIntrinsicSpinRadiationBalanceResult
 
 
@@ -289,8 +303,94 @@ def evaluate_causal_sampled_intrinsic_spin_reduction_native(
     )
 
 
+def evaluate_potential_directional_intrinsic_spin_reduction_native(
+    *,
+    four_velocity_mm_ns: ArrayLike,
+    normalized_spin_four_vector: ArrayLike,
+    partial_a: ArrayLike,
+    partial2_a: ArrayLike,
+    partial3_a_along_velocity: ArrayLike,
+    partial3_a_along_acceleration: ArrayLike,
+    partial4_a_along_velocity_twice: ArrayLike,
+    charge_native: float,
+    mass_amu: float,
+    invariant_spin_native: float,
+    g_factor: float,
+) -> PotentialDirectionalIntrinsicSpinReductionResult:
+    """Evaluate the intrinsic linear-spin balance from potential derivatives.
+
+    The magnetic moment is not an independent input here.  It is fixed by the
+    intrinsic no-susceptibility relation
+    ``mu = g q S / (2 m c)``, where ``S`` is
+    ``invariant_spin_native``.  This is the same relation assumed by the
+    Jakobsen radiation-balance formula and prevents an inconsistent leading
+    RFS response from being compared with that formula.
+
+    Only directional third- and fourth-potential derivatives are consumed;
+    see :func:`potential_directional_rfs_reduction_jet_native`.  The result is
+    diagnostic and contains no applied radiation-reaction impulse.
+    """
+
+    spin = np.asarray(normalized_spin_four_vector, dtype=float)
+    if spin.shape != (4,) or not np.all(np.isfinite(spin)):
+        raise ValueError(
+            "normalized_spin_four_vector must have shape (4,) and be finite"
+        )
+    charge = float(charge_native)
+    mass = float(mass_amu)
+    invariant_spin = float(invariant_spin_native)
+    g_value = float(g_factor)
+    if not np.isfinite(charge):
+        raise ValueError("charge_native must be finite")
+    if not np.isfinite(mass) or mass <= 0.0:
+        raise ValueError("mass_amu must be finite and positive")
+    if not np.isfinite(invariant_spin) or invariant_spin <= 0.0:
+        raise ValueError("invariant_spin_native must be finite and positive")
+    if not np.isfinite(g_value):
+        raise ValueError("g_factor must be finite")
+
+    intrinsic_moment = g_value * charge * invariant_spin / (2.0 * mass * C_MMNS)
+    leading = potential_directional_rfs_reduction_jet_native(
+        four_velocity_mm_ns=four_velocity_mm_ns,
+        spin_four_vector=spin,
+        partial_a=partial_a,
+        partial2_a=partial2_a,
+        partial3_a_along_velocity=partial3_a_along_velocity,
+        partial3_a_along_acceleration=partial3_a_along_acceleration,
+        partial4_a_along_velocity_twice=partial4_a_along_velocity_twice,
+        charge_native=charge,
+        mass_amu=mass,
+        magnetic_moment_native=intrinsic_moment,
+        invariant_spin_native=invariant_spin,
+    )
+    physical_spin = invariant_spin * spin
+    radiation_balance = evaluate_jakobsen_intrinsic_spin_radiation_balance_native(
+        charge_native=charge,
+        mass_amu=mass,
+        g_factor=g_value,
+        four_velocity_mm_ns=four_velocity_mm_ns,
+        four_acceleration_mm_ns2=leading.four_acceleration,
+        four_jerk_mm_ns3=leading.four_jerk,
+        four_snap_mm_ns4=leading.four_snap,
+        spin_four_vector_native=physical_spin,
+        spin_four_derivative_native=(
+            invariant_spin * leading.normalized_spin_first_derivative
+        ),
+        spin_four_second_derivative_native=(
+            invariant_spin * leading.normalized_spin_second_derivative
+        ),
+    )
+    return PotentialDirectionalIntrinsicSpinReductionResult(
+        intrinsic_magnetic_moment_native=intrinsic_moment,
+        leading_dynamics=leading,
+        radiation_balance=radiation_balance,
+    )
+
+
 __all__ = [
+    "PotentialDirectionalIntrinsicSpinReductionResult",
     "SampledIntrinsicSpinReductionResult",
     "evaluate_causal_sampled_intrinsic_spin_reduction_native",
+    "evaluate_potential_directional_intrinsic_spin_reduction_native",
     "evaluate_sampled_intrinsic_spin_reduction_native",
 ]
