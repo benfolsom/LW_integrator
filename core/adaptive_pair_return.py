@@ -709,9 +709,7 @@ def run_exact_pair_adaptive_window(
                     if growable_causal_c5_source_history is not None
                     else c5_history
                 ),
-                growable_causal_c5_source_history=(
-                    growable_causal_c5_source_history
-                ),
+                growable_causal_c5_source_history=(growable_causal_c5_source_history),
             )
         except IntegrationCancelled:
             flush_interrupted_checkpoint()

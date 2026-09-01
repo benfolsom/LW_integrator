@@ -987,9 +987,7 @@ def test_window_resume_reproduces_causal_c5_coefficients_bitwise(
     continuous_c5_arguments = (
         {
             "growable_causal_c5_source_history": (
-                GrowableAcceptedPairCausalC5SourceHistory.from_accepted(
-                    continuous_c5
-                )
+                GrowableAcceptedPairCausalC5SourceHistory.from_accepted(continuous_c5)
             )
         }
         if growable
@@ -1022,9 +1020,7 @@ def test_window_resume_reproduces_causal_c5_coefficients_bitwise(
     interrupted_c5_arguments = (
         {
             "growable_causal_c5_source_history": (
-                GrowableAcceptedPairCausalC5SourceHistory.from_accepted(
-                    interrupted_c5
-                )
+                GrowableAcceptedPairCausalC5SourceHistory.from_accepted(interrupted_c5)
             )
         }
         if growable

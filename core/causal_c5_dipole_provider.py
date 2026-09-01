@@ -433,7 +433,10 @@ class GrowableCausalC5DipoleSourceCollection:
             raise ValueError("growable causal C5 particle indices must be unique")
         if any(index < 0 for index in self.particle_indices):
             raise ValueError("growable causal C5 particle indices must be non-negative")
-        if any(not np.isfinite(moment) or moment == 0.0 for moment in self.magnetic_moments_native):
+        if any(
+            not np.isfinite(moment) or moment == 0.0
+            for moment in self.magnetic_moments_native
+        ):
             raise ValueError("growable causal C5 moments must be finite and nonzero")
 
     @classmethod
@@ -516,10 +519,7 @@ class GrowableCausalC5DipoleSourceCollection:
                     [_state_scalar(state, "t", particle) for state in rows]
                 ),
                 position_mm=np.asarray(
-                    [
-                        _state_vector(state, ("x", "y", "z"), particle)
-                        for state in rows
-                    ]
+                    [_state_vector(state, ("x", "y", "z"), particle) for state in rows]
                 ),
                 beta=np.asarray(
                     [
