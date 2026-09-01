@@ -8,6 +8,7 @@ import pytest
 from core.causal_c5_dipole_provider import (
     AcceptedPairCausalC5SourceHistory,
     CausalC5DipoleSourceCollection,
+    GrowableAcceptedPairCausalC5SourceHistory,
     evaluate_causal_c5_dipole_source_collection_native,
 )
 from core.causal_c5_source_history import CausalC5HistoryUnavailableError
@@ -167,6 +168,68 @@ def test_provider_result_arrays_are_read_only() -> None:
         "partial_f",
     ):
         assert not getattr(result, name).flags.writeable
+
+
+def test_growable_pair_commit_matches_immutable_candidate_bitwise() -> None:
+    trajectory = _trajectory()
+    accepted = AcceptedPairCausalC5SourceHistory.from_trajectory_arrays(
+        trajectory,
+        trajectory,
+    )
+    growable = GrowableAcceptedPairCausalC5SourceHistory.from_accepted(accepted)
+    states = (_state(21), _state(22))
+    transaction = growable.preflight_states(
+        rider_states=states,
+        driver_states=states,
+    )
+
+    assert growable.build_current().rider.sources[0].history.sample_count == 21
+    assert transaction.candidate.rider.sources[0].history.sample_count == 23
+    expected_rider = accepted.rider
+    for state in states:
+        expected_rider = expected_rider.append_accepted_state(state)
+    for candidate_source, expected_source in zip(
+        transaction.candidate.rider.sources,
+        expected_rider.sources,
+    ):
+        for candidate_segment, expected_segment in zip(
+            candidate_source.history.frozen_segments,
+            expected_source.history.frozen_segments,
+        ):
+            np.testing.assert_array_equal(
+                candidate_segment.position_coefficients_mm,
+                expected_segment.position_coefficients_mm,
+            )
+            np.testing.assert_array_equal(
+                candidate_segment.rest_spin_stereographic_coefficients,
+                expected_segment.rest_spin_stereographic_coefficients,
+            )
+
+    committed = growable.commit(transaction)
+    assert committed.rider.sources[0].history.sample_count == 23
+    assert committed.driver.sources[0].history.sample_count == 23
+    assert accepted.rider.sources[0].history.sample_count == 21
+
+
+def test_growable_pair_failure_publishes_neither_role() -> None:
+    trajectory = _trajectory()
+    accepted = AcceptedPairCausalC5SourceHistory.from_trajectory_arrays(
+        trajectory,
+        trajectory,
+    )
+    growable = GrowableAcceptedPairCausalC5SourceHistory.from_accepted(accepted)
+    invalid_driver = _state(21)
+    invalid_driver["magnetic_moment_native"] = np.asarray((2.0e-6, -4.0e-6))
+
+    with pytest.raises(ValueError, match="changed magnetic moment"):
+        growable.preflight_states(
+            rider_states=(_state(21),),
+            driver_states=(invalid_driver,),
+        )
+
+    current = growable.build_current()
+    assert all(source.history.sample_count == 21 for source in current.rider.sources)
+    assert all(source.history.sample_count == 21 for source in current.driver.sources)
 
 
 def test_duplicate_identities_fail_closed() -> None:

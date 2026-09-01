@@ -14,6 +14,7 @@ from core.adaptive_pair_return import (
 )
 from core.causal_c5_dipole_provider import (
     AcceptedPairCausalC5SourceHistory,
+    GrowableAcceptedPairCausalC5SourceHistory,
     evaluate_causal_c5_dipole_source_collection_native,
 )
 from core.causal_c5_source_history import CausalC5HistoryUnavailableError
@@ -206,6 +207,7 @@ def _attempt(
     intrinsic_spin_reduction_history=None,
     build_intrinsic_spin_reduction_candidate=None,
     causal_c5_source_history=None,
+    growable_causal_c5_source_history=None,
 ):
     return attempt_exact_pair_adaptive_step(
         rider_builder=rider,
@@ -224,6 +226,7 @@ def _attempt(
             build_intrinsic_spin_reduction_candidate
         ),
         causal_c5_source_history=causal_c5_source_history,
+        growable_causal_c5_source_history=growable_causal_c5_source_history,
     )
 
 
@@ -337,6 +340,55 @@ def test_rejected_attempt_does_not_touch_causal_c5_history() -> None:
     assert not attempt.accepted
     assert attempt.causal_c5_source_history is accepted
     assert rider.accepted_steps == driver.accepted_steps == 1
+
+
+def test_growable_causal_c5_attempt_commits_only_after_acceptance() -> None:
+    rider, driver = _magnetic_pair()
+    growable = GrowableAcceptedPairCausalC5SourceHistory.from_trajectory_arrays(
+        rider.build_current(),
+        driver.build_current(),
+    )
+
+    rejected = _attempt(
+        rider,
+        driver,
+        rider_advance=_advance(2.0),
+        tolerances=_tolerances(1.0e-4),
+        growable_causal_c5_source_history=growable,
+    )
+    assert not rejected.accepted
+    assert growable.build_current().rider.sources[0].history.sample_count == 1
+
+    accepted = _attempt(
+        rider,
+        driver,
+        rider_advance=_advance(2.0),
+        tolerances=_tolerances(1.0),
+        growable_causal_c5_source_history=growable,
+    )
+    assert accepted.accepted
+    assert accepted.causal_c5_source_history is not None
+    assert accepted.causal_c5_source_history.rider.sources[0].history.sample_count == 3
+    assert growable.build_current().driver.sources[0].history.sample_count == 3
+
+
+def test_immutable_and_growable_causal_c5_inputs_are_mutually_exclusive() -> None:
+    rider, driver = _magnetic_pair()
+    immutable = AcceptedPairCausalC5SourceHistory.from_trajectory_arrays(
+        rider.build_current(),
+        driver.build_current(),
+    )
+    growable = GrowableAcceptedPairCausalC5SourceHistory.from_accepted(immutable)
+
+    with pytest.raises(ValueError, match="cannot both be supplied"):
+        _attempt(
+            rider,
+            driver,
+            rider_advance=_advance(2.0),
+            tolerances=_tolerances(1.0),
+            causal_c5_source_history=immutable,
+            growable_causal_c5_source_history=growable,
+        )
 
 
 def test_causal_c5_candidate_failure_precedes_pair_publication() -> None:
@@ -913,8 +965,10 @@ def test_window_resume_reproduces_history_and_output_selection_bitwise(
             )
 
 
+@pytest.mark.parametrize("growable", (False, True), ids=("immutable", "growable"))
 def test_window_resume_reproduces_causal_c5_coefficients_bitwise(
     tmp_path: Path,
+    growable: bool,
 ) -> None:
     controller = AdaptivePairControllerState(
         current_step_ns=0.02,
@@ -929,6 +983,17 @@ def test_window_resume_reproduces_causal_c5_coefficients_bitwise(
     continuous_c5 = AcceptedPairCausalC5SourceHistory.from_trajectory_arrays(
         continuous_rider.build_current(),
         continuous_driver.build_current(),
+    )
+    continuous_c5_arguments = (
+        {
+            "growable_causal_c5_source_history": (
+                GrowableAcceptedPairCausalC5SourceHistory.from_accepted(
+                    continuous_c5
+                )
+            )
+        }
+        if growable
+        else {"causal_c5_source_history": continuous_c5}
     )
     continuous = run_exact_pair_adaptive_window(
         rider_builder=continuous_rider,
@@ -946,7 +1011,7 @@ def test_window_resume_reproduces_causal_c5_coefficients_bitwise(
         public_sample_interval_ns=0.15,
         magnetic_dipole=MagneticDipoleConfig(),
         include_dipole_source=False,
-        causal_c5_source_history=continuous_c5,
+        **continuous_c5_arguments,
     )
 
     interrupted_rider, interrupted_driver = _magnetic_history_pair(18)
@@ -954,7 +1019,18 @@ def test_window_resume_reproduces_causal_c5_coefficients_bitwise(
         interrupted_rider.build_current(),
         interrupted_driver.build_current(),
     )
-    directory = tmp_path / "c5-resume.checkpoint"
+    interrupted_c5_arguments = (
+        {
+            "growable_causal_c5_source_history": (
+                GrowableAcceptedPairCausalC5SourceHistory.from_accepted(
+                    interrupted_c5
+                )
+            )
+        }
+        if growable
+        else {"causal_c5_source_history": interrupted_c5}
+    )
+    directory = tmp_path / f"c5-resume-{growable}.checkpoint"
     store = AcceptedPairCheckpointStore(
         directory,
         compatibility_payload={"physics": "c5-resume"},
@@ -980,7 +1056,7 @@ def test_window_resume_reproduces_causal_c5_coefficients_bitwise(
             magnetic_dipole=MagneticDipoleConfig(),
             include_dipole_source=False,
             checkpoint_store=store,
-            causal_c5_source_history=interrupted_c5,
+            **interrupted_c5_arguments,
         )
 
     reopened = AcceptedPairCheckpointStore(
@@ -998,6 +1074,15 @@ def test_window_resume_reproduces_causal_c5_coefficients_bitwise(
         resumed_driver.build_current(),
     )
     assert restored_c5 is not None
+    resumed_c5_arguments = (
+        {
+            "growable_causal_c5_source_history": (
+                GrowableAcceptedPairCausalC5SourceHistory.from_accepted(restored_c5)
+            )
+        }
+        if growable
+        else {"causal_c5_source_history": restored_c5}
+    )
     resumed = run_exact_pair_adaptive_window(
         rider_builder=resumed_rider,
         driver_builder=resumed_driver,
@@ -1020,7 +1105,7 @@ def test_window_resume_reproduces_causal_c5_coefficients_bitwise(
             reopened.public_output_state
         ),
         checkpoint_store=reopened,
-        causal_c5_source_history=restored_c5,
+        **resumed_c5_arguments,
     )
 
     assert continuous.causal_c5_source_history is not None
