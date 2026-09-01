@@ -421,6 +421,21 @@ total through linear order in spin, the balance residual norm, and the causal
 condition number when applicable.  These records are checkpointed, but none
 of their forces or balance-only terms are applied to the trajectory.
 
+A paired production regression runs the same short adaptive RFS plus retarded-
+dipole trajectory with a nonzero Medina charge-reaction work term, first with
+this diagnostic off and then on.  Position, canonical momentum, velocity,
+spin, radiation, Medina history/readiness/cap state, and mass-shell projection
+arrays are bit-for-bit identical.  Each available trace record independently
+checks
+
+.. math::
+
+   f_{\mathrm{trace,total}}^\mu
+   =f_{q^2,\mathrm{ALD\ comparator}}^\mu+f_{q\mu}^\mu.
+
+The comparison term remains trace data only; the existing Medina result is the
+only charge-radiation impulse applied to the trajectory.
+
 For the intrinsic relation :math:`M=gqS/(2mc)`, the mechanical linear-spin
 bracket can be written schematically as
 

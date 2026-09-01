@@ -30,6 +30,7 @@ from core.self_consistency import SelfConsistencyConfig
 from core.shared_lab_time import SharedLabTimeError
 from core.spin_self_force_reduction_history import (
     AcceptedPairIntrinsicSpinReductionHistory,
+    build_accepted_pair_intrinsic_spin_reduction_candidate,
     build_accepted_pair_intrinsic_spin_reduction_diagnostic_candidate,
 )
 from core.species import get_species
@@ -843,6 +844,132 @@ def test_short_adaptive_window_runs_charged_rfs_medina_and_dipole_source() -> No
                 2.0e-12 * acceleration_scale
             )
             assert abs(minkowski_dot(velocity, spin)) <= 2.0e-12 * spin_scale
+
+
+def test_spin_diagnostic_cannot_change_medina_trajectory_or_double_count_charge() -> (
+    None
+):
+    def run(mode: str):
+        rider_builder, driver_builder, magnetic = _charged_accepted_pair(
+            include_dipole_source=True,
+            exact_retarded_update="second_order_start_taylor_endpoint",
+            intrinsic_spin_self_reaction_mode=mode,
+        )
+        start_time = float(rider_builder.build_current().t[-1, 0])
+        advance = make_exact_role_eom_advance(
+            ExactPairEOMOptions(
+                aperture_radius_mm=1.0,
+                magnetic_dipole=magnetic,
+                self_consistency=SelfConsistencyConfig.standard(),
+                radiation_reaction_mode="medina_lad",
+            )
+        )
+        loose = StepDoublingTolerances(
+            position_mm=ErrorScale(1.0, 1.0),
+            mechanical_momentum_native=ErrorScale(1.0, 1.0),
+            rest_spin=ErrorScale(1.0, 1.0),
+            diagnostics_native=ErrorScale(1.0, 1.0),
+        )
+        result = run_exact_pair_adaptive_window(
+            rider_builder=rider_builder,
+            driver_builder=driver_builder,
+            advance_rider=advance,
+            advance_driver=advance,
+            controller_state=AdaptivePairControllerState(
+                current_step_ns=1.0e-8,
+                rider_proper_step_guess_ns=1.0e-8,
+                driver_proper_step_guess_ns=1.0e-8,
+            ),
+            controller_config=StepControllerConfig(method_order=1),
+            tolerances=loose,
+            target_time_ns=start_time + 2.0e-8,
+            minimum_step_ns=1.0e-12,
+            maximum_step_ns=1.0e-8,
+            maximum_attempts=4,
+            maximum_accepted_slabs=2,
+            public_sample_interval_ns=1.5e-8,
+            magnetic_dipole=magnetic,
+            include_dipole_source=True,
+            intrinsic_spin_reduction_history=(
+                AcceptedPairIntrinsicSpinReductionHistory.empty()
+            ),
+            build_intrinsic_spin_reduction_candidate=(
+                build_accepted_pair_intrinsic_spin_reduction_diagnostic_candidate
+                if mode == "diagnostic"
+                else build_accepted_pair_intrinsic_spin_reduction_candidate
+            ),
+        )
+        return (
+            rider_builder.build_current(),
+            driver_builder.build_current(),
+            result,
+        )
+
+    off_rider, off_driver, off_result = run("off")
+    diagnostic_rider, diagnostic_driver, diagnostic_result = run("diagnostic")
+
+    assert off_result.controller_state == diagnostic_result.controller_state
+    assert off_result.attempts == diagnostic_result.attempts
+    assert off_result.accepted_slabs == diagnostic_result.accepted_slabs
+    compared_arrays = (
+        "x",
+        "y",
+        "z",
+        "t",
+        "Px",
+        "Py",
+        "Pz",
+        "Pt",
+        "gamma",
+        "bx",
+        "by",
+        "bz",
+        "bdotx",
+        "bdoty",
+        "bdotz",
+        "spin_x",
+        "spin_y",
+        "spin_z",
+        "radiation_energy",
+        "radiation_reaction_work",
+        "medina_cross_field_energy",
+        "medina_cross_field_energy_change",
+        "medina_external_force_x",
+        "medina_external_force_y",
+        "medina_external_force_z",
+        "medina_external_force_sample_time",
+        "medina_force_derivative_ready",
+        "medina_impulse_capped",
+        "mass_shell_projection_energy",
+    )
+    for off_history, diagnostic_history in (
+        (off_rider, diagnostic_rider),
+        (off_driver, diagnostic_driver),
+    ):
+        for name in compared_arrays:
+            np.testing.assert_array_equal(
+                np.asarray(getattr(off_history, name)),
+                np.asarray(getattr(diagnostic_history, name)),
+            )
+        assert np.any(diagnostic_history.medina_force_derivative_ready)
+        assert np.any(np.abs(diagnostic_history.radiation_reaction_work) > 0.0)
+
+    assert diagnostic_result.intrinsic_spin_reduction_history is not None
+    for trace in (
+        diagnostic_result.intrinsic_spin_reduction_history.rider_diagnostics,
+        diagnostic_result.intrinsic_spin_reduction_history.driver_diagnostics,
+    ):
+        available = [
+            record
+            for record in trace.records
+            if not record.route.startswith("unavailable_")
+        ]
+        assert available
+        for record in available:
+            linear = np.asarray(record.linear_spin_four_force_native)
+            charge = np.asarray(record.charge_ald_four_force_native)
+            total = np.asarray(record.total_four_force_native)
+            np.testing.assert_array_equal(total, charge + linear)
 
 
 def test_real_neutral_eom_step_doubling_accepts_identical_coasting_paths() -> None:

@@ -22,7 +22,11 @@
   comparison term and still applies no magnetic self-reaction force.  A causal
   unequal-step derivative fit whose scaled condition number exceeds ``1e5``
   now fails closed: its condition is retained in the trace, but no force
-  estimate is returned.
+  estimate is returned.  A production adaptive RFS + retarded-dipole + Medina
+  regression now proves that enabling this trace leaves every compared
+  trajectory and Medina ledger array unchanged even when the Medina work is
+  nonzero, while each record keeps the linear-spin term, charge-ALD comparator,
+  and their sum separate.
 - Added a diagnostic smooth-segment retarded-potential derivative bridge for
   linear-spin reduction of order.  One safeguarded charge or dipole root now
   supplies the potential Hessian and only the three higher directional
