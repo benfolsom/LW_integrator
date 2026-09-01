@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Sequence, Union
+from typing import TYPE_CHECKING, Hashable, Sequence, Union
 
 import numpy as np
 
@@ -28,8 +28,18 @@ from .spin_self_force_oracle import (
 )
 from .potential_jet_rfs import (
     PotentialDirectionalRFSReductionJet,
+    potential_derivative_rfs_response_native,
     potential_directional_rfs_reduction_jet_native,
 )
+from .retarded_potential_directional_jet import (
+    RetardedPotentialDirectionalJetProviderResult,
+    evaluate_retarded_charge_potential_directional_jet_native,
+    evaluate_retarded_dipole_potential_directional_jet_native,
+    sum_potential_directional_derivatives_native,
+)
+
+if TYPE_CHECKING:
+    from .retarded_fields import ObserverEvent, TrajectoryHistory
 
 
 ArrayLike = Union[Sequence[float], Sequence[Sequence[float]], np.ndarray]
@@ -91,6 +101,18 @@ class PotentialDirectionalIntrinsicSpinReductionResult:
     intrinsic_magnetic_moment_native: float
     leading_dynamics: PotentialDirectionalRFSReductionJet
     radiation_balance: JakobsenIntrinsicSpinRadiationBalanceResult
+
+
+@dataclass(frozen=True)
+class RetardedPotentialIntrinsicSpinReductionResult:
+    """Two-pass retarded-provider evaluation of the potential-only reduction."""
+
+    available: bool
+    unavailable_reason: str | None
+    leading_four_acceleration_mm_ns2: np.ndarray | None
+    charge_provider: RetardedPotentialDirectionalJetProviderResult
+    dipole_provider: RetardedPotentialDirectionalJetProviderResult
+    reduction: PotentialDirectionalIntrinsicSpinReductionResult | None
 
 
 def _evaluate_sampled_intrinsic_spin_reduction_native(
@@ -387,10 +409,184 @@ def evaluate_potential_directional_intrinsic_spin_reduction_native(
     )
 
 
+def evaluate_retarded_potential_intrinsic_spin_reduction_native(
+    *,
+    source_history: "TrajectoryHistory",
+    observer_event: "ObserverEvent",
+    four_velocity_mm_ns: ArrayLike,
+    normalized_spin_four_vector: ArrayLike,
+    charge_native: float,
+    mass_amu: float,
+    invariant_spin_native: float,
+    g_factor: float,
+    excluded_charge_source_indices: Sequence[int] = (),
+    dipole_source_identities: Sequence[Hashable] | None = None,
+    observer_source_identity: Hashable | None = None,
+    excluded_dipole_source_identities: Sequence[Hashable] = (),
+    require_complete_history: bool = True,
+    boundary_guard_fraction: float = 1.0e-6,
+    require_frozen_spin_segment: bool = True,
+    minimum_separation_mm: float = 1.0e-15,
+    root_tolerance_mm: float = 1.0e-21,
+    max_root_iterations: int = 96,
+    spin_interpolation_model: str = "centered_c1",
+) -> RetardedPotentialIntrinsicSpinReductionResult:
+    """Evaluate the analytical reduction directly from retarded source history.
+
+    The required acceleration-direction contraction creates a small apparent
+    dependency: the leading acceleration is itself determined by the first two
+    potential derivatives.  This diagnostic resolves it transparently in two
+    passes.  The first pass obtains ``dA`` and ``d2A`` and computes the leading
+    non-self acceleration.  The second evaluates the same roots with that
+    acceleration as the directional vector, then calls the local intrinsic-spin
+    balance.  No trajectory impulse or Medina term is applied.
+
+    A production sparse kernel can fuse these passes after the numerical
+    comparison is accepted.  Keeping them separate here makes the dependency
+    and the boundary handoff auditable.
+    """
+
+    velocity = np.asarray(four_velocity_mm_ns, dtype=float)
+    spin = np.asarray(normalized_spin_four_vector, dtype=float)
+    if velocity.shape != (4,) or not np.all(np.isfinite(velocity)):
+        raise ValueError("four_velocity_mm_ns must have shape (4,) and be finite")
+    if spin.shape != (4,) or not np.all(np.isfinite(spin)):
+        raise ValueError(
+            "normalized_spin_four_vector must have shape (4,) and be finite"
+        )
+    charge = float(charge_native)
+    mass = float(mass_amu)
+    invariant_spin = float(invariant_spin_native)
+    g_value = float(g_factor)
+    if not np.isfinite(charge):
+        raise ValueError("charge_native must be finite")
+    if not np.isfinite(mass) or mass <= 0.0:
+        raise ValueError("mass_amu must be finite and positive")
+    if not np.isfinite(invariant_spin) or invariant_spin <= 0.0:
+        raise ValueError("invariant_spin_native must be finite and positive")
+    if not np.isfinite(g_value):
+        raise ValueError("g_factor must be finite")
+
+    def providers_for_acceleration(
+        acceleration: np.ndarray,
+    ) -> tuple[
+        RetardedPotentialDirectionalJetProviderResult,
+        RetardedPotentialDirectionalJetProviderResult,
+    ]:
+        charge_result = evaluate_retarded_charge_potential_directional_jet_native(
+            source_history,
+            observer_event,
+            four_velocity_mm_ns=velocity,
+            four_acceleration_mm_ns2=acceleration,
+            excluded_source_indices=excluded_charge_source_indices,
+            require_complete_history=require_complete_history,
+            boundary_guard_fraction=boundary_guard_fraction,
+            minimum_separation_mm=minimum_separation_mm,
+            root_tolerance_mm=root_tolerance_mm,
+            max_root_iterations=max_root_iterations,
+        )
+        dipole_result = evaluate_retarded_dipole_potential_directional_jet_native(
+            source_history,
+            observer_event,
+            four_velocity_mm_ns=velocity,
+            four_acceleration_mm_ns2=acceleration,
+            source_identities=dipole_source_identities,
+            observer_source_identity=observer_source_identity,
+            excluded_source_identities=excluded_dipole_source_identities,
+            require_complete_history=require_complete_history,
+            boundary_guard_fraction=boundary_guard_fraction,
+            require_frozen_spin_segment=require_frozen_spin_segment,
+            minimum_separation_mm=minimum_separation_mm,
+            root_tolerance_mm=root_tolerance_mm,
+            max_root_iterations=max_root_iterations,
+            spin_interpolation_model=spin_interpolation_model,
+        )
+        return charge_result, dipole_result
+
+    zero_acceleration = np.zeros(4, dtype=float)
+    charge_first, dipole_first = providers_for_acceleration(zero_acceleration)
+    for provider in (charge_first, dipole_first):
+        if not provider.available or provider.derivatives is None:
+            return RetardedPotentialIntrinsicSpinReductionResult(
+                available=False,
+                unavailable_reason=provider.unavailable_reason,
+                leading_four_acceleration_mm_ns2=None,
+                charge_provider=charge_first,
+                dipole_provider=dipole_first,
+                reduction=None,
+            )
+    assert charge_first.derivatives is not None
+    assert dipole_first.derivatives is not None
+    first_derivatives = sum_potential_directional_derivatives_native(
+        charge_first.derivatives,
+        dipole_first.derivatives,
+    )
+    intrinsic_moment = g_value * charge * invariant_spin / (2.0 * mass * C_MMNS)
+    leading_response = potential_derivative_rfs_response_native(
+        four_velocity_mm_ns=velocity,
+        spin_four_vector=spin,
+        partial_a=first_derivatives.partial_a,
+        partial2_a=first_derivatives.partial2_a,
+        charge_native=charge,
+        mass_amu=mass,
+        magnetic_moment_native=intrinsic_moment,
+        invariant_spin_native=invariant_spin,
+    )
+    leading_acceleration = leading_response.total_four_force / mass
+    charge_final, dipole_final = providers_for_acceleration(leading_acceleration)
+    for provider in (charge_final, dipole_final):
+        if not provider.available or provider.derivatives is None:
+            return RetardedPotentialIntrinsicSpinReductionResult(
+                available=False,
+                unavailable_reason=provider.unavailable_reason,
+                leading_four_acceleration_mm_ns2=leading_acceleration,
+                charge_provider=charge_final,
+                dipole_provider=dipole_final,
+                reduction=None,
+            )
+    assert charge_final.derivatives is not None
+    assert dipole_final.derivatives is not None
+    derivatives = sum_potential_directional_derivatives_native(
+        charge_final.derivatives,
+        dipole_final.derivatives,
+    )
+    reduction = evaluate_potential_directional_intrinsic_spin_reduction_native(
+        four_velocity_mm_ns=velocity,
+        normalized_spin_four_vector=spin,
+        partial_a=derivatives.partial_a,
+        partial2_a=derivatives.partial2_a,
+        partial3_a_along_velocity=derivatives.partial3_a_along_velocity,
+        partial3_a_along_acceleration=derivatives.partial3_a_along_acceleration,
+        partial4_a_along_velocity_twice=(derivatives.partial4_a_along_velocity_twice),
+        charge_native=charge,
+        mass_amu=mass,
+        invariant_spin_native=invariant_spin,
+        g_factor=g_value,
+    )
+    if not np.array_equal(
+        reduction.leading_dynamics.four_acceleration,
+        leading_acceleration,
+    ):
+        raise RuntimeError(
+            "retarded directional provider changed its leading acceleration "
+            "between the two diagnostic passes"
+        )
+    return RetardedPotentialIntrinsicSpinReductionResult(
+        available=True,
+        unavailable_reason=None,
+        leading_four_acceleration_mm_ns2=leading_acceleration,
+        charge_provider=charge_final,
+        dipole_provider=dipole_final,
+        reduction=reduction,
+    )
+
+
 __all__ = [
     "PotentialDirectionalIntrinsicSpinReductionResult",
+    "RetardedPotentialIntrinsicSpinReductionResult",
     "SampledIntrinsicSpinReductionResult",
     "evaluate_causal_sampled_intrinsic_spin_reduction_native",
     "evaluate_potential_directional_intrinsic_spin_reduction_native",
+    "evaluate_retarded_potential_intrinsic_spin_reduction_native",
     "evaluate_sampled_intrinsic_spin_reduction_native",
 ]

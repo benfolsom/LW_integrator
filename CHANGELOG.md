@@ -1,5 +1,17 @@
 # Changelog
 
+- Added a diagnostic smooth-segment retarded-potential derivative bridge for
+  linear-spin reduction of order.  One safeguarded charge or dipole root now
+  supplies the potential Hessian and only the three higher directional
+  contractions consumed by the local RFS/Jakobsen calculation, without
+  constructing electric or magnetic three-fields, a field tensor, or its
+  gradient.  History-facing charge and dipole providers sum sources in their
+  declared order and explicitly report the derivative unavailable at a
+  worldline or spin-interpolation boundary.  The dense Taylor table remains a
+  validation oracle.  A weak leading-trajectory test agrees with the
+  independent centered and causal sampled reductions to about ``1.8e-8`` and
+  ``5.8e-7`` respectively in linear-spin force-vector norm.  No self-reaction
+  impulse is applied to trajectories.
 - Exposed the checkpointed exact-retarded adaptive pair integrator through the
   core configuration, direct CLI, testbed JSON, and GUI. The mode advances one
   rider and one driver on shared lab-time barriers, keeps accepted midpoint

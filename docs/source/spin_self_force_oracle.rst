@@ -311,10 +311,47 @@ the directional information actually used by the equations.
 The analytical chain rule is exact in a homogeneous-field benchmark.  In a
 time-varying polynomial potential with nonzero magnetic-moment response, it
 agrees with an independently integrated local trajectory and centered
-derivative check below :math:`10^{-12}` in the combined derivative norm.  The
-remaining provider task is to calculate these three contractions directly
-from the retarded charge and dipole potential jets, with smooth-segment and
-boundary fallback rules analogous to the existing response provider.
+derivative check below :math:`10^{-12}` in the combined derivative norm.
+
+``retarded_potential_directional_jet`` now supplies the first provider-side
+bridge.  For each charge or magnetic-dipole source, the existing safeguarded
+scalar light-cone solver selects one smooth source segment.  Taylor
+arithmetic differentiates that same implicit root and returns the potential,
+its first two coordinate derivatives, and the three higher directional
+contractions above.  Multiple sources are summed in source order.  At a
+worldline or spin-interpolation knot the provider returns an explicit
+``available=False`` result and reason; it does not extrapolate a derivative
+that the current interpolation does not define uniquely.
+
+This first version is deliberately a readable validation oracle.  Although
+its public result omits the complete rank-four and rank-five potential
+derivative tensors, its internal scalar Taylor algebra retains 70
+coefficients through fourth order for a charge potential and 126 through
+fifth order for a dipole Hertz component.  Many of those internal
+coefficients are probably unnecessary in a production sparse kernel.  They
+remain visible as an optimization target rather than being removed before
+the end-to-end physics comparison establishes which combinations are safe to
+discard.
+
+``evaluate_retarded_potential_intrinsic_spin_reduction_native`` connects this
+provider to the local reduction oracle without altering an integrated state.
+It uses two explicit provider passes.  The first obtains the first two
+potential derivatives and therefore the ordinary non-self acceleration.  The
+second contracts the higher derivative along that acceleration and evaluates
+the complete local linear-spin balance.  This two-pass form is a diagnostic
+clarity choice, not a proposed production cost: after validation, a sparse
+kernel can retain the needed Taylor coefficients and fuse the two operations.
+
+The first end-to-end comparison integrates ten weak leading-order RK4 steps
+in a static retarded point-charge potential.  It then evaluates the same
+linear-spin self-force three ways.  The analytical provider agrees with the
+five-sample centered reference to about :math:`1.8\times10^{-8}` and with the
+six-sample causal backward reference to about :math:`5.8\times10^{-7}` in
+force-vector norm.  Their independent velocity-derivative residuals remain
+below :math:`6\times10^{-11}` in native acceleration units.  Together with
+the exact circular benchmark above, this checks the source derivative, local
+chain rule, and self-force formula without applying the result to a live
+trajectory.
 
 For the intrinsic relation :math:`M=gqS/(2mc)`, the mechanical linear-spin
 bracket can be written schematically as
@@ -350,13 +387,13 @@ Villarroel [Villarroel1975]_ shows explicitly that the radiated momentum and
 the local force differ by a total derivative and an additional radiative-field
 term, so far flux alone is not the instantaneous local force.
 
-The next milestone is to make the retarded provider return the analytical
-directional contractions consumed by this bridge.  Compare that end-to-end
-provider result with the backward accepted-history reference at smooth
-events, and require explicit fallback at history or spin-segment boundaries.
-Production injection remains blocked until the analytical and causal routes
-converge, accepted-history lifecycle tests pass, and the existing Medina
-charge term is shown to enter exactly once.
+The next milestone is the causal boundary and state-lifecycle bridge.  At an
+unavailable segment boundary, hand off to the causal accepted-history result
+and record that choice explicitly.  Prove that only accepted non-self states
+enter that history, that rejected adaptive/nonlinear trials leave it
+unchanged, and that checkpoint/restart reproduces the same six-sample result.
+Production injection remains blocked until those lifecycle tests pass and the
+existing Medina charge term is shown to enter exactly once.
 
 References
 ----------
