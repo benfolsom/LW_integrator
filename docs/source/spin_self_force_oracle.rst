@@ -373,11 +373,37 @@ exist.  The causal path evaluates at the newest accepted proper time, so it
 does not add a one-step indexing delay.  Its scaled Vandermonde condition
 number remains part of the result for variable-step conditioning checks.
 
-This object is not yet owned by the live adaptive integrator or written into
-its checkpoint manifest.  That production wiring must append only after a
-joint rider/driver slab is accepted and must restore the state alongside the
-existing Medina history.  Until that integration test exists, the selector is
-a diagnostic and neither route is applied as a force.
+``AcceptedPairIntrinsicSpinReductionHistory`` now gives the live shared-time
+adaptive controller transactional ownership of one rider and one driver
+history.  The controller asks a pure callback to construct a candidate from
+the authoritative two-half-step path before publishing either trajectory.
+It adopts that candidate only after the joint trajectory preflight succeeds.
+Rejected trials never call the callback, and an exception while constructing
+the candidate leaves both trajectory builders unchanged.
+
+Accepted-pair checkpoint schema 2 stores this optional pair history alongside
+the controller and public-output cursor.  An interrupted/resumed adaptive
+window reproduces both the uninterrupted trajectories and the complete
+diagnostic history exactly.  Runs that do not supply the history and callback
+retain the previous path and store ``null`` for this state.
+
+The second-order exact equations now expose private start-event velocity,
+physical four-spin, and non-self four-acceleration metadata before Medina adds
+its charge-radiation kick.  For each accepted slab, the midpoint trial supplies
+the sample at the previous accepted endpoint and the refined trial supplies the
+sample at the new midpoint.  Independently accumulated rider and driver proper
+times place both samples correctly; coordinate time is not substituted for
+proper time.  A real RFS-plus-Medina-plus-dipole-source adaptive test checks
+that these four-vectors are finite and preserve velocity--acceleration and
+velocity--spin orthogonality.
+
+The production adaptive path records and checkpoints this diagnostic
+automatically when
+``exact_retarded_update=second_order_start_taylor_endpoint``.  It reports the
+retained rider/driver sample counts in the adaptive summary.  First-order exact
+runs retain the previous path and store ``null``.  The histories are not yet
+used to evaluate route statistics in the public result, and neither reduction
+route is applied as a force.
 
 For the intrinsic relation :math:`M=gqS/(2mc)`, the mechanical linear-spin
 bracket can be written schematically as

@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from core.exact_pair_integration import run_exact_pair_adaptive_integrator
 from core.types import (
@@ -59,13 +60,32 @@ def _advance(scale: float):
         result["_dead_particles"] = np.array([False])
         result["_exact_source_start_four_potential"] = np.zeros((1, 4))
         result["_exact_source_endpoint_rebase_required"] = np.array([False])
+        result["_intrinsic_spin_start_four_velocity"] = np.array(
+            [[1.0, float(observer_start["x"][0]), 0.0, 0.0]]
+        )
+        result["_intrinsic_spin_start_non_self_four_acceleration"] = np.array(
+            [[0.0, proper_step_ns, 0.0, 0.0]]
+        )
+        result["_intrinsic_spin_start_physical_four_spin"] = np.array(
+            [[0.0, 0.0, 0.0, 1.0]]
+        )
         return result
 
     return advance
 
 
+@pytest.mark.parametrize(
+    ("exact_retarded_update", "expected_reduction_samples"),
+    [
+        ("first_order_endpoint", None),
+        ("second_order_start_taylor_endpoint", 2),
+    ],
+)
 def test_public_exact_pair_runner_writes_and_reopens_checkpoint(
-    monkeypatch, tmp_path: Path
+    monkeypatch,
+    tmp_path: Path,
+    exact_retarded_update: str,
+    expected_reduction_samples: int | None,
 ) -> None:
     advances = iter((_advance(2.0), _advance(4.0)))
     monkeypatch.setattr(
@@ -88,6 +108,10 @@ def test_public_exact_pair_runner_writes_and_reopens_checkpoint(
         interval_seconds=0.0,
     )
     progress: list[tuple[int, int]] = []
+    magnetic = MagneticDipoleConfig(
+        enabled=True,
+        exact_retarded_update=exact_retarded_update,
+    )
 
     fresh = run_exact_pair_adaptive_integrator(
         rider_seed=[_state(-1.0)],
@@ -95,7 +119,7 @@ def test_public_exact_pair_runner_writes_and_reopens_checkpoint(
         initial_step_ns=0.2,
         requested_public_samples=3,
         aperture_radius_mm=10.0,
-        magnetic_dipole=MagneticDipoleConfig(enabled=True),
+        magnetic_dipole=magnetic,
         self_consistency=None,
         chrono_mode=ChronoMatchingMode.FAST,
         radiation_reaction_mode="off",
@@ -111,6 +135,20 @@ def test_public_exact_pair_runner_writes_and_reopens_checkpoint(
     assert manifest["status"] == "complete"
     assert len(fresh[0]) == len(fresh[1]) == fresh[2].n_steps == fresh[3].n_steps
     assert fresh[0][-1]["_adaptive_pair_return"]["completed"] is True
+    assert fresh[0][-1]["_adaptive_pair_return"][
+        "intrinsic_spin_reduction_samples"
+    ] == (
+        None
+        if expected_reduction_samples is None
+        else {
+            "rider": expected_reduction_samples,
+            "driver": expected_reduction_samples,
+        }
+    )
+    if expected_reduction_samples is None:
+        assert manifest["intrinsic_spin_reduction_state"] is None
+    else:
+        assert manifest["intrinsic_spin_reduction_state"] is not None
     assert progress[-1] == (3, 3)
 
     # A complete checkpoint is a valid read-only resume target. No new event
@@ -125,7 +163,7 @@ def test_public_exact_pair_runner_writes_and_reopens_checkpoint(
         initial_step_ns=0.2,
         requested_public_samples=3,
         aperture_radius_mm=10.0,
-        magnetic_dipole=MagneticDipoleConfig(enabled=True),
+        magnetic_dipole=magnetic,
         self_consistency=None,
         chrono_mode=ChronoMatchingMode.FAST,
         radiation_reaction_mode="off",

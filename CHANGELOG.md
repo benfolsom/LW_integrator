@@ -4,9 +4,17 @@
   intrinsic-spin reduction fallback.  Tentative appends return a new object,
   so discarded adaptive/nonlinear trials cannot mutate accepted diagnostic
   history; strict checkpoint payloads reproduce the next candidate and causal
-  force exactly.  A pure selector records analytical smooth-segment, causal
-  boundary-fallback, or insufficient-history routes.  This is lifecycle
-  validation only and still applies no self-reaction force.
+  force exactly.  A rider/driver pair wrapper can now participate in the live
+  shared-time adaptive transaction: its pure candidate is built before the
+  refined trajectory is published, adopted only after joint acceptance, and
+  stored in accepted-pair checkpoint schema 2.  Rejected trials never invoke
+  the update, and restart reproduces the uninterrupted diagnostic history.
+  A pure selector records analytical smooth-segment, causal boundary-fallback,
+  or insufficient-history routes.  The second-order exact equations now expose
+  private start-event velocity, physical spin, and non-self four-acceleration
+  before Medina's charge-radiation kick.  The production adaptive path records
+  these diagnostics automatically and reports the retained sample counts, but
+  still applies no magnetic self-reaction force.
 - Added a diagnostic smooth-segment retarded-potential derivative bridge for
   linear-spin reduction of order.  One safeguarded charge or dipole root now
   supplies the potential Hessian and only the three higher directional

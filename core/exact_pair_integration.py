@@ -15,11 +15,16 @@ import numpy as np
 from .adaptive_pair_return import (
     AdaptivePairControllerState,
     AdaptivePairPublicOutputState,
+    IntrinsicSpinReductionCandidate,
     run_exact_pair_adaptive_window,
 )
 from .exact_pair_trial import ExactPairEOMOptions, make_exact_role_eom_advance
 from .integration_checkpoint import AcceptedPairCheckpointStore
 from .self_consistency import SelfConsistencyConfig
+from .spin_self_force_reduction_history import (
+    AcceptedPairIntrinsicSpinReductionHistory,
+    build_accepted_pair_intrinsic_spin_reduction_candidate,
+)
 from .step_doubling import ErrorScale, StepControllerConfig, StepDoublingTolerances
 from .types import (
     AdaptivePairReturnConfig,
@@ -109,6 +114,11 @@ def run_exact_pair_adaptive_integrator(
     )
     public_output: AdaptivePairPublicOutputState | None = None
     controller: AdaptivePairControllerState | None = None
+    reduction_history: AcceptedPairIntrinsicSpinReductionHistory | None = None
+    reduction_candidate_builder: IntrinsicSpinReductionCandidate | None = None
+    reduction_diagnostic_enabled = bool(
+        magnetic_dipole.exact_retarded_update == "second_order_start_taylor_endpoint"
+    )
     if resume:
         rider_builder = GrowableTrajectoryBuilder(8, 1, magnetic_dipole=True)
         driver_builder = GrowableTrajectoryBuilder(8, 1, magnetic_dipole=True)
@@ -119,6 +129,18 @@ def run_exact_pair_adaptive_integrator(
         public_output = AdaptivePairPublicOutputState.from_checkpoint_state(
             store.public_output_state
         )
+        if reduction_diagnostic_enabled:
+            payload = store.intrinsic_spin_reduction_state
+            if payload is None:
+                raise ValueError(
+                    "second-order exact-pair checkpoint has no intrinsic-spin "
+                    "diagnostic history"
+                )
+            reduction_history = (
+                AcceptedPairIntrinsicSpinReductionHistory.from_checkpoint_payload(
+                    payload
+                )
+            )
         active_row = public_output.selected_rows[0]
     else:
         rider_builder = _new_builder_from_seed(
@@ -132,6 +154,13 @@ def run_exact_pair_adaptive_integrator(
         if rider_builder.accepted_steps != driver_builder.accepted_steps:
             raise ValueError("exact-pair adaptive seed histories must be aligned")
         active_row = len(rider_seed) - 1
+        if reduction_diagnostic_enabled:
+            reduction_history = AcceptedPairIntrinsicSpinReductionHistory.empty()
+
+    if reduction_diagnostic_enabled:
+        reduction_candidate_builder = (
+            build_accepted_pair_intrinsic_spin_reduction_candidate
+        )
 
     active_start_time_ns = float(rider_builder.build_current().t[active_row, 0])
     active_duration_ns = adaptive.target_lab_time_ns - active_start_time_ns
@@ -200,6 +229,8 @@ def run_exact_pair_adaptive_integrator(
         relative_time_tolerance=adaptive.shared_time_relative_tolerance,
         cancel_callback=cancel_callback,
         accepted_progress_callback=progress,
+        intrinsic_spin_reduction_history=reduction_history,
+        build_intrinsic_spin_reduction_candidate=reduction_candidate_builder,
     )
     if progress_callback is not None and result.completed:
         progress_callback(
@@ -231,6 +262,14 @@ def run_exact_pair_adaptive_integrator(
         "checkpoint_resumed": resume,
         "accepted_history_knots": rider_full.n_steps,
         "public_selected_rows": len(result.public_output_state.selected_rows),
+        "intrinsic_spin_reduction_samples": (
+            None
+            if result.intrinsic_spin_reduction_history is None
+            else {
+                "rider": result.intrinsic_spin_reduction_history.rider.sample_count,
+                "driver": result.intrinsic_spin_reduction_history.driver.sample_count,
+            }
+        ),
     }
     cast(dict[str, Any], rider_legacy[-1])["_adaptive_pair_return"] = dict(summary)
     cast(dict[str, Any], driver_legacy[-1])["_adaptive_pair_return"] = dict(summary)

@@ -22,7 +22,7 @@ import numpy as np
 from .types import TrajectoryArrays, TrajectoryBuilder
 
 SCHEMA_VERSION = 1
-ACCEPTED_PAIR_SCHEMA_VERSION = 1
+ACCEPTED_PAIR_SCHEMA_VERSION = 2
 
 
 class CheckpointError(RuntimeError):
@@ -447,6 +447,7 @@ class AcceptedPairCheckpointStore:
                 "chunks": [],
                 "controller_state": {},
                 "public_output_state": {},
+                "intrinsic_spin_reduction_state": None,
             }
             _atomic_json(self.manifest_path, self.manifest)
 
@@ -468,6 +469,19 @@ class AcceptedPairCheckpointStore:
             raise CheckpointError("public_output_state must be a JSON object")
         return cast(dict[str, Any], dict(value))
 
+    @property
+    def intrinsic_spin_reduction_state(self) -> dict[str, Any] | None:
+        """Return the detached diagnostic history payload, when enabled."""
+
+        value = self.manifest.get("intrinsic_spin_reduction_state")
+        if value is None:
+            return None
+        if not isinstance(value, dict):
+            raise CheckpointError(
+                "intrinsic_spin_reduction_state must be a JSON object or null"
+            )
+        return self._json_state(value, "intrinsic_spin_reduction_state")
+
     def _load_and_validate_manifest(self) -> dict[str, Any]:
         if not self.manifest_path.is_file():
             raise CheckpointError(
@@ -487,6 +501,15 @@ class AcceptedPairCheckpointStore:
         if manifest.get("compatibility_hash") != self.compatibility_hash:
             raise CheckpointCompatibilityError(
                 "checkpoint physics/configuration fingerprint does not match this run"
+            )
+        if "intrinsic_spin_reduction_state" not in manifest:
+            raise CheckpointCompatibilityError(
+                "accepted-pair checkpoint has no intrinsic-spin state boundary"
+            )
+        reduction_state = manifest["intrinsic_spin_reduction_state"]
+        if reduction_state is not None and not isinstance(reduction_state, dict):
+            raise CheckpointError(
+                "intrinsic_spin_reduction_state must be a JSON object or null"
             )
         committed = int(manifest.get("committed_knots", -1))
         if committed < 1:
@@ -589,6 +612,7 @@ class AcceptedPairCheckpointStore:
         driver: TrajectoryArrays,
         controller_state: dict[str, Any],
         public_output_state: dict[str, Any],
+        intrinsic_spin_reduction_state: dict[str, object] | None = None,
         complete: bool = False,
     ) -> None:
         """Commit all jointly accepted knots after the manifest boundary."""
@@ -601,6 +625,14 @@ class AcceptedPairCheckpointStore:
             )
         normalized_controller = self._json_state(controller_state, "controller_state")
         normalized_output = self._json_state(public_output_state, "public_output_state")
+        normalized_spin_reduction = (
+            None
+            if intrinsic_spin_reduction_state is None
+            else self._json_state(
+                intrinsic_spin_reduction_state,
+                "intrinsic_spin_reduction_state",
+            )
+        )
         start = self.committed_knots
         stop = int(rider.n_steps)
         if stop < start:
@@ -611,6 +643,9 @@ class AcceptedPairCheckpointStore:
                 next_manifest["status"] = "complete"
                 next_manifest["controller_state"] = normalized_controller
                 next_manifest["public_output_state"] = normalized_output
+                next_manifest["intrinsic_spin_reduction_state"] = (
+                    normalized_spin_reduction
+                )
                 next_manifest["updated_utc"] = _utc_now()
                 _atomic_json(self.manifest_path, next_manifest)
                 self.manifest = next_manifest
@@ -642,6 +677,7 @@ class AcceptedPairCheckpointStore:
         next_manifest["committed_knots"] = stop
         next_manifest["controller_state"] = normalized_controller
         next_manifest["public_output_state"] = normalized_output
+        next_manifest["intrinsic_spin_reduction_state"] = normalized_spin_reduction
         next_manifest["status"] = "complete" if complete else "running"
         next_manifest["updated_utc"] = _utc_now()
         _atomic_json(self.manifest_path, next_manifest)

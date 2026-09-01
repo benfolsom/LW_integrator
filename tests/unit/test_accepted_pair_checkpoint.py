@@ -103,6 +103,11 @@ def test_variable_length_pair_checkpoint_round_trip(tmp_path: Path) -> None:
         driver=driver.build_current(),
         controller_state={"current_lab_step_ns": 0.04, "rejections": 2},
         public_output_state={"next_sample_time_ns": 0.08},
+        intrinsic_spin_reduction_state={
+            "schema_version": 1,
+            "rider": {"proper_times_ns": [0.0, 0.1]},
+            "driver": {"proper_times_ns": [0.0, 0.05]},
+        },
         complete=True,
     )
 
@@ -123,6 +128,15 @@ def test_variable_length_pair_checkpoint_round_trip(tmp_path: Path) -> None:
         "rejections": 2,
     }
     assert reopened.public_output_state == {"next_sample_time_ns": 0.08}
+    reduction_state = reopened.intrinsic_spin_reduction_state
+    assert reduction_state == {
+        "schema_version": 1,
+        "rider": {"proper_times_ns": [0.0, 0.1]},
+        "driver": {"proper_times_ns": [0.0, 0.05]},
+    }
+    assert reduction_state is not None
+    reduction_state["rider"]["proper_times_ns"].append(99.0)
+    assert reopened.intrinsic_spin_reduction_state != reduction_state
     _assert_same(restored_rider.build_current(), rider.build_current())
     _assert_same(restored_driver.build_current(), driver.build_current())
 

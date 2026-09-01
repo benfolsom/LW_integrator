@@ -1853,6 +1853,21 @@ def retarded_equations_of_motion(
         result["_exact_source_endpoint_rebase_required"] = np.zeros(
             num_particles, dtype=bool
         )
+    if second_order_exact_source_selected:
+        # Private accepted-trial metadata for the diagnostic intrinsic-spin
+        # history.  These values belong to the step start and are calculated
+        # before Medina adds its charge-radiation impulse.  They are consumed
+        # transactionally by the exact-pair adaptive controller and are never
+        # materialized in TrajectoryArrays or public output.
+        result["_intrinsic_spin_start_four_velocity"] = np.full(
+            (num_particles, 4), np.nan, dtype=float
+        )
+        result["_intrinsic_spin_start_non_self_four_acceleration"] = np.full(
+            (num_particles, 4), np.nan, dtype=float
+        )
+        result["_intrinsic_spin_start_physical_four_spin"] = np.full(
+            (num_particles, 4), np.nan, dtype=float
+        )
     pseudo_grid_sc_charge_matrix = None
     pseudo_grid_sc_source_radii = None
     if pseudo_grid_space_charge_source_radii_mm is not None:
@@ -3514,6 +3529,33 @@ def retarded_equations_of_motion(
                     + rfs_dipole_force_native
                     + additional_start_force_native
                 ) / particle_mass
+                from .magnetic_dipole import HBAR_NATIVE, boost_rest_polarization
+
+                start_rest_spin = np.asarray(
+                    (
+                        current_state["spin_x"][particle_idx],
+                        current_state["spin_y"][particle_idx],
+                        current_state["spin_z"][particle_idx],
+                    ),
+                    dtype=float,
+                )
+                invariant_spin_native = (
+                    float(current_state["spin_quantum_number"][particle_idx])
+                    * HBAR_NATIVE
+                )
+                result["_intrinsic_spin_start_four_velocity"][
+                    particle_idx
+                ] = start_four_velocity
+                result["_intrinsic_spin_start_non_self_four_acceleration"][
+                    particle_idx
+                ] = start_four_acceleration
+                result["_intrinsic_spin_start_physical_four_spin"][particle_idx] = (
+                    invariant_spin_native
+                    * boost_rest_polarization(
+                        start_rest_spin,
+                        exact_ordinary_response_beta,
+                    )
+                )
                 ordinary_force_derivative = np.zeros(4, dtype=float)
                 for interaction in (
                     exact_charge_source_interaction,

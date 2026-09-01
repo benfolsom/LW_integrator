@@ -15,7 +15,7 @@ checkpoint payload so restart parity can be tested before production wiring.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Mapping, Sequence, cast
+from typing import TYPE_CHECKING, Mapping, Sequence, cast
 
 import numpy as np
 
@@ -24,6 +24,9 @@ from .spin_self_force_reduction_oracle import (
     SampledIntrinsicSpinReductionResult,
     evaluate_causal_sampled_intrinsic_spin_reduction_native,
 )
+
+if TYPE_CHECKING:
+    from .exact_pair_trial import ExactPairStepDoublingTrial
 
 _CHECKPOINT_SCHEMA_VERSION = 1
 _MINIMUM_CAUSAL_SAMPLES = 6
@@ -240,6 +243,191 @@ class AcceptedIntrinsicSpinReductionHistory:
 
 
 @dataclass(frozen=True)
+class AcceptedPairIntrinsicSpinReductionHistory:
+    """Checkpointable causal histories for one accepted rider/driver pair.
+
+    This object is deliberately separate from the trajectory builders.  A
+    step-doubling trial may construct a replacement object, but the adaptive
+    controller only adopts it when the same refined rider/driver path is
+    jointly accepted.  The second-order exact equations expose the required
+    private pre-self-reaction samples; the pure builder below converts the
+    authoritative refined path without reading endpoint ``bdot``.
+    """
+
+    rider: AcceptedIntrinsicSpinReductionHistory
+    driver: AcceptedIntrinsicSpinReductionHistory
+    rider_endpoint_proper_time_ns: float = 0.0
+    driver_endpoint_proper_time_ns: float = 0.0
+
+    def __post_init__(self) -> None:
+        endpoints = (
+            float(self.rider_endpoint_proper_time_ns),
+            float(self.driver_endpoint_proper_time_ns),
+        )
+        if not all(np.isfinite(value) for value in endpoints):
+            raise ValueError("accepted endpoint proper times must be finite")
+        for role, history, endpoint in (
+            ("rider", self.rider, endpoints[0]),
+            ("driver", self.driver, endpoints[1]),
+        ):
+            if history.sample_count and endpoint < float(history.proper_times_ns[-1]):
+                raise ValueError(
+                    f"{role} endpoint proper time precedes its newest force sample"
+                )
+        object.__setattr__(self, "rider_endpoint_proper_time_ns", endpoints[0])
+        object.__setattr__(self, "driver_endpoint_proper_time_ns", endpoints[1])
+
+    @classmethod
+    def empty(
+        cls,
+        *,
+        maximum_samples: int = _MINIMUM_CAUSAL_SAMPLES,
+    ) -> "AcceptedPairIntrinsicSpinReductionHistory":
+        return cls(
+            rider=AcceptedIntrinsicSpinReductionHistory.empty(
+                maximum_samples=maximum_samples
+            ),
+            driver=AcceptedIntrinsicSpinReductionHistory.empty(
+                maximum_samples=maximum_samples
+            ),
+            rider_endpoint_proper_time_ns=0.0,
+            driver_endpoint_proper_time_ns=0.0,
+        )
+
+    def to_checkpoint_payload(self) -> dict[str, object]:
+        """Return the complete pair as strict finite JSON-compatible data."""
+
+        return {
+            "schema_version": _CHECKPOINT_SCHEMA_VERSION,
+            "rider": self.rider.to_checkpoint_payload(),
+            "driver": self.driver.to_checkpoint_payload(),
+            "rider_endpoint_proper_time_ns": self.rider_endpoint_proper_time_ns,
+            "driver_endpoint_proper_time_ns": self.driver_endpoint_proper_time_ns,
+        }
+
+    @classmethod
+    def from_checkpoint_payload(
+        cls,
+        payload: Mapping[str, object],
+    ) -> "AcceptedPairIntrinsicSpinReductionHistory":
+        required = {
+            "schema_version",
+            "rider",
+            "driver",
+            "rider_endpoint_proper_time_ns",
+            "driver_endpoint_proper_time_ns",
+        }
+        if set(payload) != required:
+            missing = sorted(required - set(payload))
+            extra = sorted(set(payload) - required)
+            raise ValueError(
+                "pair intrinsic-spin checkpoint keys do not match: "
+                f"missing={missing}, extra={extra}"
+            )
+        if int(cast(int, payload["schema_version"])) != _CHECKPOINT_SCHEMA_VERSION:
+            raise ValueError("unsupported pair intrinsic-spin checkpoint schema")
+        rider_payload = payload["rider"]
+        driver_payload = payload["driver"]
+        if not isinstance(rider_payload, Mapping) or not isinstance(
+            driver_payload, Mapping
+        ):
+            raise ValueError("pair intrinsic-spin histories must be JSON objects")
+        return cls(
+            rider=AcceptedIntrinsicSpinReductionHistory.from_checkpoint_payload(
+                rider_payload
+            ),
+            driver=AcceptedIntrinsicSpinReductionHistory.from_checkpoint_payload(
+                driver_payload
+            ),
+            rider_endpoint_proper_time_ns=float(
+                cast(float, payload["rider_endpoint_proper_time_ns"])
+            ),
+            driver_endpoint_proper_time_ns=float(
+                cast(float, payload["driver_endpoint_proper_time_ns"])
+            ),
+        )
+
+
+def _private_start_sample(state: Mapping[str, object]) -> dict[str, np.ndarray]:
+    names = {
+        "four_velocity_mm_ns": "_intrinsic_spin_start_four_velocity",
+        "non_self_four_acceleration_mm_ns2": (
+            "_intrinsic_spin_start_non_self_four_acceleration"
+        ),
+        "physical_spin_four_native": "_intrinsic_spin_start_physical_four_spin",
+    }
+    sample: dict[str, np.ndarray] = {}
+    for public_name, private_name in names.items():
+        values = np.asarray(state.get(private_name), dtype=float)
+        if values.shape != (1, 4) or not np.all(np.isfinite(values)):
+            raise ValueError(
+                "accepted exact-pair state has no finite pre-self-reaction "
+                f"sample {private_name}"
+            )
+        sample[public_name] = np.array(values[0], copy=True)
+    return sample
+
+
+def build_accepted_pair_intrinsic_spin_reduction_candidate(
+    trial: "ExactPairStepDoublingTrial",
+    accepted: AcceptedPairIntrinsicSpinReductionHistory,
+) -> AcceptedPairIntrinsicSpinReductionHistory:
+    """Build the diagnostic history for one authoritative two-half path.
+
+    The midpoint state contains the leading sample at the accepted slab start;
+    the refined endpoint state contains the leading sample at the midpoint.
+    The endpoint proper time is advanced by both independently solved proper
+    increments and retained for the next slab.  This pure function is intended
+    to run before the trajectory commit, so any malformed private sample fails
+    without partially publishing rider or driver state.
+    """
+
+    def append_role(
+        history: AcceptedIntrinsicSpinReductionHistory,
+        endpoint_proper_time_ns: float,
+        midpoint_state: Mapping[str, object],
+        endpoint_state: Mapping[str, object],
+        midpoint_step_ns: float,
+        endpoint_step_ns: float,
+    ) -> tuple[AcceptedIntrinsicSpinReductionHistory, float]:
+        start_sample = _private_start_sample(midpoint_state)
+        with_start = history.append_accepted(
+            proper_time_ns=endpoint_proper_time_ns,
+            **start_sample,
+        )
+        midpoint_time = endpoint_proper_time_ns + float(midpoint_step_ns)
+        midpoint_sample = _private_start_sample(endpoint_state)
+        with_midpoint = with_start.append_accepted(
+            proper_time_ns=midpoint_time,
+            **midpoint_sample,
+        )
+        return with_midpoint, midpoint_time + float(endpoint_step_ns)
+
+    rider, rider_endpoint = append_role(
+        accepted.rider,
+        accepted.rider_endpoint_proper_time_ns,
+        trial.midpoint.pair.rider.state,
+        trial.refined.pair.rider.state,
+        trial.midpoint.pair.rider.proper_step_ns,
+        trial.refined.pair.rider.proper_step_ns,
+    )
+    driver, driver_endpoint = append_role(
+        accepted.driver,
+        accepted.driver_endpoint_proper_time_ns,
+        trial.midpoint.pair.driver.state,
+        trial.refined.pair.driver.state,
+        trial.midpoint.pair.driver.proper_step_ns,
+        trial.refined.pair.driver.proper_step_ns,
+    )
+    return AcceptedPairIntrinsicSpinReductionHistory(
+        rider=rider,
+        driver=driver,
+        rider_endpoint_proper_time_ns=rider_endpoint,
+        driver_endpoint_proper_time_ns=driver_endpoint,
+    )
+
+
+@dataclass(frozen=True)
 class IntrinsicSpinReductionRouteResult:
     """Explicit analytical, causal-boundary, or unavailable route selection."""
 
@@ -296,7 +484,9 @@ def select_intrinsic_spin_reduction_route_native(
 
 
 __all__ = [
+    "AcceptedPairIntrinsicSpinReductionHistory",
     "AcceptedIntrinsicSpinReductionHistory",
     "IntrinsicSpinReductionRouteResult",
+    "build_accepted_pair_intrinsic_spin_reduction_candidate",
     "select_intrinsic_spin_reduction_route_native",
 ]

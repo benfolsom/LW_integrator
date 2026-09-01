@@ -90,6 +90,15 @@ state and the sparse public-output cursor. A focused interrupted/resumed run
 reproduces the uninterrupted accepted histories, controller, and output-row
 selection bit-for-bit.
 
+Accepted-pair checkpoint schema 2 also reserves an optional JSON state for the
+causal intrinsic-spin reduction history.  Second-order exact-retarded adaptive
+runs record it automatically; its rider and driver histories advance in the
+same joint acceptance transaction and are restored exactly on resume.
+First-order runs write ``null`` and follow the unchanged trajectory path.
+Schema-1
+accepted-pair checkpoints were alpha-development artifacts and must be
+restarted rather than silently interpreted without this state boundary.
+
 Enable it in a testbed configuration with ``adaptive_pair_return.enabled`` or
 on the direct CLI with ``--adaptive-pair-return``. A direct CLI launch also
 needs ``--adaptive-pair-target-time-ns`` and ``--checkpoint-dir``. The GUI

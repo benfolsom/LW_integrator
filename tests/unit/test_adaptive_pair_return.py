@@ -15,6 +15,10 @@ from core.adaptive_pair_return import (
 from core.integration_checkpoint import AcceptedPairCheckpointStore
 from core.integration_runner import IntegrationCancelled
 from core.shared_lab_time import SharedLabTimeError
+from core.spin_self_force_reduction_history import (
+    AcceptedPairIntrinsicSpinReductionHistory,
+    build_accepted_pair_intrinsic_spin_reduction_candidate,
+)
 from core.step_doubling import (
     ErrorScale,
     StepControllerConfig,
@@ -75,6 +79,15 @@ def _advance(scale: float, *, cap: bool = False, dead: bool = False):
         result["_dead_particles"] = np.array([dead])
         result["_exact_source_start_four_potential"] = np.zeros((1, 4))
         result["_exact_source_endpoint_rebase_required"] = np.array([False])
+        result["_intrinsic_spin_start_four_velocity"] = np.array(
+            [[1.0, float(observer_start["x"][0]), 0.0, 0.0]]
+        )
+        result["_intrinsic_spin_start_non_self_four_acceleration"] = np.array(
+            [[0.0, proper_step_ns, 0.0, 0.0]]
+        )
+        result["_intrinsic_spin_start_physical_four_spin"] = np.array(
+            [[0.0, 0.0, 0.0, 1.0]]
+        )
         return result
 
     return advance
@@ -97,6 +110,13 @@ def _controller() -> AdaptivePairControllerState:
     )
 
 
+def _initial_spin_reduction_history() -> AcceptedPairIntrinsicSpinReductionHistory:
+    return AcceptedPairIntrinsicSpinReductionHistory.empty()
+
+
+_build_spin_reduction_candidate = build_accepted_pair_intrinsic_spin_reduction_candidate
+
+
 def _attempt(
     rider: GrowableTrajectoryBuilder,
     driver: GrowableTrajectoryBuilder,
@@ -104,6 +124,8 @@ def _attempt(
     rider_advance,
     tolerances: StepDoublingTolerances,
     controller_state: AdaptivePairControllerState | None = None,
+    intrinsic_spin_reduction_history=None,
+    build_intrinsic_spin_reduction_candidate=None,
 ):
     return attempt_exact_pair_adaptive_step(
         rider_builder=rider,
@@ -117,6 +139,10 @@ def _attempt(
         maximum_step_ns=1.0,
         magnetic_dipole=MagneticDipoleConfig(),
         include_dipole_source=False,
+        intrinsic_spin_reduction_history=intrinsic_spin_reduction_history,
+        build_intrinsic_spin_reduction_candidate=(
+            build_intrinsic_spin_reduction_candidate
+        ),
     )
 
 
@@ -136,6 +162,71 @@ def test_accepted_attempt_commits_refined_rows_and_advances_controller() -> None
     assert driver.accepted_steps == 3
     assert attempt.controller_state.accepted_slabs == 1
     assert attempt.controller_state.rejected_trials == 0
+
+
+def test_accepted_attempt_adopts_spin_history_after_joint_preflight() -> None:
+    rider, driver = _pair()
+    accepted = _initial_spin_reduction_history()
+    before = accepted.to_checkpoint_payload()
+
+    attempt = _attempt(
+        rider,
+        driver,
+        rider_advance=_advance(2.0),
+        tolerances=_tolerances(1.0),
+        intrinsic_spin_reduction_history=accepted,
+        build_intrinsic_spin_reduction_candidate=_build_spin_reduction_candidate,
+    )
+
+    assert attempt.accepted
+    assert accepted.to_checkpoint_payload() == before
+    assert attempt.intrinsic_spin_reduction_history is not None
+    assert attempt.intrinsic_spin_reduction_history.rider.sample_count == 2
+    assert attempt.intrinsic_spin_reduction_history.driver.sample_count == 2
+    assert rider.accepted_steps == driver.accepted_steps == 3
+
+
+def test_rejected_attempt_never_builds_or_adopts_spin_history() -> None:
+    rider, driver = _pair()
+    accepted = _initial_spin_reduction_history()
+    calls = []
+
+    def unexpected_candidate(*args):
+        calls.append(args)
+        return _build_spin_reduction_candidate(*args)
+
+    attempt = _attempt(
+        rider,
+        driver,
+        rider_advance=_advance(2.0),
+        tolerances=_tolerances(1.0e-4),
+        intrinsic_spin_reduction_history=accepted,
+        build_intrinsic_spin_reduction_candidate=unexpected_candidate,
+    )
+
+    assert not attempt.accepted
+    assert calls == []
+    assert attempt.intrinsic_spin_reduction_history is accepted
+    assert rider.accepted_steps == driver.accepted_steps == 1
+
+
+def test_spin_history_preflight_failure_leaves_pair_unpublished() -> None:
+    rider, driver = _pair()
+
+    def fail_candidate(*_args):
+        raise RuntimeError("diagnostic sample construction failed")
+
+    with pytest.raises(RuntimeError, match="sample construction"):
+        _attempt(
+            rider,
+            driver,
+            rider_advance=_advance(2.0),
+            tolerances=_tolerances(1.0),
+            intrinsic_spin_reduction_history=_initial_spin_reduction_history(),
+            build_intrinsic_spin_reduction_candidate=fail_candidate,
+        )
+
+    assert rider.accepted_steps == driver.accepted_steps == 1
 
 
 def test_error_rejection_shrinks_without_publishing() -> None:
@@ -267,6 +358,8 @@ def _run_window(
     target_time_ns: float = 0.65,
     minimum_step_ns: float = 0.001,
     maximum_attempts: int = 20,
+    intrinsic_spin_reduction_history=None,
+    build_intrinsic_spin_reduction_candidate=None,
 ):
     rider, driver = _pair()
     result = run_exact_pair_adaptive_window(
@@ -285,6 +378,10 @@ def _run_window(
         public_sample_interval_ns=public_interval_ns,
         magnetic_dipole=MagneticDipoleConfig(),
         include_dipole_source=False,
+        intrinsic_spin_reduction_history=intrinsic_spin_reduction_history,
+        build_intrinsic_spin_reduction_candidate=(
+            build_intrinsic_spin_reduction_candidate
+        ),
     )
     return rider, driver, result
 
@@ -451,6 +548,8 @@ def test_window_writes_complete_checkpoint_with_public_cursor(tmp_path: Path) ->
         magnetic_dipole=MagneticDipoleConfig(),
         include_dipole_source=False,
         checkpoint_store=store,
+        intrinsic_spin_reduction_history=_initial_spin_reduction_history(),
+        build_intrinsic_spin_reduction_candidate=_build_spin_reduction_candidate,
     )
 
     reopened = AcceptedPairCheckpointStore(
@@ -470,6 +569,17 @@ def test_window_writes_complete_checkpoint_with_public_cursor(tmp_path: Path) ->
             reopened.public_output_state
         )
         == result.public_output_state
+    )
+    assert reopened.intrinsic_spin_reduction_state is not None
+    restored_reduction = (
+        AcceptedPairIntrinsicSpinReductionHistory.from_checkpoint_payload(
+            reopened.intrinsic_spin_reduction_state
+        )
+    )
+    assert result.intrinsic_spin_reduction_history is not None
+    assert (
+        restored_reduction.to_checkpoint_payload()
+        == result.intrinsic_spin_reduction_history.to_checkpoint_payload()
     )
 
 
@@ -524,7 +634,9 @@ def test_window_resume_reproduces_history_and_output_selection_bitwise(
     tmp_path: Path,
 ) -> None:
     continuous_rider, continuous_driver, continuous = _run_window(
-        public_interval_ns=0.15
+        public_interval_ns=0.15,
+        intrinsic_spin_reduction_history=_initial_spin_reduction_history(),
+        build_intrinsic_spin_reduction_candidate=_build_spin_reduction_candidate,
     )
     interrupted_rider, interrupted_driver = _pair()
     directory = tmp_path / "resume-window.checkpoint"
@@ -553,6 +665,8 @@ def test_window_resume_reproduces_history_and_output_selection_bitwise(
             magnetic_dipole=MagneticDipoleConfig(),
             include_dipole_source=False,
             checkpoint_store=store,
+            intrinsic_spin_reduction_history=_initial_spin_reduction_history(),
+            build_intrinsic_spin_reduction_candidate=(_build_spin_reduction_candidate),
         )
 
     reopened = AcceptedPairCheckpointStore(
@@ -565,6 +679,12 @@ def test_window_resume_reproduces_history_and_output_selection_bitwise(
     resumed_rider = GrowableTrajectoryBuilder(1, 1)
     resumed_driver = GrowableTrajectoryBuilder(1, 1)
     reopened.restore_pair(resumed_rider, resumed_driver)
+    assert reopened.intrinsic_spin_reduction_state is not None
+    restored_reduction = (
+        AcceptedPairIntrinsicSpinReductionHistory.from_checkpoint_payload(
+            reopened.intrinsic_spin_reduction_state
+        )
+    )
     resumed = run_exact_pair_adaptive_window(
         rider_builder=resumed_rider,
         driver_builder=resumed_driver,
@@ -589,10 +709,18 @@ def test_window_resume_reproduces_history_and_output_selection_bitwise(
             )
         ),
         checkpoint_store=reopened,
+        intrinsic_spin_reduction_history=restored_reduction,
+        build_intrinsic_spin_reduction_candidate=_build_spin_reduction_candidate,
     )
 
     assert resumed.controller_state == continuous.controller_state
     assert resumed.public_output_state == continuous.public_output_state
+    assert resumed.intrinsic_spin_reduction_history is not None
+    assert continuous.intrinsic_spin_reduction_history is not None
+    assert (
+        resumed.intrinsic_spin_reduction_history.to_checkpoint_payload()
+        == continuous.intrinsic_spin_reduction_history.to_checkpoint_payload()
+    )
     for restored, expected in (
         (resumed_rider.build_current(), continuous_rider.build_current()),
         (resumed_driver.build_current(), continuous_driver.build_current()),

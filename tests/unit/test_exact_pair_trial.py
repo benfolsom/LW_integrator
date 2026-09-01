@@ -25,8 +25,13 @@ from core.integration_runner import (
     _initialize_magnetic_dipole_state,
     _preflight_inertial_exact_histories,
 )
+from core.magnetic_dipole import minkowski_dot
 from core.self_consistency import SelfConsistencyConfig
 from core.shared_lab_time import SharedLabTimeError
+from core.spin_self_force_reduction_history import (
+    AcceptedPairIntrinsicSpinReductionHistory,
+    build_accepted_pair_intrinsic_spin_reduction_candidate,
+)
 from core.species import get_species
 from core.step_doubling import (
     ErrorScale,
@@ -151,6 +156,7 @@ def _charged_species_state(
 def _charged_accepted_pair(
     *,
     include_dipole_source: bool = False,
+    exact_retarded_update: str = "first_order_endpoint",
 ) -> tuple[
     GrowableTrajectoryBuilder,
     GrowableTrajectoryBuilder,
@@ -165,6 +171,7 @@ def _charged_accepted_pair(
         source=DipoleSourceConfig(
             model=("covariant_retarded_point" if include_dipole_source else "off")
         ),
+        exact_retarded_update=exact_retarded_update,
         rider=MagneticDipoleParticleConfig(species="electron"),
         driver=MagneticDipoleParticleConfig(species="proton"),
     )
@@ -686,7 +693,8 @@ def test_charged_exact_rfs_step_doubling_uses_trial_history_without_commit(
 
 def test_short_adaptive_window_runs_charged_rfs_medina_and_dipole_source() -> None:
     rider_builder, driver_builder, magnetic = _charged_accepted_pair(
-        include_dipole_source=True
+        include_dipole_source=True,
+        exact_retarded_update="second_order_start_taylor_endpoint",
     )
     start_time = float(rider_builder.build_current().t[-1, 0])
     advance = make_exact_role_eom_advance(
@@ -724,6 +732,12 @@ def test_short_adaptive_window_runs_charged_rfs_medina_and_dipole_source() -> No
         public_sample_interval_ns=1.5e-8,
         magnetic_dipole=magnetic,
         include_dipole_source=True,
+        intrinsic_spin_reduction_history=(
+            AcceptedPairIntrinsicSpinReductionHistory.empty()
+        ),
+        build_intrinsic_spin_reduction_candidate=(
+            build_accepted_pair_intrinsic_spin_reduction_candidate
+        ),
     )
 
     assert result.completed
@@ -737,6 +751,31 @@ def test_short_adaptive_window_runs_charged_rfs_medina_and_dipole_source() -> No
     assert not np.any(rider.medina_impulse_capped)
     assert not np.any(driver.medina_impulse_capped)
     assert result.public_output_state.selected_rows[-1] == rider.n_steps - 1
+    assert result.intrinsic_spin_reduction_history is not None
+    reduction = result.intrinsic_spin_reduction_history
+    assert reduction.rider.sample_count == 4
+    assert reduction.driver.sample_count == 4
+    for history in (reduction.rider, reduction.driver):
+        assert np.all(np.isfinite(history.four_velocity_mm_ns))
+        assert np.all(np.isfinite(history.non_self_four_acceleration_mm_ns2))
+        assert np.all(np.isfinite(history.physical_spin_four_native))
+        for velocity, acceleration, spin in zip(
+            history.four_velocity_mm_ns,
+            history.non_self_four_acceleration_mm_ns2,
+            history.physical_spin_four_native,
+        ):
+            acceleration_scale = max(
+                float(np.linalg.norm(velocity) * np.linalg.norm(acceleration)),
+                1.0,
+            )
+            spin_scale = max(
+                float(np.linalg.norm(velocity) * np.linalg.norm(spin)),
+                1.0,
+            )
+            assert abs(minkowski_dot(velocity, acceleration)) <= (
+                2.0e-12 * acceleration_scale
+            )
+            assert abs(minkowski_dot(velocity, spin)) <= 2.0e-12 * spin_scale
 
 
 def test_real_neutral_eom_step_doubling_accepts_identical_coasting_paths() -> None:

@@ -10,6 +10,7 @@ import pytest
 from core.constants import C_MMNS
 from core.spin_self_force_reduction_history import (
     AcceptedIntrinsicSpinReductionHistory,
+    AcceptedPairIntrinsicSpinReductionHistory,
     select_intrinsic_spin_reduction_route_native,
 )
 from core.spin_self_force_reduction_oracle import (
@@ -116,6 +117,24 @@ def test_checkpoint_roundtrip_reproduces_next_candidate_and_force() -> None:
         restored_force.radiation_balance.self_force.linear_spin_self_force_native,
         original_force.radiation_balance.self_force.linear_spin_self_force_native,
     )
+
+
+def test_pair_checkpoint_roundtrip_preserves_both_role_histories() -> None:
+    pair = AcceptedPairIntrinsicSpinReductionHistory(
+        rider=_accepted_history(),
+        driver=_accepted_history(4),
+        rider_endpoint_proper_time_ns=0.5,
+        driver_endpoint_proper_time_ns=0.4,
+    )
+
+    serialized = json.loads(json.dumps(pair.to_checkpoint_payload()))
+    restored = AcceptedPairIntrinsicSpinReductionHistory.from_checkpoint_payload(
+        serialized
+    )
+
+    assert restored.to_checkpoint_payload() == pair.to_checkpoint_payload()
+    assert restored.rider.sample_count == 6
+    assert restored.driver.sample_count == 4
 
 
 def test_route_uses_analytical_result_without_causal_history() -> None:
