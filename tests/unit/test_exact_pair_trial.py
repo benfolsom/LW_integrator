@@ -25,13 +25,16 @@ from core.integration_runner import (
     _initialize_magnetic_dipole_state,
     _preflight_inertial_exact_histories,
 )
-from core.magnetic_dipole import minkowski_dot
+from core.magnetic_dipole import HBAR_NATIVE, minkowski_dot
 from core.self_consistency import SelfConsistencyConfig
 from core.shared_lab_time import SharedLabTimeError
 from core.spin_self_force_reduction_history import (
     AcceptedPairIntrinsicSpinReductionHistory,
     build_accepted_pair_intrinsic_spin_reduction_candidate,
     build_accepted_pair_intrinsic_spin_reduction_diagnostic_candidate,
+)
+from core.spin_self_force_reduction_oracle import (
+    evaluate_sampled_intrinsic_spin_reduction_native,
 )
 from core.species import get_species
 from core.step_doubling import (
@@ -159,13 +162,15 @@ def _charged_accepted_pair(
     include_dipole_source: bool = False,
     exact_retarded_update: str = "first_order_endpoint",
     intrinsic_spin_self_reaction_mode: str = "off",
+    separation_mm: float = 1.0e-2,
 ) -> tuple[
     GrowableTrajectoryBuilder,
     GrowableTrajectoryBuilder,
     MagneticDipoleConfig,
 ]:
-    rider = _charged_species_state("electron", position_mm=-5.0e-3)
-    driver = _charged_species_state("proton", position_mm=5.0e-3)
+    half_separation = 0.5 * float(separation_mm)
+    rider = _charged_species_state("electron", position_mm=-half_separation)
+    driver = _charged_species_state("proton", position_mm=half_separation)
     magnetic = MagneticDipoleConfig(
         enabled=True,
         spin_precession_enabled=True,
@@ -970,6 +975,171 @@ def test_spin_diagnostic_cannot_change_medina_trajectory_or_double_count_charge(
             charge = np.asarray(record.charge_ald_four_force_native)
             total = np.asarray(record.total_four_force_native)
             np.testing.assert_array_equal(total, charge + linear)
+
+
+@pytest.mark.slow
+def test_medina_live_spin_trace_matches_delayed_centered_same_event_reference() -> None:
+    """Compare the live reduction with a delayed centered reference.
+
+    The reduction-of-order history deliberately stores the ordinary non-self
+    acceleration, not the acceleration after Medina radiation reaction.  The
+    derivative of the accepted four-velocity therefore need not equal the
+    stored acceleration in this active-Medina test.  That difference is a
+    sector-separation diagnostic, while the force comparison below is made
+    from the same non-self samples on both routes.
+    """
+
+    rider_builder, driver_builder, magnetic = _charged_accepted_pair(
+        include_dipole_source=True,
+        exact_retarded_update="second_order_start_taylor_endpoint",
+        intrinsic_spin_self_reaction_mode="diagnostic",
+        separation_mm=1.0e-7,
+    )
+    start_time = float(rider_builder.build_current().t[-1, 0])
+    advance = make_exact_role_eom_advance(
+        ExactPairEOMOptions(
+            aperture_radius_mm=1.0,
+            magnetic_dipole=magnetic,
+            self_consistency=SelfConsistencyConfig.standard(),
+            radiation_reaction_mode="medina_lad",
+        )
+    )
+    loose = StepDoublingTolerances(
+        position_mm=ErrorScale(1.0, 1.0),
+        mechanical_momentum_native=ErrorScale(1.0, 1.0),
+        rest_spin=ErrorScale(1.0, 1.0),
+        diagnostics_native=ErrorScale(1.0, 1.0),
+    )
+    result = run_exact_pair_adaptive_window(
+        rider_builder=rider_builder,
+        driver_builder=driver_builder,
+        advance_rider=advance,
+        advance_driver=advance,
+        controller_state=AdaptivePairControllerState(
+            current_step_ns=1.0e-8,
+            rider_proper_step_guess_ns=1.0e-8,
+            driver_proper_step_guess_ns=1.0e-8,
+        ),
+        controller_config=StepControllerConfig(method_order=1),
+        tolerances=loose,
+        target_time_ns=start_time + 4.0e-8,
+        minimum_step_ns=1.0e-12,
+        maximum_step_ns=1.0e-8,
+        maximum_attempts=8,
+        maximum_accepted_slabs=4,
+        public_sample_interval_ns=1.5e-8,
+        magnetic_dipole=magnetic,
+        include_dipole_source=True,
+        intrinsic_spin_reduction_history=(
+            AcceptedPairIntrinsicSpinReductionHistory.empty(maximum_samples=16)
+        ),
+        build_intrinsic_spin_reduction_candidate=(
+            build_accepted_pair_intrinsic_spin_reduction_diagnostic_candidate
+        ),
+    )
+
+    assert result.completed
+    rider_trajectory = rider_builder.build_current()
+    driver_trajectory = driver_builder.build_current()
+    assert not np.any(rider_trajectory.medina_impulse_capped)
+    assert not np.any(driver_trajectory.medina_impulse_capped)
+    assert (
+        float(np.min(np.abs(driver_trajectory.x[:, 0] - rider_trajectory.x[:, 0])))
+        > magnetic.source.minimum_separation_mm
+    )
+    assert result.intrinsic_spin_reduction_history is not None
+    pair_history = result.intrinsic_spin_reduction_history
+    relative_force_errors: list[float] = []
+    relative_velocity_residuals: list[float] = []
+    comparison_details: list[tuple[object, ...]] = []
+    for species_name, history, trace, trajectory in (
+        (
+            "electron",
+            pair_history.rider,
+            pair_history.rider_diagnostics,
+            rider_trajectory,
+        ),
+        (
+            "proton",
+            pair_history.driver,
+            pair_history.driver_diagnostics,
+            driver_trajectory,
+        ),
+    ):
+        assert history.sample_count == len(trace.records) == 8
+        species = get_species(species_name)
+        charge_native = float(species.charge_e) * ELEMENTARY_CHARGE
+        moment_native = float(trajectory.magnetic_moment_native[0])
+        spin_quantum_number = float(trajectory.spin_quantum_number[0])
+        invariant_spin_native = spin_quantum_number * HBAR_NATIVE
+        g_factor = (
+            2.0
+            * species.mass_amu
+            * C_MMNS
+            * moment_native
+            / (charge_native * invariant_spin_native)
+        )
+        for center in range(2, history.sample_count - 2):
+            record = trace.records[center]
+            if record.route.startswith("unavailable_"):
+                continue
+            window = slice(center - 2, center + 3)
+            reference = evaluate_sampled_intrinsic_spin_reduction_native(
+                proper_times_ns=history.proper_times_ns[window],
+                four_velocity_samples_mm_ns=history.four_velocity_mm_ns[window],
+                non_self_four_acceleration_samples_mm_ns2=(
+                    history.non_self_four_acceleration_mm_ns2[window]
+                ),
+                physical_spin_four_samples_native=(
+                    history.physical_spin_four_native[window]
+                ),
+                charge_native=charge_native,
+                mass_amu=species.mass_amu,
+                g_factor=g_factor,
+            )
+            live_force = np.asarray(record.linear_spin_four_force_native)
+            centered_force = np.asarray(
+                reference.radiation_balance.self_force.linear_spin_self_force_native
+            )
+            force_scale = max(
+                float(np.linalg.norm(live_force)),
+                float(np.linalg.norm(centered_force)),
+                np.finfo(float).tiny,
+            )
+            relative_force_errors.append(
+                float(np.linalg.norm(live_force - centered_force)) / force_scale
+            )
+            acceleration_scale = max(
+                float(
+                    np.linalg.norm(history.non_self_four_acceleration_mm_ns2[center])
+                ),
+                np.finfo(float).tiny,
+            )
+            relative_velocity_residuals.append(
+                float(np.linalg.norm(reference.velocity_derivative_residual_mm_ns2))
+                / acceleration_scale
+            )
+            comparison_details.append(
+                (
+                    species_name,
+                    center,
+                    record.route,
+                    float(np.linalg.norm(live_force)),
+                    float(np.linalg.norm(centered_force)),
+                    relative_force_errors[-1],
+                    relative_velocity_residuals[-1],
+                    reference.scaled_vandermonde_condition_number,
+                )
+            )
+
+    assert relative_force_errors
+    # This deliberately short, coarse smoke test resolves the q-mu force to
+    # about 1.2%.  The maintained study refines the common physical horizon;
+    # this regression only prevents order-one route disagreement from returning.
+    assert max(relative_force_errors) < 2.0e-2, comparison_details
+    # Medina changes the accepted velocity but is intentionally absent from
+    # the lower-order acceleration differentiated inside the q-mu reduction.
+    assert max(relative_velocity_residuals) > 0.0
 
 
 def test_real_neutral_eom_step_doubling_accepts_identical_coasting_paths() -> None:
