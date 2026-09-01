@@ -356,6 +356,43 @@ trajectory.
 Causal boundary history
 ~~~~~~~~~~~~~~~~~~~~~~~
 
+The higher-order source history has a separate physical purpose from the
+six-sample force fallback described below.  The retarded dipole potential is
+differentiated deeply enough that a merely continuous position or spin curve
+can create an artificial force jump at a stored-history knot.  The validated
+target is therefore a source curve whose position and unit-spin orientation
+share derivatives through fifth order, written :math:`C^5`.
+
+``CausalC5SourceHistory`` is the first isolated state object for that target.
+It accepts only jointly accepted source samples: coordinate time, position,
+velocity, acceleration, and rest-frame unit spin.  Position derivatives use a
+seven-knot local window.  Spin uses two coordinates on the unit sphere and a
+fifteen-knot degree-ten fit.  Once both endpoints have their complete windows,
+the object freezes one degree-eleven segment.  A later append returns a new
+history and leaves every older coefficient bit-for-bit unchanged.
+
+The delay is intentional.  For a segment whose endpoints are knots
+:math:`i` and :math:`i+1`, the spin fit is not ready until knot :math:`i+8`
+has been accepted.  A retarded query outside the frozen interval raises
+``CausalC5HistoryUnavailableError``; it does not silently use the older
+:math:`C^1` interpolation.  A fixed stereographic frame and a scaled condition
+number limit of :math:`10^5` are part of the model.  Reaching the excluded
+chart pole or exceeding the conditioning limit also fails closed.
+
+The strict checkpoint payload currently duplicates the accepted samples and
+stores every frozen coefficient and window index.  That is suitable for
+bitwise lifecycle validation, not yet the final large-particle storage format.
+A production checkpoint should place these arrays in the existing append-only
+binary chunks and retain only compact readiness metadata in JSON.
+
+This object is intentionally not connected to the retarded provider or the
+equations of motion yet.  The next integration step must prove that rejected
+adaptive trials publish no segment, that accepted fixed and adaptive histories
+select the same frozen segment at the same source time, and that an
+interrupted/resumed run reproduces the uninterrupted response.  Until those
+tests pass, the current production provider and all applied forces are
+unchanged.
+
 ``AcceptedIntrinsicSpinReductionHistory`` is the first state-lifecycle layer
 for the boundary route.  It retains only the newest six accepted proper-time
 samples of four-velocity, non-self acceleration, and physical four-spin.

@@ -1,5 +1,16 @@
 # Changelog
 
+- Added the first isolated production-state layer for a causal ``C5`` source
+  history.  Accepted position, velocity, acceleration, and unit-spin samples
+  now produce immutable degree-eleven worldline and stereographic-spin
+  segments only after their complete seven- and fifteen-knot derivative
+  windows are accepted.  A named unavailable error replaces silent
+  lower-smoothness fallback; future appends cannot mutate published
+  coefficients; fixed chart-pole and ``1e5`` conditioning guards fail closed;
+  and a strict checkpoint payload preserves samples, readiness, windows, and
+  coefficients bit-for-bit.  This state is not yet connected to the retarded
+  provider or equations of motion, so trajectories and self-reaction remain
+  unchanged.
 - Added a validation-only polynomial dipole-Hertz response jet.  Offline
   studies can now differentiate smoother worldline and rest-spin polynomial
   segments through the same covariant retarded-potential algebra used by the
