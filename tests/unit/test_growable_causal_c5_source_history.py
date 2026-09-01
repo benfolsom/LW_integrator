@@ -106,9 +106,7 @@ def test_failed_numerical_preflight_invalidates_overwritten_candidate() -> None:
 
 
 def test_growable_segments_match_immutable_oracle_bitwise() -> None:
-    increments = 0.01 * (
-        1.0 + 0.2 * np.sin(0.61 * np.arange(40, dtype=np.float64))
-    )
+    increments = 0.01 * (1.0 + 0.2 * np.sin(0.61 * np.arange(40, dtype=np.float64)))
     times = np.concatenate((np.zeros(1), np.cumsum(increments)))
     expected = _immutable(times)
     builder = GrowableCausalC5SourceHistory(initial_capacity=2)

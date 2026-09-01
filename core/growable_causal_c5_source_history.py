@@ -187,9 +187,7 @@ class GrowableCausalC5SourceHistory:
         capacity = int(initial_capacity)
         if capacity < 1:
             raise ValueError("initial_capacity must be positive")
-        reference = CausalC5SourceHistory.empty(
-            stereographic_frame=stereographic_frame
-        )
+        reference = CausalC5SourceHistory.empty(stereographic_frame=stereographic_frame)
         self.stereographic_frame = reference.stereographic_frame
         self._time_ns = np.empty(capacity, dtype=np.float64)
         self._position_mm = np.empty((capacity, 3), dtype=np.float64)
