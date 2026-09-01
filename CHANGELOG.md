@@ -3,7 +3,10 @@
 - Added a validation-only polynomial dipole-Hertz response jet.  Offline
   studies can now differentiate smoother worldline and rest-spin polynomial
   segments through the same covariant retarded-potential algebra used by the
-  production oracle.  The existing quintic-worldline/cubic-spin entry point,
+  production oracle.  It also accepts two stereographic spin-coordinate
+  polynomials in a declared orthonormal frame, mapping them analytically onto
+  the unit sphere so the norm constraint and all normalization derivatives are
+  part of the jet.  The existing quintic-worldline/cubic-spin entry point,
   Numba kernels, and production backend selection are unchanged; a bitwise
   regression locks the legacy wrapper to the generic implementation.
 - Added an immutable six-sample accepted-history state for the causal

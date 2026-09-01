@@ -312,6 +312,52 @@ def test_polynomial_hertz_jet_preserves_cubic_spin_wrapper_bitwise() -> None:
     assert polynomial.light_cone_jet_residual == wrapped.light_cone_jet_residual
 
 
+def test_stereographic_spin_jet_matches_the_same_constant_unit_spin() -> None:
+    common = {
+        "observer_time_ns": 0.004,
+        "observer_position_mm": (1.4, -0.8, 1.1),
+        "magnetic_moment_native": -1.2,
+        "segment_start_time_ns": -0.005,
+        "segment_duration_ns": 0.013,
+        "position_coefficients_mm": np.asarray(
+            (
+                (0.2, -0.3, 0.1),
+                (0.004, 0.002, -0.003),
+                (2.0e-4, -1.0e-4, 3.0e-4),
+                (-2.0e-5, 1.0e-5, 0.5e-5),
+                (1.0e-6, 2.0e-6, -1.0e-6),
+                (-1.0e-7, 0.5e-7, 1.0e-7),
+            )
+        ),
+        "retarded_time_ns": -0.001,
+    }
+    component = polynomial_dipole_hertz_response_jet_native(
+        **common,
+        rest_spin_coefficients=np.asarray(((0.8, 0.0, 0.6),)),
+        preserved_rest_spin_magnitude=1.0,
+    )
+    stereographic = polynomial_dipole_hertz_response_jet_native(
+        **common,
+        rest_spin_coefficients=None,
+        rest_spin_stereographic_coefficients=np.asarray(((0.5, 0.0),)),
+        rest_spin_stereographic_frame=np.eye(3),
+        preserved_rest_spin_magnitude=None,
+    )
+    for name in (
+        "hertz_tensor",
+        "four_potential",
+        "partial_a",
+        "field_tensor",
+        "partial_f",
+    ):
+        np.testing.assert_allclose(
+            getattr(stereographic, name),
+            getattr(component, name),
+            rtol=3.0e-14,
+            atol=3.0e-14,
+        )
+
+
 def test_hertz_jet_rejects_a_nonsmooth_segment_boundary() -> None:
     arguments = {
         "observer_time_ns": 0.1,

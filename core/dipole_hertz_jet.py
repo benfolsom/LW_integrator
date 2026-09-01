@@ -295,7 +295,9 @@ def polynomial_dipole_hertz_response_jet_native(
     segment_start_time_ns: float,
     segment_duration_ns: float,
     position_coefficients_mm: np.ndarray,
-    rest_spin_coefficients: np.ndarray,
+    rest_spin_coefficients: np.ndarray | None,
+    rest_spin_stereographic_coefficients: np.ndarray | None = None,
+    rest_spin_stereographic_frame: np.ndarray | None = None,
     preserved_rest_spin_magnitude: float | None,
     retarded_time_ns: float,
     jet_newton_iterations: int = 4,
@@ -314,7 +316,21 @@ def polynomial_dipole_hertz_response_jet_native(
     start_time = float(segment_start_time_ns)
     duration = float(segment_duration_ns)
     position_coefficients = np.asarray(position_coefficients_mm, dtype=float)
-    spin_coefficients = np.asarray(rest_spin_coefficients, dtype=float)
+    spin_coefficients = (
+        None
+        if rest_spin_coefficients is None
+        else np.asarray(rest_spin_coefficients, dtype=float)
+    )
+    stereographic_coefficients = (
+        None
+        if rest_spin_stereographic_coefficients is None
+        else np.asarray(rest_spin_stereographic_coefficients, dtype=float)
+    )
+    stereographic_frame = (
+        None
+        if rest_spin_stereographic_frame is None
+        else np.asarray(rest_spin_stereographic_frame, dtype=float)
+    )
     root_time = float(retarded_time_ns)
     iterations = int(jet_newton_iterations)
     if not np.isfinite(observer_time):
@@ -334,13 +350,53 @@ def polynomial_dipole_hertz_response_jet_native(
         raise ValueError(
             "position_coefficients_mm must have finite shape (degree+1, 3)"
         )
-    if (
-        spin_coefficients.ndim != 2
-        or spin_coefficients.shape[0] < 1
-        or spin_coefficients.shape[1] != 3
-        or not np.all(np.isfinite(spin_coefficients))
-    ):
-        raise ValueError("rest_spin_coefficients must have finite shape (degree+1, 3)")
+    if (spin_coefficients is None) == (stereographic_coefficients is None):
+        raise ValueError(
+            "provide exactly one of rest_spin_coefficients or "
+            "rest_spin_stereographic_coefficients"
+        )
+    if spin_coefficients is not None:
+        if (
+            spin_coefficients.ndim != 2
+            or spin_coefficients.shape[0] < 1
+            or spin_coefficients.shape[1] != 3
+            or not np.all(np.isfinite(spin_coefficients))
+        ):
+            raise ValueError(
+                "rest_spin_coefficients must have finite shape (degree+1, 3)"
+            )
+        if stereographic_frame is not None:
+            raise ValueError(
+                "rest_spin_stereographic_frame requires stereographic coefficients"
+            )
+    else:
+        if (
+            stereographic_coefficients is None
+            or stereographic_coefficients.ndim != 2
+            or stereographic_coefficients.shape[0] < 1
+            or stereographic_coefficients.shape[1] != 2
+            or not np.all(np.isfinite(stereographic_coefficients))
+        ):
+            raise ValueError(
+                "rest_spin_stereographic_coefficients must have finite shape "
+                "(degree+1, 2)"
+            )
+        if (
+            stereographic_frame is None
+            or stereographic_frame.shape != (3, 3)
+            or not np.all(np.isfinite(stereographic_frame))
+            or not np.allclose(
+                stereographic_frame.T @ stereographic_frame,
+                np.eye(3),
+                rtol=1.0e-12,
+                atol=1.0e-12,
+            )
+            or np.linalg.det(stereographic_frame) <= 0.0
+        ):
+            raise ValueError(
+                "rest_spin_stereographic_frame must be a finite right-handed "
+                "orthonormal (3, 3) matrix"
+            )
     if preserved_rest_spin_magnitude is not None and (
         not np.isfinite(preserved_rest_spin_magnitude)
         or preserved_rest_spin_magnitude < 0.0
@@ -389,23 +445,51 @@ def polynomial_dipole_hertz_response_jet_native(
             )
             for component in range(3)
         ]
-        source_spin = [
-            _polynomial(spin_coefficients[:, component], normalized_time)
-            for component in range(3)
-        ]
-        target = preserved_rest_spin_magnitude
-        if target is not None:
-            if target == 0.0:
-                source_spin = [_Jet3.constant(0.0) for _ in range(3)]
-            else:
-                magnitude = _norm(source_spin)
-                if magnitude.value <= 1.0e-15:
-                    raise ValueError(
-                        "constant-magnitude source-spin interpolation crossed zero"
-                    )
-                source_spin = [
-                    component * (target / magnitude) for component in source_spin
-                ]
+        if spin_coefficients is not None:
+            source_spin = [
+                _polynomial(spin_coefficients[:, component], normalized_time)
+                for component in range(3)
+            ]
+            target = preserved_rest_spin_magnitude
+            if target is not None:
+                if target == 0.0:
+                    source_spin = [_Jet3.constant(0.0) for _ in range(3)]
+                else:
+                    magnitude = _norm(source_spin)
+                    if magnitude.value <= 1.0e-15:
+                        raise ValueError(
+                            "constant-magnitude source-spin interpolation crossed zero"
+                        )
+                    source_spin = [
+                        component * (target / magnitude) for component in source_spin
+                    ]
+        else:
+            assert stereographic_coefficients is not None
+            assert stereographic_frame is not None
+            chart = [
+                _polynomial(stereographic_coefficients[:, component], normalized_time)
+                for component in range(2)
+            ]
+            radius_squared = chart[0] * chart[0] + chart[1] * chart[1]
+            denominator = 1.0 + radius_squared
+            local_spin = (
+                2.0 * chart[0] / denominator,
+                2.0 * chart[1] / denominator,
+                (1.0 - radius_squared) / denominator,
+            )
+            target = (
+                1.0
+                if preserved_rest_spin_magnitude is None
+                else preserved_rest_spin_magnitude
+            )
+            source_spin = [
+                target
+                * sum(
+                    stereographic_frame[component, basis] * local_spin[basis]
+                    for basis in range(3)
+                )
+                for component in range(3)
+            ]
         return source_position, source_beta, source_spin
 
     light_cone = _Jet3.constant(0.0)
