@@ -50,6 +50,7 @@ from .testbed_runner import (
     DIPOLE_SOURCE_MODEL_OPTIONS,
     EXACT_RETARDED_BACKEND_OPTIONS,
     EXACT_RETARDED_UPDATE_OPTIONS,
+    INTRINSIC_SPIN_SELF_REACTION_OPTIONS,
     PARTICLE_PARAM_FIELDS,
     SPECIES_OPTIONS,
     SimulationOptions,
@@ -353,6 +354,19 @@ class IntegratorGUI(
             value=exact_retarded_update_label_by_name.get(
                 exact_retarded_update, "First-order endpoint"
             )
+        )
+        self_reaction_label_by_mode = {
+            mode: label for label, mode in INTRINSIC_SPIN_SELF_REACTION_OPTIONS
+        }
+        self_reaction_mode = str(
+            getattr(
+                self.options,
+                "magnetic_dipole_intrinsic_spin_self_reaction_mode",
+                "off",
+            )
+        )
+        self.magnetic_dipole_intrinsic_spin_self_reaction_var = tk.StringVar(
+            value=self_reaction_label_by_mode.get(self_reaction_mode, "Off")
         )
         self.magnetic_dipole_source_minimum_separation_var = tk.StringVar(
             value=str(

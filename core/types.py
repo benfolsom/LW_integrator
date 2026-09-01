@@ -612,6 +612,7 @@ class MagneticDipoleConfig:
     stern_gerlach_model: str = "rfs_full_g"
     exact_retarded_backend: str = "python"
     exact_retarded_update: str = "first_order_endpoint"
+    intrinsic_spin_self_reaction_mode: str = "off"
     source: DipoleSourceConfig = field(default_factory=DipoleSourceConfig)
     rider: MagneticDipoleParticleConfig = field(
         default_factory=lambda: MagneticDipoleParticleConfig(species="electron")
@@ -629,6 +630,12 @@ class MagneticDipoleConfig:
         self.exact_retarded_backend = str(self.exact_retarded_backend).strip().lower()
         self.exact_retarded_update = (
             str(self.exact_retarded_update).strip().lower().replace("-", "_")
+        )
+        self.intrinsic_spin_self_reaction_mode = (
+            str(self.intrinsic_spin_self_reaction_mode)
+            .strip()
+            .lower()
+            .replace("-", "_")
         )
         update_aliases = {
             "first_order": "first_order_endpoint",
@@ -684,6 +691,19 @@ class MagneticDipoleConfig:
             raise ValueError(
                 "magnetic-dipole exact_retarded_update must be one of: "
                 "first_order_endpoint, second_order_start_taylor_endpoint"
+            )
+        if self.intrinsic_spin_self_reaction_mode not in {"off", "diagnostic"}:
+            raise ValueError(
+                "magnetic-dipole intrinsic_spin_self_reaction_mode must be one "
+                "of: off, diagnostic"
+            )
+        if (
+            self.intrinsic_spin_self_reaction_mode == "diagnostic"
+            and self.exact_retarded_update != "second_order_start_taylor_endpoint"
+        ):
+            raise ValueError(
+                "intrinsic-spin self-reaction diagnostics require "
+                "second_order_start_taylor_endpoint"
             )
         if isinstance(self.source, dict):
             self.source = DipoleSourceConfig(**self.source)

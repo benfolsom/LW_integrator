@@ -24,6 +24,7 @@ from .self_consistency import SelfConsistencyConfig
 from .spin_self_force_reduction_history import (
     AcceptedPairIntrinsicSpinReductionHistory,
     build_accepted_pair_intrinsic_spin_reduction_candidate,
+    build_accepted_pair_intrinsic_spin_reduction_diagnostic_candidate,
 )
 from .step_doubling import ErrorScale, StepControllerConfig, StepDoublingTolerances
 from .types import (
@@ -159,7 +160,9 @@ def run_exact_pair_adaptive_integrator(
 
     if reduction_diagnostic_enabled:
         reduction_candidate_builder = (
-            build_accepted_pair_intrinsic_spin_reduction_candidate
+            build_accepted_pair_intrinsic_spin_reduction_diagnostic_candidate
+            if magnetic_dipole.intrinsic_spin_self_reaction_mode == "diagnostic"
+            else build_accepted_pair_intrinsic_spin_reduction_candidate
         )
 
     active_start_time_ns = float(rider_builder.build_current().t[active_row, 0])
@@ -268,6 +271,27 @@ def run_exact_pair_adaptive_integrator(
             else {
                 "rider": result.intrinsic_spin_reduction_history.rider.sample_count,
                 "driver": result.intrinsic_spin_reduction_history.driver.sample_count,
+            }
+        ),
+        "intrinsic_spin_self_reaction_diagnostics": (
+            None
+            if result.intrinsic_spin_reduction_history is None
+            or magnetic_dipole.intrinsic_spin_self_reaction_mode != "diagnostic"
+            else {
+                "mode": "diagnostic_only",
+                "applied_as_force": False,
+                "rider": {
+                    "total": result.intrinsic_spin_reduction_history.rider_diagnostics.total_records,
+                    "analytical": result.intrinsic_spin_reduction_history.rider_diagnostics.analytical_records,
+                    "causal": result.intrinsic_spin_reduction_history.rider_diagnostics.causal_records,
+                    "unavailable": result.intrinsic_spin_reduction_history.rider_diagnostics.unavailable_records,
+                },
+                "driver": {
+                    "total": result.intrinsic_spin_reduction_history.driver_diagnostics.total_records,
+                    "analytical": result.intrinsic_spin_reduction_history.driver_diagnostics.analytical_records,
+                    "causal": result.intrinsic_spin_reduction_history.driver_diagnostics.causal_records,
+                    "unavailable": result.intrinsic_spin_reduction_history.driver_diagnostics.unavailable_records,
+                },
             }
         ),
     }

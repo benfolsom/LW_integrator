@@ -381,7 +381,7 @@ It adopts that candidate only after the joint trajectory preflight succeeds.
 Rejected trials never call the callback, and an exception while constructing
 the candidate leaves both trajectory builders unchanged.
 
-Accepted-pair checkpoint schema 2 stores this optional pair history alongside
+Accepted-pair checkpoint schema 3 stores this optional pair history alongside
 the controller and public-output cursor.  An interrupted/resumed adaptive
 window reproduces both the uninterrupted trajectories and the complete
 diagnostic history exactly.  Runs that do not supply the history and callback
@@ -401,9 +401,20 @@ The production adaptive path records and checkpoints this diagnostic
 automatically when
 ``exact_retarded_update=second_order_start_taylor_endpoint``.  It reports the
 retained rider/driver sample counts in the adaptive summary.  First-order exact
-runs retain the previous path and store ``null``.  The histories are not yet
-used to evaluate route statistics in the public result, and neither reduction
-route is applied as a force.
+runs retain the previous path and store ``null``.
+
+Setting ``intrinsic_spin_self_reaction_mode=diagnostic`` adds live route
+evaluation without changing the equations of motion.  At each accepted slab
+start and midpoint, the code uses the analytical retarded-potential result
+inside a smooth source segment.  If that derivative is undefined at a guarded
+segment boundary, it uses the causal six-sample result once enough accepted
+history exists; before then it reports unavailable.  Each particle retains at
+most 4,096 recent records while lifetime analytical, causal, and unavailable
+counts continue to accumulate.  A record contains the linear-spin mechanical
+four-force, the independently reconstructed charge-ALD comparison term, the
+total through linear order in spin, the balance residual norm, and the causal
+condition number when applicable.  These records are checkpointed, but none
+of their forces or balance-only terms are applied to the trajectory.
 
 For the intrinsic relation :math:`M=gqS/(2mc)`, the mechanical linear-spin
 bracket can be written schematically as
@@ -439,13 +450,12 @@ Villarroel [Villarroel1975]_ shows explicitly that the radiated momentum and
 the local force differ by a total derivative and an additional radiative-field
 term, so far flux alone is not the instantaneous local force.
 
-The next milestone is live adaptive ownership of the causal history.  Append
-only after joint rider/driver slab acceptance, persist the six samples in the
-adaptive checkpoint, and prove interrupted/resumed and uninterrupted
-diagnostic routes are identical.  Then run phase-delay and unequal-step
-comparisons while the self-reaction remains diagnostic.  Production injection
-stays blocked until those integration tests pass and the existing Medina
-charge term is shown to enter exactly once.
+The next milestone is numerical validation of this live route trace.  Compare
+the analytical, causal, and centered-reference values on weak smooth motion;
+measure phase error at route transitions and conditioning under unequal
+adaptive proper-time intervals; and prove checkpoint/resume trace equality.
+Production injection stays blocked until those tests pass and the existing
+Medina charge term is shown to enter exactly once.
 
 References
 ----------

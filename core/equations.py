@@ -1843,6 +1843,11 @@ def retarded_equations_of_motion(
         and magnetic_dipole.exact_retarded_update
         == "second_order_start_taylor_endpoint"
     )
+    intrinsic_spin_diagnostic_selected = bool(
+        second_order_exact_source_selected
+        and magnetic_dipole is not None
+        and magnetic_dipole.intrinsic_spin_self_reaction_mode == "diagnostic"
+    )
     if exact_endpoint_recomposition_selected:
         # Private, step-local handoff to the pair-level accepted-endpoint
         # finalizer in integration_runner.  It is intentionally absent from
@@ -1868,6 +1873,22 @@ def retarded_equations_of_motion(
         result["_intrinsic_spin_start_physical_four_spin"] = np.full(
             (num_particles, 4), np.nan, dtype=float
         )
+        if intrinsic_spin_diagnostic_selected:
+            result["_intrinsic_spin_start_analytical_reduction"] = [
+                None
+            ] * num_particles
+            result["_intrinsic_spin_start_analytical_unavailable_reason"] = [
+                "not evaluated"
+            ] * num_particles
+            result["_intrinsic_spin_charge_native"] = np.full(
+                num_particles, np.nan, dtype=float
+            )
+            result["_intrinsic_spin_mass_amu"] = np.full(
+                num_particles, np.nan, dtype=float
+            )
+            result["_intrinsic_spin_g_factor"] = np.full(
+                num_particles, np.nan, dtype=float
+            )
     pseudo_grid_sc_charge_matrix = None
     pseudo_grid_sc_source_radii = None
     if pseudo_grid_space_charge_source_radii_mm is not None:
@@ -3556,6 +3577,99 @@ def retarded_equations_of_motion(
                         exact_ordinary_response_beta,
                     )
                 )
+                if intrinsic_spin_diagnostic_selected:
+                    charge_for_reduction = float(force_particle_charge)
+                    signed_moment_for_reduction = float(
+                        current_state["magnetic_moment_native"][particle_idx]
+                    )
+                    if charge_for_reduction == 0.0 or invariant_spin_native == 0.0:
+                        g_factor = 0.0
+                        unavailable_reason = (
+                            "intrinsic q-mu reduction requires nonzero charge and spin"
+                        )
+                        analytical_reduction = None
+                    else:
+                        g_factor = (
+                            2.0
+                            * particle_mass
+                            * C_MMNS
+                            * signed_moment_for_reduction
+                            / (charge_for_reduction * invariant_spin_native)
+                        )
+                        unavailable_reason = None
+                        analytical_reduction = None
+                        if external_field is not None and getattr(
+                            external_field, "enabled", False
+                        ):
+                            unavailable_reason = (
+                                "prescribed external-field potential jet is unavailable"
+                            )
+                        elif exact_source_history is None:
+                            unavailable_reason = (
+                                "exact retarded source history is unavailable"
+                            )
+                        else:
+                            from .spin_self_force_reduction_oracle import (
+                                evaluate_retarded_potential_intrinsic_spin_reduction_native,
+                            )
+                            from .retarded_fields import ObserverEvent
+
+                            source_settings = magnetic_dipole.source
+                            analytical_result = evaluate_retarded_potential_intrinsic_spin_reduction_native(
+                                source_history=exact_source_history,
+                                observer_event=ObserverEvent(
+                                    time_ns=float(current_state["t"][particle_idx]),
+                                    position_mm=(
+                                        float(current_state["x"][particle_idx]),
+                                        float(current_state["y"][particle_idx]),
+                                        float(current_state["z"][particle_idx]),
+                                    ),
+                                ),
+                                four_velocity_mm_ns=start_four_velocity,
+                                normalized_spin_four_vector=(
+                                    boost_rest_polarization(
+                                        start_rest_spin,
+                                        exact_ordinary_response_beta,
+                                    )
+                                ),
+                                charge_native=charge_for_reduction,
+                                mass_amu=particle_mass,
+                                invariant_spin_native=invariant_spin_native,
+                                g_factor=g_factor,
+                                require_complete_history=True,
+                                include_dipole_source=(source_settings.active),
+                                minimum_separation_mm=(
+                                    source_settings.minimum_separation_mm
+                                    if source_settings.active
+                                    else 1.0e-15
+                                ),
+                                root_tolerance_mm=(
+                                    source_settings.root_tolerance_mm
+                                    if source_settings.active
+                                    else 1.0e-21
+                                ),
+                                max_root_iterations=(
+                                    source_settings.max_root_iterations
+                                    if source_settings.active
+                                    else 96
+                                ),
+                                spin_interpolation_model=(
+                                    exact_source_spin_interpolation_model
+                                ),
+                            )
+                            analytical_reduction = analytical_result.reduction
+                            unavailable_reason = analytical_result.unavailable_reason
+                    result["_intrinsic_spin_start_analytical_reduction"][
+                        particle_idx
+                    ] = analytical_reduction
+                    result["_intrinsic_spin_start_analytical_unavailable_reason"][
+                        particle_idx
+                    ] = unavailable_reason
+                    result["_intrinsic_spin_charge_native"][
+                        particle_idx
+                    ] = charge_for_reduction
+                    result["_intrinsic_spin_mass_amu"][particle_idx] = particle_mass
+                    result["_intrinsic_spin_g_factor"][particle_idx] = g_factor
                 ordinary_force_derivative = np.zeros(4, dtype=float)
                 for interaction in (
                     exact_charge_source_interaction,

@@ -12,12 +12,14 @@ from core.adaptive_pair_return import (
     attempt_exact_pair_adaptive_step,
     run_exact_pair_adaptive_window,
 )
+from core.constants import C_MMNS
 from core.integration_checkpoint import AcceptedPairCheckpointStore
 from core.integration_runner import IntegrationCancelled
 from core.shared_lab_time import SharedLabTimeError
 from core.spin_self_force_reduction_history import (
     AcceptedPairIntrinsicSpinReductionHistory,
     build_accepted_pair_intrinsic_spin_reduction_candidate,
+    build_accepted_pair_intrinsic_spin_reduction_diagnostic_candidate,
 )
 from core.step_doubling import (
     ErrorScale,
@@ -88,6 +90,30 @@ def _advance(scale: float, *, cap: bool = False, dead: bool = False):
         result["_intrinsic_spin_start_physical_four_spin"] = np.array(
             [[0.0, 0.0, 0.0, 1.0]]
         )
+        return result
+
+    return advance
+
+
+def _diagnostic_unavailable_advance(scale: float):
+    ordinary = _advance(scale)
+
+    def advance(*args, **kwargs):
+        result = ordinary(*args, **kwargs)
+        result["_intrinsic_spin_start_four_velocity"] = np.array(
+            [[C_MMNS, 0.0, 0.0, 0.0]]
+        )
+        result["_intrinsic_spin_start_non_self_four_acceleration"] = np.zeros((1, 4))
+        result["_intrinsic_spin_start_physical_four_spin"] = np.array(
+            [[0.0, 0.0, 0.0, 1.0]]
+        )
+        result["_intrinsic_spin_start_analytical_reduction"] = [None]
+        result["_intrinsic_spin_start_analytical_unavailable_reason"] = [
+            "spin segment boundary"
+        ]
+        result["_intrinsic_spin_charge_native"] = np.array([1.0])
+        result["_intrinsic_spin_mass_amu"] = np.array([1.0])
+        result["_intrinsic_spin_g_factor"] = np.array([2.0])
         return result
 
     return advance
@@ -360,13 +386,15 @@ def _run_window(
     maximum_attempts: int = 20,
     intrinsic_spin_reduction_history=None,
     build_intrinsic_spin_reduction_candidate=None,
+    rider_advance=None,
+    driver_advance=None,
 ):
     rider, driver = _pair()
     result = run_exact_pair_adaptive_window(
         rider_builder=rider,
         driver_builder=driver,
-        advance_rider=_advance(2.0),
-        advance_driver=_advance(4.0),
+        advance_rider=rider_advance or _advance(2.0),
+        advance_driver=driver_advance or _advance(4.0),
         controller_state=_controller(),
         controller_config=StepControllerConfig(method_order=1),
         tolerances=_tolerances(diagnostic_absolute),
@@ -384,6 +412,33 @@ def _run_window(
         ),
     )
     return rider, driver, result
+
+
+def test_live_diagnostic_trace_switches_from_unavailable_to_causal() -> None:
+    _rider, _driver, result = _run_window(
+        public_interval_ns=0.15,
+        intrinsic_spin_reduction_history=_initial_spin_reduction_history(),
+        build_intrinsic_spin_reduction_candidate=(
+            build_accepted_pair_intrinsic_spin_reduction_diagnostic_candidate
+        ),
+        rider_advance=_diagnostic_unavailable_advance(2.0),
+        driver_advance=_diagnostic_unavailable_advance(4.0),
+    )
+
+    assert result.intrinsic_spin_reduction_history is not None
+    for trace in (
+        result.intrinsic_spin_reduction_history.rider_diagnostics,
+        result.intrinsic_spin_reduction_history.driver_diagnostics,
+    ):
+        assert trace.total_records >= 6
+        assert trace.unavailable_records == 5
+        assert trace.causal_records == trace.total_records - 5
+        assert trace.analytical_records == 0
+        assert all(
+            record.causal_condition_number is not None
+            and np.isfinite(record.causal_condition_number)
+            for record in trace.records[5:]
+        )
 
 
 def test_public_output_cadence_does_not_change_accepted_dynamics() -> None:
@@ -730,3 +785,103 @@ def test_window_resume_reproduces_history_and_output_selection_bitwise(
                 np.asarray(getattr(restored, name)),
                 np.asarray(getattr(expected, name)),
             )
+
+
+def test_window_resume_reproduces_diagnostic_route_trace_exactly(
+    tmp_path: Path,
+) -> None:
+    diagnostic_builder = (
+        build_accepted_pair_intrinsic_spin_reduction_diagnostic_candidate
+    )
+    continuous_rider, continuous_driver, continuous = _run_window(
+        public_interval_ns=0.15,
+        intrinsic_spin_reduction_history=_initial_spin_reduction_history(),
+        build_intrinsic_spin_reduction_candidate=diagnostic_builder,
+        rider_advance=_diagnostic_unavailable_advance(2.0),
+        driver_advance=_diagnostic_unavailable_advance(4.0),
+    )
+    interrupted_rider, interrupted_driver = _pair()
+    directory = tmp_path / "diagnostic-resume.checkpoint"
+    store = AcceptedPairCheckpointStore(
+        directory,
+        compatibility_payload={"physics": "diagnostic-resume-test"},
+        interval_knots=1,
+        interval_seconds=0.0,
+        resume=False,
+    )
+    with pytest.raises(SharedLabTimeError, match="maximum accepted slabs"):
+        run_exact_pair_adaptive_window(
+            rider_builder=interrupted_rider,
+            driver_builder=interrupted_driver,
+            advance_rider=_diagnostic_unavailable_advance(2.0),
+            advance_driver=_diagnostic_unavailable_advance(4.0),
+            controller_state=_controller(),
+            controller_config=StepControllerConfig(method_order=1),
+            tolerances=_tolerances(1.0),
+            target_time_ns=0.65,
+            minimum_step_ns=0.001,
+            maximum_step_ns=1.0,
+            maximum_attempts=20,
+            maximum_accepted_slabs=1,
+            public_sample_interval_ns=0.15,
+            magnetic_dipole=MagneticDipoleConfig(),
+            include_dipole_source=False,
+            checkpoint_store=store,
+            intrinsic_spin_reduction_history=_initial_spin_reduction_history(),
+            build_intrinsic_spin_reduction_candidate=diagnostic_builder,
+        )
+
+    reopened = AcceptedPairCheckpointStore(
+        directory,
+        compatibility_payload={"physics": "diagnostic-resume-test"},
+        interval_knots=1,
+        interval_seconds=0.0,
+        resume=True,
+    )
+    resumed_rider = GrowableTrajectoryBuilder(1, 1)
+    resumed_driver = GrowableTrajectoryBuilder(1, 1)
+    reopened.restore_pair(resumed_rider, resumed_driver)
+    assert reopened.intrinsic_spin_reduction_state is not None
+    restored_reduction = (
+        AcceptedPairIntrinsicSpinReductionHistory.from_checkpoint_payload(
+            reopened.intrinsic_spin_reduction_state
+        )
+    )
+    resumed = run_exact_pair_adaptive_window(
+        rider_builder=resumed_rider,
+        driver_builder=resumed_driver,
+        advance_rider=_diagnostic_unavailable_advance(2.0),
+        advance_driver=_diagnostic_unavailable_advance(4.0),
+        controller_state=AdaptivePairControllerState.from_checkpoint_state(
+            reopened.controller_state
+        ),
+        controller_config=StepControllerConfig(method_order=1),
+        tolerances=_tolerances(1.0),
+        target_time_ns=0.65,
+        minimum_step_ns=0.001,
+        maximum_step_ns=1.0,
+        maximum_attempts=20,
+        maximum_accepted_slabs=20,
+        public_sample_interval_ns=0.15,
+        magnetic_dipole=MagneticDipoleConfig(),
+        include_dipole_source=False,
+        public_output_state=AdaptivePairPublicOutputState.from_checkpoint_state(
+            reopened.public_output_state
+        ),
+        checkpoint_store=reopened,
+        intrinsic_spin_reduction_history=restored_reduction,
+        build_intrinsic_spin_reduction_candidate=diagnostic_builder,
+    )
+
+    assert resumed.intrinsic_spin_reduction_history is not None
+    assert continuous.intrinsic_spin_reduction_history is not None
+    assert (
+        resumed.intrinsic_spin_reduction_history.to_checkpoint_payload()
+        == continuous.intrinsic_spin_reduction_history.to_checkpoint_payload()
+    )
+    for restored, expected in (
+        (resumed_rider.build_current(), continuous_rider.build_current()),
+        (resumed_driver.build_current(), continuous_driver.build_current()),
+    ):
+        np.testing.assert_array_equal(restored.x, expected.x)
+        np.testing.assert_array_equal(restored.t, expected.t)

@@ -7,7 +7,11 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from core.constants import C_MMNS
 from core.exact_pair_integration import run_exact_pair_adaptive_integrator
+from core.spin_self_force_reduction_oracle import (
+    evaluate_potential_directional_intrinsic_spin_reduction_native,
+)
 from core.types import (
     AdaptivePairReturnConfig,
     CheckpointConfig,
@@ -72,6 +76,90 @@ def _advance(scale: float):
         return result
 
     return advance
+
+
+def _diagnostic_advance(scale: float):
+    ordinary = _advance(scale)
+    zero_hessian = np.zeros((4, 4, 4))
+    reduction = evaluate_potential_directional_intrinsic_spin_reduction_native(
+        four_velocity_mm_ns=(C_MMNS, 0.0, 0.0, 0.0),
+        normalized_spin_four_vector=(0.0, 0.0, 0.0, 1.0),
+        partial_a=np.zeros((4, 4)),
+        partial2_a=zero_hessian,
+        partial3_a_along_velocity=zero_hessian,
+        partial3_a_along_acceleration=zero_hessian,
+        partial4_a_along_velocity_twice=zero_hessian,
+        charge_native=1.0,
+        mass_amu=1.0,
+        invariant_spin_native=1.0,
+        g_factor=2.0,
+    )
+
+    def advance(*args, **kwargs):
+        result = ordinary(*args, **kwargs)
+        result["_intrinsic_spin_start_analytical_reduction"] = [reduction]
+        result["_intrinsic_spin_start_analytical_unavailable_reason"] = [None]
+        result["_intrinsic_spin_charge_native"] = np.array([1.0])
+        result["_intrinsic_spin_mass_amu"] = np.array([1.0])
+        result["_intrinsic_spin_g_factor"] = np.array([2.0])
+        return result
+
+    return advance
+
+
+def test_public_runner_reports_checkpointed_diagnostic_routes(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    advances = iter((_diagnostic_advance(2.0), _diagnostic_advance(4.0)))
+    monkeypatch.setattr(
+        "core.exact_pair_integration.make_exact_role_eom_advance",
+        lambda _options: next(advances),
+    )
+    directory = tmp_path / "diagnostic.checkpoint"
+    result = run_exact_pair_adaptive_integrator(
+        rider_seed=[_state(-1.0)],
+        driver_seed=[_state(1.0)],
+        initial_step_ns=0.2,
+        requested_public_samples=3,
+        aperture_radius_mm=10.0,
+        magnetic_dipole=MagneticDipoleConfig(
+            enabled=True,
+            exact_retarded_update="second_order_start_taylor_endpoint",
+            intrinsic_spin_self_reaction_mode="diagnostic",
+        ),
+        self_consistency=None,
+        chrono_mode=ChronoMatchingMode.FAST,
+        radiation_reaction_mode="off",
+        external_field=None,
+        adaptive=AdaptivePairReturnConfig(
+            enabled=True,
+            target_lab_time_ns=0.2,
+            tolerance_scale=1.0e12,
+            minimum_step_factor=0.01,
+            maximum_step_factor=5.0,
+            public_sample_interval_ns=0.1,
+        ),
+        checkpoint=CheckpointConfig(
+            enabled=True,
+            directory=str(directory),
+            interval_steps=1,
+            interval_seconds=0.0,
+        ),
+        compatibility_payload={"physics": "diagnostic-route-test"},
+    )
+
+    summary = result[0][-1]["_adaptive_pair_return"]
+    assert summary["intrinsic_spin_self_reaction_diagnostics"] == {
+        "mode": "diagnostic_only",
+        "applied_as_force": False,
+        "rider": {"total": 2, "analytical": 2, "causal": 0, "unavailable": 0},
+        "driver": {"total": 2, "analytical": 2, "causal": 0, "unavailable": 0},
+    }
+    manifest = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
+    reduction_state = manifest["intrinsic_spin_reduction_state"]
+    assert reduction_state["rider_diagnostics"]["total_records"] == 2
+    assert reduction_state["driver_diagnostics"]["total_records"] == 2
 
 
 @pytest.mark.parametrize(

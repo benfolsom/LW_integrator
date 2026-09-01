@@ -22,6 +22,7 @@ from .testbed_runner import (
     DIPOLE_SOURCE_MODEL_OPTIONS,
     EXACT_RETARDED_BACKEND_OPTIONS,
     EXACT_RETARDED_UPDATE_OPTIONS,
+    INTRINSIC_SPIN_SELF_REACTION_OPTIONS,
     PARTICLE_PARAM_FIELDS,
     SimulationOptions,
     load_config,
@@ -49,6 +50,10 @@ _EXACT_RETARDED_LABEL_BY_BACKEND = {
 _EXACT_RETARDED_UPDATE_BY_LABEL = dict(EXACT_RETARDED_UPDATE_OPTIONS)
 _EXACT_RETARDED_LABEL_BY_UPDATE = {
     update: label for label, update in EXACT_RETARDED_UPDATE_OPTIONS
+}
+_INTRINSIC_SPIN_SELF_REACTION_BY_LABEL = dict(INTRINSIC_SPIN_SELF_REACTION_OPTIONS)
+_INTRINSIC_SPIN_SELF_REACTION_LABEL_BY_MODE = {
+    mode: label for label, mode in INTRINSIC_SPIN_SELF_REACTION_OPTIONS
 }
 
 
@@ -192,6 +197,25 @@ class IntegratorGUIConfigMixin:
                 exact_retarded_update, exact_retarded_update
             )
         )
+        self_reaction_var = getattr(
+            self, "magnetic_dipole_intrinsic_spin_self_reaction_var", None
+        )
+        if self_reaction_var is not None:
+            self_reaction_var.set(
+                _INTRINSIC_SPIN_SELF_REACTION_LABEL_BY_MODE.get(
+                    str(
+                        getattr(
+                            options,
+                            "magnetic_dipole_intrinsic_spin_self_reaction_mode",
+                            "off",
+                        )
+                    )
+                    .strip()
+                    .lower()
+                    .replace("-", "_"),
+                    "Off",
+                )
+            )
         self.magnetic_dipole_source_minimum_separation_var.set(
             _format_gui_float(
                 getattr(
@@ -312,6 +336,31 @@ class IntegratorGUIConfigMixin:
                 "Select First-order endpoint or Second-order accepted-start "
                 "Taylor for the exact-retarded update."
             )
+        self_reaction_var = getattr(
+            self, "magnetic_dipole_intrinsic_spin_self_reaction_var", None
+        )
+        self_reaction_selection = (
+            "Off" if self_reaction_var is None else str(self_reaction_var.get()).strip()
+        )
+        intrinsic_spin_self_reaction_mode = _INTRINSIC_SPIN_SELF_REACTION_BY_LABEL.get(
+            self_reaction_selection,
+            self_reaction_selection.lower().replace("-", "_"),
+        )
+        if (
+            intrinsic_spin_self_reaction_mode
+            not in _INTRINSIC_SPIN_SELF_REACTION_LABEL_BY_MODE
+        ):
+            raise ValueError(
+                "Select Off or Diagnostic only for intrinsic-spin self-reaction."
+            )
+        if (
+            intrinsic_spin_self_reaction_mode == "diagnostic"
+            and exact_retarded_update != "second_order_start_taylor_endpoint"
+        ):
+            raise ValueError(
+                "Intrinsic-spin self-reaction diagnostics require the "
+                "Second-order accepted-start Taylor update."
+            )
         source_minimum_separation = _parse_gui_float(
             self.magnetic_dipole_source_minimum_separation_var.get(),
             "Dipole source minimum separation",
@@ -341,6 +390,9 @@ class IntegratorGUIConfigMixin:
             "magnetic_dipole_source_model": source_model,
             "magnetic_dipole_exact_retarded_backend": exact_retarded_backend,
             "magnetic_dipole_exact_retarded_update": exact_retarded_update,
+            "magnetic_dipole_intrinsic_spin_self_reaction_mode": (
+                intrinsic_spin_self_reaction_mode
+            ),
             "magnetic_dipole_source_minimum_separation_mm": (source_minimum_separation),
             "magnetic_dipole_source_relative_stencil_step": getattr(
                 self, "_magnetic_dipole_source_relative_stencil_step", 1.0e-3

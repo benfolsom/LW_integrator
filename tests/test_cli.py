@@ -412,6 +412,10 @@ class TestCliConfigParsing:
                 "full-retarded-point",
                 "--exact-retarded-backend",
                 "numba_roots_exact_serial",
+                "--exact-retarded-update",
+                "second_order_start_taylor_endpoint",
+                "--intrinsic-spin-self-reaction-mode",
+                "diagnostic",
                 "--dipole-source-cutoff-mm",
                 "2e-9",
             ]
@@ -425,6 +429,8 @@ class TestCliConfigParsing:
         assert args.stern_gerlach_force_enabled is True
         assert args.dipole_source_model == "full-retarded-point"
         assert args.exact_retarded_backend == "numba_roots_exact_serial"
+        assert args.exact_retarded_update == "second_order_start_taylor_endpoint"
+        assert args.intrinsic_spin_self_reaction_mode == "diagnostic"
         assert args.dipole_source_minimum_separation_mm == pytest.approx(2.0e-9)
 
     def test_parse_args_accepts_disabling_magnetic_dipole_options(self):
@@ -2075,6 +2081,7 @@ class TestCliMain:
         assert report["exact_retarded"] == {
             "backend": "numba_roots_exact_serial",
             "update": "first_order_endpoint",
+            "intrinsic_spin_self_reaction_mode": "off",
         }
 
     def test_testbed_report_records_source_model_and_exact_retarded_backend(
@@ -2107,6 +2114,7 @@ class TestCliMain:
         assert report["exact_retarded"] == {
             "backend": "numba_full_strict_serial",
             "update": "first_order_endpoint",
+            "intrinsic_spin_self_reaction_mode": "off",
         }
 
     def test_metal_report_records_certification_and_fallback_counts(self, monkeypatch):

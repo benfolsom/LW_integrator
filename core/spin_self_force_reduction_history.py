@@ -14,7 +14,7 @@ checkpoint payload so restart parity can be tested before production wiring.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Mapping, Sequence, cast
 
 import numpy as np
@@ -28,8 +28,9 @@ from .spin_self_force_reduction_oracle import (
 if TYPE_CHECKING:
     from .exact_pair_trial import ExactPairStepDoublingTrial
 
-_CHECKPOINT_SCHEMA_VERSION = 1
+_CHECKPOINT_SCHEMA_VERSION = 2
 _MINIMUM_CAUSAL_SAMPLES = 6
+_MAXIMUM_DIAGNOSTIC_RECORDS = 4096
 
 
 def _readonly_matrix(
@@ -242,6 +243,247 @@ class AcceptedIntrinsicSpinReductionHistory:
         )
 
 
+def _finite_four_tuple(
+    value: Sequence[float] | np.ndarray,
+    *,
+    name: str,
+) -> tuple[float, float, float, float]:
+    vector = np.asarray(value, dtype=float)
+    if vector.shape != (4,) or not np.all(np.isfinite(vector)):
+        raise ValueError(f"{name} must be a finite four-vector")
+    return cast(
+        tuple[float, float, float, float], tuple(float(item) for item in vector)
+    )
+
+
+@dataclass(frozen=True)
+class IntrinsicSpinReductionDiagnosticRecord:
+    """One accepted diagnostic evaluation; never an applied force."""
+
+    proper_time_ns: float
+    route: str
+    analytical_unavailable_reason: str | None
+    causal_condition_number: float | None
+    linear_spin_four_force_native: tuple[float, float, float, float] | None
+    charge_ald_four_force_native: tuple[float, float, float, float] | None
+    total_four_force_native: tuple[float, float, float, float] | None
+    balance_residual_norm_native: float | None
+
+    def __post_init__(self) -> None:
+        time = float(self.proper_time_ns)
+        if not np.isfinite(time):
+            raise ValueError("diagnostic proper_time_ns must be finite")
+        route = str(self.route)
+        valid_routes = {
+            "analytical_smooth_segment",
+            "causal_accepted_history_boundary_fallback",
+            "unavailable_insufficient_accepted_history",
+            "unavailable_outside_intrinsic_qmu_model",
+        }
+        if route not in valid_routes:
+            raise ValueError(f"unsupported intrinsic-spin diagnostic route: {route}")
+        object.__setattr__(self, "proper_time_ns", time)
+        object.__setattr__(self, "route", route)
+        condition = self.causal_condition_number
+        if condition is not None:
+            condition = float(condition)
+            if not np.isfinite(condition) or condition <= 0.0:
+                raise ValueError("causal condition number must be finite and positive")
+            object.__setattr__(self, "causal_condition_number", condition)
+        vectors = (
+            "linear_spin_four_force_native",
+            "charge_ald_four_force_native",
+            "total_four_force_native",
+        )
+        available = not route.startswith("unavailable_")
+        for name in vectors:
+            value = getattr(self, name)
+            if available and value is None:
+                raise ValueError(f"available diagnostic route requires {name}")
+            if not available and value is not None:
+                raise ValueError(f"unavailable diagnostic route cannot contain {name}")
+            if value is not None:
+                object.__setattr__(
+                    self,
+                    name,
+                    _finite_four_tuple(value, name=name),
+                )
+        residual = self.balance_residual_norm_native
+        if available:
+            if (
+                residual is None
+                or not np.isfinite(float(residual))
+                or float(residual) < 0.0
+            ):
+                raise ValueError(
+                    "available diagnostic route requires a finite non-negative "
+                    "balance residual norm"
+                )
+            object.__setattr__(self, "balance_residual_norm_native", float(residual))
+        elif residual is not None:
+            raise ValueError("unavailable diagnostic route cannot contain a residual")
+
+    def to_checkpoint_payload(self) -> dict[str, object]:
+        return {
+            "proper_time_ns": self.proper_time_ns,
+            "route": self.route,
+            "analytical_unavailable_reason": self.analytical_unavailable_reason,
+            "causal_condition_number": self.causal_condition_number,
+            "linear_spin_four_force_native": self.linear_spin_four_force_native,
+            "charge_ald_four_force_native": self.charge_ald_four_force_native,
+            "total_four_force_native": self.total_four_force_native,
+            "balance_residual_norm_native": self.balance_residual_norm_native,
+        }
+
+    @classmethod
+    def from_checkpoint_payload(
+        cls,
+        payload: Mapping[str, object],
+    ) -> "IntrinsicSpinReductionDiagnosticRecord":
+        required = {
+            "proper_time_ns",
+            "route",
+            "analytical_unavailable_reason",
+            "causal_condition_number",
+            "linear_spin_four_force_native",
+            "charge_ald_four_force_native",
+            "total_four_force_native",
+            "balance_residual_norm_native",
+        }
+        if set(payload) != required:
+            raise ValueError("intrinsic-spin diagnostic record keys do not match")
+
+        def optional_vector(name: str) -> tuple[float, float, float, float] | None:
+            value = payload[name]
+            if value is None:
+                return None
+            return _finite_four_tuple(cast(Sequence[float], value), name=name)
+
+        reason = payload["analytical_unavailable_reason"]
+        if reason is not None and not isinstance(reason, str):
+            raise ValueError("analytical_unavailable_reason must be a string or null")
+        return cls(
+            proper_time_ns=float(cast(float, payload["proper_time_ns"])),
+            route=str(payload["route"]),
+            analytical_unavailable_reason=reason,
+            causal_condition_number=(
+                None
+                if payload["causal_condition_number"] is None
+                else float(cast(float, payload["causal_condition_number"]))
+            ),
+            linear_spin_four_force_native=optional_vector(
+                "linear_spin_four_force_native"
+            ),
+            charge_ald_four_force_native=optional_vector(
+                "charge_ald_four_force_native"
+            ),
+            total_four_force_native=optional_vector("total_four_force_native"),
+            balance_residual_norm_native=(
+                None
+                if payload["balance_residual_norm_native"] is None
+                else float(cast(float, payload["balance_residual_norm_native"]))
+            ),
+        )
+
+
+@dataclass(frozen=True)
+class IntrinsicSpinReductionDiagnosticTrace:
+    """Bounded recent records plus lifetime route counters."""
+
+    records: tuple[IntrinsicSpinReductionDiagnosticRecord, ...] = ()
+    total_records: int = 0
+    analytical_records: int = 0
+    causal_records: int = 0
+    unavailable_records: int = 0
+    maximum_records: int = _MAXIMUM_DIAGNOSTIC_RECORDS
+
+    def __post_init__(self) -> None:
+        maximum = int(self.maximum_records)
+        counters = (
+            int(self.total_records),
+            int(self.analytical_records),
+            int(self.causal_records),
+            int(self.unavailable_records),
+        )
+        if maximum < 1 or any(value < 0 for value in counters):
+            raise ValueError("diagnostic trace counts must be non-negative")
+        if sum(counters[1:]) != counters[0]:
+            raise ValueError("diagnostic route counters must sum to total_records")
+        records = tuple(self.records)
+        if len(records) > maximum or len(records) > counters[0]:
+            raise ValueError("diagnostic trace retention is inconsistent")
+        if any(
+            records[index].proper_time_ns <= records[index - 1].proper_time_ns
+            for index in range(1, len(records))
+        ):
+            raise ValueError("diagnostic record proper times must increase strictly")
+        object.__setattr__(self, "records", records)
+        object.__setattr__(self, "maximum_records", maximum)
+        object.__setattr__(self, "total_records", counters[0])
+        object.__setattr__(self, "analytical_records", counters[1])
+        object.__setattr__(self, "causal_records", counters[2])
+        object.__setattr__(self, "unavailable_records", counters[3])
+
+    def append(
+        self,
+        record: IntrinsicSpinReductionDiagnosticRecord,
+    ) -> "IntrinsicSpinReductionDiagnosticTrace":
+        if self.records and record.proper_time_ns <= self.records[-1].proper_time_ns:
+            raise ValueError("diagnostic record proper times must increase strictly")
+        records = (self.records + (record,))[-self.maximum_records :]
+        return IntrinsicSpinReductionDiagnosticTrace(
+            records=records,
+            total_records=self.total_records + 1,
+            analytical_records=self.analytical_records
+            + int(record.route == "analytical_smooth_segment"),
+            causal_records=self.causal_records
+            + int(record.route == "causal_accepted_history_boundary_fallback"),
+            unavailable_records=self.unavailable_records
+            + int(record.route.startswith("unavailable_")),
+            maximum_records=self.maximum_records,
+        )
+
+    def to_checkpoint_payload(self) -> dict[str, object]:
+        return {
+            "maximum_records": self.maximum_records,
+            "total_records": self.total_records,
+            "analytical_records": self.analytical_records,
+            "causal_records": self.causal_records,
+            "unavailable_records": self.unavailable_records,
+            "records": [record.to_checkpoint_payload() for record in self.records],
+        }
+
+    @classmethod
+    def from_checkpoint_payload(
+        cls,
+        payload: Mapping[str, object],
+    ) -> "IntrinsicSpinReductionDiagnosticTrace":
+        required = {
+            "maximum_records",
+            "total_records",
+            "analytical_records",
+            "causal_records",
+            "unavailable_records",
+            "records",
+        }
+        if set(payload) != required or not isinstance(payload["records"], list):
+            raise ValueError("intrinsic-spin diagnostic trace keys are invalid")
+        raw_records = payload["records"]
+        if any(not isinstance(record, Mapping) for record in raw_records):
+            raise ValueError("intrinsic-spin diagnostic records must be JSON objects")
+        return cls(
+            records=tuple(
+                IntrinsicSpinReductionDiagnosticRecord.from_checkpoint_payload(record)
+                for record in raw_records
+            ),
+            total_records=int(cast(int, payload["total_records"])),
+            analytical_records=int(cast(int, payload["analytical_records"])),
+            causal_records=int(cast(int, payload["causal_records"])),
+            unavailable_records=int(cast(int, payload["unavailable_records"])),
+            maximum_records=int(cast(int, payload["maximum_records"])),
+        )
+
+
 @dataclass(frozen=True)
 class AcceptedPairIntrinsicSpinReductionHistory:
     """Checkpointable causal histories for one accepted rider/driver pair.
@@ -258,6 +500,12 @@ class AcceptedPairIntrinsicSpinReductionHistory:
     driver: AcceptedIntrinsicSpinReductionHistory
     rider_endpoint_proper_time_ns: float = 0.0
     driver_endpoint_proper_time_ns: float = 0.0
+    rider_diagnostics: IntrinsicSpinReductionDiagnosticTrace = field(
+        default_factory=IntrinsicSpinReductionDiagnosticTrace
+    )
+    driver_diagnostics: IntrinsicSpinReductionDiagnosticTrace = field(
+        default_factory=IntrinsicSpinReductionDiagnosticTrace
+    )
 
     def __post_init__(self) -> None:
         endpoints = (
@@ -292,6 +540,8 @@ class AcceptedPairIntrinsicSpinReductionHistory:
             ),
             rider_endpoint_proper_time_ns=0.0,
             driver_endpoint_proper_time_ns=0.0,
+            rider_diagnostics=IntrinsicSpinReductionDiagnosticTrace(),
+            driver_diagnostics=IntrinsicSpinReductionDiagnosticTrace(),
         )
 
     def to_checkpoint_payload(self) -> dict[str, object]:
@@ -303,6 +553,8 @@ class AcceptedPairIntrinsicSpinReductionHistory:
             "driver": self.driver.to_checkpoint_payload(),
             "rider_endpoint_proper_time_ns": self.rider_endpoint_proper_time_ns,
             "driver_endpoint_proper_time_ns": self.driver_endpoint_proper_time_ns,
+            "rider_diagnostics": self.rider_diagnostics.to_checkpoint_payload(),
+            "driver_diagnostics": self.driver_diagnostics.to_checkpoint_payload(),
         }
 
     @classmethod
@@ -316,6 +568,8 @@ class AcceptedPairIntrinsicSpinReductionHistory:
             "driver",
             "rider_endpoint_proper_time_ns",
             "driver_endpoint_proper_time_ns",
+            "rider_diagnostics",
+            "driver_diagnostics",
         }
         if set(payload) != required:
             missing = sorted(required - set(payload))
@@ -332,6 +586,12 @@ class AcceptedPairIntrinsicSpinReductionHistory:
             driver_payload, Mapping
         ):
             raise ValueError("pair intrinsic-spin histories must be JSON objects")
+        rider_diagnostics = payload["rider_diagnostics"]
+        driver_diagnostics = payload["driver_diagnostics"]
+        if not isinstance(rider_diagnostics, Mapping) or not isinstance(
+            driver_diagnostics, Mapping
+        ):
+            raise ValueError("pair intrinsic-spin diagnostics must be JSON objects")
         return cls(
             rider=AcceptedIntrinsicSpinReductionHistory.from_checkpoint_payload(
                 rider_payload
@@ -345,10 +605,22 @@ class AcceptedPairIntrinsicSpinReductionHistory:
             driver_endpoint_proper_time_ns=float(
                 cast(float, payload["driver_endpoint_proper_time_ns"])
             ),
+            rider_diagnostics=(
+                IntrinsicSpinReductionDiagnosticTrace.from_checkpoint_payload(
+                    rider_diagnostics
+                )
+            ),
+            driver_diagnostics=(
+                IntrinsicSpinReductionDiagnosticTrace.from_checkpoint_payload(
+                    driver_diagnostics
+                )
+            ),
         )
 
 
-def _private_start_sample(state: Mapping[str, object]) -> dict[str, np.ndarray]:
+def _private_start_sample(
+    state: Mapping[str, object],
+) -> dict[str, tuple[float, float, float, float]]:
     names = {
         "four_velocity_mm_ns": "_intrinsic_spin_start_four_velocity",
         "non_self_four_acceleration_mm_ns2": (
@@ -356,7 +628,7 @@ def _private_start_sample(state: Mapping[str, object]) -> dict[str, np.ndarray]:
         ),
         "physical_spin_four_native": "_intrinsic_spin_start_physical_four_spin",
     }
-    sample: dict[str, np.ndarray] = {}
+    sample: dict[str, tuple[float, float, float, float]] = {}
     for public_name, private_name in names.items():
         values = np.asarray(state.get(private_name), dtype=float)
         if values.shape != (1, 4) or not np.all(np.isfinite(values)):
@@ -364,8 +636,108 @@ def _private_start_sample(state: Mapping[str, object]) -> dict[str, np.ndarray]:
                 "accepted exact-pair state has no finite pre-self-reaction "
                 f"sample {private_name}"
             )
-        sample[public_name] = np.array(values[0], copy=True)
+        sample[public_name] = _finite_four_tuple(values[0], name=private_name)
     return sample
+
+
+def _private_route_inputs(
+    state: Mapping[str, object],
+) -> tuple[
+    PotentialDirectionalIntrinsicSpinReductionResult | None,
+    str | None,
+    float,
+    float,
+    float,
+]:
+    reductions = state.get("_intrinsic_spin_start_analytical_reduction")
+    reasons = state.get("_intrinsic_spin_start_analytical_unavailable_reason")
+    if not isinstance(reductions, list) or len(reductions) != 1:
+        raise ValueError("accepted exact-pair state has no analytical reduction slot")
+    analytical = reductions[0]
+    if analytical is not None and not isinstance(
+        analytical, PotentialDirectionalIntrinsicSpinReductionResult
+    ):
+        raise ValueError("accepted exact-pair analytical reduction has invalid type")
+    if not isinstance(reasons, list) or len(reasons) != 1:
+        raise ValueError("accepted exact-pair state has no analytical reason slot")
+    reason = reasons[0]
+    if reason is not None and not isinstance(reason, str):
+        raise ValueError("accepted exact-pair analytical reason must be text or null")
+
+    def scalar(name: str) -> float:
+        values = np.asarray(state.get(name), dtype=float)
+        if values.shape != (1,) or not np.isfinite(values[0]):
+            raise ValueError(f"accepted exact-pair state has no finite {name}")
+        return float(values[0])
+
+    return (
+        analytical,
+        reason,
+        scalar("_intrinsic_spin_charge_native"),
+        scalar("_intrinsic_spin_mass_amu"),
+        scalar("_intrinsic_spin_g_factor"),
+    )
+
+
+def _diagnostic_record(
+    *,
+    proper_time_ns: float,
+    state: Mapping[str, object],
+    accepted_history: AcceptedIntrinsicSpinReductionHistory,
+) -> IntrinsicSpinReductionDiagnosticRecord:
+    analytical, reason, charge, mass, g_factor = _private_route_inputs(state)
+    if charge == 0.0 or g_factor == 0.0:
+        return IntrinsicSpinReductionDiagnosticRecord(
+            proper_time_ns=proper_time_ns,
+            route="unavailable_outside_intrinsic_qmu_model",
+            analytical_unavailable_reason=reason,
+            causal_condition_number=None,
+            linear_spin_four_force_native=None,
+            charge_ald_four_force_native=None,
+            total_four_force_native=None,
+            balance_residual_norm_native=None,
+        )
+    selected = select_intrinsic_spin_reduction_route_native(
+        analytical_reduction=analytical,
+        analytical_unavailable_reason=reason,
+        accepted_history=accepted_history,
+        charge_native=charge,
+        mass_amu=mass,
+        g_factor=g_factor,
+    )
+    reduction = selected.analytical_reduction or selected.causal_reduction
+    if reduction is None:
+        return IntrinsicSpinReductionDiagnosticRecord(
+            proper_time_ns=proper_time_ns,
+            route=selected.route,
+            analytical_unavailable_reason=selected.unavailable_reason,
+            causal_condition_number=None,
+            linear_spin_four_force_native=None,
+            charge_ald_four_force_native=None,
+            total_four_force_native=None,
+            balance_residual_norm_native=None,
+        )
+    balance = reduction.radiation_balance
+    self_force = balance.self_force
+    condition = (
+        None
+        if selected.causal_reduction is None
+        else selected.causal_reduction.scaled_vandermonde_condition_number
+    )
+    return IntrinsicSpinReductionDiagnosticRecord(
+        proper_time_ns=proper_time_ns,
+        route=selected.route,
+        analytical_unavailable_reason=selected.unavailable_reason,
+        causal_condition_number=condition,
+        linear_spin_four_force_native=(self_force.linear_spin_self_force_native),
+        charge_ald_four_force_native=self_force.charge_ald_self_force_native,
+        total_four_force_native=(
+            self_force.total_self_force_through_linear_spin_native
+        ),
+        balance_residual_norm_native=float(
+            np.linalg.norm(balance.balance_residual_native)
+        ),
+    )
 
 
 def build_accepted_pair_intrinsic_spin_reduction_candidate(
@@ -393,13 +765,21 @@ def build_accepted_pair_intrinsic_spin_reduction_candidate(
         start_sample = _private_start_sample(midpoint_state)
         with_start = history.append_accepted(
             proper_time_ns=endpoint_proper_time_ns,
-            **start_sample,
+            four_velocity_mm_ns=start_sample["four_velocity_mm_ns"],
+            non_self_four_acceleration_mm_ns2=start_sample[
+                "non_self_four_acceleration_mm_ns2"
+            ],
+            physical_spin_four_native=start_sample["physical_spin_four_native"],
         )
         midpoint_time = endpoint_proper_time_ns + float(midpoint_step_ns)
         midpoint_sample = _private_start_sample(endpoint_state)
         with_midpoint = with_start.append_accepted(
             proper_time_ns=midpoint_time,
-            **midpoint_sample,
+            four_velocity_mm_ns=midpoint_sample["four_velocity_mm_ns"],
+            non_self_four_acceleration_mm_ns2=midpoint_sample[
+                "non_self_four_acceleration_mm_ns2"
+            ],
+            physical_spin_four_native=midpoint_sample["physical_spin_four_native"],
         )
         return with_midpoint, midpoint_time + float(endpoint_step_ns)
 
@@ -424,6 +804,90 @@ def build_accepted_pair_intrinsic_spin_reduction_candidate(
         driver=driver,
         rider_endpoint_proper_time_ns=rider_endpoint,
         driver_endpoint_proper_time_ns=driver_endpoint,
+        rider_diagnostics=accepted.rider_diagnostics,
+        driver_diagnostics=accepted.driver_diagnostics,
+    )
+
+
+def build_accepted_pair_intrinsic_spin_reduction_diagnostic_candidate(
+    trial: "ExactPairStepDoublingTrial",
+    accepted: AcceptedPairIntrinsicSpinReductionHistory,
+) -> AcceptedPairIntrinsicSpinReductionHistory:
+    """Advance accepted histories and append live diagnostic route records."""
+
+    def append_role(
+        history: AcceptedIntrinsicSpinReductionHistory,
+        trace: IntrinsicSpinReductionDiagnosticTrace,
+        endpoint_proper_time_ns: float,
+        midpoint_state: Mapping[str, object],
+        endpoint_state: Mapping[str, object],
+        midpoint_step_ns: float,
+        endpoint_step_ns: float,
+    ) -> tuple[
+        AcceptedIntrinsicSpinReductionHistory,
+        IntrinsicSpinReductionDiagnosticTrace,
+        float,
+    ]:
+        start_sample = _private_start_sample(midpoint_state)
+        with_start = history.append_accepted(
+            proper_time_ns=endpoint_proper_time_ns,
+            four_velocity_mm_ns=start_sample["four_velocity_mm_ns"],
+            non_self_four_acceleration_mm_ns2=start_sample[
+                "non_self_four_acceleration_mm_ns2"
+            ],
+            physical_spin_four_native=start_sample["physical_spin_four_native"],
+        )
+        next_trace = trace.append(
+            _diagnostic_record(
+                proper_time_ns=endpoint_proper_time_ns,
+                state=midpoint_state,
+                accepted_history=with_start,
+            )
+        )
+        midpoint_time = endpoint_proper_time_ns + float(midpoint_step_ns)
+        midpoint_sample = _private_start_sample(endpoint_state)
+        with_midpoint = with_start.append_accepted(
+            proper_time_ns=midpoint_time,
+            four_velocity_mm_ns=midpoint_sample["four_velocity_mm_ns"],
+            non_self_four_acceleration_mm_ns2=midpoint_sample[
+                "non_self_four_acceleration_mm_ns2"
+            ],
+            physical_spin_four_native=midpoint_sample["physical_spin_four_native"],
+        )
+        next_trace = next_trace.append(
+            _diagnostic_record(
+                proper_time_ns=midpoint_time,
+                state=endpoint_state,
+                accepted_history=with_midpoint,
+            )
+        )
+        return with_midpoint, next_trace, midpoint_time + float(endpoint_step_ns)
+
+    rider, rider_trace, rider_endpoint = append_role(
+        accepted.rider,
+        accepted.rider_diagnostics,
+        accepted.rider_endpoint_proper_time_ns,
+        trial.midpoint.pair.rider.state,
+        trial.refined.pair.rider.state,
+        trial.midpoint.pair.rider.proper_step_ns,
+        trial.refined.pair.rider.proper_step_ns,
+    )
+    driver, driver_trace, driver_endpoint = append_role(
+        accepted.driver,
+        accepted.driver_diagnostics,
+        accepted.driver_endpoint_proper_time_ns,
+        trial.midpoint.pair.driver.state,
+        trial.refined.pair.driver.state,
+        trial.midpoint.pair.driver.proper_step_ns,
+        trial.refined.pair.driver.proper_step_ns,
+    )
+    return AcceptedPairIntrinsicSpinReductionHistory(
+        rider=rider,
+        driver=driver,
+        rider_endpoint_proper_time_ns=rider_endpoint,
+        driver_endpoint_proper_time_ns=driver_endpoint,
+        rider_diagnostics=rider_trace,
+        driver_diagnostics=driver_trace,
     )
 
 
@@ -486,7 +950,10 @@ def select_intrinsic_spin_reduction_route_native(
 __all__ = [
     "AcceptedPairIntrinsicSpinReductionHistory",
     "AcceptedIntrinsicSpinReductionHistory",
+    "IntrinsicSpinReductionDiagnosticRecord",
+    "IntrinsicSpinReductionDiagnosticTrace",
     "IntrinsicSpinReductionRouteResult",
     "build_accepted_pair_intrinsic_spin_reduction_candidate",
+    "build_accepted_pair_intrinsic_spin_reduction_diagnostic_candidate",
     "select_intrinsic_spin_reduction_route_native",
 ]

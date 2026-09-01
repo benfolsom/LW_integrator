@@ -32,6 +32,7 @@ from .potential_jet_rfs import (
     potential_directional_rfs_reduction_jet_native,
 )
 from .retarded_potential_directional_jet import (
+    PotentialDirectionalDerivatives,
     RetardedPotentialDirectionalJetProviderResult,
     evaluate_retarded_charge_potential_directional_jet_native,
     evaluate_retarded_dipole_potential_directional_jet_native,
@@ -424,6 +425,7 @@ def evaluate_retarded_potential_intrinsic_spin_reduction_native(
     observer_source_identity: Hashable | None = None,
     excluded_dipole_source_identities: Sequence[Hashable] = (),
     require_complete_history: bool = True,
+    include_dipole_source: bool = True,
     boundary_guard_fraction: float = 1.0e-6,
     require_frozen_spin_segment: bool = True,
     minimum_separation_mm: float = 1.0e-15,
@@ -485,22 +487,43 @@ def evaluate_retarded_potential_intrinsic_spin_reduction_native(
             root_tolerance_mm=root_tolerance_mm,
             max_root_iterations=max_root_iterations,
         )
-        dipole_result = evaluate_retarded_dipole_potential_directional_jet_native(
-            source_history,
-            observer_event,
-            four_velocity_mm_ns=velocity,
-            four_acceleration_mm_ns2=acceleration,
-            source_identities=dipole_source_identities,
-            observer_source_identity=observer_source_identity,
-            excluded_source_identities=excluded_dipole_source_identities,
-            require_complete_history=require_complete_history,
-            boundary_guard_fraction=boundary_guard_fraction,
-            require_frozen_spin_segment=require_frozen_spin_segment,
-            minimum_separation_mm=minimum_separation_mm,
-            root_tolerance_mm=root_tolerance_mm,
-            max_root_iterations=max_root_iterations,
-            spin_interpolation_model=spin_interpolation_model,
-        )
+        if include_dipole_source:
+            dipole_result = evaluate_retarded_dipole_potential_directional_jet_native(
+                source_history,
+                observer_event,
+                four_velocity_mm_ns=velocity,
+                four_acceleration_mm_ns2=acceleration,
+                source_identities=dipole_source_identities,
+                observer_source_identity=observer_source_identity,
+                excluded_source_identities=excluded_dipole_source_identities,
+                require_complete_history=require_complete_history,
+                boundary_guard_fraction=boundary_guard_fraction,
+                require_frozen_spin_segment=require_frozen_spin_segment,
+                minimum_separation_mm=minimum_separation_mm,
+                root_tolerance_mm=root_tolerance_mm,
+                max_root_iterations=max_root_iterations,
+                spin_interpolation_model=spin_interpolation_model,
+            )
+        else:
+            zero_derivatives = PotentialDirectionalDerivatives(
+                four_potential=np.zeros(4, dtype=float),
+                partial_a=np.zeros((4, 4), dtype=float),
+                partial2_a=np.zeros((4, 4, 4), dtype=float),
+                partial3_a_along_velocity=np.zeros((4, 4, 4), dtype=float),
+                partial3_a_along_acceleration=np.zeros((4, 4, 4), dtype=float),
+                partial4_a_along_velocity_twice=np.zeros((4, 4, 4), dtype=float),
+            )
+            dipole_result = RetardedPotentialDirectionalJetProviderResult(
+                derivatives=zero_derivatives,
+                available=True,
+                unavailable_reason=None,
+                source_identities=(),
+                valid_sources=np.zeros(0, dtype=bool),
+                retarded_time_ns=np.zeros(0, dtype=float),
+                source_segment_index=np.zeros(0, dtype=np.int64),
+                source_segment_fraction=np.zeros(0, dtype=float),
+                source_jet_residual=np.zeros(0, dtype=float),
+            )
         return charge_result, dipole_result
 
     zero_acceleration = np.zeros(4, dtype=float)

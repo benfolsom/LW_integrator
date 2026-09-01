@@ -7,14 +7,19 @@
   force exactly.  A rider/driver pair wrapper can now participate in the live
   shared-time adaptive transaction: its pure candidate is built before the
   refined trajectory is published, adopted only after joint acceptance, and
-  stored in accepted-pair checkpoint schema 2.  Rejected trials never invoke
+  stored in accepted-pair checkpoint schema 3.  Rejected trials never invoke
   the update, and restart reproduces the uninterrupted diagnostic history.
   A pure selector records analytical smooth-segment, causal boundary-fallback,
   or insufficient-history routes.  The second-order exact equations now expose
   private start-event velocity, physical spin, and non-self four-acceleration
-  before Medina's charge-radiation kick.  The production adaptive path records
-  these diagnostics automatically and reports the retained sample counts, but
-  still applies no magnetic self-reaction force.
+  before Medina's charge-radiation kick.  Second-order adaptive runs retain
+  this accepted causal input history and report its sample count.  The new
+  explicit ``intrinsic_spin_self_reaction_mode=diagnostic`` option additionally
+  evaluates the analytical smooth-segment reduction at each accepted start or
+  midpoint, switches to the six-sample causal estimate at guarded segment
+  boundaries, and checkpoints a bounded recent trace plus lifetime route
+  counts.  It records the linear-spin force separately from the charge-ALD
+  comparison term and still applies no magnetic self-reaction force.
 - Added a diagnostic smooth-segment retarded-potential derivative bridge for
   linear-spin reduction of order.  One safeguarded charge or dipole root now
   supplies the potential Hessian and only the three higher directional

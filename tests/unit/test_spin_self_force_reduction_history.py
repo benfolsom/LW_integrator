@@ -11,6 +11,8 @@ from core.constants import C_MMNS
 from core.spin_self_force_reduction_history import (
     AcceptedIntrinsicSpinReductionHistory,
     AcceptedPairIntrinsicSpinReductionHistory,
+    IntrinsicSpinReductionDiagnosticRecord,
+    IntrinsicSpinReductionDiagnosticTrace,
     select_intrinsic_spin_reduction_route_native,
 )
 from core.spin_self_force_reduction_oracle import (
@@ -193,7 +195,7 @@ def test_boundary_route_fails_closed_before_six_accepted_samples() -> None:
 
 def test_checkpoint_payload_rejects_unknown_schema_or_keys() -> None:
     payload = _accepted_history().to_checkpoint_payload()
-    payload["schema_version"] = 2
+    payload["schema_version"] = 999
     with pytest.raises(ValueError, match="unsupported"):
         AcceptedIntrinsicSpinReductionHistory.from_checkpoint_payload(payload)
 
@@ -201,3 +203,49 @@ def test_checkpoint_payload_rejects_unknown_schema_or_keys() -> None:
     payload["unexpected"] = True
     with pytest.raises(ValueError, match="keys do not match"):
         AcceptedIntrinsicSpinReductionHistory.from_checkpoint_payload(payload)
+
+
+def test_diagnostic_trace_is_bounded_but_preserves_lifetime_route_counts() -> None:
+    trace = IntrinsicSpinReductionDiagnosticTrace(maximum_records=2)
+    unavailable = IntrinsicSpinReductionDiagnosticRecord(
+        proper_time_ns=0.0,
+        route="unavailable_insufficient_accepted_history",
+        analytical_unavailable_reason="segment boundary",
+        causal_condition_number=None,
+        linear_spin_four_force_native=None,
+        charge_ald_four_force_native=None,
+        total_four_force_native=None,
+        balance_residual_norm_native=None,
+    )
+    analytical = IntrinsicSpinReductionDiagnosticRecord(
+        proper_time_ns=0.1,
+        route="analytical_smooth_segment",
+        analytical_unavailable_reason=None,
+        causal_condition_number=None,
+        linear_spin_four_force_native=(0.0, 1.0, 0.0, 0.0),
+        charge_ald_four_force_native=(0.0, 0.0, 0.0, 0.0),
+        total_four_force_native=(0.0, 1.0, 0.0, 0.0),
+        balance_residual_norm_native=0.0,
+    )
+    causal = IntrinsicSpinReductionDiagnosticRecord(
+        proper_time_ns=0.2,
+        route="causal_accepted_history_boundary_fallback",
+        analytical_unavailable_reason="segment boundary",
+        causal_condition_number=42.0,
+        linear_spin_four_force_native=(0.0, 2.0, 0.0, 0.0),
+        charge_ald_four_force_native=(0.0, 0.0, 0.0, 0.0),
+        total_four_force_native=(0.0, 2.0, 0.0, 0.0),
+        balance_residual_norm_native=1.0e-30,
+    )
+    for record in (unavailable, analytical, causal):
+        trace = trace.append(record)
+
+    assert trace.total_records == 3
+    assert trace.analytical_records == 1
+    assert trace.causal_records == 1
+    assert trace.unavailable_records == 1
+    assert [record.proper_time_ns for record in trace.records] == [0.1, 0.2]
+    restored = IntrinsicSpinReductionDiagnosticTrace.from_checkpoint_payload(
+        json.loads(json.dumps(trace.to_checkpoint_payload()))
+    )
+    assert restored.to_checkpoint_payload() == trace.to_checkpoint_payload()

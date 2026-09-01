@@ -22,7 +22,7 @@ import numpy as np
 from .types import TrajectoryArrays, TrajectoryBuilder
 
 SCHEMA_VERSION = 1
-ACCEPTED_PAIR_SCHEMA_VERSION = 2
+ACCEPTED_PAIR_SCHEMA_VERSION = 3
 
 
 class CheckpointError(RuntimeError):

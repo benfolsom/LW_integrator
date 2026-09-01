@@ -164,6 +164,7 @@ DEFAULT_MAGNETIC_DIPOLE: Dict[str, Any] = {
     "stern_gerlach_model": "rfs_full_g",
     "exact_retarded_backend": "python",
     "exact_retarded_update": "first_order_endpoint",
+    "intrinsic_spin_self_reaction_mode": "off",
     "source": {
         "model": "off",
         "minimum_separation_mm": 2.0e-9,
@@ -743,6 +744,15 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
             "endpoint scheme (default), or an experimental second-order "
             "proper-time Taylor update evaluated entirely at the accepted "
             "start phase-space event."
+        ),
+    )
+    parser.add_argument(
+        "--intrinsic-spin-self-reaction-mode",
+        choices=("off", "diagnostic"),
+        help=(
+            "Intrinsic-spin self-reaction handling: off (default), or retain "
+            "analytical/causal q-mu estimates as checkpointed diagnostics. "
+            "Diagnostic values are never applied as forces."
         ),
     )
     parser.add_argument(
@@ -1392,6 +1402,9 @@ def _build_testbed_report(
         report["exact_retarded"]["update"] = str(
             options.magnetic_dipole_exact_retarded_update
         )
+        report["exact_retarded"]["intrinsic_spin_self_reaction_mode"] = str(
+            options.magnetic_dipole_intrinsic_spin_self_reaction_mode
+        )
     return report
 
 
@@ -1942,6 +1955,10 @@ def _merge_simulation_payload(
         magnetic_dipole["exact_retarded_backend"] = args.exact_retarded_backend
     if getattr(args, "exact_retarded_update", None) is not None:
         magnetic_dipole["exact_retarded_update"] = args.exact_retarded_update
+    if getattr(args, "intrinsic_spin_self_reaction_mode", None) is not None:
+        magnetic_dipole["intrinsic_spin_self_reaction_mode"] = (
+            args.intrinsic_spin_self_reaction_mode
+        )
     if getattr(args, "dipole_source_minimum_separation_mm", None) is not None:
         dipole_source["minimum_separation_mm"] = (
             args.dipole_source_minimum_separation_mm
@@ -2248,6 +2265,9 @@ def _build_magnetic_dipole_config(payload: Any) -> MagneticDipoleConfig:
             exact_retarded_backend=exact_retarded_backend,
             exact_retarded_update=payload.get(
                 "exact_retarded_update", "first_order_endpoint"
+            ),
+            intrinsic_spin_self_reaction_mode=payload.get(
+                "intrinsic_spin_self_reaction_mode", "off"
             ),
             source=source_config,
             rider=_particle_config("rider", "electron"),
@@ -3249,6 +3269,9 @@ def build_report(
             magnetic_dipole.exact_retarded_backend
         )
         report["exact_retarded"]["update"] = magnetic_dipole.exact_retarded_update
+        report["exact_retarded"][
+            "intrinsic_spin_self_reaction_mode"
+        ] = magnetic_dipole.intrinsic_spin_self_reaction_mode
     return report
 
 

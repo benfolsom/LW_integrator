@@ -286,8 +286,7 @@ def test_moving_rotating_dipole_matches_independent_third_order_hertz_jet() -> N
             for nu in range(4):
                 reconstructed_partial_f[derivative_index, mu, nu] = (
                     signs[mu] * directional.partial2_a[derivative_index, mu, nu]
-                    - signs[nu]
-                    * directional.partial2_a[derivative_index, nu, mu]
+                    - signs[nu] * directional.partial2_a[derivative_index, nu, mu]
                 )
     np.testing.assert_allclose(
         reconstructed_partial_f,
@@ -450,6 +449,31 @@ def test_retarded_history_evaluates_complete_potential_only_spin_reduction() -> 
     # The point source is off the observer and both source sectors are active.
     np.testing.assert_array_equal(result.charge_provider.valid_sources, (True,))
     np.testing.assert_array_equal(result.dipole_provider.valid_sources, (True,))
+
+
+def test_retarded_reduction_can_exclude_the_ordinary_dipole_source_sector() -> None:
+    history = _static_history(np.linspace(-0.1, 0.0, 9))
+    result = evaluate_retarded_potential_intrinsic_spin_reduction_native(
+        source_history=history,
+        observer_event=ObserverEvent(0.0, (10.0, 0.0, 0.0)),
+        four_velocity_mm_ns=(C_MMNS, 0.0, 0.0, 0.0),
+        normalized_spin_four_vector=(0.0, 0.0, 0.0, 1.0),
+        charge_native=-0.5,
+        mass_amu=1.0,
+        invariant_spin_native=0.75,
+        g_factor=2.1,
+        include_dipole_source=False,
+    )
+
+    assert result.available and result.reduction is not None
+    assert result.dipole_provider.available
+    assert result.dipole_provider.source_identities == ()
+    assert result.dipole_provider.valid_sources.size == 0
+    assert result.dipole_provider.derivatives is not None
+    np.testing.assert_array_equal(
+        result.dipole_provider.derivatives.four_potential,
+        np.zeros(4),
+    )
 
 
 def test_retarded_reduction_matches_centered_and_causal_sampled_oracles() -> None:

@@ -30,7 +30,7 @@ from core.self_consistency import SelfConsistencyConfig
 from core.shared_lab_time import SharedLabTimeError
 from core.spin_self_force_reduction_history import (
     AcceptedPairIntrinsicSpinReductionHistory,
-    build_accepted_pair_intrinsic_spin_reduction_candidate,
+    build_accepted_pair_intrinsic_spin_reduction_diagnostic_candidate,
 )
 from core.species import get_species
 from core.step_doubling import (
@@ -157,6 +157,7 @@ def _charged_accepted_pair(
     *,
     include_dipole_source: bool = False,
     exact_retarded_update: str = "first_order_endpoint",
+    intrinsic_spin_self_reaction_mode: str = "off",
 ) -> tuple[
     GrowableTrajectoryBuilder,
     GrowableTrajectoryBuilder,
@@ -172,6 +173,7 @@ def _charged_accepted_pair(
             model=("covariant_retarded_point" if include_dipole_source else "off")
         ),
         exact_retarded_update=exact_retarded_update,
+        intrinsic_spin_self_reaction_mode=intrinsic_spin_self_reaction_mode,
         rider=MagneticDipoleParticleConfig(species="electron"),
         driver=MagneticDipoleParticleConfig(species="proton"),
     )
@@ -691,10 +693,56 @@ def test_charged_exact_rfs_step_doubling_uses_trial_history_without_commit(
         assert bool(trial.refined.pair.driver.state["medina_force_derivative_ready"][0])
 
 
+def test_intrinsic_spin_diagnostic_off_never_calls_reduction_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import core.spin_self_force_reduction_oracle as reduction_oracle
+
+    rider_builder, driver_builder, magnetic = _charged_accepted_pair(
+        exact_retarded_update="second_order_start_taylor_endpoint",
+        intrinsic_spin_self_reaction_mode="off",
+    )
+
+    def fail_if_called(*args: object, **kwargs: object) -> None:
+        raise AssertionError("feature-off path evaluated intrinsic-spin reduction")
+
+    monkeypatch.setattr(
+        reduction_oracle,
+        "evaluate_retarded_potential_intrinsic_spin_reduction_native",
+        fail_if_called,
+    )
+    advance = make_exact_role_eom_advance(
+        ExactPairEOMOptions(
+            aperture_radius_mm=1.0,
+            magnetic_dipole=magnetic,
+            self_consistency=SelfConsistencyConfig.standard(),
+            radiation_reaction_mode="medina_lad",
+        )
+    )
+
+    trial = solve_exact_pair_slab_trial(
+        accepted_rider_history=rider_builder.build_current(),
+        accepted_driver_history=driver_builder.build_current(),
+        advance_rider=advance,
+        advance_driver=advance,
+        delta_time_ns=1.0e-8,
+        rider_initial_proper_step_ns=1.0e-8,
+        driver_initial_proper_step_ns=1.0e-8,
+        magnetic_dipole=magnetic,
+        include_dipole_source=False,
+    )
+
+    assert np.all(np.isfinite(trial.pair.rider.state["Px"]))
+    assert np.all(np.isfinite(trial.pair.driver.state["Px"]))
+    assert "_intrinsic_spin_start_analytical_reduction" not in trial.pair.rider.state
+    assert "_intrinsic_spin_start_analytical_reduction" not in trial.pair.driver.state
+
+
 def test_short_adaptive_window_runs_charged_rfs_medina_and_dipole_source() -> None:
     rider_builder, driver_builder, magnetic = _charged_accepted_pair(
         include_dipole_source=True,
         exact_retarded_update="second_order_start_taylor_endpoint",
+        intrinsic_spin_self_reaction_mode="diagnostic",
     )
     start_time = float(rider_builder.build_current().t[-1, 0])
     advance = make_exact_role_eom_advance(
@@ -736,7 +784,7 @@ def test_short_adaptive_window_runs_charged_rfs_medina_and_dipole_source() -> No
             AcceptedPairIntrinsicSpinReductionHistory.empty()
         ),
         build_intrinsic_spin_reduction_candidate=(
-            build_accepted_pair_intrinsic_spin_reduction_candidate
+            build_accepted_pair_intrinsic_spin_reduction_diagnostic_candidate
         ),
     )
 
@@ -755,6 +803,25 @@ def test_short_adaptive_window_runs_charged_rfs_medina_and_dipole_source() -> No
     reduction = result.intrinsic_spin_reduction_history
     assert reduction.rider.sample_count == 4
     assert reduction.driver.sample_count == 4
+    for trace in (reduction.rider_diagnostics, reduction.driver_diagnostics):
+        assert trace.total_records == 4
+        assert trace.total_records == (
+            trace.analytical_records + trace.causal_records + trace.unavailable_records
+        )
+        assert len(trace.records) == 4
+        assert all(
+            record.route
+            in {
+                "analytical_smooth_segment",
+                "unavailable_insufficient_accepted_history",
+            }
+            for record in trace.records
+        )
+        assert all(
+            record.linear_spin_four_force_native is not None
+            for record in trace.records
+            if record.route == "analytical_smooth_segment"
+        )
     for history in (reduction.rider, reduction.driver):
         assert np.all(np.isfinite(history.four_velocity_mm_ns))
         assert np.all(np.isfinite(history.non_self_four_acceleration_mm_ns2))

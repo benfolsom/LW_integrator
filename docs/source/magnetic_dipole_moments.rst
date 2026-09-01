@@ -513,6 +513,16 @@ response.  It does not yet supply the higher field derivatives needed to make
 the RFS moment force or Medina reaction intrinsically second order, so full
 coupled runs still require timestep refinement and projection-energy audits.
 
+The separate ``intrinsic_spin_self_reaction_mode=diagnostic`` selection uses
+that second-order adaptive path to measure, but not apply, the point-particle
+linear-spin self-reaction.  Smooth retarded source segments use analytical
+potential derivatives.  Guarded interpolation boundaries use a causal
+six-sample accepted-history estimate when ready, and otherwise report the
+value unavailable.  Checkpoints retain route counts and up to 4,096 recent
+force records per particle.  The existing Medina charge term is not replaced
+or added a second time, and pure magnetic :math:`\mu^2` recoil remains outside
+this diagnostic.
+
 This first implementation remains a full-retarded finite-difference oracle.
 The shared optional exact-retarded backends accelerate charge and dipole
 light-cone work without changing Python reference-order source or stencil

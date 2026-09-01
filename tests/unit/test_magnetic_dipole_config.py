@@ -152,6 +152,25 @@ def test_magnetic_dipole_rejects_unknown_exact_retarded_update() -> None:
         MagneticDipoleConfig(exact_retarded_update="adaptive_magic")
 
 
+def test_intrinsic_spin_self_reaction_diagnostic_requires_second_order() -> None:
+    with pytest.raises(ValueError, match="self-reaction diagnostics require"):
+        MagneticDipoleConfig(intrinsic_spin_self_reaction_mode="diagnostic")
+
+    config = MagneticDipoleConfig(
+        exact_retarded_update="second_order_start_taylor_endpoint",
+        intrinsic_spin_self_reaction_mode="diagnostic",
+    )
+    assert config.intrinsic_spin_self_reaction_mode == "diagnostic"
+
+
+def test_magnetic_dipole_rejects_unknown_intrinsic_spin_self_reaction_mode() -> None:
+    with pytest.raises(ValueError, match="intrinsic_spin_self_reaction_mode"):
+        MagneticDipoleConfig(
+            exact_retarded_update="second_order_start_taylor_endpoint",
+            intrinsic_spin_self_reaction_mode="apply_now",
+        )
+
+
 def test_magnetic_dipole_rejects_unknown_exact_retarded_backend() -> None:
     with pytest.raises(ValueError, match="exact_retarded_backend"):
         MagneticDipoleConfig(exact_retarded_backend="auto")

@@ -54,6 +54,7 @@ class _MagneticHarness(IntegratorGUIConfigMixin):
         self.magnetic_dipole_source_model_var = _Var()
         self.magnetic_dipole_exact_retarded_backend_var = _Var()
         self.magnetic_dipole_exact_retarded_update_var = _Var()
+        self.magnetic_dipole_intrinsic_spin_self_reaction_var = _Var()
         self.magnetic_dipole_source_minimum_separation_var = _Var()
         self.rider_magnetic_species_var = _Var()
         self.driver_magnetic_species_var = _Var()
@@ -86,6 +87,7 @@ def test_current_magnetic_dipole_config_round_trips_through_gui_fields() -> None
                 "stern_gerlach_force_enabled": True,
                 "exact_retarded_backend": "numba_roots_exact_serial",
                 "exact_retarded_update": ("second_order_start_taylor_endpoint"),
+                "intrinsic_spin_self_reaction_mode": "diagnostic",
                 "source": {
                     "model": "covariant_retarded_point",
                     "minimum_separation_mm": 7.0e-9,
@@ -127,6 +129,9 @@ def test_current_magnetic_dipole_config_round_trips_through_gui_fields() -> None
     assert harness.magnetic_dipole_exact_retarded_update_var.get() == (
         "Second-order accepted-start Taylor"
     )
+    assert harness.magnetic_dipole_intrinsic_spin_self_reaction_var.get() == (
+        "Diagnostic only"
+    )
     assert float(harness.magnetic_dipole_source_minimum_separation_var.get()) == (
         pytest.approx(7.0e-9)
     )
@@ -137,6 +142,7 @@ def test_current_magnetic_dipole_config_round_trips_through_gui_fields() -> None
     assert rebuilt.magnetic_dipole_exact_retarded_update == (
         "second_order_start_taylor_endpoint"
     )
+    assert rebuilt.magnetic_dipole_intrinsic_spin_self_reaction_mode == "diagnostic"
     assert rebuilt.magnetic_dipole_source_minimum_separation_mm == pytest.approx(7.0e-9)
     assert rebuilt.magnetic_dipole_source_relative_stencil_step == pytest.approx(2.0e-3)
     assert rebuilt.magnetic_dipole_source_minimum_stencil_step_mm == pytest.approx(
@@ -219,6 +225,7 @@ def test_old_config_defaults_round_trip_with_magnetic_dipoles_off() -> None:
     assert rebuilt.magnetic_dipole_source_model == "off"
     assert rebuilt.magnetic_dipole_exact_retarded_backend == "python"
     assert rebuilt.magnetic_dipole_exact_retarded_update == "first_order_endpoint"
+    assert rebuilt.magnetic_dipole_intrinsic_spin_self_reaction_mode == "off"
     assert rebuilt.magnetic_dipole_source_minimum_separation_mm == pytest.approx(2.0e-9)
     assert rebuilt.rider_magnetic_species == "electron"
     assert rebuilt.driver_magnetic_species == "proton"
