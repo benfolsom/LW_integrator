@@ -19,6 +19,15 @@
   still copies its full sample arrays on append and is therefore explicitly
   not the production long-history store; live selection waits for a growable,
   transaction-safe implementation.
+- Added that growable transaction-safe causal ``C5`` history store as a
+  separate internal primitive. It grows accepted sample buffers geometrically,
+  preflights new rows and every newly ready segment beyond the published
+  boundary, invalidates overwritten or failed candidates, and commits without
+  copying the accepted prefix. The shared-time adaptive validation path can
+  now use the growable rider/driver pair; rejected trials publish neither role,
+  while accepted and checkpoint-resumed paths reproduce the immutable oracle
+  coefficients and provider response bit-for-bit. Live equations still do not
+  select this provider and no self-reaction force is applied.
 - Added the first isolated production-state layer for a causal ``C5`` source
   history.  Accepted position, velocity, acceleration, and unit-spin samples
   now produce immutable degree-eleven worldline and stereographic-spin

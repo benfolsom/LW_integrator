@@ -552,11 +552,22 @@ coefficients bit-for-bit, while the worst spin-fit condition number remains
 below ``1e4`` compared with the fail-closed ``1e5`` limit. A factor-of-ten
 cadence discontinuity still fails before either trajectory is published.
 
-The current immutable object copies its accepted sample arrays whenever a new
-sample is appended. That makes it a clear correctness oracle, but gives
-quadratic construction cost over a long run. It must not be selected by live
-dynamics until a growable store can preflight both particle roles, publish the
-new rows and coefficients atomically, and checkpoint only the appended tail.
+The immutable object copies its accepted sample arrays whenever a new sample
+is appended. That makes it a clear correctness oracle, but gives quadratic
+construction cost over a long run. A separate growable store now removes this
+storage cost. It writes tentative rows only beyond the visible boundary,
+constructs all newly ready segments before publication, and invalidates stale
+or overwritten candidates. Accepted buffers grow geometrically and previously
+published segment objects are reused rather than rebuilt.
+
+The shared-time validation controller can carry a growable rider/driver pair.
+A rejected attempt advances neither role; an accepted attempt publishes the
+already-preflighted midpoint and endpoint after the joint trajectory commit.
+The existing binary checkpoint restores exact coefficients and can seed a new
+growable store. Matched-cadence uninterrupted and interrupted/resumed tests
+reproduce the immutable oracle coefficients and :math:`A`, :math:`F`, and
+:math:`\partial F` bit-for-bit. Concurrent mutation and evaluation of one
+builder remains unsupported.
 
 The next milestone is numerical validation of this live route trace.  Compare
 the analytical, causal, and centered-reference values on weak smooth motion;
