@@ -219,9 +219,7 @@ def test_checkpoint_roundtrip_preserves_frozen_coefficients_bitwise() -> None:
 
 
 def test_bounded_nonuniform_cadence_matches_incremental_history_bitwise() -> None:
-    increments = 0.002 * (
-        1.0 + 0.2 * np.sin(0.73 * np.arange(40, dtype=np.float64))
-    )
+    increments = 0.002 * (1.0 + 0.2 * np.sin(0.73 * np.arange(40, dtype=np.float64)))
     times = np.concatenate((np.zeros(1), np.cumsum(increments)))
     samples = tuple(_accepted_sample_at_time(float(time)) for time in times)
     incremental = CausalC5SourceHistory.empty()
@@ -239,9 +237,9 @@ def test_bounded_nonuniform_cadence_matches_incremental_history_bitwise() -> Non
     )
 
     assert len(batch.frozen_segments) == len(incremental.frozen_segments)
-    assert max(
-        segment.spin_condition_number for segment in batch.frozen_segments
-    ) < 1.0e4
+    assert (
+        max(segment.spin_condition_number for segment in batch.frozen_segments) < 1.0e4
+    )
     for expected, actual in zip(incremental.frozen_segments, batch.frozen_segments):
         np.testing.assert_array_equal(
             actual.position_coefficients_mm,
