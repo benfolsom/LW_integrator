@@ -353,6 +353,32 @@ the exact circular benchmark above, this checks the source derivative, local
 chain rule, and self-force formula without applying the result to a live
 trajectory.
 
+Causal boundary history
+~~~~~~~~~~~~~~~~~~~~~~~
+
+``AcceptedIntrinsicSpinReductionHistory`` is the first state-lifecycle layer
+for the boundary route.  It retains only the newest six accepted proper-time
+samples of four-velocity, non-self acceleration, and physical four-spin.
+Appending a tentative state returns a new immutable history; discarding that
+object leaves the accepted history byte-for-byte unchanged.  This makes trial
+isolation a property of the data structure rather than a convention that each
+caller must remember.
+
+The state has a strict JSON-compatible checkpoint payload.  Round-trip tests
+reproduce the next candidate history and the resulting causal self-force
+exactly.  ``select_intrinsic_spin_reduction_route_native`` reports one of
+three explicit paths: analytical smooth segment, causal accepted-history
+boundary fallback, or unavailable because fewer than six accepted samples
+exist.  The causal path evaluates at the newest accepted proper time, so it
+does not add a one-step indexing delay.  Its scaled Vandermonde condition
+number remains part of the result for variable-step conditioning checks.
+
+This object is not yet owned by the live adaptive integrator or written into
+its checkpoint manifest.  That production wiring must append only after a
+joint rider/driver slab is accepted and must restore the state alongside the
+existing Medina history.  Until that integration test exists, the selector is
+a diagnostic and neither route is applied as a force.
+
 For the intrinsic relation :math:`M=gqS/(2mc)`, the mechanical linear-spin
 bracket can be written schematically as
 
@@ -387,13 +413,13 @@ Villarroel [Villarroel1975]_ shows explicitly that the radiated momentum and
 the local force differ by a total derivative and an additional radiative-field
 term, so far flux alone is not the instantaneous local force.
 
-The next milestone is the causal boundary and state-lifecycle bridge.  At an
-unavailable segment boundary, hand off to the causal accepted-history result
-and record that choice explicitly.  Prove that only accepted non-self states
-enter that history, that rejected adaptive/nonlinear trials leave it
-unchanged, and that checkpoint/restart reproduces the same six-sample result.
-Production injection remains blocked until those lifecycle tests pass and the
-existing Medina charge term is shown to enter exactly once.
+The next milestone is live adaptive ownership of the causal history.  Append
+only after joint rider/driver slab acceptance, persist the six samples in the
+adaptive checkpoint, and prove interrupted/resumed and uninterrupted
+diagnostic routes are identical.  Then run phase-delay and unequal-step
+comparisons while the self-reaction remains diagnostic.  Production injection
+stays blocked until those integration tests pass and the existing Medina
+charge term is shown to enter exactly once.
 
 References
 ----------

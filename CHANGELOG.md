@@ -1,5 +1,12 @@
 # Changelog
 
+- Added an immutable six-sample accepted-history state for the causal
+  intrinsic-spin reduction fallback.  Tentative appends return a new object,
+  so discarded adaptive/nonlinear trials cannot mutate accepted diagnostic
+  history; strict checkpoint payloads reproduce the next candidate and causal
+  force exactly.  A pure selector records analytical smooth-segment, causal
+  boundary-fallback, or insufficient-history routes.  This is lifecycle
+  validation only and still applies no self-reaction force.
 - Added a diagnostic smooth-segment retarded-potential derivative bridge for
   linear-spin reduction of order.  One safeguarded charge or dipole root now
   supplies the potential Hessian and only the three higher directional
