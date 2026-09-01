@@ -31,6 +31,7 @@ if TYPE_CHECKING:
 _CHECKPOINT_SCHEMA_VERSION = 2
 _MINIMUM_CAUSAL_SAMPLES = 6
 _MAXIMUM_DIAGNOSTIC_RECORDS = 4096
+_MAXIMUM_CAUSAL_CONDITION_NUMBER = 1.0e5
 
 
 def _readonly_matrix(
@@ -278,6 +279,7 @@ class IntrinsicSpinReductionDiagnosticRecord:
             "analytical_smooth_segment",
             "causal_accepted_history_boundary_fallback",
             "unavailable_insufficient_accepted_history",
+            "unavailable_ill_conditioned_causal_fit",
             "unavailable_outside_intrinsic_qmu_model",
         }
         if route not in valid_routes:
@@ -711,7 +713,7 @@ def _diagnostic_record(
             proper_time_ns=proper_time_ns,
             route=selected.route,
             analytical_unavailable_reason=selected.unavailable_reason,
-            causal_condition_number=None,
+            causal_condition_number=selected.causal_condition_number,
             linear_spin_four_force_native=None,
             charge_ald_four_force_native=None,
             total_four_force_native=None,
@@ -898,6 +900,7 @@ class IntrinsicSpinReductionRouteResult:
     route: str
     analytical_reduction: PotentialDirectionalIntrinsicSpinReductionResult | None
     causal_reduction: SampledIntrinsicSpinReductionResult | None
+    causal_condition_number: float | None
     unavailable_reason: str | None
 
 
@@ -909,8 +912,20 @@ def select_intrinsic_spin_reduction_route_native(
     charge_native: float,
     mass_amu: float,
     g_factor: float,
+    maximum_causal_condition_number: float = _MAXIMUM_CAUSAL_CONDITION_NUMBER,
 ) -> IntrinsicSpinReductionRouteResult:
-    """Select one diagnostic route without applying either result as a force."""
+    """Select one diagnostic route without applying either result as a force.
+
+    A causal derivative fit above ``maximum_causal_condition_number`` is
+    reported as unavailable.  The condition number measures how strongly
+    sample noise and roundoff can be amplified by the unequal-step derivative
+    solve; returning no force is safer than passing an unstable estimate to a
+    future applied mode.
+    """
+
+    condition_limit = float(maximum_causal_condition_number)
+    if not np.isfinite(condition_limit) or condition_limit <= 0.0:
+        raise ValueError("maximum_causal_condition_number must be finite and positive")
 
     if analytical_reduction is not None:
         if analytical_unavailable_reason is not None:
@@ -921,6 +936,7 @@ def select_intrinsic_spin_reduction_route_native(
             route="analytical_smooth_segment",
             analytical_reduction=analytical_reduction,
             causal_reduction=None,
+            causal_condition_number=None,
             unavailable_reason=None,
         )
     if analytical_unavailable_reason is None:
@@ -932,6 +948,7 @@ def select_intrinsic_spin_reduction_route_native(
             route="unavailable_insufficient_accepted_history",
             analytical_reduction=None,
             causal_reduction=None,
+            causal_condition_number=None,
             unavailable_reason=analytical_unavailable_reason,
         )
     causal = accepted_history.evaluate_causal(
@@ -939,10 +956,20 @@ def select_intrinsic_spin_reduction_route_native(
         mass_amu=mass_amu,
         g_factor=g_factor,
     )
+    condition = float(causal.scaled_vandermonde_condition_number)
+    if condition > condition_limit:
+        return IntrinsicSpinReductionRouteResult(
+            route="unavailable_ill_conditioned_causal_fit",
+            analytical_reduction=None,
+            causal_reduction=None,
+            causal_condition_number=condition,
+            unavailable_reason=analytical_unavailable_reason,
+        )
     return IntrinsicSpinReductionRouteResult(
         route="causal_accepted_history_boundary_fallback",
         analytical_reduction=None,
         causal_reduction=causal,
+        causal_condition_number=condition,
         unavailable_reason=analytical_unavailable_reason,
     )
 

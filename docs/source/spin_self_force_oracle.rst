@@ -367,11 +367,16 @@ caller must remember.
 The state has a strict JSON-compatible checkpoint payload.  Round-trip tests
 reproduce the next candidate history and the resulting causal self-force
 exactly.  ``select_intrinsic_spin_reduction_route_native`` reports one of
-three explicit paths: analytical smooth segment, causal accepted-history
-boundary fallback, or unavailable because fewer than six accepted samples
-exist.  The causal path evaluates at the newest accepted proper time, so it
-does not add a one-step indexing delay.  Its scaled Vandermonde condition
-number remains part of the result for variable-step conditioning checks.
+four explicit paths: analytical smooth segment, causal accepted-history
+boundary fallback, unavailable because fewer than six accepted samples exist,
+or unavailable because the causal derivative fit is ill-conditioned.  The
+causal path evaluates at the newest accepted proper time, so it does not add a
+one-step indexing delay.  A scaled Vandermonde condition number above
+:math:`10^5` now fails closed: the condition remains recorded, but no force is
+returned.  This threshold is deliberately above the
+:math:`4.9\times10^3`--:math:`5.9\times10^3` range measured in the accepted
+uniform and smooth unequal-step validation and must be rechecked for moving
+sources and close passages before an applied mode exists.
 
 ``AcceptedPairIntrinsicSpinReductionHistory`` now gives the live shared-time
 adaptive controller transactional ownership of one rider and one driver

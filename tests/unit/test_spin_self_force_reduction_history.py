@@ -174,6 +174,9 @@ def test_boundary_route_uses_newest_accepted_sample_without_phase_delay() -> Non
     )
     assert selected.causal_reduction.uses_future_samples is False
     assert np.isfinite(selected.causal_reduction.scaled_vandermonde_condition_number)
+    assert selected.causal_condition_number == pytest.approx(
+        selected.causal_reduction.scaled_vandermonde_condition_number
+    )
     assert selected.unavailable_reason == "retarded root is on a C1 spin knot"
 
 
@@ -190,7 +193,66 @@ def test_boundary_route_fails_closed_before_six_accepted_samples() -> None:
     assert selected.route == "unavailable_insufficient_accepted_history"
     assert selected.analytical_reduction is None
     assert selected.causal_reduction is None
+    assert selected.causal_condition_number is None
     assert selected.unavailable_reason == "segment boundary"
+
+
+def test_boundary_route_rejects_an_ill_conditioned_causal_fit() -> None:
+    accepted = _accepted_history()
+    candidate = accepted.evaluate_causal(
+        charge_native=1.2,
+        mass_amu=2.0,
+        g_factor=2.1,
+    )
+    condition = candidate.scaled_vandermonde_condition_number
+    selected = select_intrinsic_spin_reduction_route_native(
+        analytical_reduction=None,
+        analytical_unavailable_reason="segment boundary",
+        accepted_history=accepted,
+        charge_native=1.2,
+        mass_amu=2.0,
+        g_factor=2.1,
+        maximum_causal_condition_number=0.5 * condition,
+    )
+
+    assert selected.route == "unavailable_ill_conditioned_causal_fit"
+    assert selected.analytical_reduction is None
+    assert selected.causal_reduction is None
+    assert selected.causal_condition_number == pytest.approx(condition)
+    assert selected.unavailable_reason == "segment boundary"
+
+
+def test_route_rejects_an_invalid_causal_condition_limit() -> None:
+    with pytest.raises(ValueError, match="maximum_causal_condition_number"):
+        select_intrinsic_spin_reduction_route_native(
+            analytical_reduction=_zero_analytical_reduction(),
+            analytical_unavailable_reason=None,
+            accepted_history=AcceptedIntrinsicSpinReductionHistory.empty(),
+            charge_native=1.0,
+            mass_amu=1.0,
+            g_factor=2.0,
+            maximum_causal_condition_number=np.inf,
+        )
+
+
+def test_ill_conditioned_record_retains_condition_without_force() -> None:
+    record = IntrinsicSpinReductionDiagnosticRecord(
+        proper_time_ns=0.5,
+        route="unavailable_ill_conditioned_causal_fit",
+        analytical_unavailable_reason="segment boundary",
+        causal_condition_number=1.25e5,
+        linear_spin_four_force_native=None,
+        charge_ald_four_force_native=None,
+        total_four_force_native=None,
+        balance_residual_norm_native=None,
+    )
+
+    restored = IntrinsicSpinReductionDiagnosticRecord.from_checkpoint_payload(
+        json.loads(json.dumps(record.to_checkpoint_payload()))
+    )
+
+    assert restored == record
+    assert restored.causal_condition_number == pytest.approx(1.25e5)
 
 
 def test_checkpoint_payload_rejects_unknown_schema_or_keys() -> None:

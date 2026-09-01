@@ -19,7 +19,10 @@
   midpoint, switches to the six-sample causal estimate at guarded segment
   boundaries, and checkpoints a bounded recent trace plus lifetime route
   counts.  It records the linear-spin force separately from the charge-ALD
-  comparison term and still applies no magnetic self-reaction force.
+  comparison term and still applies no magnetic self-reaction force.  A causal
+  unequal-step derivative fit whose scaled condition number exceeds ``1e5``
+  now fails closed: its condition is retained in the trace, but no force
+  estimate is returned.
 - Added a diagnostic smooth-segment retarded-potential derivative bridge for
   linear-spin reduction of order.  One safeguarded charge or dipole root now
   supplies the potential Hessian and only the three higher directional
