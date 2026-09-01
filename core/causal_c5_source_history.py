@@ -544,6 +544,62 @@ class CausalC5SourceHistory:
             stereographic_frame=np.asarray(stereographic_frame, dtype=np.float64),
         )
 
+    @classmethod
+    def from_accepted_samples(
+        cls,
+        *,
+        time_ns: Sequence[float] | np.ndarray,
+        position_mm: Sequence[Sequence[float]] | np.ndarray,
+        beta: Sequence[Sequence[float]] | np.ndarray,
+        beta_prime_per_mm: Sequence[Sequence[float]] | np.ndarray,
+        rest_spin: Sequence[Sequence[float]] | np.ndarray,
+        stereographic_frame: Sequence[Sequence[float]] | np.ndarray = np.eye(3),
+        frozen_segments: Sequence[FrozenC5SourceSegment] | None = None,
+    ) -> "CausalC5SourceHistory":
+        """Build one accepted prefix without repeated immutable appends.
+
+        ``frozen_segments=None`` reconstructs every segment whose complete
+        derivative windows are already accepted.  A supplied sequence is used
+        verbatim after the normal consistency checks; checkpoint restoration
+        uses that path so it never refits an already published coefficient.
+        """
+
+        history = cls(
+            time_ns=np.asarray(time_ns, dtype=np.float64),
+            position_mm=np.asarray(position_mm, dtype=np.float64),
+            beta=np.asarray(beta, dtype=np.float64),
+            beta_prime_per_mm=np.asarray(beta_prime_per_mm, dtype=np.float64),
+            rest_spin=np.asarray(rest_spin, dtype=np.float64),
+            stereographic_frame=np.asarray(stereographic_frame, dtype=np.float64),
+            frozen_segments=(),
+        )
+        if frozen_segments is not None:
+            return cls(
+                time_ns=history.time_ns,
+                position_mm=history.position_mm,
+                beta=history.beta,
+                beta_prime_per_mm=history.beta_prime_per_mm,
+                rest_spin=history.rest_spin,
+                stereographic_frame=history.stereographic_frame,
+                frozen_segments=tuple(frozen_segments),
+            )
+        maximum_left = history.sample_count - _SPIN_HALF_WINDOW - 2
+        if maximum_left < _SPIN_HALF_WINDOW:
+            return history
+        segments = tuple(
+            history._build_segment(left)
+            for left in range(_SPIN_HALF_WINDOW, maximum_left + 1)
+        )
+        return cls(
+            time_ns=history.time_ns,
+            position_mm=history.position_mm,
+            beta=history.beta,
+            beta_prime_per_mm=history.beta_prime_per_mm,
+            rest_spin=history.rest_spin,
+            stereographic_frame=history.stereographic_frame,
+            frozen_segments=segments,
+        )
+
     @property
     def sample_count(self) -> int:
         return int(self.time_ns.size)

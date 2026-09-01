@@ -7,6 +7,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from core.causal_c5_dipole_provider import AcceptedPairCausalC5SourceHistory
 from core.integration_checkpoint import (
     AcceptedPairCheckpointStore,
     CheckpointCompatibilityError,
@@ -140,6 +141,127 @@ def test_variable_length_pair_checkpoint_round_trip(tmp_path: Path) -> None:
     assert reopened.intrinsic_spin_reduction_state != reduction_state
     _assert_same(restored_rider.build_current(), rider.build_current())
     _assert_same(restored_driver.build_current(), driver.build_current())
+
+
+def test_pair_checkpoint_appends_and_restores_frozen_c5_coefficients(
+    tmp_path: Path,
+) -> None:
+    rider = _history(10.0, 18)
+    driver = _history(-10.0, 18)
+    accepted_c5 = AcceptedPairCausalC5SourceHistory.from_trajectory_arrays(
+        rider.build_current(),
+        driver.build_current(),
+    )
+    directory = tmp_path / "pair-c5.checkpoint"
+    store = AcceptedPairCheckpointStore(
+        directory,
+        compatibility_payload={"physics": "causal-c5-pair"},
+        interval_knots=1,
+        interval_seconds=0.0,
+        resume=False,
+    )
+    store.write(
+        rider=rider.build_current(),
+        driver=driver.build_current(),
+        controller_state={},
+        public_output_state={},
+        causal_c5_source_history=accepted_c5,
+    )
+    for step in range(18, 24):
+        rider_state = _state(step, offset=10.0)
+        driver_state = _state(step, offset=-10.0)
+        rider.append_step(rider_state)
+        driver.append_step(driver_state)
+        accepted_c5 = AcceptedPairCausalC5SourceHistory(
+            rider=accepted_c5.rider.append_accepted_state(rider_state),
+            driver=accepted_c5.driver.append_accepted_state(driver_state),
+        )
+    store.write(
+        rider=rider.build_current(),
+        driver=driver.build_current(),
+        controller_state={},
+        public_output_state={},
+        causal_c5_source_history=accepted_c5,
+        complete=True,
+    )
+
+    reopened = AcceptedPairCheckpointStore(
+        directory,
+        compatibility_payload={"physics": "causal-c5-pair"},
+        interval_knots=1,
+        interval_seconds=0.0,
+        resume=True,
+    )
+    restored_rider = GrowableTrajectoryBuilder(8, 1, magnetic_dipole=True)
+    restored_driver = GrowableTrajectoryBuilder(8, 1, magnetic_dipole=True)
+    reopened.restore_pair(restored_rider, restored_driver)
+    restored_c5 = reopened.restore_causal_c5_source_history(
+        restored_rider.build_current(),
+        restored_driver.build_current(),
+    )
+
+    assert restored_c5 is not None
+    assert reopened.causal_c5_source_history_metadata is not None
+    for restored_collection, expected_collection in (
+        (restored_c5.rider, accepted_c5.rider),
+        (restored_c5.driver, accepted_c5.driver),
+    ):
+        assert restored_collection.source_identities == expected_collection.source_identities
+        for restored_source, expected_source in zip(
+            restored_collection.sources,
+            expected_collection.sources,
+        ):
+            assert len(restored_source.history.frozen_segments) == len(
+                expected_source.history.frozen_segments
+            )
+            for restored_segment, expected_segment in zip(
+                restored_source.history.frozen_segments,
+                expected_source.history.frozen_segments,
+            ):
+                np.testing.assert_array_equal(
+                    restored_segment.position_coefficients_mm,
+                    expected_segment.position_coefficients_mm,
+                )
+                np.testing.assert_array_equal(
+                    restored_segment.rest_spin_stereographic_coefficients,
+                    expected_segment.rest_spin_stereographic_coefficients,
+                )
+
+
+def test_pair_checkpoint_cannot_drop_active_c5_history(tmp_path: Path) -> None:
+    rider = _history(1.0, 18)
+    driver = _history(-1.0, 18)
+    c5_state = AcceptedPairCausalC5SourceHistory.from_trajectory_arrays(
+        rider.build_current(),
+        driver.build_current(),
+    )
+    store = AcceptedPairCheckpointStore(
+        tmp_path / "pair-c5.checkpoint",
+        compatibility_payload={"physics": "causal-c5-pair"},
+        interval_knots=1,
+        interval_seconds=0.0,
+        resume=False,
+    )
+    store.write(
+        rider=rider.build_current(),
+        driver=driver.build_current(),
+        controller_state={},
+        public_output_state={},
+        causal_c5_source_history=c5_state,
+    )
+    rider.append_step(_state(18, offset=1.0))
+    driver.append_step(_state(18, offset=-1.0))
+    manifest_before = json.loads(store.manifest_path.read_text(encoding="utf-8"))
+
+    with pytest.raises(CheckpointError, match="cannot omit an active causal C5"):
+        store.write(
+            rider=rider.build_current(),
+            driver=driver.build_current(),
+            controller_state={},
+            public_output_state={},
+        )
+
+    assert json.loads(store.manifest_path.read_text(encoding="utf-8")) == manifest_before
 
 
 def test_pair_checkpoint_rejects_mismatched_history_lengths(tmp_path: Path) -> None:

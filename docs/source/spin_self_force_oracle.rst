@@ -515,6 +515,37 @@ Villarroel [Villarroel1975]_ shows explicitly that the radiated momentum and
 the local force differ by a total derivative and an additional radiative-field
 term, so far flux alone is not the instantaneous local force.
 
+Causal multi-source history boundary
+------------------------------------
+
+The first internal production-history boundary now retains a fixed ordered
+set of source identities. Each source owns accepted position, velocity,
+acceleration, and unit-rest-spin samples plus only those degree-eleven
+worldline and stereographic-spin segments whose full derivative windows are
+already accepted. An observer query solves its relativistic light cone inside
+that ready interval and sums source responses in the declared identity order.
+It does not assume slow motion.
+
+Adaptive step doubling treats the source state as part of the same transaction
+as the rider and driver rows. A rejected full/two-half comparison discards its
+candidate. A healthy comparison first builds both midpoint and endpoint source
+segments, then publishes both particle histories. If segment construction is
+ill-conditioned, the attempt fails before either history changes.
+
+Checkpoint chunks already contain the accepted trajectory samples. They now
+also contain only the newly frozen coefficient arrays and their fit-window
+indices. The small manifest records source identity, particle index, signed
+moment, fixed stereographic frame, and committed segment count. Restoration
+loads those coefficients rather than refitting the past; the same observer
+event consequently reproduces :math:`A`, :math:`F`, and
+:math:`\partial F` bit-for-bit in the focused restart test.
+
+This boundary is still opt-in internal state. The live charge/dipole provider
+and the equations of motion do not select it yet, and it applies neither the
+linear :math:`q\mu` self-force nor the pure :math:`\mu^2` reaction. Before
+promotion, unequal adaptive step sequences must be shown to remain below the
+declared conditioning limit without weakening that guard.
+
 The next milestone is numerical validation of this live route trace.  Compare
 the analytical, causal, and centered-reference values on weak smooth motion;
 measure phase error at route transitions and conditioning under unequal

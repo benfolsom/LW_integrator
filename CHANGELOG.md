@@ -1,5 +1,18 @@
 # Changelog
 
+- Added the internal ordered multi-source layer for causally frozen ``C5``
+  dipole histories. Stable string identities now define both exclusion and
+  floating-point summation order; each source solves the full relativistic
+  light cone on its frozen segment and exposes auditable individual plus summed
+  ``A``, ``F``, and ``partial F`` responses. The shared-time adaptive path can
+  carry this state transactionally: rejected trials leave it untouched, while
+  a healthy refined midpoint and endpoint are appended before the pair rows are
+  jointly published. Newly frozen polynomial coefficients are appended to the
+  same immutable NPZ checkpoint chunks as accepted trajectory rows; the
+  manifest stores only source topology, frames, moments, and counts. Restart
+  reuses those exact coefficients and reproduces the provider response
+  bit-for-bit. This remains an explicit internal validation surface, is not
+  selected by the equations of motion, and applies no self-reaction force.
 - Added the first isolated production-state layer for a causal ``C5`` source
   history.  Accepted position, velocity, acceleration, and unit-spin samples
   now produce immutable degree-eleven worldline and stereographic-spin

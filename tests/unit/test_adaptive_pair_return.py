@@ -12,9 +12,15 @@ from core.adaptive_pair_return import (
     attempt_exact_pair_adaptive_step,
     run_exact_pair_adaptive_window,
 )
+from core.causal_c5_dipole_provider import (
+    AcceptedPairCausalC5SourceHistory,
+    evaluate_causal_c5_dipole_source_collection_native,
+)
+from core.causal_c5_source_history import CausalC5HistoryUnavailableError
 from core.constants import C_MMNS
 from core.integration_checkpoint import AcceptedPairCheckpointStore
 from core.integration_runner import IntegrationCancelled
+from core.retarded_fields import ObserverEvent
 from core.shared_lab_time import SharedLabTimeError
 from core.spin_self_force_reduction_history import (
     AcceptedPairIntrinsicSpinReductionHistory,
@@ -57,6 +63,53 @@ def _pair() -> tuple[GrowableTrajectoryBuilder, GrowableTrajectoryBuilder]:
     driver = GrowableTrajectoryBuilder(1, 1)
     rider.append_step(_state(0.0, -1.0))
     driver.append_step(_state(0.0, 1.0))
+    return rider, driver
+
+
+def _magnetic_pair() -> tuple[GrowableTrajectoryBuilder, GrowableTrajectoryBuilder]:
+    rider = GrowableTrajectoryBuilder(8, 1, magnetic_dipole=True)
+    driver = GrowableTrajectoryBuilder(8, 1, magnetic_dipole=True)
+    for builder, position, moment in (
+        (rider, -1.0, 2.0e-6),
+        (driver, 1.0, -3.0e-6),
+    ):
+        state = _state(0.0, position)
+        state.update(
+            {
+                "spin_x": np.array([0.0]),
+                "spin_y": np.array([0.0]),
+                "spin_z": np.array([1.0]),
+                "magnetic_moment_native": np.array([moment]),
+                "magnetic_dipole_active": np.array([1.0]),
+            }
+        )
+        builder.append_step(state)
+    return rider, driver
+
+
+def _magnetic_history_pair(
+    count: int,
+) -> tuple[GrowableTrajectoryBuilder, GrowableTrajectoryBuilder]:
+    rider = GrowableTrajectoryBuilder(8, 1, magnetic_dipole=True)
+    driver = GrowableTrajectoryBuilder(8, 1, magnetic_dipole=True)
+    for step in range(count):
+        time = 0.01 * step
+        angle = 0.02 * time
+        for builder, position, moment in (
+            (rider, -1.0, 2.0e-6),
+            (driver, 1.0, -3.0e-6),
+        ):
+            state = _state(time, position)
+            state.update(
+                {
+                    "spin_x": np.array([np.sin(angle)]),
+                    "spin_y": np.array([0.0]),
+                    "spin_z": np.array([np.cos(angle)]),
+                    "magnetic_moment_native": np.array([moment]),
+                    "magnetic_dipole_active": np.array([1.0]),
+                }
+            )
+            builder.append_step(state)
     return rider, driver
 
 
@@ -152,6 +205,7 @@ def _attempt(
     controller_state: AdaptivePairControllerState | None = None,
     intrinsic_spin_reduction_history=None,
     build_intrinsic_spin_reduction_candidate=None,
+    causal_c5_source_history=None,
 ):
     return attempt_exact_pair_adaptive_step(
         rider_builder=rider,
@@ -169,6 +223,7 @@ def _attempt(
         build_intrinsic_spin_reduction_candidate=(
             build_intrinsic_spin_reduction_candidate
         ),
+        causal_c5_source_history=causal_c5_source_history,
     )
 
 
@@ -234,6 +289,71 @@ def test_rejected_attempt_never_builds_or_adopts_spin_history() -> None:
     assert calls == []
     assert attempt.intrinsic_spin_reduction_history is accepted
     assert rider.accepted_steps == driver.accepted_steps == 1
+
+
+def test_causal_c5_history_advances_only_after_joint_acceptance() -> None:
+    rider, driver = _magnetic_pair()
+    accepted = AcceptedPairCausalC5SourceHistory.from_trajectory_arrays(
+        rider.build_current(),
+        driver.build_current(),
+    )
+
+    accepted_attempt = _attempt(
+        rider,
+        driver,
+        rider_advance=_advance(2.0),
+        tolerances=_tolerances(1.0),
+        causal_c5_source_history=accepted,
+    )
+
+    assert accepted_attempt.accepted
+    assert accepted.rider.sources[0].history.sample_count == 1
+    assert accepted_attempt.causal_c5_source_history is not None
+    assert accepted_attempt.causal_c5_source_history.rider.sources[0].history.sample_count == 3
+    assert accepted_attempt.causal_c5_source_history.driver.sources[0].history.sample_count == 3
+
+
+def test_rejected_attempt_does_not_touch_causal_c5_history() -> None:
+    rider, driver = _magnetic_pair()
+    accepted = AcceptedPairCausalC5SourceHistory.from_trajectory_arrays(
+        rider.build_current(),
+        driver.build_current(),
+    )
+
+    attempt = _attempt(
+        rider,
+        driver,
+        rider_advance=_advance(2.0),
+        tolerances=_tolerances(1.0e-4),
+        causal_c5_source_history=accepted,
+    )
+
+    assert not attempt.accepted
+    assert attempt.causal_c5_source_history is accepted
+    assert rider.accepted_steps == driver.accepted_steps == 1
+
+
+def test_causal_c5_candidate_failure_precedes_pair_publication() -> None:
+    rider, driver = _magnetic_history_pair(18)
+    accepted = AcceptedPairCausalC5SourceHistory.from_trajectory_arrays(
+        rider.build_current(),
+        driver.build_current(),
+    )
+
+    with pytest.raises(
+        CausalC5HistoryUnavailableError,
+        match="condition-number limit",
+    ):
+        _attempt(
+            rider,
+            driver,
+            rider_advance=_advance(2.0),
+            tolerances=_tolerances(1.0),
+            causal_c5_source_history=accepted,
+        )
+
+    assert rider.accepted_steps == driver.accepted_steps == 18
+    assert accepted.rider.sources[0].history.sample_count == 18
 
 
 def test_spin_history_preflight_failure_leaves_pair_unpublished() -> None:
@@ -784,6 +904,183 @@ def test_window_resume_reproduces_history_and_output_selection_bitwise(
             np.testing.assert_array_equal(
                 np.asarray(getattr(restored, name)),
                 np.asarray(getattr(expected, name)),
+            )
+
+
+def test_window_resume_reproduces_causal_c5_coefficients_bitwise(
+    tmp_path: Path,
+) -> None:
+    controller = AdaptivePairControllerState(
+        current_step_ns=0.02,
+        rider_proper_step_guess_ns=0.01,
+        driver_proper_step_guess_ns=0.005,
+    )
+    controller_config = StepControllerConfig(
+        method_order=1,
+        maximum_growth_factor=1.0,
+    )
+    continuous_rider, continuous_driver = _magnetic_history_pair(18)
+    continuous_c5 = AcceptedPairCausalC5SourceHistory.from_trajectory_arrays(
+        continuous_rider.build_current(),
+        continuous_driver.build_current(),
+    )
+    continuous = run_exact_pair_adaptive_window(
+        rider_builder=continuous_rider,
+        driver_builder=continuous_driver,
+        advance_rider=_advance(2.0),
+        advance_driver=_advance(4.0),
+        controller_state=controller,
+        controller_config=controller_config,
+        tolerances=_tolerances(1.0),
+        target_time_ns=0.21,
+        minimum_step_ns=0.001,
+        maximum_step_ns=1.0,
+        maximum_attempts=20,
+        maximum_accepted_slabs=20,
+        public_sample_interval_ns=0.15,
+        magnetic_dipole=MagneticDipoleConfig(),
+        include_dipole_source=False,
+        causal_c5_source_history=continuous_c5,
+    )
+
+    interrupted_rider, interrupted_driver = _magnetic_history_pair(18)
+    interrupted_c5 = AcceptedPairCausalC5SourceHistory.from_trajectory_arrays(
+        interrupted_rider.build_current(),
+        interrupted_driver.build_current(),
+    )
+    directory = tmp_path / "c5-resume.checkpoint"
+    store = AcceptedPairCheckpointStore(
+        directory,
+        compatibility_payload={"physics": "c5-resume"},
+        interval_knots=1,
+        interval_seconds=0.0,
+        resume=False,
+    )
+    with pytest.raises(SharedLabTimeError, match="maximum accepted slabs"):
+        run_exact_pair_adaptive_window(
+            rider_builder=interrupted_rider,
+            driver_builder=interrupted_driver,
+            advance_rider=_advance(2.0),
+            advance_driver=_advance(4.0),
+            controller_state=controller,
+            controller_config=controller_config,
+            tolerances=_tolerances(1.0),
+            target_time_ns=0.21,
+            minimum_step_ns=0.001,
+            maximum_step_ns=1.0,
+            maximum_attempts=20,
+            maximum_accepted_slabs=1,
+            public_sample_interval_ns=0.15,
+            magnetic_dipole=MagneticDipoleConfig(),
+            include_dipole_source=False,
+            checkpoint_store=store,
+            causal_c5_source_history=interrupted_c5,
+        )
+
+    reopened = AcceptedPairCheckpointStore(
+        directory,
+        compatibility_payload={"physics": "c5-resume"},
+        interval_knots=1,
+        interval_seconds=0.0,
+        resume=True,
+    )
+    resumed_rider = GrowableTrajectoryBuilder(8, 1, magnetic_dipole=True)
+    resumed_driver = GrowableTrajectoryBuilder(8, 1, magnetic_dipole=True)
+    reopened.restore_pair(resumed_rider, resumed_driver)
+    restored_c5 = reopened.restore_causal_c5_source_history(
+        resumed_rider.build_current(),
+        resumed_driver.build_current(),
+    )
+    assert restored_c5 is not None
+    resumed = run_exact_pair_adaptive_window(
+        rider_builder=resumed_rider,
+        driver_builder=resumed_driver,
+        advance_rider=_advance(2.0),
+        advance_driver=_advance(4.0),
+        controller_state=AdaptivePairControllerState.from_checkpoint_state(
+            reopened.controller_state
+        ),
+        controller_config=controller_config,
+        tolerances=_tolerances(1.0),
+        target_time_ns=0.21,
+        minimum_step_ns=0.001,
+        maximum_step_ns=1.0,
+        maximum_attempts=20,
+        maximum_accepted_slabs=20,
+        public_sample_interval_ns=0.15,
+        magnetic_dipole=MagneticDipoleConfig(),
+        include_dipole_source=False,
+        public_output_state=AdaptivePairPublicOutputState.from_checkpoint_state(
+            reopened.public_output_state
+        ),
+        checkpoint_store=reopened,
+        causal_c5_source_history=restored_c5,
+    )
+
+    assert continuous.causal_c5_source_history is not None
+    assert resumed.causal_c5_source_history is not None
+    assert resumed.controller_state == continuous.controller_state
+    rebuilt = AcceptedPairCausalC5SourceHistory.from_trajectory_arrays(
+        continuous_rider.build_current(),
+        continuous_driver.build_current(),
+    )
+    for resumed_collection, continuous_collection, rebuilt_collection in (
+        (
+            resumed.causal_c5_source_history.rider,
+            continuous.causal_c5_source_history.rider,
+            rebuilt.rider,
+        ),
+        (
+            resumed.causal_c5_source_history.driver,
+            continuous.causal_c5_source_history.driver,
+            rebuilt.driver,
+        ),
+    ):
+        for resumed_source, continuous_source, rebuilt_source in zip(
+            resumed_collection.sources,
+            continuous_collection.sources,
+            rebuilt_collection.sources,
+        ):
+            for resumed_segment, continuous_segment, rebuilt_segment in zip(
+                resumed_source.history.frozen_segments,
+                continuous_source.history.frozen_segments,
+                rebuilt_source.history.frozen_segments,
+            ):
+                np.testing.assert_array_equal(
+                    resumed_segment.position_coefficients_mm,
+                    continuous_segment.position_coefficients_mm,
+                )
+                np.testing.assert_array_equal(
+                    rebuilt_segment.position_coefficients_mm,
+                    continuous_segment.position_coefficients_mm,
+                )
+                np.testing.assert_array_equal(
+                    resumed_segment.rest_spin_stereographic_coefficients,
+                    continuous_segment.rest_spin_stereographic_coefficients,
+                )
+                np.testing.assert_array_equal(
+                    rebuilt_segment.rest_spin_stereographic_coefficients,
+                    continuous_segment.rest_spin_stereographic_coefficients,
+                )
+
+        event = ObserverEvent(
+            time_ns=0.175,
+            position_mm=np.asarray((15.0, 0.0, 0.0)),
+        )
+        resumed_response = evaluate_causal_c5_dipole_source_collection_native(
+            resumed_collection,
+            event,
+            root_tolerance_mm=1.0e-12,
+        )
+        continuous_response = evaluate_causal_c5_dipole_source_collection_native(
+            continuous_collection,
+            event,
+            root_tolerance_mm=1.0e-12,
+        )
+        for name in ("four_potential", "field_tensor", "partial_f"):
+            np.testing.assert_array_equal(
+                getattr(resumed_response, name),
+                getattr(continuous_response, name),
             )
 
 

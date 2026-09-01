@@ -14,6 +14,10 @@ from typing import Any, Callable, Protocol
 
 import numpy as np
 
+from .causal_c5_dipole_provider import (
+    AcceptedPairCausalC5SourceHistory,
+    build_accepted_pair_causal_c5_candidate,
+)
 from .exact_pair_trial import (
     AdvanceRoleTrial,
     ExactPairStepDoublingTrial,
@@ -43,6 +47,7 @@ class _AcceptedPairCheckpoint(Protocol):
         controller_state: dict[str, Any],
         public_output_state: dict[str, Any],
         intrinsic_spin_reduction_state: dict[str, object] | None = None,
+        causal_c5_source_history: AcceptedPairCausalC5SourceHistory | None = None,
         complete: bool = False,
     ) -> None: ...
 
@@ -123,6 +128,7 @@ class AdaptivePairAttempt:
     intrinsic_spin_reduction_history: (
         AcceptedPairIntrinsicSpinReductionHistory | None
     ) = None
+    causal_c5_source_history: AcceptedPairCausalC5SourceHistory | None = None
 
     @property
     def accepted(self) -> bool:
@@ -213,6 +219,7 @@ class AdaptivePairRunResult:
     intrinsic_spin_reduction_history: (
         AcceptedPairIntrinsicSpinReductionHistory | None
     ) = None
+    causal_c5_source_history: AcceptedPairCausalC5SourceHistory | None = None
 
 
 @dataclass(frozen=True)
@@ -345,6 +352,7 @@ def attempt_exact_pair_adaptive_step(
     build_intrinsic_spin_reduction_candidate: (
         IntrinsicSpinReductionCandidate | None
     ) = None,
+    causal_c5_source_history: AcceptedPairCausalC5SourceHistory | None = None,
 ) -> AdaptivePairAttempt:
     """Try one slab, committing only a healthy accepted two-half path.
 
@@ -407,6 +415,7 @@ def attempt_exact_pair_adaptive_step(
 
     committed_rows = None
     next_intrinsic_spin_history = intrinsic_spin_reduction_history
+    next_causal_c5_history = causal_c5_source_history
     if accepted:
         if build_intrinsic_spin_reduction_candidate is not None:
             if intrinsic_spin_reduction_history is None:  # pragma: no cover
@@ -421,6 +430,11 @@ def attempt_exact_pair_adaptive_step(
                     "history"
                 )
             next_intrinsic_spin_history = candidate
+        if causal_c5_source_history is not None:
+            next_causal_c5_history = build_accepted_pair_causal_c5_candidate(
+                trial,
+                causal_c5_source_history,
+            )
         committed_rows = commit_accepted_exact_pair_step_doubling_trial(
             trial,
             rider_builder=rider_builder,
@@ -438,6 +452,7 @@ def attempt_exact_pair_adaptive_step(
         controller_state=next_state,
         committed_rows=committed_rows,
         intrinsic_spin_reduction_history=next_intrinsic_spin_history,
+        causal_c5_source_history=next_causal_c5_history,
     )
 
 
@@ -472,6 +487,7 @@ def run_exact_pair_adaptive_window(
     build_intrinsic_spin_reduction_candidate: (
         IntrinsicSpinReductionCandidate | None
     ) = None,
+    causal_c5_source_history: AcceptedPairCausalC5SourceHistory | None = None,
 ) -> AdaptivePairRunResult:
     """Advance accepted pair history to a bounded shared lab-time target.
 
@@ -565,6 +581,7 @@ def run_exact_pair_adaptive_window(
     attempt_diagnostics: list[AdaptivePairAttemptDiagnostics] = []
     state = controller_state
     reduction_history = intrinsic_spin_reduction_history
+    c5_history = causal_c5_source_history
     completed = target_time_ns - current_time <= completion_tolerance
 
     def flush_interrupted_checkpoint() -> None:
@@ -580,6 +597,7 @@ def run_exact_pair_adaptive_window(
                 if reduction_history is None
                 else reduction_history.to_checkpoint_payload()
             ),
+            causal_c5_source_history=c5_history,
             complete=False,
         )
 
@@ -631,6 +649,7 @@ def run_exact_pair_adaptive_window(
                 build_intrinsic_spin_reduction_candidate=(
                     build_intrinsic_spin_reduction_candidate
                 ),
+                causal_c5_source_history=c5_history,
             )
         except IntegrationCancelled:
             flush_interrupted_checkpoint()
@@ -638,6 +657,7 @@ def run_exact_pair_adaptive_window(
         attempts += 1
         state = result.controller_state
         reduction_history = result.intrinsic_spin_reduction_history
+        c5_history = result.causal_c5_source_history
         if record_attempt_diagnostics:
             assessment = result.trial.assessment
             attempt_diagnostics.append(
@@ -712,6 +732,7 @@ def run_exact_pair_adaptive_window(
                     if reduction_history is None
                     else reduction_history.to_checkpoint_payload()
                 ),
+                causal_c5_source_history=c5_history,
                 complete=completed,
             )
         if accepted_progress_callback is not None:
@@ -727,6 +748,7 @@ def run_exact_pair_adaptive_window(
         completed=completed,
         attempt_diagnostics=tuple(attempt_diagnostics),
         intrinsic_spin_reduction_history=reduction_history,
+        causal_c5_source_history=c5_history,
     )
 
 
