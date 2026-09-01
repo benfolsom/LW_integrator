@@ -185,7 +185,9 @@ class CausalC5DipoleSourceCollection:
             moments = np.asarray(trajectory.magnetic_moment_native, dtype=np.float64)
             indices = tuple(
                 int(index)
-                for index in np.flatnonzero(active & np.isfinite(moments) & (moments != 0))
+                for index in np.flatnonzero(
+                    active & np.isfinite(moments) & (moments != 0)
+                )
             )
         else:
             indices = tuple(int(index) for index in particle_indices)
@@ -198,7 +200,9 @@ class CausalC5DipoleSourceCollection:
         )
         if len(identities) != len(indices):
             raise ValueError("source identities must match selected particle indices")
-        if stereographic_frames is not None and len(stereographic_frames) != len(indices):
+        if stereographic_frames is not None and len(stereographic_frames) != len(
+            indices
+        ):
             raise ValueError("stereographic frames must match selected sources")
         if frozen_segments is not None and len(frozen_segments) != len(indices):
             raise ValueError("frozen segment sets must match selected sources")
@@ -342,16 +346,12 @@ def evaluate_causal_c5_dipole_source_collection_native(
                 f"source identity {source.identity!r}: {exc}"
             ) from exc
         except ValueError as exc:
-            raise ValueError(
-                f"source identity {source.identity!r}: {exc}"
-            ) from exc
+            raise ValueError(f"source identity {source.identity!r}: {exc}") from exc
         potential += response.four_potential
         partial_a += response.partial_a
         field += response.field_tensor
         partial_f += response.partial_f
-        source_results.append(
-            CausalC5DipoleSourceEvaluation(source.identity, response)
-        )
+        source_results.append(CausalC5DipoleSourceEvaluation(source.identity, response))
     electric, magnetic = fields_from_tensor_native(field)
     return CausalC5DipoleProviderResult(
         four_potential=potential,

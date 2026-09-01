@@ -839,10 +839,7 @@ class AcceptedPairCheckpointStore:
                 [segment.position_coefficients_mm for segment in segments]
             ),
             "rest_spin_stereographic_coefficients": np.stack(
-                [
-                    segment.rest_spin_stereographic_coefficients
-                    for segment in segments
-                ]
+                [segment.rest_spin_stereographic_coefficients for segment in segments]
             ),
             "position_condition_number": np.asarray(
                 [segment.position_condition_number for segment in segments],
@@ -922,9 +919,7 @@ class AcceptedPairCheckpointStore:
                     )
                 new_segments = source.history.frozen_segments[previous_count:]
                 for field_name, values in self._segment_arrays(new_segments).items():
-                    arrays[
-                        f"c5__{role}__{source_index}__{field_name}"
-                    ] = values
+                    arrays[f"c5__{role}__{source_index}__{field_name}"] = values
                 role_sources.append(topology)
             next_metadata[role] = {"sources": role_sources}
         return next_metadata
@@ -958,10 +953,7 @@ class AcceptedPairCheckpointStore:
                 raise CheckpointError(f"causal C5 {role} metadata is invalid")
             source_metadata = role_metadata["sources"]
             segment_fields: dict[int, dict[str, list[np.ndarray]]] = {
-                index: {
-                    name: []
-                    for name in self._segment_arrays(()).keys()
-                }
+                index: {name: [] for name in self._segment_arrays(()).keys()}
                 for index in range(len(source_metadata))
             }
             for chunk in self.manifest.get("chunks", []):
@@ -989,9 +981,7 @@ class AcceptedPairCheckpointStore:
                     if parts:
                         concatenated[field_name] = np.concatenate(parts, axis=0)
                     else:
-                        concatenated[field_name] = self._segment_arrays(())[
-                            field_name
-                        ]
+                        concatenated[field_name] = self._segment_arrays(())[field_name]
                 count = int(concatenated["left_knot_index"].size)
                 expected_count = int(source_meta["frozen_segment_count"])
                 if count != expected_count:
@@ -1019,12 +1009,10 @@ class AcceptedPairCheckpointStore:
                         spin_condition_number=float(
                             concatenated["spin_condition_number"][index]
                         ),
-                        position_window_indices=concatenated[
-                            "position_window_indices"
-                        ][index],
-                        spin_window_indices=concatenated["spin_window_indices"][
+                        position_window_indices=concatenated["position_window_indices"][
                             index
                         ],
+                        spin_window_indices=concatenated["spin_window_indices"][index],
                     )
                     for index in range(count)
                 )

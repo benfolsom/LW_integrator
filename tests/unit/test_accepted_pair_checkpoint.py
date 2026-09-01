@@ -206,7 +206,10 @@ def test_pair_checkpoint_appends_and_restores_frozen_c5_coefficients(
         (restored_c5.rider, accepted_c5.rider),
         (restored_c5.driver, accepted_c5.driver),
     ):
-        assert restored_collection.source_identities == expected_collection.source_identities
+        assert (
+            restored_collection.source_identities
+            == expected_collection.source_identities
+        )
         for restored_source, expected_source in zip(
             restored_collection.sources,
             expected_collection.sources,
@@ -261,7 +264,9 @@ def test_pair_checkpoint_cannot_drop_active_c5_history(tmp_path: Path) -> None:
             public_output_state={},
         )
 
-    assert json.loads(store.manifest_path.read_text(encoding="utf-8")) == manifest_before
+    assert (
+        json.loads(store.manifest_path.read_text(encoding="utf-8")) == manifest_before
+    )
 
 
 def test_pair_checkpoint_rejects_mismatched_history_lengths(tmp_path: Path) -> None:

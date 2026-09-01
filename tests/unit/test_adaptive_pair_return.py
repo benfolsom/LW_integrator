@@ -309,8 +309,14 @@ def test_causal_c5_history_advances_only_after_joint_acceptance() -> None:
     assert accepted_attempt.accepted
     assert accepted.rider.sources[0].history.sample_count == 1
     assert accepted_attempt.causal_c5_source_history is not None
-    assert accepted_attempt.causal_c5_source_history.rider.sources[0].history.sample_count == 3
-    assert accepted_attempt.causal_c5_source_history.driver.sources[0].history.sample_count == 3
+    assert (
+        accepted_attempt.causal_c5_source_history.rider.sources[0].history.sample_count
+        == 3
+    )
+    assert (
+        accepted_attempt.causal_c5_source_history.driver.sources[0].history.sample_count
+        == 3
+    )
 
 
 def test_rejected_attempt_does_not_touch_causal_c5_history() -> None:
