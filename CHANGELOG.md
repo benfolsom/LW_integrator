@@ -1,5 +1,11 @@
 # Changelog
 
+- Added a validation-only polynomial dipole-Hertz response jet.  Offline
+  studies can now differentiate smoother worldline and rest-spin polynomial
+  segments through the same covariant retarded-potential algebra used by the
+  production oracle.  The existing quintic-worldline/cubic-spin entry point,
+  Numba kernels, and production backend selection are unchanged; a bitwise
+  regression locks the legacy wrapper to the generic implementation.
 - Added an immutable six-sample accepted-history state for the causal
   intrinsic-spin reduction fallback.  Tentative appends return a new object,
   so discarded adaptive/nonlinear trials cannot mutate accepted diagnostic

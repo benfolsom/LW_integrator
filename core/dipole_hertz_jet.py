@@ -287,7 +287,7 @@ def _hodge_dual(jet_tensor: np.ndarray) -> np.ndarray:
     return result
 
 
-def quintic_dipole_hertz_response_jet_native(
+def polynomial_dipole_hertz_response_jet_native(
     *,
     observer_time_ns: float,
     observer_position_mm: Sequence[float],
@@ -295,15 +295,18 @@ def quintic_dipole_hertz_response_jet_native(
     segment_start_time_ns: float,
     segment_duration_ns: float,
     position_coefficients_mm: np.ndarray,
-    rest_spin_start: Sequence[float],
-    rest_spin_end: Sequence[float],
-    rest_spin_start_derivative_per_ns: Sequence[float],
-    rest_spin_end_derivative_per_ns: Sequence[float],
+    rest_spin_coefficients: np.ndarray,
     preserved_rest_spin_magnitude: float | None,
     retarded_time_ns: float,
     jet_newton_iterations: int = 4,
 ) -> DipoleHertzResponseJetResult:
-    """Differentiate one retarded point-dipole source inside one segment."""
+    """Differentiate one smooth polynomial worldline/spin source segment.
+
+    This pure-Python routine is a validation oracle.  It accepts arbitrary
+    polynomial degrees so studies can compare the production interpolation
+    against smoother causal-history candidates without changing production
+    dispatch.
+    """
 
     observer_time = float(observer_time_ns)
     observer_position = np.asarray(observer_position_mm, dtype=float)
@@ -311,13 +314,9 @@ def quintic_dipole_hertz_response_jet_native(
     start_time = float(segment_start_time_ns)
     duration = float(segment_duration_ns)
     position_coefficients = np.asarray(position_coefficients_mm, dtype=float)
-    spin_start = np.asarray(rest_spin_start, dtype=float)
-    spin_end = np.asarray(rest_spin_end, dtype=float)
-    spin_start_slope = np.asarray(rest_spin_start_derivative_per_ns, dtype=float)
-    spin_end_slope = np.asarray(rest_spin_end_derivative_per_ns, dtype=float)
+    spin_coefficients = np.asarray(rest_spin_coefficients, dtype=float)
     root_time = float(retarded_time_ns)
     iterations = int(jet_newton_iterations)
-    vectors = (spin_start, spin_end, spin_start_slope, spin_end_slope)
     if not np.isfinite(observer_time):
         raise ValueError("observer_time_ns must be finite")
     if observer_position.shape != (3,) or not np.all(np.isfinite(observer_position)):
@@ -326,16 +325,22 @@ def quintic_dipole_hertz_response_jet_native(
         raise ValueError("magnetic_moment_native must be finite")
     if not np.isfinite(start_time) or not np.isfinite(duration) or duration <= 0.0:
         raise ValueError("the segment start and positive duration must be finite")
-    if position_coefficients.shape != (6, 3) or not np.all(
-        np.isfinite(position_coefficients)
-    ):
-        raise ValueError("position_coefficients_mm must have finite shape (6, 3)")
-    if any(
-        vector.shape != (3,) or not np.all(np.isfinite(vector)) for vector in vectors
+    if (
+        position_coefficients.ndim != 2
+        or position_coefficients.shape[0] < 2
+        or position_coefficients.shape[1] != 3
+        or not np.all(np.isfinite(position_coefficients))
     ):
         raise ValueError(
-            "source spin values and slopes must contain three finite values"
+            "position_coefficients_mm must have finite shape (degree+1, 3)"
         )
+    if (
+        spin_coefficients.ndim != 2
+        or spin_coefficients.shape[0] < 1
+        or spin_coefficients.shape[1] != 3
+        or not np.all(np.isfinite(spin_coefficients))
+    ):
+        raise ValueError("rest_spin_coefficients must have finite shape (degree+1, 3)")
     if preserved_rest_spin_magnitude is not None and (
         not np.isfinite(preserved_rest_spin_magnitude)
         or preserved_rest_spin_magnitude < 0.0
@@ -363,13 +368,6 @@ def quintic_dipole_hertz_response_jet_native(
     root_coordinate = _Jet3.constant(C_MMNS * root_time)
     start_coordinate = C_MMNS * start_time
     duration_coordinate = C_MMNS * duration
-    spin_coefficients = _spin_coefficients(
-        spin_start,
-        spin_end,
-        spin_start_slope,
-        spin_end_slope,
-        duration,
-    )
 
     def source_state(
         source_coordinate: _Jet3,
@@ -385,7 +383,7 @@ def quintic_dipole_hertz_response_jet_native(
                     order
                     * position_coefficients[order, component]
                     / duration_coordinate
-                    for order in range(1, 6)
+                    for order in range(1, position_coefficients.shape[0])
                 ),
                 normalized_time,
             )
@@ -530,6 +528,92 @@ def quintic_dipole_hertz_response_jet_native(
         ),
         light_cone_jet_residual=float(residual),
         segment_fraction=float(fraction),
+    )
+
+
+def quintic_dipole_hertz_response_jet_native(
+    *,
+    observer_time_ns: float,
+    observer_position_mm: Sequence[float],
+    magnetic_moment_native: float,
+    segment_start_time_ns: float,
+    segment_duration_ns: float,
+    position_coefficients_mm: np.ndarray,
+    rest_spin_start: Sequence[float],
+    rest_spin_end: Sequence[float],
+    rest_spin_start_derivative_per_ns: Sequence[float],
+    rest_spin_end_derivative_per_ns: Sequence[float],
+    preserved_rest_spin_magnitude: float | None,
+    retarded_time_ns: float,
+    jet_newton_iterations: int = 4,
+) -> DipoleHertzResponseJetResult:
+    """Preserve the production quintic-worldline/cubic-spin oracle surface."""
+
+    observer_time = float(observer_time_ns)
+    observer_position = np.asarray(observer_position_mm, dtype=float)
+    moment = float(magnetic_moment_native)
+    start_time = float(segment_start_time_ns)
+    duration = float(segment_duration_ns)
+    position_coefficients = np.asarray(position_coefficients_mm, dtype=float)
+    spin_start = np.asarray(rest_spin_start, dtype=float)
+    spin_end = np.asarray(rest_spin_end, dtype=float)
+    spin_start_slope = np.asarray(rest_spin_start_derivative_per_ns, dtype=float)
+    spin_end_slope = np.asarray(rest_spin_end_derivative_per_ns, dtype=float)
+    root_time = float(retarded_time_ns)
+    iterations = int(jet_newton_iterations)
+    vectors = (spin_start, spin_end, spin_start_slope, spin_end_slope)
+    if not np.isfinite(observer_time):
+        raise ValueError("observer_time_ns must be finite")
+    if observer_position.shape != (3,) or not np.all(np.isfinite(observer_position)):
+        raise ValueError("observer_position_mm must contain three finite values")
+    if not np.isfinite(moment):
+        raise ValueError("magnetic_moment_native must be finite")
+    if not np.isfinite(start_time) or not np.isfinite(duration) or duration <= 0.0:
+        raise ValueError("the segment start and positive duration must be finite")
+    if position_coefficients.shape != (6, 3) or not np.all(
+        np.isfinite(position_coefficients)
+    ):
+        raise ValueError("position_coefficients_mm must have finite shape (6, 3)")
+    if any(
+        vector.shape != (3,) or not np.all(np.isfinite(vector)) for vector in vectors
+    ):
+        raise ValueError(
+            "source spin values and slopes must contain three finite values"
+        )
+    if preserved_rest_spin_magnitude is not None and (
+        not np.isfinite(preserved_rest_spin_magnitude)
+        or preserved_rest_spin_magnitude < 0.0
+    ):
+        raise ValueError(
+            "preserved_rest_spin_magnitude must be finite and non-negative"
+        )
+    if not np.isfinite(root_time):
+        raise ValueError("retarded_time_ns must be finite")
+    fraction = (root_time - start_time) / duration
+    if not 0.0 < fraction < 1.0:
+        raise ValueError(
+            "retarded_time_ns must lie strictly inside the selected smooth segment"
+        )
+    if iterations < 3:
+        raise ValueError("jet_newton_iterations must be at least three")
+    spin_coefficients = _spin_coefficients(
+        spin_start,
+        spin_end,
+        spin_start_slope,
+        spin_end_slope,
+        duration,
+    )
+    return polynomial_dipole_hertz_response_jet_native(
+        observer_time_ns=observer_time,
+        observer_position_mm=observer_position,
+        magnetic_moment_native=moment,
+        segment_start_time_ns=start_time,
+        segment_duration_ns=duration,
+        position_coefficients_mm=position_coefficients,
+        rest_spin_coefficients=spin_coefficients,
+        preserved_rest_spin_magnitude=preserved_rest_spin_magnitude,
+        retarded_time_ns=root_time,
+        jet_newton_iterations=iterations,
     )
 
 
@@ -1061,6 +1145,7 @@ __all__ = [
     "DipoleHertzResponseJetResult",
     "DipoleHertzSparseResponseJetResult",
     "evaluate_retarded_dipole_field_gradient_hertz_jet_native",
+    "polynomial_dipole_hertz_response_jet_native",
     "quintic_dipole_hertz_response_jet_native",
     "quintic_dipole_hertz_response_jet_numba_native",
     "quintic_dipole_hertz_sparse_response_numba_native",

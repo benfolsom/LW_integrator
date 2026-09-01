@@ -8,6 +8,7 @@ from core.dipole_fields import static_point_dipole_field_native
 from core.dipole_hertz_jet import (
     _spin_coefficients,
     evaluate_retarded_dipole_field_gradient_hertz_jet_native,
+    polynomial_dipole_hertz_response_jet_native,
     quintic_dipole_hertz_response_jet_native,
     quintic_dipole_hertz_response_jet_numba_native,
 )
@@ -251,6 +252,64 @@ def test_static_hertz_jet_matches_exact_exterior_dipole_response() -> None:
     assert np.max(np.abs(result.hertz_tensor + result.hertz_tensor.T)) == 0.0
     assert result.light_cone_jet_residual < 1.0e-12
     assert result.segment_fraction == 0.5
+
+
+def test_polynomial_hertz_jet_preserves_cubic_spin_wrapper_bitwise() -> None:
+    duration = 0.013
+    position_coefficients = np.asarray(
+        (
+            (0.2, -0.3, 0.1),
+            (0.004, 0.002, -0.003),
+            (2.0e-4, -1.0e-4, 3.0e-4),
+            (-2.0e-5, 1.0e-5, 0.5e-5),
+            (1.0e-6, 2.0e-6, -1.0e-6),
+            (-1.0e-7, 0.5e-7, 1.0e-7),
+        )
+    )
+    spin_start = np.asarray((0.8, 0.0, 0.6))
+    spin_end = np.asarray((0.3, 0.7, 0.64))
+    spin_start_slope = np.asarray((4.0, -3.0, 1.0))
+    spin_end_slope = np.asarray((-2.0, 5.0, -1.0))
+    common = {
+        "observer_time_ns": 0.004,
+        "observer_position_mm": (1.4, -0.8, 1.1),
+        "magnetic_moment_native": -1.2,
+        "segment_start_time_ns": -0.005,
+        "segment_duration_ns": duration,
+        "position_coefficients_mm": position_coefficients,
+        "preserved_rest_spin_magnitude": 1.0,
+        "retarded_time_ns": -0.001,
+    }
+    wrapped = quintic_dipole_hertz_response_jet_native(
+        **common,
+        rest_spin_start=spin_start,
+        rest_spin_end=spin_end,
+        rest_spin_start_derivative_per_ns=spin_start_slope,
+        rest_spin_end_derivative_per_ns=spin_end_slope,
+    )
+    polynomial = polynomial_dipole_hertz_response_jet_native(
+        **common,
+        rest_spin_coefficients=_spin_coefficients(
+            spin_start,
+            spin_end,
+            spin_start_slope,
+            spin_end_slope,
+            duration,
+        ),
+    )
+    for name in (
+        "hertz_tensor",
+        "four_potential",
+        "partial_a",
+        "field_tensor",
+        "partial_f",
+        "retarded_coordinate_gradient",
+        "retarded_coordinate_hessian",
+        "retarded_coordinate_third_derivative",
+    ):
+        np.testing.assert_array_equal(getattr(polynomial, name), getattr(wrapped, name))
+    assert polynomial.retarded_time_ns == wrapped.retarded_time_ns
+    assert polynomial.light_cone_jet_residual == wrapped.light_cone_jet_residual
 
 
 def test_hertz_jet_rejects_a_nonsmooth_segment_boundary() -> None:
