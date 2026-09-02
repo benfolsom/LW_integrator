@@ -1,5 +1,15 @@
 # Changelog
 
+- Stabilized live causal ``C5`` startup and adaptive sampling without weakening
+  the existing derivative-fit guard. The inertial prefix now retains coarse
+  remote samples but tapers its interval by no more than 5 percent between
+  neighboring knots until it matches the first step-doubling midpoint. While
+  C5 is active, accepted adaptive steps may likewise grow by at most 5 percent;
+  other history modes retain the ordinary factor-of-two limit. This prevents a
+  smooth moving/precessing source from looking numerically singular solely
+  because the sampling cadence changed abruptly. A representative
+  electron--proton probe that previously failed after two accepted slabs now
+  completes six unequal slabs with no rejection.
 - Promoted the causally frozen ``C5`` intrinsic-dipole source history into the
   opt-in exact-pair adaptive equations of motion. Charge fields continue to use
   their established accepted chronology, while dipole ``A``, ``F``, and

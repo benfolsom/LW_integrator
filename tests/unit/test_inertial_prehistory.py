@@ -11,8 +11,10 @@ import numpy as np
 import pytest
 
 from core.constants import C_MMNS, ELEMENTARY_CHARGE
+from core.causal_c5_source_history import CausalC5SourceHistory
 from core.external_fields import electric_field_v_per_m_to_native
 from core.integration_runner import (
+    _causal_c5_inertial_time_offsets_ns,
     _estimate_inertial_prehistory_duration_ns,
     _build_inertial_coasting_history,
     _evaluate_exact_endpoint_four_potential,
@@ -21,6 +23,7 @@ from core.integration_runner import (
     _preflight_inertial_exact_histories,
     retarded_integrator,
 )
+from core.exact_pair_integration import _step_controller_config
 from core.charge_source_interactions import (
     evaluate_retarded_charge_source_interaction_native,
 )
@@ -153,6 +156,51 @@ def test_sparse_inertial_history_has_exact_positions_and_times(knot_count: int) 
         np.testing.assert_array_equal(history[-1][key], active[key])
 
 
+def test_causal_c5_prehistory_tapers_into_midpoint_cadence() -> None:
+    duration_ns = 0.00675
+    initial_step_ns = 1.0e-4
+
+    offsets = _causal_c5_inertial_time_offsets_ns(
+        duration_ns,
+        initial_step_ns,
+    )
+    intervals = np.diff(offsets)
+
+    assert offsets.size >= 16
+    assert offsets[0] == pytest.approx(-duration_ns, rel=0.0, abs=1.0e-18)
+    assert offsets[-1] == 0.0
+    assert np.all(intervals > 0.0)
+    assert intervals[-1] <= 0.5 * initial_step_ns
+    assert np.max(intervals[:-1] / intervals[1:]) <= 1.05 * (1.0 + 1.0e-12)
+    assert np.max(intervals) <= duration_ns / 15.0
+
+    count = offsets.size
+    source_history = CausalC5SourceHistory.from_accepted_samples(
+        time_ns=offsets,
+        position_mm=np.zeros((count, 3)),
+        beta=np.zeros((count, 3)),
+        beta_prime_per_mm=np.zeros((count, 3)),
+        rest_spin=np.tile(np.asarray((0.0, 0.0, 1.0)), (count, 1)),
+    )
+    assert source_history.frozen_segments
+    assert (
+        max(segment.spin_condition_number for segment in source_history.frozen_segments)
+        < 5.0e4
+    )
+
+    active = _state(
+        position_mm=(1.0, -0.5, 0.25),
+        beta=(0.03, -0.01, 0.02),
+    )
+    history = _build_inertial_coasting_history(
+        active,
+        duration_ns,
+        time_offsets_ns=offsets,
+    )
+    np.testing.assert_array_equal(history[-1]["t"], active["t"])
+    np.testing.assert_array_equal(history[-1]["x"], active["x"])
+
+
 def test_exact_charge_and_dipole_fields_are_invariant_to_doubled_duration() -> None:
     source = _state(
         position_mm=(0.0, 0.0, 0.0),
@@ -273,7 +321,7 @@ def _run_simple_inertial(
     )
 
 
-def test_causal_c5_adaptive_start_uses_sixteen_preflight_knots(
+def test_causal_c5_adaptive_start_uses_tapered_preflight_knots(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
 ) -> None:
@@ -326,12 +374,19 @@ def test_causal_c5_adaptive_start_uses_sixteen_preflight_knots(
 
     rider_seed = captured["rider_seed"]
     driver_seed = captured["driver_seed"]
-    assert len(rider_seed) == len(driver_seed) == 16
+    assert len(rider_seed) == len(driver_seed)
+    assert len(rider_seed) > 16
+    seed_times = np.asarray([float(state["t"][0]) for state in rider_seed])
+    seed_intervals = np.diff(seed_times)
+    assert seed_intervals[-1] <= 0.5e-11
+    assert np.max(seed_intervals[:-1] / seed_intervals[1:]) <= 1.05 * (1.0 + 1.0e-12)
+    assert _step_controller_config(causal_c5_enabled=True).maximum_growth_factor == 1.05
+    assert _step_controller_config(causal_c5_enabled=False).maximum_growth_factor == 2.0
     accepted_c5 = captured["initial_causal_c5_source_history"]
-    assert accepted_c5.rider.sources[0].history.sample_count == 16
-    assert accepted_c5.driver.sources[0].history.sample_count == 16
-    assert len(accepted_c5.rider.sources[0].history.frozen_segments) == 1
-    assert len(accepted_c5.driver.sources[0].history.frozen_segments) == 1
+    assert accepted_c5.rider.sources[0].history.sample_count == len(rider_seed)
+    assert accepted_c5.driver.sources[0].history.sample_count == len(driver_seed)
+    assert len(accepted_c5.rider.sources[0].history.frozen_segments) > 1
+    assert len(accepted_c5.driver.sources[0].history.frozen_segments) > 1
 
 
 def test_causal_c5_rejects_unwired_fixed_step_path() -> None:
@@ -412,17 +467,17 @@ def test_short_causal_c5_adaptive_run_uses_live_dipole_provider(
     result = _run_simple_inertial(
         rider,
         driver,
-        steps=3,
+        steps=6,
         h_step=1.0e-11,
         radiation_reaction_mode="off",
         magnetic_dipole=magnetic,
         self_consistency=SelfConsistencyConfig.standard(),
         adaptive_pair_return=AdaptivePairReturnConfig(
             enabled=True,
-            target_lab_time_ns=2.0e-11,
+            target_lab_time_ns=5.0e-11,
             tolerance_scale=1.0e6,
             minimum_step_factor=1.0 / 64.0,
-            maximum_step_factor=1.0,
+            maximum_step_factor=2.0,
             maximum_attempts=64,
             maximum_accepted_slabs=32,
         ),
@@ -442,6 +497,11 @@ def test_short_causal_c5_adaptive_run_uses_live_dipole_provider(
     assert summary["dipole_source_history"] == "causal_c5"
     assert provider_event_times
     assert any(time_ns > 0.0 for time_ns in provider_event_times)
+    accepted_intervals = np.diff(np.asarray(rider_soa.t[:, 0], dtype=float))
+    assert np.max(accepted_intervals) > 0.5e-11
+    assert np.max(accepted_intervals[1:] / accepted_intervals[:-1]) <= 1.05 * (
+        1.0 + 5.0e-12
+    )
     assert np.all(np.isfinite(rider_soa.Pt))
     assert np.all(np.isfinite(driver_soa.Pt))
 

@@ -43,6 +43,23 @@ from .types import (
     TrajectoryArrays,
 )
 
+# The fifteen-knot spin derivative fit remains comfortably below its existing
+# condition-number guard when neighboring accepted intervals grow by at most
+# five percent.  Larger jumps can make smooth data numerically singular even
+# though every individual adaptive step is otherwise healthy.
+_CAUSAL_C5_MAXIMUM_STEP_GROWTH = 1.05
+
+
+def _step_controller_config(*, causal_c5_enabled: bool) -> StepControllerConfig:
+    """Return the ordinary controller with the C5 cadence safeguard applied."""
+
+    return StepControllerConfig(
+        method_order=1,
+        maximum_growth_factor=(
+            _CAUSAL_C5_MAXIMUM_STEP_GROWTH if causal_c5_enabled else 2.0
+        ),
+    )
+
 
 def _scaled_tolerances(scale: float) -> StepDoublingTolerances:
     """Return the validated scale-1 first-pass error model."""
@@ -247,7 +264,7 @@ def run_exact_pair_adaptive_integrator(
         advance_rider=advance,
         advance_driver=advance,
         controller_state=initial_controller,
-        controller_config=StepControllerConfig(method_order=1),
+        controller_config=_step_controller_config(causal_c5_enabled=causal_c5_enabled),
         tolerances=_scaled_tolerances(adaptive.tolerance_scale),
         target_time_ns=adaptive.target_lab_time_ns,
         minimum_step_ns=initial_step_ns * adaptive.minimum_step_factor,

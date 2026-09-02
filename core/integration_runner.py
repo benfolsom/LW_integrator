@@ -12,7 +12,7 @@ from dataclasses import dataclass, fields, is_dataclass, replace
 from enum import Enum
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Callable, Optional, Tuple, cast
+from typing import Any, Callable, Optional, Sequence, Tuple, cast
 
 import numpy as np
 
@@ -84,8 +84,9 @@ from .types import (
 # knots leave useful room for knot-count invariance tests without tying the
 # prefix spacing to the (much smaller) active integration timestep.
 _INERTIAL_PREHISTORY_KNOT_COUNT = 8
-_INERTIAL_PREHISTORY_C5_KNOT_COUNT = 16
+_INERTIAL_PREHISTORY_C5_MINIMUM_KNOT_COUNT = 16
 _INERTIAL_PREHISTORY_SAFETY_FACTOR = 2.0
+_INERTIAL_PREHISTORY_C5_MAXIMUM_INTERVAL_RATIO = 1.05
 
 
 def _checkpoint_json_value(value: Any) -> Any:
@@ -903,15 +904,42 @@ def _build_inertial_coasting_history(
     duration_ns: float,
     *,
     knot_count: int = _INERTIAL_PREHISTORY_KNOT_COUNT,
+    time_offsets_ns: Sequence[float] | np.ndarray | None = None,
 ) -> Trajectory:
     """Build a sparse constant-velocity history ending at ``active_state``."""
 
     duration = float(duration_ns)
-    knots = int(knot_count)
     if not np.isfinite(duration) or duration <= 0.0:
         raise ValueError("inertial prehistory duration must be finite and positive")
-    if knots < 2:
-        raise ValueError("inertial prehistory requires at least two knots")
+    if time_offsets_ns is None:
+        knots = int(knot_count)
+        if knots < 2:
+            raise ValueError("inertial prehistory requires at least two knots")
+        offsets = np.linspace(-duration, 0.0, knots)
+    else:
+        offsets = np.asarray(time_offsets_ns, dtype=float)
+        if (
+            offsets.ndim != 1
+            or offsets.size < 2
+            or not np.all(np.isfinite(offsets))
+            or np.any(np.diff(offsets) <= 0.0)
+        ):
+            raise ValueError(
+                "inertial prehistory time offsets must be a finite increasing vector"
+            )
+        endpoint_tolerance = 8.0 * np.finfo(float).eps * duration
+        if (
+            not np.isclose(
+                float(offsets[0]),
+                -duration,
+                rtol=0.0,
+                atol=endpoint_tolerance,
+            )
+            or float(offsets[-1]) != 0.0
+        ):
+            raise ValueError(
+                "inertial prehistory offsets must span -duration through zero"
+            )
     for axis in "xyz":
         acceleration = np.asarray(
             active_state.get(f"bdot{axis}", np.zeros_like(active_state["x"])),
@@ -922,7 +950,6 @@ def _build_inertial_coasting_history(
                 "INERTIAL_PREHISTORY requires zero initial bdot; it is a fresh "
                 "constant-velocity boundary model, not a restart extrapolation"
             )
-    offsets = np.linspace(-duration, 0.0, knots)
     history = [
         _coast_state_by_coordinate_time(active_state, float(offset))
         for offset in offsets
@@ -945,6 +972,58 @@ def _build_inertial_coasting_history(
                 )
         _clear_medina_force_history(state)
     return history
+
+
+def _causal_c5_inertial_time_offsets_ns(
+    duration_ns: float,
+    initial_step_ns: float,
+    *,
+    maximum_interval_ratio: float = (_INERTIAL_PREHISTORY_C5_MAXIMUM_INTERVAL_RATIO),
+) -> np.ndarray:
+    """Return a sparse prehistory that tapers into adaptive midpoint cadence.
+
+    A uniform 16-knot prehistory is sufficient to expose one frozen C5
+    segment, but its final interval can be much larger than the first accepted
+    midpoint interval.  That abrupt cadence change makes an otherwise smooth
+    fifteen-knot spin fit ill-conditioned.  These offsets retain coarse knots
+    in the remote past and reduce adjacent intervals geometrically toward
+    ``initial_step_ns / 2``, the first step-doubling midpoint cadence.
+    """
+
+    duration = float(duration_ns)
+    initial_step = float(initial_step_ns)
+    ratio = float(maximum_interval_ratio)
+    if not np.isfinite(duration) or duration <= 0.0:
+        raise ValueError("causal C5 prehistory duration must be finite and positive")
+    if not np.isfinite(initial_step) or initial_step <= 0.0:
+        raise ValueError("causal C5 initial step must be finite and positive")
+    if not np.isfinite(ratio) or ratio <= 1.0:
+        raise ValueError("causal C5 maximum interval ratio must exceed one")
+
+    coarse_interval = duration / float(_INERTIAL_PREHISTORY_C5_MINIMUM_KNOT_COUNT - 1)
+    newest_interval = min(0.5 * initial_step, coarse_interval)
+    reverse_intervals: list[float] = []
+    interval = newest_interval
+    accumulated = 0.0
+    while accumulated < duration:
+        reverse_intervals.append(interval)
+        accumulated += interval
+        interval = min(ratio * interval, coarse_interval)
+
+    scale = duration / accumulated
+    intervals = np.asarray(reverse_intervals[::-1], dtype=float) * scale
+    offsets = np.concatenate(
+        (
+            np.asarray((-duration,), dtype=float),
+            -duration + np.cumsum(intervals),
+        )
+    )
+    offsets[-1] = 0.0
+    if offsets.size < _INERTIAL_PREHISTORY_C5_MINIMUM_KNOT_COUNT:
+        raise RuntimeError("causal C5 prehistory constructed too few knots")
+    if np.any(np.diff(offsets) <= 0.0):
+        raise RuntimeError("causal C5 prehistory offsets lost strict ordering")
+    return offsets
 
 
 def _preflight_inertial_exact_histories(
@@ -3177,11 +3256,8 @@ def retarded_integrator(
     causal_c5_enabled = bool(
         dipole_source_active and magnetic_dipole.source.history_model == "causal_c5"
     )
-    inertial_prehistory_knot_count = (
-        _INERTIAL_PREHISTORY_C5_KNOT_COUNT
-        if causal_c5_enabled
-        else _INERTIAL_PREHISTORY_KNOT_COUNT
-    )
+    inertial_prehistory_knot_count = _INERTIAL_PREHISTORY_KNOT_COUNT
+    inertial_prehistory_time_offsets_ns: np.ndarray | None = None
     initial_causal_c5_source_history = None
     if inertial_prehistory_enabled:
         inertial_prehistory_duration_ns = _estimate_inertial_prehistory_duration_ns(
@@ -3189,6 +3265,14 @@ def retarded_integrator(
             cast(ParticleState, init_driver),
             magnetic_dipole,
         )
+        if causal_c5_enabled:
+            inertial_prehistory_time_offsets_ns = _causal_c5_inertial_time_offsets_ns(
+                inertial_prehistory_duration_ns,
+                h_step,
+            )
+            inertial_prehistory_knot_count = int(
+                inertial_prehistory_time_offsets_ns.size
+            )
         active_start = inertial_prehistory_knot_count - 1
     else:
         active_start = int(driver_train.prehistory_steps) if driver_train_enabled else 0
@@ -3276,11 +3360,13 @@ def retarded_integrator(
                 init_rider,
                 inertial_prehistory_duration_ns,
                 knot_count=inertial_prehistory_knot_count,
+                time_offsets_ns=inertial_prehistory_time_offsets_ns,
             )
             driver_seed_history = _build_inertial_coasting_history(
                 init_driver,
                 inertial_prehistory_duration_ns,
                 knot_count=inertial_prehistory_knot_count,
+                time_offsets_ns=inertial_prehistory_time_offsets_ns,
             )
             if causal_c5_enabled:
                 from .causal_c5_dipole_provider import (
@@ -3325,6 +3411,18 @@ def retarded_integrator(
                         "exact-field stencil after eight geometric extensions"
                     )
                 inertial_prehistory_duration_ns *= 2.0
+                if causal_c5_enabled:
+                    inertial_prehistory_time_offsets_ns = (
+                        _causal_c5_inertial_time_offsets_ns(
+                            inertial_prehistory_duration_ns,
+                            h_step,
+                        )
+                    )
+                    inertial_prehistory_knot_count = int(
+                        inertial_prehistory_time_offsets_ns.size
+                    )
+                    active_start = inertial_prehistory_knot_count - 1
+                    total_steps = requested_steps + active_start
                 continue
             _apply_inertial_canonical_rebase(
                 rider_seed_history[-1],

@@ -556,6 +556,19 @@ coefficients bit-for-bit, while the worst spin-fit condition number remains
 below ``1e4`` compared with the fail-closed ``1e5`` limit. A factor-of-ten
 cadence discontinuity still fails before either trajectory is published.
 
+The live controller therefore treats sampling cadence as part of the C5
+numerical model.  Its inertial prefix uses sparse samples in the remote past,
+then reduces adjacent intervals by at most 5 percent until the last interval
+matches the first adaptive midpoint interval.  Accepted adaptive steps may
+subsequently grow by at most 5 percent while C5 is active; other source-history
+models keep the ordinary factor-of-two growth limit.  For the representative
+startup schedule used in the moving-spin probe, this lowers the spin
+derivative-fit condition number from about ``2e6`` to about ``1.7e4`` without
+changing the ``1e5`` rejection threshold.  A sudden accepted step reduction
+can still violate the fit guard; that case deliberately fails closed because
+the current polynomial history cannot justify a reliable fifth derivative
+across such a cadence break.
+
 The immutable object copies its accepted sample arrays whenever a new sample
 is appended. That makes it a clear correctness oracle, but gives quadratic
 construction cost over a long run. A separate growable store now removes this
@@ -574,8 +587,9 @@ reproduce the immutable oracle coefficients and :math:`A`, :math:`F`, and
 builder remains unsupported.
 
 The live bridge has four direct regression checks.  A short electron--proton
-adaptive run observes C5 evaluations after the initial event and finishes with
-finite canonical momenta.  The same smooth two-source history agrees with the
+adaptive run observes C5 evaluations after the initial event, exercises
+unequal accepted step sizes, and finishes with finite canonical momenta.  The
+same smooth two-source history agrees with the
 older analytical C1 provider to relative differences of about
 :math:`3.1\times10^{-11}` in :math:`A`, :math:`6.2\times10^{-10}` in
 :math:`\partial A`, :math:`2.5\times10^{-9}` in :math:`F`, and
