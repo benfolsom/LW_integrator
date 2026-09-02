@@ -1,5 +1,16 @@
 # Changelog
 
+- Make accepted local source history transactional across the adaptive
+  exact-pair boundary and resumable through the production disk checkpoint.
+  A rejected step-doubling trial cannot publish its provisional midpoint or
+  endpoint acceleration interval; rider and driver rows become visible only
+  after the pair trajectory is jointly accepted. Checkpoints store the
+  explicit trusted-interval mask and fixed source/chart identity alongside
+  the authoritative trajectory, then restore every local-history array
+  bitwise without consulting legacy `bdot`. This is production-history
+  plumbing only: the local jet is still not selected by the equations of
+  motion, and existing causal-$C^5$ and nondipole paths remain unchanged.
+
 - Add an opt-in `interval_mean` acceleration source for the local retarded
   jet. It reconstructs the total acceleration from each accepted velocity
   change, including a split radiation-reaction impulse, and locates that

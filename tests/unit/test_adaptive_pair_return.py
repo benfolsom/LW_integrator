@@ -18,9 +18,13 @@ from core.causal_c5_dipole_provider import (
     evaluate_causal_c5_dipole_source_collection_native,
 )
 from core.causal_c5_source_history import CausalC5HistoryUnavailableError
+from core.causal_local_source_history import AcceptedPairCausalLocalSourceHistory
 from core.constants import C_MMNS
 from core.integration_checkpoint import AcceptedPairCheckpointStore
 from core.integration_runner import IntegrationCancelled
+from core.growable_causal_local_source_history import (
+    GrowableAcceptedPairCausalLocalSourceHistory,
+)
 from core.retarded_fields import ObserverEvent
 from core.shared_lab_time import SharedLabTimeError
 from core.spin_self_force_reduction_history import (
@@ -208,6 +212,8 @@ def _attempt(
     build_intrinsic_spin_reduction_candidate=None,
     causal_c5_source_history=None,
     growable_causal_c5_source_history=None,
+    causal_local_source_history=None,
+    growable_causal_local_source_history=None,
 ):
     return attempt_exact_pair_adaptive_step(
         rider_builder=rider,
@@ -227,6 +233,8 @@ def _attempt(
         ),
         causal_c5_source_history=causal_c5_source_history,
         growable_causal_c5_source_history=growable_causal_c5_source_history,
+        causal_local_source_history=causal_local_source_history,
+        growable_causal_local_source_history=growable_causal_local_source_history,
     )
 
 
@@ -370,6 +378,66 @@ def test_growable_causal_c5_attempt_commits_only_after_acceptance() -> None:
     assert accepted.causal_c5_source_history is not None
     assert accepted.causal_c5_source_history.rider.sources[0].history.sample_count == 3
     assert growable.build_current().driver.sources[0].history.sample_count == 3
+
+
+def test_rejected_attempt_cannot_enter_growable_causal_local_history() -> None:
+    rider, driver = _magnetic_pair()
+    growable = GrowableAcceptedPairCausalLocalSourceHistory.from_trajectory_arrays(
+        rider.build_current(),
+        driver.build_current(),
+    )
+
+    rejected = _attempt(
+        rider,
+        driver,
+        rider_advance=_advance(2.0),
+        tolerances=_tolerances(1.0e-4),
+        growable_causal_local_source_history=growable,
+    )
+
+    assert not rejected.accepted
+    assert rejected.causal_local_source_history is not None
+    assert (
+        rejected.causal_local_source_history.rider.sources[0].history.sample_count == 1
+    )
+    assert growable.build_current().driver.sources[0].history.sample_count == 1
+    assert rider.accepted_steps == driver.accepted_steps == 1
+
+    accepted = _attempt(
+        rider,
+        driver,
+        rider_advance=_advance(2.0),
+        tolerances=_tolerances(1.0),
+        growable_causal_local_source_history=growable,
+    )
+    assert accepted.accepted
+    assert accepted.causal_local_source_history is not None
+    assert (
+        accepted.causal_local_source_history.rider.sources[0].history.sample_count == 3
+    )
+    assert growable.build_current().driver.sources[0].history.sample_count == 3
+
+
+def test_causal_local_and_c5_histories_are_mutually_exclusive() -> None:
+    rider, driver = _magnetic_pair()
+    local = AcceptedPairCausalLocalSourceHistory.from_trajectory_arrays(
+        rider.build_current(),
+        driver.build_current(),
+    )
+    c5 = AcceptedPairCausalC5SourceHistory.from_trajectory_arrays(
+        rider.build_current(),
+        driver.build_current(),
+    )
+
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        _attempt(
+            rider,
+            driver,
+            rider_advance=_advance(2.0),
+            tolerances=_tolerances(1.0),
+            causal_c5_source_history=c5,
+            causal_local_source_history=local,
+        )
 
 
 def test_immutable_and_growable_causal_c5_inputs_are_mutually_exclusive() -> None:

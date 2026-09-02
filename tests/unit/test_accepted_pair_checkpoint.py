@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 from core.causal_c5_dipole_provider import AcceptedPairCausalC5SourceHistory
+from core.causal_local_source_history import AcceptedPairCausalLocalSourceHistory
 from core.integration_checkpoint import (
     AcceptedPairCheckpointStore,
     CheckpointCompatibilityError,
@@ -268,6 +269,108 @@ def test_pair_checkpoint_cannot_drop_active_c5_history(tmp_path: Path) -> None:
     assert (
         json.loads(store.manifest_path.read_text(encoding="utf-8")) == manifest_before
     )
+
+
+def test_pair_checkpoint_round_trips_causal_local_history_bitwise(
+    tmp_path: Path,
+) -> None:
+    rider = _history(10.0, 4)
+    driver = _history(-10.0, 4)
+    accepted = AcceptedPairCausalLocalSourceHistory.from_trajectory_arrays(
+        rider.build_current(),
+        driver.build_current(),
+    )
+
+    # Preserve an explicit history decision which cannot be inferred from the
+    # trajectory's legacy row fields alone.
+    def with_explicit_gap(collection):
+        history = collection.sources[0].history
+        ready = np.array(history.interval_mean_acceleration_ready, copy=True)
+        ready[1] = False
+        source = replace(
+            collection.sources[0],
+            history=replace(history, interval_mean_acceleration_ready=ready),
+        )
+        return replace(collection, sources=(source,))
+
+    accepted = replace(
+        accepted,
+        rider=with_explicit_gap(accepted.rider),
+        driver=with_explicit_gap(accepted.driver),
+    )
+
+    directory = tmp_path / "pair-local.checkpoint"
+    store = AcceptedPairCheckpointStore(
+        directory,
+        compatibility_payload={"physics": "causal-local-pair"},
+        interval_knots=1,
+        interval_seconds=0.0,
+        resume=False,
+    )
+    store.write(
+        rider=rider.build_current(),
+        driver=driver.build_current(),
+        controller_state={},
+        public_output_state={},
+        causal_local_source_history=accepted,
+    )
+    for step in range(4, 7):
+        rider_state = _state(step, offset=10.0)
+        driver_state = _state(step, offset=-10.0)
+        rider.append_step(rider_state)
+        driver.append_step(driver_state)
+        accepted = AcceptedPairCausalLocalSourceHistory(
+            rider=accepted.rider.append_accepted_state(rider_state),
+            driver=accepted.driver.append_accepted_state(driver_state),
+        )
+    store.write(
+        rider=rider.build_current(),
+        driver=driver.build_current(),
+        controller_state={},
+        public_output_state={},
+        causal_local_source_history=accepted,
+        complete=True,
+    )
+
+    reopened = AcceptedPairCheckpointStore(
+        directory,
+        compatibility_payload={"physics": "causal-local-pair"},
+        interval_knots=1,
+        interval_seconds=0.0,
+        resume=True,
+    )
+    restored_rider = GrowableTrajectoryBuilder(8, 1, magnetic_dipole=True)
+    restored_driver = GrowableTrajectoryBuilder(8, 1, magnetic_dipole=True)
+    reopened.restore_pair(restored_rider, restored_driver)
+    restored = reopened.restore_causal_local_source_history(
+        restored_rider.build_current(),
+        restored_driver.build_current(),
+    )
+
+    assert restored is not None
+    assert reopened.causal_local_source_history_metadata is not None
+    for actual_collection, expected_collection in (
+        (restored.rider, accepted.rider),
+        (restored.driver, accepted.driver),
+    ):
+        for actual_source, expected_source in zip(
+            actual_collection.sources,
+            expected_collection.sources,
+        ):
+            for name in (
+                "time_ns",
+                "position_mm",
+                "beta",
+                "rest_spin",
+                "stereographic_frame",
+                "interval_start_beta_prime_per_mm",
+                "interval_start_acceleration_ready",
+                "interval_mean_acceleration_ready",
+            ):
+                np.testing.assert_array_equal(
+                    getattr(actual_source.history, name),
+                    getattr(expected_source.history, name),
+                )
 
 
 def test_pair_checkpoint_rejects_mismatched_history_lengths(tmp_path: Path) -> None:

@@ -23,6 +23,7 @@ from .types import TrajectoryArrays, TrajectoryBuilder
 
 if TYPE_CHECKING:
     from .causal_c5_dipole_provider import AcceptedPairCausalC5SourceHistory
+    from .causal_local_source_history import AcceptedPairCausalLocalSourceHistory
 
 SCHEMA_VERSION = 1
 ACCEPTED_PAIR_SCHEMA_VERSION = 4
@@ -463,6 +464,7 @@ class AcceptedPairCheckpointStore:
                 "public_output_state": {},
                 "intrinsic_spin_reduction_state": None,
                 "causal_c5_source_history": None,
+                "causal_local_source_history": None,
             }
             _atomic_json(self.manifest_path, self.manifest)
 
@@ -510,6 +512,19 @@ class AcceptedPairCheckpointStore:
             )
         return self._json_state(value, "causal_c5_source_history")
 
+    @property
+    def causal_local_source_history_metadata(self) -> dict[str, Any] | None:
+        """Return detached accepted local-history metadata, when enabled."""
+
+        value = self.manifest.get("causal_local_source_history")
+        if value is None:
+            return None
+        if not isinstance(value, dict):
+            raise CheckpointError(
+                "causal_local_source_history must be a JSON object or null"
+            )
+        return self._json_state(value, "causal_local_source_history")
+
     def _load_and_validate_manifest(self) -> dict[str, Any]:
         if not self.manifest_path.is_file():
             raise CheckpointError(
@@ -548,6 +563,13 @@ class AcceptedPairCheckpointStore:
         if c5_state is not None and not isinstance(c5_state, dict):
             raise CheckpointError(
                 "causal_c5_source_history must be a JSON object or null"
+            )
+        if "causal_local_source_history" not in manifest:
+            manifest["causal_local_source_history"] = None
+        local_state = manifest["causal_local_source_history"]
+        if local_state is not None and not isinstance(local_state, dict):
+            raise CheckpointError(
+                "causal_local_source_history must be a JSON object or null"
             )
         committed = int(manifest.get("committed_knots", -1))
         if committed < 1:
@@ -652,6 +674,9 @@ class AcceptedPairCheckpointStore:
         public_output_state: dict[str, Any],
         intrinsic_spin_reduction_state: dict[str, object] | None = None,
         causal_c5_source_history: "AcceptedPairCausalC5SourceHistory | None" = None,
+        causal_local_source_history: (
+            "AcceptedPairCausalLocalSourceHistory | None"
+        ) = None,
         complete: bool = False,
     ) -> None:
         """Commit all jointly accepted knots after the manifest boundary."""
@@ -673,9 +698,21 @@ class AcceptedPairCheckpointStore:
             )
         )
         existing_c5 = self.manifest.get("causal_c5_source_history")
+        existing_local = self.manifest.get("causal_local_source_history")
+        if (
+            causal_c5_source_history is not None
+            and causal_local_source_history is not None
+        ):
+            raise CheckpointError(
+                "causal C5 and causal local source histories are mutually exclusive"
+            )
         if existing_c5 is not None and causal_c5_source_history is None:
             raise CheckpointError(
                 "cannot omit an active causal C5 source history from a checkpoint"
+            )
+        if existing_local is not None and causal_local_source_history is None:
+            raise CheckpointError(
+                "cannot omit an active causal local source history from a checkpoint"
             )
         start = self.committed_knots
         stop = int(rider.n_steps)
@@ -685,6 +722,11 @@ class AcceptedPairCheckpointStore:
             if causal_c5_source_history is not None and existing_c5 is None:
                 raise CheckpointError(
                     "cannot introduce causal C5 source history without a new knot chunk"
+                )
+            if causal_local_source_history is not None and existing_local is None:
+                raise CheckpointError(
+                    "cannot introduce causal local source history without a new knot "
+                    "chunk"
                 )
             if causal_c5_source_history is not None:
                 verified_c5 = self._append_causal_c5_arrays(
@@ -696,6 +738,18 @@ class AcceptedPairCheckpointStore:
                 if verified_c5 != existing_c5:
                     raise CheckpointCompatibilityError(
                         "causal C5 source metadata changed without new accepted knots"
+                    )
+            if causal_local_source_history is not None:
+                verified_local = self._append_causal_local_arrays(
+                    {},
+                    causal_local_source_history,
+                    rider=rider,
+                    driver=driver,
+                )
+                if verified_local != existing_local:
+                    raise CheckpointCompatibilityError(
+                        "causal local source metadata changed without new accepted "
+                        "knots"
                     )
             if complete:
                 next_manifest = dict(self.manifest)
@@ -724,6 +778,12 @@ class AcceptedPairCheckpointStore:
             rider=rider,
             driver=driver,
         )
+        local_metadata = self._append_causal_local_arrays(
+            arrays,
+            causal_local_source_history,
+            rider=rider,
+            driver=driver,
+        )
         filename = f"knots_{start:09d}_{stop:09d}.npz"
         chunk_path = self.chunks_directory / filename
         digest = _atomic_npz(chunk_path, arrays)
@@ -744,6 +804,7 @@ class AcceptedPairCheckpointStore:
         next_manifest["public_output_state"] = normalized_output
         next_manifest["intrinsic_spin_reduction_state"] = normalized_spin_reduction
         next_manifest["causal_c5_source_history"] = c5_metadata
+        next_manifest["causal_local_source_history"] = local_metadata
         next_manifest["status"] = "complete" if complete else "running"
         next_manifest["updated_utc"] = _utc_now()
         _atomic_json(self.manifest_path, next_manifest)
@@ -1052,6 +1113,208 @@ class AcceptedPairCheckpointStore:
                 )
             )
         return AcceptedPairCausalC5SourceHistory(
+            rider=restored_collections["rider"],
+            driver=restored_collections["driver"],
+        )
+
+    @staticmethod
+    def _local_source_topology(source: Any) -> dict[str, Any]:
+        return {
+            "identity": str(source.identity),
+            "particle_index": int(source.particle_index),
+            "magnetic_moment_native": float(source.magnetic_moment_native),
+            "stereographic_frame": source.history.stereographic_frame.tolist(),
+            "sample_count": int(source.history.sample_count),
+        }
+
+    def _append_causal_local_arrays(
+        self,
+        arrays: dict[str, np.ndarray],
+        state: "AcceptedPairCausalLocalSourceHistory | None",
+        *,
+        rider: TrajectoryArrays,
+        driver: TrajectoryArrays,
+    ) -> dict[str, Any] | None:
+        """Append only new trusted-interval masks for local source history."""
+
+        if state is None:
+            return None
+        existing = self.manifest.get("causal_local_source_history")
+        if existing is not None and not isinstance(existing, dict):
+            raise CheckpointError("causal local source metadata is invalid")
+        next_metadata: dict[str, Any] = {"schema_version": 1}
+        for role, collection, trajectory in (
+            ("rider", state.rider, rider),
+            ("driver", state.driver, driver),
+        ):
+            previous_sources: list[Any] = []
+            if existing is not None:
+                role_metadata = existing.get(role)
+                if not isinstance(role_metadata, dict) or not isinstance(
+                    role_metadata.get("sources"), list
+                ):
+                    raise CheckpointError(
+                        f"causal local {role} source metadata is invalid"
+                    )
+                previous_sources = list(role_metadata["sources"])
+            if previous_sources and len(previous_sources) != len(collection.sources):
+                raise CheckpointCompatibilityError(
+                    f"causal local {role} source count changed"
+                )
+            role_sources: list[dict[str, Any]] = []
+            for source_index, source in enumerate(collection.sources):
+                current_count = int(source.history.sample_count)
+                if current_count != trajectory.n_steps:
+                    raise CheckpointError(
+                        f"causal local {role} source {source.identity!r} sample count "
+                        "does not match accepted trajectory"
+                    )
+                topology = self._local_source_topology(source)
+                previous_count = 0
+                if previous_sources:
+                    previous = previous_sources[source_index]
+                    if not isinstance(previous, dict):
+                        raise CheckpointError("causal local source metadata is invalid")
+                    previous_count = int(previous.get("sample_count", -1))
+                    comparable = dict(previous)
+                    comparable["sample_count"] = topology["sample_count"]
+                    if comparable != topology:
+                        raise CheckpointCompatibilityError(
+                            f"causal local {role} source topology changed at index "
+                            f"{source_index}"
+                        )
+                if previous_count < 0 or current_count < previous_count:
+                    raise CheckpointError(
+                        f"causal local {role} accepted history moved backwards"
+                    )
+                interval_start = max(0, previous_count - 1)
+                interval_stop = max(0, current_count - 1)
+                arrays[f"local__{role}__{source_index}__interval_mean_ready"] = (
+                    np.array(
+                        source.history.interval_mean_acceleration_ready[
+                            interval_start:interval_stop
+                        ],
+                        copy=True,
+                    )
+                )
+                role_sources.append(topology)
+            next_metadata[role] = {"sources": role_sources}
+        return next_metadata
+
+    def restore_causal_local_source_history(
+        self,
+        rider: TrajectoryArrays,
+        driver: TrajectoryArrays,
+    ) -> "AcceptedPairCausalLocalSourceHistory | None":
+        """Restore local history without consulting legacy ``bdot`` output."""
+
+        metadata = self.causal_local_source_history_metadata
+        if metadata is None:
+            return None
+        if metadata.get("schema_version") != 1:
+            raise CheckpointCompatibilityError(
+                "unsupported causal local checkpoint metadata schema"
+            )
+        from .causal_local_source_history import (
+            AcceptedPairCausalLocalSourceHistory,
+            CausalLocalDipoleSource,
+            CausalLocalDipoleSourceCollection,
+            CausalLocalSourceHistory,
+        )
+
+        restored_collections: dict[str, Any] = {}
+        for role, trajectory in (("rider", rider), ("driver", driver)):
+            role_metadata = metadata.get(role)
+            if not isinstance(role_metadata, dict) or not isinstance(
+                role_metadata.get("sources"), list
+            ):
+                raise CheckpointError(f"causal local {role} metadata is invalid")
+            source_metadata = role_metadata["sources"]
+            masks: dict[int, list[np.ndarray]] = {
+                index: [] for index in range(len(source_metadata))
+            }
+            for chunk in self.manifest.get("chunks", []):
+                with self._verified_npz(
+                    str(chunk["file"]), str(chunk["sha256"])
+                ) as archive:
+                    available = set(archive.files)
+                    for source_index in range(len(source_metadata)):
+                        key = f"local__{role}__{source_index}__interval_mean_ready"
+                        if key in available:
+                            masks[source_index].append(
+                                np.array(archive[key], copy=True)
+                            )
+            identities: list[str] = []
+            particle_indices: list[int] = []
+            frames: list[np.ndarray] = []
+            for source_meta in source_metadata:
+                if not isinstance(source_meta, dict):
+                    raise CheckpointError("causal local source metadata is invalid")
+                identities.append(str(source_meta["identity"]))
+                particle_indices.append(int(source_meta["particle_index"]))
+                frames.append(
+                    np.asarray(source_meta["stereographic_frame"], dtype=np.float64)
+                )
+            base = CausalLocalDipoleSourceCollection.from_trajectory_arrays(
+                trajectory,
+                identity_prefix=role,
+                particle_indices=particle_indices,
+                source_identities=identities,
+                stereographic_frames=frames,
+            )
+            restored_sources = []
+            for source_index, (source, source_meta) in enumerate(
+                zip(base.sources, source_metadata)
+            ):
+                expected_count = int(source_meta["sample_count"])
+                if expected_count != trajectory.n_steps:
+                    raise CheckpointError(
+                        f"causal local {role} source sample count does not match "
+                        "the accepted trajectory"
+                    )
+                if float(source_meta["magnetic_moment_native"]) != (
+                    source.magnetic_moment_native
+                ):
+                    raise CheckpointCompatibilityError(
+                        f"causal local {role} source moment changed on restore"
+                    )
+                ready = (
+                    np.concatenate(masks[source_index])
+                    if masks[source_index]
+                    else np.zeros(0, dtype=bool)
+                )
+                if ready.shape != (max(0, expected_count - 1),):
+                    raise CheckpointError(
+                        f"causal local {role} trusted-interval count does not match "
+                        "the manifest"
+                    )
+                history = source.history
+                restored_history = CausalLocalSourceHistory.from_accepted_samples(
+                    time_ns=history.time_ns,
+                    position_mm=history.position_mm,
+                    beta=history.beta,
+                    rest_spin=history.rest_spin,
+                    stereographic_frame=history.stereographic_frame,
+                    interval_start_beta_prime_per_mm=(
+                        history.interval_start_beta_prime_per_mm
+                    ),
+                    interval_start_acceleration_ready=(
+                        history.interval_start_acceleration_ready
+                    ),
+                    interval_mean_acceleration_ready=ready,
+                )
+                restored_sources.append(
+                    CausalLocalDipoleSource(
+                        identity=source.identity,
+                        particle_index=source.particle_index,
+                        magnetic_moment_native=source.magnetic_moment_native,
+                        history=restored_history,
+                    )
+                )
+            restored_collections[role] = CausalLocalDipoleSourceCollection(
+                tuple(restored_sources)
+            )
+        return AcceptedPairCausalLocalSourceHistory(
             rider=restored_collections["rider"],
             driver=restored_collections["driver"],
         )
