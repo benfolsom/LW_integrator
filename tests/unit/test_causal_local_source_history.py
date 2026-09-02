@@ -104,6 +104,27 @@ def test_trajectory_conversion_aligns_interval_acceleration_and_ignores_bdot() -
     assert not np.any(history.interval_start_beta_prime_per_mm[:, 0] > 1000.0)
 
 
+def test_trajectory_conversion_recognizes_accepted_medina_intervals() -> None:
+    builder = GrowableTrajectoryBuilder(4, 1, magnetic_dipole=True)
+    builder.append_step(_state(0))
+    for step in range(1, 5):
+        state = _state(step)
+        state["medina_external_force_sample_time"] = np.asarray((0.01 * (step - 0.5),))
+        builder.append_step(state)
+
+    collection = CausalLocalDipoleSourceCollection.from_trajectory_arrays(
+        builder.build_current(),
+        identity_prefix="rider",
+    )
+    history = collection.sources[0].history
+
+    assert not np.any(history.interval_start_acceleration_ready)
+    np.testing.assert_array_equal(
+        history.interval_mean_acceleration_ready,
+        np.ones(4, dtype=bool),
+    )
+
+
 def test_checkpoint_round_trip_preserves_exact_timing_bitwise() -> None:
     expected = _history()
     payload = json.loads(json.dumps(expected.to_checkpoint_payload()))

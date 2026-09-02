@@ -680,6 +680,10 @@ class CausalLocalDipoleSourceCollection:
                     trajectory.source_start_beta_prime_z_per_mm[1:, particle],
                 )
             )
+            exact_start_ready = trajectory.source_start_beta_prime_ready[1:, particle]
+            interval_mean_ready = exact_start_ready | np.isfinite(
+                trajectory.medina_external_force_sample_time[1:, particle]
+            )
             history = CausalLocalSourceHistory.from_accepted_samples(
                 time_ns=trajectory.t[:, particle],
                 position_mm=np.column_stack(
@@ -699,15 +703,12 @@ class CausalLocalDipoleSourceCollection:
                 rest_spin=spin,
                 stereographic_frame=frame,
                 interval_start_beta_prime_per_mm=interval_beta_prime,
-                interval_start_acceleration_ready=(
-                    trajectory.source_start_beta_prime_ready[1:, particle]
-                ),
+                interval_start_acceleration_ready=exact_start_ready,
                 # Existing trajectory files do not yet carry a distinct mask.
-                # Exact-start readiness is a conservative marker for physical
-                # accepted intervals and excludes synthetic inertial history.
-                interval_mean_acceleration_ready=(
-                    trajectory.source_start_beta_prime_ready[1:, particle]
-                ),
+                # Exact-start readiness marks physical radiation-off intervals;
+                # a finite accepted Medina force timestamp marks physical
+                # Medina intervals. Both remain absent in synthetic prehistory.
+                interval_mean_acceleration_ready=interval_mean_ready,
             )
             sources.append(
                 CausalLocalDipoleSource(
