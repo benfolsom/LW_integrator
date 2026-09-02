@@ -169,6 +169,42 @@ def test_adjacent_segments_share_derivatives_through_fifth_order() -> None:
         )
 
 
+def test_accepted_step_start_acceleration_overrides_endpoint_fallback() -> None:
+    samples = tuple(_accepted_sample(index) for index in range(22))
+    times = np.asarray([sample["time_ns"] for sample in samples])
+    positions = np.asarray([sample["position_mm"] for sample in samples])
+    beta = np.asarray([sample["beta"] for sample in samples])
+    exact_beta_prime = np.asarray([sample["beta_prime_per_mm"] for sample in samples])
+    spins = np.asarray([sample["rest_spin"] for sample in samples])
+    step_start_beta_prime = np.zeros_like(exact_beta_prime)
+    step_start_beta_prime[1:] = exact_beta_prime[:-1]
+    step_start_ready = np.ones(times.size, dtype=bool)
+    step_start_ready[0] = False
+
+    reference = CausalC5SourceHistory.from_accepted_samples(
+        time_ns=times,
+        position_mm=positions,
+        beta=beta,
+        beta_prime_per_mm=exact_beta_prime,
+        rest_spin=spins,
+    )
+    shifted = CausalC5SourceHistory.from_accepted_samples(
+        time_ns=times,
+        position_mm=positions,
+        beta=beta,
+        beta_prime_per_mm=np.full_like(exact_beta_prime, 9.0e-3),
+        rest_spin=spins,
+        step_start_beta_prime_per_mm=step_start_beta_prime,
+        step_start_beta_prime_ready=step_start_ready,
+    )
+
+    for expected, actual in zip(reference.frozen_segments, shifted.frozen_segments):
+        np.testing.assert_array_equal(
+            actual.position_coefficients_mm,
+            expected.position_coefficients_mm,
+        )
+
+
 def test_stereographic_segment_preserves_unit_spin() -> None:
     segment = _history(16).frozen_segments[0]
     for fraction in np.linspace(0.0, 1.0, 101):
@@ -198,10 +234,18 @@ def test_unready_time_fails_closed() -> None:
 def test_checkpoint_roundtrip_preserves_frozen_coefficients_bitwise() -> None:
     history = _history(22)
     payload = json.loads(json.dumps(history.to_checkpoint_payload(), allow_nan=False))
-    assert payload["schema_version"] == 2
+    assert payload["schema_version"] == 3
     restored = CausalC5SourceHistory.from_checkpoint_payload(payload)
     np.testing.assert_array_equal(restored.time_ns, history.time_ns)
     np.testing.assert_array_equal(restored.position_mm, history.position_mm)
+    np.testing.assert_array_equal(
+        restored.step_start_beta_prime_per_mm,
+        history.step_start_beta_prime_per_mm,
+    )
+    np.testing.assert_array_equal(
+        restored.step_start_beta_prime_ready,
+        history.step_start_beta_prime_ready,
+    )
     np.testing.assert_array_equal(restored.rest_spin, history.rest_spin)
     assert restored.readiness_left_knot == history.readiness_left_knot
     for expected, actual in zip(history.frozen_segments, restored.frozen_segments):
@@ -219,9 +263,9 @@ def test_checkpoint_roundtrip_preserves_frozen_coefficients_bitwise() -> None:
         )
 
 
-def test_checkpoint_schema_one_is_rejected_after_acceleration_contract_change() -> None:
+def test_old_checkpoint_schema_is_rejected_after_acceleration_contract_change() -> None:
     payload = _history(22).to_checkpoint_payload()
-    payload["schema_version"] = 1
+    payload["schema_version"] = 2
 
     with pytest.raises(ValueError, match="unsupported causal C5"):
         CausalC5SourceHistory.from_checkpoint_payload(payload)

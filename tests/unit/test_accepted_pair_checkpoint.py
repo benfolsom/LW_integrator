@@ -123,7 +123,7 @@ def test_variable_length_pair_checkpoint_round_trip(tmp_path: Path) -> None:
     restored_driver = GrowableTrajectoryBuilder(1, 1, magnetic_dipole=True)
     reopened.restore_pair(restored_rider, restored_driver)
 
-    assert reopened.manifest["schema_version"] == 3
+    assert reopened.manifest["schema_version"] == 4
     assert reopened.committed_knots == 7
     assert reopened.controller_state == {
         "current_lab_step_ns": 0.04,
@@ -202,7 +202,7 @@ def test_pair_checkpoint_appends_and_restores_frozen_c5_coefficients(
 
     assert restored_c5 is not None
     assert reopened.causal_c5_source_history_metadata is not None
-    assert reopened.causal_c5_source_history_metadata["schema_version"] == 2
+    assert reopened.causal_c5_source_history_metadata["schema_version"] == 3
     for restored_collection, expected_collection in (
         (restored_c5.rider, accepted_c5.rider),
         (restored_c5.driver, accepted_c5.driver),

@@ -18,7 +18,7 @@ published view is read-only and remains a stable prefix after later commits.
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 import itertools
 from typing import overload
@@ -119,6 +119,20 @@ class CausalC5PublishedHistory:
         return _readonly_prefix(self._owner._beta_prime_per_mm, self._sample_stop)
 
     @property
+    def step_start_beta_prime_per_mm(self) -> np.ndarray:
+        return _readonly_prefix(
+            self._owner._step_start_beta_prime_per_mm,
+            self._sample_stop,
+        )
+
+    @property
+    def step_start_beta_prime_ready(self) -> np.ndarray:
+        return _readonly_prefix(
+            self._owner._step_start_beta_prime_ready,
+            self._sample_stop,
+        )
+
+    @property
     def rest_spin(self) -> np.ndarray:
         return _readonly_prefix(self._owner._rest_spin, self._sample_stop)
 
@@ -193,6 +207,8 @@ class GrowableCausalC5SourceHistory:
         self._position_mm = np.empty((capacity, 3), dtype=np.float64)
         self._beta = np.empty((capacity, 3), dtype=np.float64)
         self._beta_prime_per_mm = np.empty((capacity, 3), dtype=np.float64)
+        self._step_start_beta_prime_per_mm = np.empty((capacity, 3), dtype=np.float64)
+        self._step_start_beta_prime_ready = np.zeros(capacity, dtype=bool)
         self._rest_spin = np.empty((capacity, 3), dtype=np.float64)
         self._sample_count = 0
         self._segments: list[FrozenC5SourceSegment] = []
@@ -219,6 +235,12 @@ class GrowableCausalC5SourceHistory:
         result._position_mm[:count] = history.position_mm
         result._beta[:count] = history.beta
         result._beta_prime_per_mm[:count] = history.beta_prime_per_mm
+        result._step_start_beta_prime_per_mm[:count] = (
+            history.step_start_beta_prime_per_mm
+        )
+        result._step_start_beta_prime_ready[:count] = (
+            history.step_start_beta_prime_ready
+        )
         result._rest_spin[:count] = history.rest_spin
         result._sample_count = count
         result._segments.extend(history.frozen_segments)
@@ -254,11 +276,13 @@ class GrowableCausalC5SourceHistory:
             ("_position_mm", (capacity, 3)),
             ("_beta", (capacity, 3)),
             ("_beta_prime_per_mm", (capacity, 3)),
+            ("_step_start_beta_prime_per_mm", (capacity, 3)),
+            ("_step_start_beta_prime_ready", (capacity,)),
             ("_rest_spin", (capacity, 3)),
         )
         for name, shape in replacements:
             old = getattr(self, name)
-            new = np.empty(shape, dtype=np.float64)
+            new = np.empty(shape, dtype=old.dtype)
             new[: self._sample_count] = old[: self._sample_count]
             setattr(self, name, new)
 
@@ -282,6 +306,10 @@ class GrowableCausalC5SourceHistory:
         beta: Sequence[Sequence[float]] | np.ndarray,
         beta_prime_per_mm: Sequence[Sequence[float]] | np.ndarray,
         rest_spin: Sequence[Sequence[float]] | np.ndarray,
+        step_start_beta_prime_per_mm: (
+            Sequence[Sequence[float]] | np.ndarray | None
+        ) = None,
+        step_start_beta_prime_ready: Sequence[bool] | np.ndarray | None = None,
     ) -> CausalC5AppendTransaction:
         """Build a detached candidate without advancing the visible prefix."""
 
@@ -300,6 +328,23 @@ class GrowableCausalC5SourceHistory:
             rows=rows,
             name="beta_prime_per_mm",
         )
+        if step_start_beta_prime_per_mm is None:
+            step_start_accelerations = np.zeros((rows, 3), dtype=np.float64)
+        else:
+            step_start_accelerations = self._finite_matrix(
+                step_start_beta_prime_per_mm,
+                rows=rows,
+                name="step_start_beta_prime_per_mm",
+            )
+        if step_start_beta_prime_ready is None:
+            step_start_ready = np.zeros(rows, dtype=bool)
+        else:
+            step_start_ready = np.asarray(step_start_beta_prime_ready, dtype=bool)
+            if step_start_ready.shape != (rows,):
+                raise ValueError(
+                    f"step_start_beta_prime_ready must have shape {(rows,)}"
+                )
+            step_start_ready = np.array(step_start_ready, dtype=bool, copy=True)
         spins = self._finite_matrix(rest_spin, rows=rows, name="rest_spin")
         if np.any(np.sum(velocities * velocities, axis=1) >= 1.0):
             raise ValueError("accepted source beta magnitude must be below one")
@@ -322,6 +367,8 @@ class GrowableCausalC5SourceHistory:
         self._position_mm[start:stop] = positions
         self._beta[start:stop] = velocities
         self._beta_prime_per_mm[start:stop] = accelerations
+        self._step_start_beta_prime_per_mm[start:stop] = step_start_accelerations
+        self._step_start_beta_prime_ready[start:stop] = step_start_ready
         self._rest_spin[start:stop] = spins
 
         sample_view = CausalC5PublishedHistory(

@@ -1134,6 +1134,10 @@ class TrajectoryArrays:
     bdotx: np.ndarray
     bdoty: np.ndarray
     bdotz: np.ndarray
+    source_start_beta_prime_x_per_mm: np.ndarray
+    source_start_beta_prime_y_per_mm: np.ndarray
+    source_start_beta_prime_z_per_mm: np.ndarray
+    source_start_beta_prime_ready: np.ndarray
     radiation_power: np.ndarray
     radiation_energy: np.ndarray
     radiation_energy_applied: np.ndarray
@@ -1350,6 +1354,18 @@ class TrajectoryArrays:
                     "local_magnetic_field_x_t": self.local_magnetic_field_x_t[step],
                     "local_magnetic_field_y_t": self.local_magnetic_field_y_t[step],
                     "local_magnetic_field_z_t": self.local_magnetic_field_z_t[step],
+                    "source_start_beta_prime_x_per_mm": (
+                        self.source_start_beta_prime_x_per_mm[step]
+                    ),
+                    "source_start_beta_prime_y_per_mm": (
+                        self.source_start_beta_prime_y_per_mm[step]
+                    ),
+                    "source_start_beta_prime_z_per_mm": (
+                        self.source_start_beta_prime_z_per_mm[step]
+                    ),
+                    "source_start_beta_prime_ready": (
+                        self.source_start_beta_prime_ready[step]
+                    ),
                     "magnetic_moment_j_per_t": self.magnetic_moment_j_per_t,
                     "magnetic_moment_native": self.magnetic_moment_native,
                     "spin_quantum_number": self.spin_quantum_number,
@@ -1621,6 +1637,18 @@ class IndexedTrajectoryArrays:
                     "local_magnetic_field_z_t": self.row(
                         "local_magnetic_field_z_t", step
                     ),
+                    "source_start_beta_prime_x_per_mm": self.row(
+                        "source_start_beta_prime_x_per_mm", step
+                    ),
+                    "source_start_beta_prime_y_per_mm": self.row(
+                        "source_start_beta_prime_y_per_mm", step
+                    ),
+                    "source_start_beta_prime_z_per_mm": self.row(
+                        "source_start_beta_prime_z_per_mm", step
+                    ),
+                    "source_start_beta_prime_ready": self.row(
+                        "source_start_beta_prime_ready", step
+                    ),
                     "magnetic_moment_j_per_t": self.constant("magnetic_moment_j_per_t"),
                     "magnetic_moment_native": self.constant("magnetic_moment_native"),
                     "spin_quantum_number": self.constant("spin_quantum_number"),
@@ -1674,6 +1702,11 @@ class TrajectoryBuilder:
         "beta_avg_z",
         "beta_samples",
     )
+    _SOURCE_START_FLOAT_FIELDS: tuple = (
+        "source_start_beta_prime_x_per_mm",
+        "source_start_beta_prime_y_per_mm",
+        "source_start_beta_prime_z_per_mm",
+    )
     _MAGNETIC_KINEMATIC_FIELDS: tuple = (
         "spin_x",
         "spin_y",
@@ -1681,7 +1714,8 @@ class TrajectoryBuilder:
         "local_magnetic_field_x_t",
         "local_magnetic_field_y_t",
         "local_magnetic_field_z_t",
-    )
+    ) + _SOURCE_START_FLOAT_FIELDS
+    _MAGNETIC_BOOL_FIELDS: tuple = ("source_start_beta_prime_ready",)
     _MEDINA_FLOAT_FIELDS: tuple = (
         "radiation_reaction_work",
         "medina_cross_field_energy",
@@ -1737,6 +1771,15 @@ class TrajectoryBuilder:
                     np.array(0.0, dtype=np.float64), (n_steps, n_particles)
                 )
             self._arrays[field_name] = magnetic_array
+        for field_name in self._MAGNETIC_BOOL_FIELDS:
+            if self._magnetic_arrays_allocated:
+                magnetic_bool_array = np.zeros((n_steps, n_particles), dtype=bool)
+            else:
+                magnetic_bool_array = np.broadcast_to(
+                    np.array(False, dtype=bool),
+                    (n_steps, n_particles),
+                )
+            self._arrays[field_name] = magnetic_bool_array
         for field_name in self._MEDINA_FLOAT_FIELDS:
             default = (
                 np.nan if field_name == "medina_external_force_sample_time" else 0.0
@@ -1777,11 +1820,13 @@ class TrajectoryBuilder:
         old_capacity = self._n_steps
         always_allocated = set(self._KINEMATIC_FIELDS) | {"dead"}
         magnetic_fields = set(self._MAGNETIC_KINEMATIC_FIELDS)
+        magnetic_bool_fields = set(self._MAGNETIC_BOOL_FIELDS)
         medina_float_fields = set(self._MEDINA_FLOAT_FIELDS)
         medina_bool_fields = set(self._MEDINA_BOOL_FIELDS)
         for field_name in (
             always_allocated
             | magnetic_fields
+            | magnetic_bool_fields
             | medina_float_fields
             | medina_bool_fields
         ):
@@ -1789,6 +1834,14 @@ class TrajectoryBuilder:
             if field_name in magnetic_fields and not self._magnetic_arrays_allocated:
                 replacement = np.broadcast_to(
                     np.array(0.0, dtype=np.float64),
+                    (new_capacity, self._n_particles),
+                )
+            elif (
+                field_name in magnetic_bool_fields
+                and not self._magnetic_arrays_allocated
+            ):
+                replacement = np.broadcast_to(
+                    np.array(False, dtype=bool),
                     (new_capacity, self._n_particles),
                 )
             elif (
@@ -1838,12 +1891,17 @@ class TrajectoryBuilder:
         if step < self._published_stop:
             self._storage_state.rewrite_epoch += 1
 
+        magnetic_fields = self._MAGNETIC_KINEMATIC_FIELDS + self._MAGNETIC_BOOL_FIELDS
         if not self._magnetic_arrays_allocated and any(
-            field_name in state for field_name in self._MAGNETIC_KINEMATIC_FIELDS
+            field_name in state for field_name in magnetic_fields
         ):
             for field_name in self._MAGNETIC_KINEMATIC_FIELDS:
                 self._arrays[field_name] = np.zeros(
                     (self._n_steps, self._n_particles), dtype=np.float64
+                )
+            for field_name in self._MAGNETIC_BOOL_FIELDS:
+                self._arrays[field_name] = np.zeros(
+                    (self._n_steps, self._n_particles), dtype=bool
                 )
             self._magnetic_arrays_allocated = True
             # Replacing one family of backing arrays changes the storage seen
@@ -1876,9 +1934,7 @@ class TrajectoryBuilder:
             self._storage_state.rewrite_epoch += 1
             self._storage_state.array_revision += 1
 
-        for field_name in (
-            self._KINEMATIC_FIELDS + self._MAGNETIC_KINEMATIC_FIELDS + medina_fields
-        ):
+        for field_name in self._KINEMATIC_FIELDS + magnetic_fields + medina_fields:
             if field_name in state:
                 self._arrays[field_name][step] = state[field_name]
             # else leave as zero (already pre-allocated)
@@ -1965,11 +2021,18 @@ class TrajectoryBuilder:
             raise ValueError("checkpoint rows must be restored contiguously")
 
         magnetic_fields = set(self._MAGNETIC_KINEMATIC_FIELDS)
+        magnetic_bool_fields = set(self._MAGNETIC_BOOL_FIELDS)
         medina_fields = set(self._MEDINA_FLOAT_FIELDS + self._MEDINA_BOOL_FIELDS)
-        if not self._magnetic_arrays_allocated and magnetic_fields & row_arrays.keys():
+        if not self._magnetic_arrays_allocated and (
+            (magnetic_fields | magnetic_bool_fields) & row_arrays.keys()
+        ):
             for field_name in self._MAGNETIC_KINEMATIC_FIELDS:
                 self._arrays[field_name] = np.zeros(
                     (self._n_steps, self._n_particles), dtype=np.float64
+                )
+            for field_name in self._MAGNETIC_BOOL_FIELDS:
+                self._arrays[field_name] = np.zeros(
+                    (self._n_steps, self._n_particles), dtype=bool
                 )
             self._magnetic_arrays_allocated = True
             self._storage_state.array_revision += 1
@@ -1991,16 +2054,23 @@ class TrajectoryBuilder:
         expected_row_fields = set(
             self._KINEMATIC_FIELDS
             + self._MAGNETIC_KINEMATIC_FIELDS
+            + self._MAGNETIC_BOOL_FIELDS
             + self._MEDINA_FLOAT_FIELDS
             + self._MEDINA_BOOL_FIELDS
             + ("dead",)
         )
-        missing = expected_row_fields - row_arrays.keys()
+        # Fixed-step checkpoint schema 1 predates the exact-pair source-start
+        # acceleration sidecars. Those fields have a safe all-zero/unready
+        # default because fixed-step causal-C5 use is not supported.
+        optional_source_start_fields = set(
+            self._SOURCE_START_FLOAT_FIELDS + self._MAGNETIC_BOOL_FIELDS
+        )
+        missing = expected_row_fields - optional_source_start_fields - row_arrays.keys()
         if missing:
             raise ValueError(
                 "checkpoint row block is missing fields: " + ", ".join(sorted(missing))
             )
-        for field_name in expected_row_fields:
+        for field_name in expected_row_fields & row_arrays.keys():
             values = np.asarray(row_arrays[field_name])
             target = self._arrays[field_name][start:stop]
             if values.shape != target.shape:
@@ -2090,6 +2160,18 @@ class TrajectoryBuilder:
             bdotx=self._arrays["bdotx"][:s],
             bdoty=self._arrays["bdoty"][:s],
             bdotz=self._arrays["bdotz"][:s],
+            source_start_beta_prime_x_per_mm=self._arrays[
+                "source_start_beta_prime_x_per_mm"
+            ][:s],
+            source_start_beta_prime_y_per_mm=self._arrays[
+                "source_start_beta_prime_y_per_mm"
+            ][:s],
+            source_start_beta_prime_z_per_mm=self._arrays[
+                "source_start_beta_prime_z_per_mm"
+            ][:s],
+            source_start_beta_prime_ready=self._arrays["source_start_beta_prime_ready"][
+                :s
+            ],
             radiation_power=self._arrays["radiation_power"][:s],
             radiation_energy=self._arrays["radiation_energy"][:s],
             radiation_energy_applied=self._arrays["radiation_energy_applied"][:s],
@@ -2168,6 +2250,16 @@ class TrajectoryBuilder:
             bdotx=self._arrays["bdotx"],
             bdoty=self._arrays["bdoty"],
             bdotz=self._arrays["bdotz"],
+            source_start_beta_prime_x_per_mm=self._arrays[
+                "source_start_beta_prime_x_per_mm"
+            ],
+            source_start_beta_prime_y_per_mm=self._arrays[
+                "source_start_beta_prime_y_per_mm"
+            ],
+            source_start_beta_prime_z_per_mm=self._arrays[
+                "source_start_beta_prime_z_per_mm"
+            ],
+            source_start_beta_prime_ready=self._arrays["source_start_beta_prime_ready"],
             radiation_power=self._arrays["radiation_power"],
             radiation_energy=self._arrays["radiation_energy"],
             radiation_energy_applied=self._arrays["radiation_energy_applied"],

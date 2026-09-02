@@ -1,5 +1,24 @@
 # Changelog
 
+- Preserve the equations-of-motion acceleration evaluated at the start of an
+  accepted exact-source step, with its timing stated explicitly. An endpoint
+  row now carries the start acceleration of the step that ended at that row;
+  the causal source history shifts it back to the physical start knot instead
+  of relabelling it as endpoint data. The value is marked ready only when no
+  later radiation-reaction impulse is applied, so Medina/LAD and other
+  reaction modes continue to use the velocity-derived fallback rather than an
+  incomplete acceleration. Charge-only trajectories retain broadcast-zero
+  magnetic sidecars and require no new configuration. The causal-$C^5$
+  checkpoint sub-schema advances to version 3 and the accepted-pair schema to
+  version 4; older exact-pair causal-$C^5$ checkpoints fail explicitly on
+  resume. Existing fixed-step checkpoints retain their schema and restore the
+  new sidecars as unready, so nondipole restart remains compatible. A
+  four-level live test confirms the timing and bitwise restart contract, but
+  also shows that exact acceleration samples alone do not make
+  trajectory-derived jerk or $\partial F$ converge. Higher source derivatives
+  still need independent information or a different continuous integration
+  representation.
+
 - Corrected the meaning of source acceleration used by retarded-field history
   interpolation. The trajectory field named `bdot` remains a diagnostic for
   the velocity change over the preceding accepted step; charge and live

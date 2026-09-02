@@ -836,6 +836,46 @@ def test_intrinsic_spin_diagnostic_off_never_calls_reduction_provider(
     assert np.all(np.isfinite(trial.pair.driver.state["Px"]))
     assert "_intrinsic_spin_start_analytical_reduction" not in trial.pair.rider.state
     assert "_intrinsic_spin_start_analytical_reduction" not in trial.pair.driver.state
+    assert not bool(trial.pair.rider.state["source_start_beta_prime_ready"][0])
+    assert not bool(trial.pair.driver.state["source_start_beta_prime_ready"][0])
+
+
+def test_second_order_source_start_acceleration_is_ready_without_reaction() -> None:
+    rider_builder, driver_builder, magnetic = _charged_accepted_pair(
+        exact_retarded_update="second_order_start_taylor_endpoint",
+    )
+    advance = make_exact_role_eom_advance(
+        ExactPairEOMOptions(
+            aperture_radius_mm=1.0,
+            magnetic_dipole=magnetic,
+            self_consistency=SelfConsistencyConfig.standard(),
+            radiation_reaction_mode="off",
+        )
+    )
+
+    trial = solve_exact_pair_slab_trial(
+        accepted_rider_history=rider_builder.build_current(),
+        accepted_driver_history=driver_builder.build_current(),
+        advance_rider=advance,
+        advance_driver=advance,
+        delta_time_ns=1.0e-8,
+        rider_initial_proper_step_ns=1.0e-8,
+        driver_initial_proper_step_ns=1.0e-8,
+        magnetic_dipole=magnetic,
+        include_dipole_source=False,
+    )
+
+    for endpoint in (trial.pair.rider.state, trial.pair.driver.state):
+        assert bool(endpoint["source_start_beta_prime_ready"][0])
+        assert np.all(
+            np.isfinite(
+                [
+                    endpoint["source_start_beta_prime_x_per_mm"][0],
+                    endpoint["source_start_beta_prime_y_per_mm"][0],
+                    endpoint["source_start_beta_prime_z_per_mm"][0],
+                ]
+            )
+        )
 
 
 def test_short_adaptive_window_runs_charged_rfs_medina_and_dipole_source() -> None:

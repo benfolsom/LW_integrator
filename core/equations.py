@@ -1873,17 +1873,26 @@ def retarded_equations_of_motion(
             "causal C5 dipole history requires the exact inertial dipole-source path"
         )
     if second_order_exact_source_selected:
-        # Private accepted-trial metadata for the diagnostic intrinsic-spin
-        # history.  These values belong to the step start and are calculated
-        # before Medina adds its charge-radiation impulse.  They are consumed
-        # transactionally by the exact-pair adaptive controller and are never
-        # materialized in TrajectoryArrays or public output.
+        # Accepted-trial metadata for the source and diagnostic intrinsic-spin
+        # histories. These values belong to the step start and are calculated
+        # before Medina adds its charge-radiation impulse. Private fields are
+        # consumed only by the exact-pair adaptive controller; the explicitly
+        # timed source acceleration is retained in TrajectoryArrays when it is
+        # known to include every applied force sector.
         result["_intrinsic_spin_start_four_velocity"] = np.full(
             (num_particles, 4), np.nan, dtype=float
         )
         result["_intrinsic_spin_start_non_self_four_acceleration"] = np.full(
             (num_particles, 4), np.nan, dtype=float
         )
+        result["_source_start_acceleration_complete"] = np.zeros(
+            num_particles, dtype=bool
+        )
+        for axis in "xyz":
+            result[f"source_start_beta_prime_{axis}_per_mm"] = np.zeros(
+                num_particles, dtype=float
+            )
+        result["source_start_beta_prime_ready"] = np.zeros(num_particles, dtype=bool)
         result["_intrinsic_spin_start_physical_four_spin"] = np.full(
             (num_particles, 4), np.nan, dtype=float
         )
@@ -3608,6 +3617,29 @@ def retarded_equations_of_motion(
                 result["_intrinsic_spin_start_non_self_four_acceleration"][
                     particle_idx
                 ] = start_four_acceleration
+                # This start-event value contains the ordinary charge force,
+                # RFS dipole force, prescribed external force, and configured
+                # Stern--Gerlach force. It is the complete trajectory
+                # acceleration only when no later reaction impulse is applied.
+                result["_source_start_acceleration_complete"][particle_idx] = (
+                    radiation_mode == "off"
+                )
+                if radiation_mode == "off":
+                    from .source_kinematics import (
+                        coordinate_beta_prime_from_four_kinematics,
+                    )
+
+                    source_start_beta_prime = (
+                        coordinate_beta_prime_from_four_kinematics(
+                            start_four_velocity,
+                            start_four_acceleration,
+                        )
+                    )
+                    for axis_index, axis in enumerate("xyz"):
+                        result[f"source_start_beta_prime_{axis}_per_mm"][
+                            particle_idx
+                        ] = source_start_beta_prime[axis_index]
+                    result["source_start_beta_prime_ready"][particle_idx] = True
                 result["_intrinsic_spin_start_physical_four_spin"][particle_idx] = (
                     invariant_spin_native
                     * boost_rest_polarization(

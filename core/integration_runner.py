@@ -25,7 +25,7 @@ from .equations import (
 )
 from .exact_pair_endpoint import (
     discard_exact_source_endpoint_scratch as _discard_exact_source_endpoint_scratch,
-    evaluate_exact_endpoint_four_potential as _evaluate_exact_endpoint_four_potential,
+    evaluate_exact_endpoint_four_potential as _evaluate_exact_endpoint_four_potential,  # noqa: F401
     finalize_exact_source_canonical_pair_states,
 )
 from .images import generate_conducting_image, generate_switching_image
@@ -1290,6 +1290,16 @@ def _slice_trajectory_arrays(
         bdotx=arrays.bdotx[start:stop],
         bdoty=arrays.bdoty[start:stop],
         bdotz=arrays.bdotz[start:stop],
+        source_start_beta_prime_x_per_mm=(
+            arrays.source_start_beta_prime_x_per_mm[start:stop]
+        ),
+        source_start_beta_prime_y_per_mm=(
+            arrays.source_start_beta_prime_y_per_mm[start:stop]
+        ),
+        source_start_beta_prime_z_per_mm=(
+            arrays.source_start_beta_prime_z_per_mm[start:stop]
+        ),
+        source_start_beta_prime_ready=arrays.source_start_beta_prime_ready[start:stop],
         radiation_power=arrays.radiation_power[start:stop],
         radiation_energy=arrays.radiation_energy[start:stop],
         radiation_energy_applied=arrays.radiation_energy_applied[start:stop],

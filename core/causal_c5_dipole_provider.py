@@ -34,7 +34,11 @@ from .growable_causal_c5_source_history import (
     GrowableCausalC5SourceHistory,
 )
 from .rfs import fields_from_tensor_native
-from .types import ParticleState, TrajectoryArrays
+from .source_kinematics import (
+    coordinate_beta_prime_from_four_kinematics,
+    reconstruct_instantaneous_beta_prime_per_mm,
+)
+from .types import TrajectoryArrays
 
 if TYPE_CHECKING:
     from .exact_pair_trial import ExactPairStepDoublingTrial
@@ -89,6 +93,63 @@ def _state_scalar(
     return result
 
 
+def _accepted_step_start_beta_prime_per_mm(
+    state: Mapping[str, object],
+    particle_index: int,
+) -> np.ndarray | None:
+    """Return the complete accepted step-start acceleration when available."""
+
+    ready_values = np.asarray(
+        state.get("source_start_beta_prime_ready", np.zeros(0, dtype=bool)),
+        dtype=bool,
+    )
+    if (
+        ready_values.ndim == 1
+        and particle_index < ready_values.size
+        and bool(ready_values[particle_index])
+    ):
+        return _state_vector(
+            state,
+            (
+                "source_start_beta_prime_x_per_mm",
+                "source_start_beta_prime_y_per_mm",
+                "source_start_beta_prime_z_per_mm",
+            ),
+            particle_index,
+        )
+
+    complete_values = np.asarray(
+        state.get("_source_start_acceleration_complete", np.zeros(0, dtype=bool)),
+        dtype=bool,
+    )
+    if (
+        complete_values.ndim != 1
+        or particle_index >= complete_values.size
+        or not bool(complete_values[particle_index])
+    ):
+        return None
+    velocity_values = np.asarray(
+        state.get("_intrinsic_spin_start_four_velocity"),
+        dtype=np.float64,
+    )
+    acceleration_values = np.asarray(
+        state.get("_intrinsic_spin_start_non_self_four_acceleration"),
+        dtype=np.float64,
+    )
+    if (
+        velocity_values.ndim != 2
+        or acceleration_values.ndim != 2
+        or velocity_values.shape[1:] != (4,)
+        or acceleration_values.shape != velocity_values.shape
+        or particle_index >= velocity_values.shape[0]
+    ):
+        raise ValueError("accepted source state has invalid start four-kinematics")
+    return coordinate_beta_prime_from_four_kinematics(
+        velocity_values[particle_index],
+        acceleration_values[particle_index],
+    )
+
+
 @dataclass(frozen=True)
 class CausalC5DipoleSource:
     """One stable source identity, constant moment, and accepted history."""
@@ -138,6 +199,9 @@ class CausalC5DipoleSource:
                 state,
                 ("spin_x", "spin_y", "spin_z"),
                 particle,
+            ),
+            step_start_beta_prime_per_mm=(
+                _accepted_step_start_beta_prime_per_mm(state, particle)
             ),
         )
         return CausalC5DipoleSource(
@@ -232,6 +296,13 @@ class CausalC5DipoleSourceCollection:
                 if frozen_segments is None
                 else tuple(frozen_segments[sequence_index])
             )
+            source_beta = np.column_stack(
+                (
+                    trajectory.bx[:, particle],
+                    trajectory.by[:, particle],
+                    trajectory.bz[:, particle],
+                )
+            )
             history = CausalC5SourceHistory.from_accepted_samples(
                 time_ns=trajectory.t[:, particle],
                 position_mm=np.column_stack(
@@ -241,22 +312,23 @@ class CausalC5DipoleSourceCollection:
                         trajectory.z[:, particle],
                     )
                 ),
-                beta=np.column_stack(
-                    (
-                        trajectory.bx[:, particle],
-                        trajectory.by[:, particle],
-                        trajectory.bz[:, particle],
-                    )
-                ),
-                beta_prime_per_mm=np.column_stack(
-                    (
-                        trajectory.bdotx[:, particle],
-                        trajectory.bdoty[:, particle],
-                        trajectory.bdotz[:, particle],
-                    )
+                beta=source_beta,
+                beta_prime_per_mm=reconstruct_instantaneous_beta_prime_per_mm(
+                    trajectory.t[:, particle],
+                    source_beta,
                 ),
                 rest_spin=spin,
                 stereographic_frame=frame,
+                step_start_beta_prime_per_mm=np.column_stack(
+                    (
+                        trajectory.source_start_beta_prime_x_per_mm[:, particle],
+                        trajectory.source_start_beta_prime_y_per_mm[:, particle],
+                        trajectory.source_start_beta_prime_z_per_mm[:, particle],
+                    )
+                ),
+                step_start_beta_prime_ready=trajectory.source_start_beta_prime_ready[
+                    :, particle
+                ],
                 frozen_segments=supplied_segments,
             )
             moment = float(trajectory.magnetic_moment_native[particle])
@@ -515,6 +587,10 @@ class GrowableCausalC5DipoleSourceCollection:
                     raise ValueError(
                         f"source identity {identity!r} changed magnetic moment"
                     )
+            step_start_accelerations = tuple(
+                _accepted_step_start_beta_prime_per_mm(state, particle)
+                for state in rows
+            )
             transaction = history.preflight_append_many(
                 time_ns=np.asarray(
                     [_state_scalar(state, "t", particle) for state in rows]
@@ -547,6 +623,16 @@ class GrowableCausalC5DipoleSourceCollection:
                         )
                         for state in rows
                     ]
+                ),
+                step_start_beta_prime_per_mm=np.asarray(
+                    [
+                        np.zeros(3, dtype=np.float64) if value is None else value
+                        for value in step_start_accelerations
+                    ]
+                ),
+                step_start_beta_prime_ready=np.asarray(
+                    [value is not None for value in step_start_accelerations],
+                    dtype=bool,
                 ),
             )
             transactions.append(transaction)

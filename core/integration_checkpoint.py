@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from .causal_c5_dipole_provider import AcceptedPairCausalC5SourceHistory
 
 SCHEMA_VERSION = 1
-ACCEPTED_PAIR_SCHEMA_VERSION = 3
+ACCEPTED_PAIR_SCHEMA_VERSION = 4
 
 
 class CheckpointError(RuntimeError):
@@ -60,11 +60,22 @@ _NON_ARRAY_FIELDS = {
     "_storage_state",
     "_storage_array_revision",
 }
-_ROW_ARRAY_FIELDS = tuple(
+_ACCEPTED_PAIR_ROW_ARRAY_FIELDS = tuple(
     descriptor.name
     for descriptor in fields(TrajectoryArrays)
     if descriptor.name not in _PARTICLE_CONSTANT_FIELDS
     and descriptor.name not in _NON_ARRAY_FIELDS
+)
+_EXACT_SOURCE_START_ROW_FIELDS = {
+    "source_start_beta_prime_x_per_mm",
+    "source_start_beta_prime_y_per_mm",
+    "source_start_beta_prime_z_per_mm",
+    "source_start_beta_prime_ready",
+}
+_ROW_ARRAY_FIELDS = tuple(
+    name
+    for name in _ACCEPTED_PAIR_ROW_ARRAY_FIELDS
+    if name not in _EXACT_SOURCE_START_ROW_FIELDS
 )
 
 
@@ -704,7 +715,7 @@ class AcceptedPairCheckpointStore:
         constants = self._constants_metadata(rider, driver)
         arrays: dict[str, np.ndarray] = {}
         for role, trajectory in (("rider", rider), ("driver", driver)):
-            for name in _ROW_ARRAY_FIELDS:
+            for name in _ACCEPTED_PAIR_ROW_ARRAY_FIELDS:
                 values = np.asarray(getattr(trajectory, name))
                 arrays[f"{role}__{name}"] = np.array(values[start:stop], copy=True)
         c5_metadata = self._append_causal_c5_arrays(
@@ -776,7 +787,7 @@ class AcceptedPairCheckpointStore:
             ) as archive:
                 row_arrays = {
                     name: np.array(archive[f"{role}__{name}"], copy=True)
-                    for name in _ROW_ARRAY_FIELDS
+                    for name in _ACCEPTED_PAIR_ROW_ARRAY_FIELDS
                 }
             builder.restore_checkpoint_rows(
                 start,
@@ -822,7 +833,7 @@ class AcceptedPairCheckpointStore:
                 ),
                 "position_condition_number": np.zeros(0, dtype=np.float64),
                 "spin_condition_number": np.zeros(0, dtype=np.float64),
-                "position_window_indices": np.zeros((0, 2, 9), dtype=np.int64),
+                "position_window_indices": np.zeros((0, 2, 7), dtype=np.int64),
                 "spin_window_indices": np.zeros((0, 2, 15), dtype=np.int64),
             }
         return {
@@ -870,10 +881,9 @@ class AcceptedPairCheckpointStore:
         existing = self.manifest.get("causal_c5_source_history")
         if existing is not None and not isinstance(existing, dict):
             raise CheckpointError("causal C5 source metadata is invalid")
-        # Schema 2 stores nine velocity-knot indices for each endpoint's
-        # instantaneous-acceleration reconstruction. Older causal-C5 chunks
-        # must not be mixed with this source-history contract.
-        next_metadata: dict[str, Any] = {"schema_version": 2}
+        # Schema 3 uses accepted step-start acceleration, stored in the pair
+        # trajectory rows, and seven physical acceleration-knot indices.
+        next_metadata: dict[str, Any] = {"schema_version": 3}
         for role, collection, trajectory in (
             ("rider", state.rider, rider),
             ("driver", state.driver, driver),
@@ -937,7 +947,7 @@ class AcceptedPairCheckpointStore:
         metadata = self.causal_c5_source_history_metadata
         if metadata is None:
             return None
-        if metadata.get("schema_version") != 2:
+        if metadata.get("schema_version") != 3:
             raise CheckpointCompatibilityError(
                 "unsupported causal C5 checkpoint metadata schema"
             )

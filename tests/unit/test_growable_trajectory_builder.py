@@ -338,4 +338,5 @@ def test_existing_chunk_format_restores_growable_accepted_history(
     assert restored.accepted_steps == 5
     assert restored.capacity >= 5
     assert reopened.loop_state == {"controller": "fine"}
+    assert not np.any(restored.build_current().source_start_beta_prime_ready)
     _assert_public_arrays_equal(restored.build_current(), history)

@@ -21,6 +21,39 @@ import numpy as np
 from .constants import C_MMNS
 
 
+def coordinate_beta_prime_from_four_kinematics(
+    four_velocity_mm_ns: Sequence[float] | np.ndarray,
+    four_acceleration_mm_ns2: Sequence[float] | np.ndarray,
+) -> np.ndarray:
+    """Convert ``du/dtau`` into instantaneous ``d beta / d(c t)``.
+
+    For ``u = gamma c (1, beta)``, the spatial coordinate acceleration obeys
+
+    ``d beta/d(ct) = (a_spatial - beta*a_time) / (gamma**2*c**2)``.
+
+    This conversion changes coordinates only. It does not add a missing force
+    sector to the supplied four-acceleration.
+    """
+
+    velocity = np.asarray(four_velocity_mm_ns, dtype=np.float64)
+    acceleration = np.asarray(four_acceleration_mm_ns2, dtype=np.float64)
+    if velocity.shape != (4,) or acceleration.shape != (4,):
+        raise ValueError("four-velocity and four-acceleration must have shape (4,)")
+    if not np.all(np.isfinite(velocity)) or not np.all(np.isfinite(acceleration)):
+        raise ValueError("four-kinematics must contain only finite values")
+    gamma = float(velocity[0] / C_MMNS)
+    if not np.isfinite(gamma) or gamma < 1.0:
+        raise ValueError("four-velocity must have a finite gamma of at least one")
+    beta = velocity[1:] / velocity[0]
+    beta_squared = float(beta @ beta)
+    if beta_squared >= 1.0:
+        raise ValueError("four-velocity must represent a subluminal beta")
+    return cast(
+        np.ndarray,
+        (acceleration[1:] - beta * acceleration[0]) / (gamma * gamma * C_MMNS * C_MMNS),
+    )
+
+
 def _three_point_first_derivative_weights(
     coordinate_mm: np.ndarray,
     *,
@@ -29,9 +62,7 @@ def _three_point_first_derivative_weights(
     """Return scaled Lagrange weights for one first derivative."""
 
     center = int(center_index)
-    offsets = np.asarray(coordinate_mm, dtype=np.float64) - float(
-        coordinate_mm[center]
-    )
+    offsets = np.asarray(coordinate_mm, dtype=np.float64) - float(coordinate_mm[center])
     scale = float(np.max(np.abs(offsets)))
     if not np.isfinite(scale) or scale <= 0.0:
         raise ValueError("source coordinate samples must span a finite interval")
@@ -73,9 +104,7 @@ def reconstruct_instantaneous_beta_prime_per_mm(
 
     coordinate_mm = C_MMNS * times
     if sample_count == 2:
-        secant = (velocities[1] - velocities[0]) / (
-            coordinate_mm[1] - coordinate_mm[0]
-        )
+        secant = (velocities[1] - velocities[0]) / (coordinate_mm[1] - coordinate_mm[0])
         result[:] = secant
         return result
 
@@ -98,4 +127,7 @@ def reconstruct_instantaneous_beta_prime_per_mm(
     return result
 
 
-__all__ = ["reconstruct_instantaneous_beta_prime_per_mm"]
+__all__ = [
+    "coordinate_beta_prime_from_four_kinematics",
+    "reconstruct_instantaneous_beta_prime_per_mm",
+]

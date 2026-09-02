@@ -6,13 +6,15 @@ the readiness boundary explicit.  A caller may construct a candidate state
 for an adaptive trial, but the accepted state is unchanged unless that
 candidate is committed.
 
-Instantaneous acceleration is first reconstructed from accepted velocity
-samples rather than from the preceding-interval ``bdot`` value. Position
-derivatives through fifth order then use a seven-acceleration, nine-velocity
-window. Unit rest spin is represented by two stereographic coordinates; a
-degree-ten fit over fifteen accepted knots estimates derivatives through fifth
-order.  Neighboring degree-eleven Hermite segments reuse the same knot
-derivatives and are therefore $C^5$ in the represented coordinates.
+Each accepted row may carry the acceleration evaluated at the start of its
+step. That value belongs to the preceding source knot, so it is stored as
+explicit shifted provenance instead of being relabelled as endpoint data.
+Position derivatives through fifth order use a seven-acceleration window,
+falling back to the supplied instantaneous-knot estimate where no accepted
+start-force value exists. Unit rest spin is represented by two stereographic
+coordinates; a degree-ten fit over fifteen accepted knots estimates derivatives
+through fifth order. Neighboring degree-eleven Hermite segments reuse the same
+knot derivatives and are therefore $C^5$ in the represented coordinates.
 
 The fixed stereographic frame is part of the checkpointed model.  A history
 that approaches its excluded chart pole fails closed instead of silently
@@ -29,14 +31,12 @@ from typing import Mapping, Sequence, cast
 import numpy as np
 
 from .constants import C_MMNS
-from .source_kinematics import reconstruct_instantaneous_beta_prime_per_mm
 
-# Schema 2 records the nine-velocity-knot provenance required by the
-# instantaneous-acceleration reconstruction. Schema 1 stored seven indices and
-# cannot be resumed without silently changing already frozen source segments.
-_CHECKPOINT_SCHEMA_VERSION = 2
+# Schema 3 adds explicit step-start acceleration values and restores
+# seven-acceleration-knot provenance. Earlier source histories cannot provide
+# the accepted-force timing needed by this representation.
+_CHECKPOINT_SCHEMA_VERSION = 3
 _POSITION_HALF_WINDOW = 3
-_POSITION_VELOCITY_HALF_WINDOW = _POSITION_HALF_WINDOW + 1
 _SPIN_HALF_WINDOW = 7
 _SPIN_FIT_DEGREE = 10
 _CONTINUITY_ORDER = 5
@@ -83,6 +83,20 @@ def _readonly_index_array(
     if result.shape != shape:
         raise ValueError(f"{name} must have shape {shape}")
     result = np.array(result, dtype=np.int64, copy=True)
+    result.setflags(write=False)
+    return result
+
+
+def _readonly_bool_array(
+    value: Sequence[bool] | np.ndarray,
+    *,
+    shape: tuple[int, ...],
+    name: str,
+) -> np.ndarray:
+    result = np.asarray(value, dtype=bool)
+    if result.shape != shape:
+        raise ValueError(f"{name} must have shape {shape}")
+    result = np.array(result, dtype=bool, copy=True)
     result.setflags(write=False)
     return result
 
@@ -169,18 +183,23 @@ def _position_derivatives_at_knot(
 ) -> tuple[np.ndarray, float, np.ndarray]:
     start = knot_index - _POSITION_HALF_WINDOW
     stop = knot_index + _POSITION_HALF_WINDOW + 1
-    velocity_start = knot_index - _POSITION_VELOCITY_HALF_WINDOW
-    velocity_stop = knot_index + _POSITION_VELOCITY_HALF_WINDOW + 1
-    if velocity_start < 0 or velocity_stop > history.sample_count:
+    if start < 0 or stop > history.sample_count:
         raise CausalC5HistoryUnavailableError(
             "position derivative window is not fully accepted"
         )
     times = history.time_ns[start:stop]
-    reconstructed_beta_prime = reconstruct_instantaneous_beta_prime_per_mm(
-        history.time_ns[velocity_start:velocity_stop],
-        history.beta[velocity_start:velocity_stop],
-    )[1:-1]
-    acceleration = C_MMNS**2 * reconstructed_beta_prime
+    beta_prime = np.array(history.beta_prime_per_mm[start:stop], copy=True)
+    source_knots = np.arange(start, stop, dtype=np.int64)
+    step_rows = source_knots + 1
+    available = step_rows < history.sample_count
+    step_start_ready = history.step_start_beta_prime_ready
+    step_start_beta_prime = history.step_start_beta_prime_per_mm
+    assert step_start_ready is not None
+    assert step_start_beta_prime is not None
+    ready = np.zeros(source_knots.size, dtype=bool)
+    ready[available] = step_start_ready[step_rows[available]]
+    beta_prime[ready] = step_start_beta_prime[step_rows[ready]]
+    acceleration = C_MMNS**2 * beta_prime
     acceleration_delta = acceleration - acceleration[_POSITION_HALF_WINDOW]
     higher_derivatives: list[np.ndarray] = []
     conditions: list[float] = []
@@ -204,7 +223,7 @@ def _position_derivatives_at_knot(
     return (
         derivatives,
         max(conditions),
-        np.arange(velocity_start, velocity_stop, dtype=np.int64),
+        source_knots,
     )
 
 
@@ -361,7 +380,7 @@ class FrozenC5SourceSegment:
             "position_window_indices",
             _readonly_index_array(
                 self.position_window_indices,
-                shape=(2, 9),
+                shape=(2, 7),
                 name="position_window_indices",
             ),
         )
@@ -471,6 +490,8 @@ class CausalC5SourceHistory:
     beta_prime_per_mm: np.ndarray
     rest_spin: np.ndarray
     stereographic_frame: np.ndarray
+    step_start_beta_prime_per_mm: np.ndarray | None = None
+    step_start_beta_prime_ready: np.ndarray | None = None
     frozen_segments: tuple[FrozenC5SourceSegment, ...] = ()
 
     def __post_init__(self) -> None:
@@ -489,6 +510,34 @@ class CausalC5SourceHistory:
                     name=name,
                 ),
             )
+        step_start_beta_prime = (
+            np.zeros((count, 3), dtype=np.float64)
+            if self.step_start_beta_prime_per_mm is None
+            else self.step_start_beta_prime_per_mm
+        )
+        step_start_ready = (
+            np.zeros(count, dtype=bool)
+            if self.step_start_beta_prime_ready is None
+            else self.step_start_beta_prime_ready
+        )
+        object.__setattr__(
+            self,
+            "step_start_beta_prime_per_mm",
+            _readonly_array(
+                step_start_beta_prime,
+                shape=(count, 3),
+                name="step_start_beta_prime_per_mm",
+            ),
+        )
+        object.__setattr__(
+            self,
+            "step_start_beta_prime_ready",
+            _readonly_bool_array(
+                step_start_ready,
+                shape=(count,),
+                name="step_start_beta_prime_ready",
+            ),
+        )
         if count and np.any(np.sum(self.beta * self.beta, axis=1) >= 1.0):
             raise ValueError("accepted source beta magnitude must be below one")
         if count and not np.allclose(
@@ -526,14 +575,8 @@ class CausalC5SourceHistory:
                 raise ValueError("frozen C5 segment changed stereographic frame")
             expected_position_windows = np.stack(
                 (
-                    np.arange(
-                        left - _POSITION_VELOCITY_HALF_WINDOW,
-                        left + _POSITION_VELOCITY_HALF_WINDOW + 1,
-                    ),
-                    np.arange(
-                        left + 1 - _POSITION_VELOCITY_HALF_WINDOW,
-                        left + 1 + _POSITION_VELOCITY_HALF_WINDOW + 1,
-                    ),
+                    np.arange(left - _POSITION_HALF_WINDOW, left + 4),
+                    np.arange(left + 1 - _POSITION_HALF_WINDOW, left + 5),
                 )
             )
             expected_spin_windows = np.stack(
@@ -565,6 +608,8 @@ class CausalC5SourceHistory:
             beta_prime_per_mm=np.zeros((0, 3)),
             rest_spin=np.zeros((0, 3)),
             stereographic_frame=np.asarray(stereographic_frame, dtype=np.float64),
+            step_start_beta_prime_per_mm=np.zeros((0, 3)),
+            step_start_beta_prime_ready=np.zeros(0, dtype=bool),
         )
 
     @classmethod
@@ -577,6 +622,10 @@ class CausalC5SourceHistory:
         beta_prime_per_mm: Sequence[Sequence[float]] | np.ndarray,
         rest_spin: Sequence[Sequence[float]] | np.ndarray,
         stereographic_frame: Sequence[Sequence[float]] | np.ndarray = np.eye(3),
+        step_start_beta_prime_per_mm: (
+            Sequence[Sequence[float]] | np.ndarray | None
+        ) = None,
+        step_start_beta_prime_ready: Sequence[bool] | np.ndarray | None = None,
         frozen_segments: Sequence[FrozenC5SourceSegment] | None = None,
     ) -> "CausalC5SourceHistory":
         """Build one accepted prefix without repeated immutable appends.
@@ -594,6 +643,16 @@ class CausalC5SourceHistory:
             beta_prime_per_mm=np.asarray(beta_prime_per_mm, dtype=np.float64),
             rest_spin=np.asarray(rest_spin, dtype=np.float64),
             stereographic_frame=np.asarray(stereographic_frame, dtype=np.float64),
+            step_start_beta_prime_per_mm=(
+                None
+                if step_start_beta_prime_per_mm is None
+                else np.asarray(step_start_beta_prime_per_mm, dtype=np.float64)
+            ),
+            step_start_beta_prime_ready=(
+                None
+                if step_start_beta_prime_ready is None
+                else np.asarray(step_start_beta_prime_ready, dtype=bool)
+            ),
             frozen_segments=(),
         )
         if frozen_segments is not None:
@@ -604,6 +663,8 @@ class CausalC5SourceHistory:
                 beta_prime_per_mm=history.beta_prime_per_mm,
                 rest_spin=history.rest_spin,
                 stereographic_frame=history.stereographic_frame,
+                step_start_beta_prime_per_mm=(history.step_start_beta_prime_per_mm),
+                step_start_beta_prime_ready=history.step_start_beta_prime_ready,
                 frozen_segments=tuple(frozen_segments),
             )
         maximum_left = history.sample_count - _SPIN_HALF_WINDOW - 2
@@ -620,6 +681,8 @@ class CausalC5SourceHistory:
             beta_prime_per_mm=history.beta_prime_per_mm,
             rest_spin=history.rest_spin,
             stereographic_frame=history.stereographic_frame,
+            step_start_beta_prime_per_mm=history.step_start_beta_prime_per_mm,
+            step_start_beta_prime_ready=history.step_start_beta_prime_ready,
             frozen_segments=segments,
         )
 
@@ -694,6 +757,7 @@ class CausalC5SourceHistory:
         beta: Sequence[float],
         beta_prime_per_mm: Sequence[float],
         rest_spin: Sequence[float],
+        step_start_beta_prime_per_mm: Sequence[float] | np.ndarray | None = None,
     ) -> "CausalC5SourceHistory":
         """Return a candidate accepted state without mutating this history."""
 
@@ -711,6 +775,16 @@ class CausalC5SourceHistory:
                 (rest_spin, "rest_spin"),
             )
         )
+        if step_start_beta_prime_per_mm is None:
+            step_start_beta_prime = np.zeros(3, dtype=np.float64)
+            step_start_ready = False
+        else:
+            step_start_beta_prime = _readonly_array(
+                step_start_beta_prime_per_mm,
+                shape=(3,),
+                name="step_start_beta_prime_per_mm",
+            )
+            step_start_ready = True
         candidate = CausalC5SourceHistory(
             time_ns=np.concatenate((self.time_ns, np.asarray((time,)))),
             position_mm=np.vstack((self.position_mm, vectors[0])),
@@ -718,6 +792,12 @@ class CausalC5SourceHistory:
             beta_prime_per_mm=np.vstack((self.beta_prime_per_mm, vectors[2])),
             rest_spin=np.vstack((self.rest_spin, vectors[3])),
             stereographic_frame=self.stereographic_frame,
+            step_start_beta_prime_per_mm=np.vstack(
+                (self.step_start_beta_prime_per_mm, step_start_beta_prime)
+            ),
+            step_start_beta_prime_ready=np.concatenate(
+                (self.step_start_beta_prime_ready, np.asarray((step_start_ready,)))
+            ),
             frozen_segments=self.frozen_segments,
         )
         segments = list(candidate.frozen_segments)
@@ -736,6 +816,8 @@ class CausalC5SourceHistory:
             beta_prime_per_mm=candidate.beta_prime_per_mm,
             rest_spin=candidate.rest_spin,
             stereographic_frame=candidate.stereographic_frame,
+            step_start_beta_prime_per_mm=(candidate.step_start_beta_prime_per_mm),
+            step_start_beta_prime_ready=candidate.step_start_beta_prime_ready,
             frozen_segments=tuple(segments),
         )
 
@@ -879,12 +961,18 @@ class CausalC5SourceHistory:
         )
 
     def to_checkpoint_payload(self) -> dict[str, object]:
+        step_start_beta_prime = self.step_start_beta_prime_per_mm
+        step_start_ready = self.step_start_beta_prime_ready
+        assert step_start_beta_prime is not None
+        assert step_start_ready is not None
         return {
             "schema_version": _CHECKPOINT_SCHEMA_VERSION,
             "time_ns": self.time_ns.tolist(),
             "position_mm": self.position_mm.tolist(),
             "beta": self.beta.tolist(),
             "beta_prime_per_mm": self.beta_prime_per_mm.tolist(),
+            "step_start_beta_prime_per_mm": step_start_beta_prime.tolist(),
+            "step_start_beta_prime_ready": step_start_ready.tolist(),
             "rest_spin": self.rest_spin.tolist(),
             "stereographic_frame": self.stereographic_frame.tolist(),
             "frozen_segments": [
@@ -903,6 +991,8 @@ class CausalC5SourceHistory:
             "position_mm",
             "beta",
             "beta_prime_per_mm",
+            "step_start_beta_prime_per_mm",
+            "step_start_beta_prime_ready",
             "rest_spin",
             "stereographic_frame",
             "frozen_segments",
@@ -922,6 +1012,12 @@ class CausalC5SourceHistory:
             beta=np.asarray(payload["beta"], dtype=np.float64),
             beta_prime_per_mm=np.asarray(
                 payload["beta_prime_per_mm"], dtype=np.float64
+            ),
+            step_start_beta_prime_per_mm=np.asarray(
+                payload["step_start_beta_prime_per_mm"], dtype=np.float64
+            ),
+            step_start_beta_prime_ready=np.asarray(
+                payload["step_start_beta_prime_ready"], dtype=bool
             ),
             rest_spin=np.asarray(payload["rest_spin"], dtype=np.float64),
             stereographic_frame=np.asarray(
