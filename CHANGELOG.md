@@ -1,5 +1,17 @@
 # Changelog
 
+- Add an opt-in local retarded source-jet provider primitive. A cubic curve
+  fixed by accepted position and velocity now locates the light-cone event;
+  local least-squares fits of the explicitly timed equations-of-motion
+  acceleration and stereographic spin history supply the derivatives used by
+  the analytical dipole Hertz response. The fitted values are encoded as a
+  centered Taylor jet at one retarded event and are not joined into a global
+  degree-11 worldline. The provider exposes its sample provenance, condition
+  numbers, root segment, and light-cone residual, and fails closed unless the
+  full requested physical window is present on both sides. It is not yet
+  selected by the equations of motion and therefore does not change existing
+  dipole or nondipole trajectories.
+
 - Preserve the equations-of-motion acceleration evaluated at the start of an
   accepted exact-source step, with its timing stated explicitly. An endpoint
   row now carries the start acceleration of the step that ended at that row;
