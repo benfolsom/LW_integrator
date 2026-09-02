@@ -392,6 +392,67 @@ def test_causal_c5_adaptive_start_uses_tapered_preflight_knots(
     assert len(accepted_c5.driver.sources[0].history.frozen_segments) > 1
 
 
+def test_causal_local_adaptive_start_covers_interval_mean_fit_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def stop_after_preflight(**kwargs):
+        captured.update(kwargs)
+        raise RuntimeError("preflight captured")
+
+    monkeypatch.setattr(
+        "core.exact_pair_integration.run_exact_pair_adaptive_integrator",
+        stop_after_preflight,
+    )
+    rider = _species_state("electron", position_mm=(-5.0e-8, 0.0, 0.0))
+    driver = _species_state("proton", position_mm=(5.0e-8, 0.0, 0.0))
+    source = DipoleSourceConfig(
+        model="covariant_retarded_point",
+        history_model="causal_local_jet",
+        local_jet_narrow_half_width_ns=1.0e-8,
+        local_jet_primary_half_width_ns=1.2e-8,
+        local_jet_wide_half_width_ns=1.5e-8,
+        local_jet_inertial_prehistory="assumed_inertial",
+    )
+    magnetic = MagneticDipoleConfig(
+        enabled=True,
+        exact_retarded_update="second_order_start_taylor_endpoint",
+        source=source,
+        rider=MagneticDipoleParticleConfig(species="electron"),
+        driver=MagneticDipoleParticleConfig(species="proton"),
+    )
+
+    with pytest.raises(RuntimeError, match="preflight captured"):
+        _run_simple_inertial(
+            rider,
+            driver,
+            steps=3,
+            h_step=5.0e-9,
+            magnetic_dipole=magnetic,
+            adaptive_pair_return=AdaptivePairReturnConfig(
+                enabled=True,
+                target_lab_time_ns=1.0e-8,
+            ),
+            checkpoint=CheckpointConfig(
+                enabled=True,
+                directory=str(tmp_path / "causal-local-margin.checkpoint"),
+            ),
+            particle_loss=ParticleLossConfig(enabled=False),
+        )
+
+    rider_seed = captured["rider_seed"]
+    local_history = captured["initial_causal_local_source_history"]
+    seed_times = np.asarray([float(state["t"][0]) for state in rider_seed])
+    maximum_interval = 2.0 * 1.0e-8 / 8.0
+    assert np.max(np.diff(seed_times)) <= maximum_interval * (1.0 + 1.0e-12)
+    assert local_history.rider.sources[0].history.sample_count == len(rider_seed)
+    assert np.all(
+        local_history.rider.sources[0].history.interval_mean_acceleration_ready
+    )
+
+
 def test_causal_c5_rejects_unwired_fixed_step_path() -> None:
     rider = _species_state(
         "electron",

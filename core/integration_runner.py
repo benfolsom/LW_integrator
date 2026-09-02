@@ -1027,6 +1027,19 @@ def _causal_c5_inertial_time_offsets_ns(
     return offsets
 
 
+def _causal_local_maximum_interval_ns(source: DipoleSourceConfig) -> float:
+    """Largest seed interval that still resolves the narrowest local fit."""
+
+    narrow = source.local_jet_narrow_half_width_ns
+    if narrow is None:  # pragma: no cover - DipoleSourceConfig invariant
+        raise ValueError("causal local narrow physical half-width is unavailable")
+    degree = max(
+        int(source.local_jet_acceleration_degree),
+        int(source.local_jet_spin_degree),
+    )
+    return 2.0 * float(narrow) / float(degree + 3)
+
+
 def _causal_local_inertial_time_offsets_ns(
     duration_ns: float,
     source: DipoleSourceConfig,
@@ -1034,16 +1047,9 @@ def _causal_local_inertial_time_offsets_ns(
     """Resolve an explicit inertial boundary model across each local fit window."""
 
     duration = float(duration_ns)
-    narrow = source.local_jet_narrow_half_width_ns
     if not np.isfinite(duration) or duration <= 0.0:
         raise ValueError("causal local prehistory duration must be finite and positive")
-    if narrow is None:  # pragma: no cover - DipoleSourceConfig invariant
-        raise ValueError("causal local narrow physical half-width is unavailable")
-    degree = max(
-        int(source.local_jet_acceleration_degree),
-        int(source.local_jet_spin_degree),
-    )
-    maximum_interval = 2.0 * float(narrow) / float(degree + 3)
+    maximum_interval = _causal_local_maximum_interval_ns(source)
     count = max(
         _INERTIAL_PREHISTORY_C5_MINIMUM_KNOT_COUNT,
         int(np.ceil(duration / maximum_interval)) + 1,
@@ -3370,7 +3376,15 @@ def retarded_integrator(
             wide = magnetic_dipole.source.local_jet_wide_half_width_ns
             if wide is None:  # pragma: no cover - configuration invariant
                 raise RuntimeError("causal local wide fit window is unavailable")
-            inertial_prehistory_duration_ns += 2.0 * wide
+            # Interval-mean acceleration is located between trajectory knots,
+            # so the oldest usable acceleration sample is later than the
+            # oldest position/spin knot. Add one fully resolved interval beyond
+            # the physical fit boundary rather than relying on roundoff at an
+            # exactly coincident endpoint.
+            local_fit_history_margin_ns = (
+                2.0 * wide + _causal_local_maximum_interval_ns(magnetic_dipole.source)
+            )
+            inertial_prehistory_duration_ns += local_fit_history_margin_ns
             inertial_prehistory_time_offsets_ns = (
                 _causal_local_inertial_time_offsets_ns(
                     inertial_prehistory_duration_ns,
@@ -3546,7 +3560,15 @@ def retarded_integrator(
                         "INERTIAL_PREHISTORY could not bracket every initial "
                         "exact-field stencil after eight geometric extensions"
                     )
-                inertial_prehistory_duration_ns *= 2.0
+                if causal_local_enabled:
+                    causal_boundary_duration = (
+                        inertial_prehistory_duration_ns - local_fit_history_margin_ns
+                    )
+                    inertial_prehistory_duration_ns = (
+                        2.0 * causal_boundary_duration + local_fit_history_margin_ns
+                    )
+                else:
+                    inertial_prehistory_duration_ns *= 2.0
                 if causal_c5_enabled:
                     inertial_prehistory_time_offsets_ns = (
                         _causal_c5_inertial_time_offsets_ns(
@@ -3560,16 +3582,8 @@ def retarded_integrator(
                     active_start = inertial_prehistory_knot_count - 1
                     total_steps = requested_steps + active_start
                 elif causal_local_enabled:
-                    wide = magnetic_dipole.source.local_jet_wide_half_width_ns
-                    if wide is None:  # pragma: no cover - configuration invariant
-                        raise RuntimeError(
-                            "causal local wide fit window is unavailable"
-                        )
                     # Preserve the physical fit margin while extending only the
                     # light-cone boundary reach.
-                    inertial_prehistory_duration_ns += (
-                        inertial_prehistory_duration_ns - 2.0 * wide
-                    )
                     inertial_prehistory_time_offsets_ns = (
                         _causal_local_inertial_time_offsets_ns(
                             inertial_prehistory_duration_ns,

@@ -215,6 +215,17 @@ def solve_exact_pair_slab_trial(
     driver_prior_tail: tuple[ParticleState, ...] = (),
     causal_c5_source_history: AcceptedPairCausalC5SourceHistory | None = None,
     causal_local_source_history: AcceptedPairCausalLocalSourceHistory | None = None,
+    build_causal_local_endpoint_candidate: (
+        Callable[
+            [
+                tuple[ParticleState, ...],
+                tuple[ParticleState, ...],
+                AcceptedPairCausalLocalSourceHistory,
+            ],
+            AcceptedPairCausalLocalSourceHistory,
+        ]
+        | None
+    ) = None,
     spin_interpolation_model: str = "causal_frozen_c1",
     absolute_tolerance_ns: float = 1.0e-18,
     relative_tolerance: float = 1.0e-12,
@@ -319,6 +330,33 @@ def solve_exact_pair_slab_trial(
         accepted_driver_history,
         driver_prior_tail + (provisional.driver.state,),
     )
+    endpoint_dipole_history = dipole_history
+    if include_dipole_source and causal_local_source_history is not None:
+        # Endpoint canonical momentum is evaluated at the new simultaneous
+        # pair event. At close separation its retarded source event can lie
+        # inside this provisional slab rather than in the accepted prefix.
+        # Supply the unpublished endpoint kinematics to the local provider;
+        # the candidate remains detached and disappears if the slab or outer
+        # step-doubling trial is rejected.
+        if build_causal_local_endpoint_candidate is None:
+            from .causal_local_source_history import (
+                AcceptedPairCausalLocalSourceHistory,
+            )
+
+            endpoint_dipole_history = AcceptedPairCausalLocalSourceHistory(
+                rider=causal_local_source_history.rider.append_accepted_state(
+                    provisional.rider.state
+                ),
+                driver=causal_local_source_history.driver.append_accepted_state(
+                    provisional.driver.state
+                ),
+            )
+        else:
+            endpoint_dipole_history = build_causal_local_endpoint_candidate(
+                rider_prior_tail + (provisional.rider.state,),
+                driver_prior_tail + (provisional.driver.state,),
+                causal_local_source_history,
+            )
     rider_state, driver_state = finalize_exact_source_canonical_pair_states(
         rider_state=provisional.rider.state,
         driver_state=provisional.driver.state,
@@ -328,13 +366,13 @@ def solve_exact_pair_slab_trial(
         include_dipole_source=include_dipole_source,
         rider_dipole_source_collection=(
             None
-            if dipole_history is None or not include_dipole_source
-            else dipole_history.rider
+            if endpoint_dipole_history is None or not include_dipole_source
+            else endpoint_dipole_history.rider
         ),
         driver_dipole_source_collection=(
             None
-            if dipole_history is None or not include_dipole_source
-            else dipole_history.driver
+            if endpoint_dipole_history is None or not include_dipole_source
+            else endpoint_dipole_history.driver
         ),
         spin_interpolation_model=spin_interpolation_model,
     )
@@ -385,6 +423,17 @@ def solve_exact_pair_step_doubling_trial(
         ]
         | None
     ) = None,
+    build_causal_local_endpoint_candidate: (
+        Callable[
+            [
+                tuple[ParticleState, ...],
+                tuple[ParticleState, ...],
+                AcceptedPairCausalLocalSourceHistory,
+            ],
+            AcceptedPairCausalLocalSourceHistory,
+        ]
+        | None
+    ) = None,
     spin_interpolation_model: str = "causal_frozen_c1",
     absolute_time_tolerance_ns: float = 1.0e-18,
     relative_time_tolerance: float = 1.0e-12,
@@ -423,6 +472,9 @@ def solve_exact_pair_step_doubling_trial(
             driver_prior_tail=driver_tail,
             causal_c5_source_history=slab_causal_c5_source_history,
             causal_local_source_history=slab_causal_local_source_history,
+            build_causal_local_endpoint_candidate=(
+                build_causal_local_endpoint_candidate
+            ),
             spin_interpolation_model=spin_interpolation_model,
             absolute_tolerance_ns=absolute_time_tolerance_ns,
             relative_tolerance=relative_time_tolerance,

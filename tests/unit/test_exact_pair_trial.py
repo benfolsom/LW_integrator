@@ -589,6 +589,58 @@ def test_step_doubling_exposes_causal_local_midpoint_without_publishing() -> Non
     assert driver_builder.accepted_steps == accepted_driver.n_steps
 
 
+def test_local_endpoint_recomposition_sees_unpublished_slab_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rider_builder, driver_builder, magnetic = _charged_accepted_pair(
+        include_dipole_source=True
+    )
+    accepted_rider = rider_builder.build_current()
+    accepted_driver = driver_builder.build_current()
+    accepted_local = AcceptedPairCausalLocalSourceHistory.from_trajectory_arrays(
+        accepted_rider,
+        accepted_driver,
+    )
+    observed_counts: list[tuple[int, int]] = []
+
+    def capture_endpoint_histories(**kwargs):
+        observed_counts.append(
+            (
+                kwargs["rider_dipole_source_collection"]
+                .sources[0]
+                .history.sample_count,
+                kwargs["driver_dipole_source_collection"]
+                .sources[0]
+                .history.sample_count,
+            )
+        )
+        return kwargs["rider_state"], kwargs["driver_state"]
+
+    monkeypatch.setattr(
+        "core.exact_pair_trial.finalize_exact_source_canonical_pair_states",
+        capture_endpoint_histories,
+    )
+
+    solve_exact_pair_slab_trial(
+        accepted_rider_history=accepted_rider,
+        accepted_driver_history=accepted_driver,
+        advance_rider=_advance(2.0, []),
+        advance_driver=_advance(4.0, []),
+        delta_time_ns=0.2,
+        rider_initial_proper_step_ns=0.1,
+        driver_initial_proper_step_ns=0.05,
+        magnetic_dipole=magnetic,
+        include_dipole_source=True,
+        causal_local_source_history=accepted_local,
+    )
+
+    assert observed_counts == [
+        (accepted_rider.n_steps + 1, accepted_driver.n_steps + 1)
+    ]
+    assert rider_builder.accepted_steps == accepted_rider.n_steps
+    assert driver_builder.accepted_steps == accepted_driver.n_steps
+
+
 def test_eom_adapter_rejects_variable_geometry() -> None:
     with pytest.raises(ValueError, match="fixed_geometry"):
         ExactPairEOMOptions(

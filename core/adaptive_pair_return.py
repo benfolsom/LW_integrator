@@ -42,7 +42,12 @@ from .step_doubling import (
     StepDoublingTolerances,
     propose_next_step_ns,
 )
-from .types import GrowableTrajectoryBuilder, MagneticDipoleConfig, TrajectoryArrays
+from .types import (
+    GrowableTrajectoryBuilder,
+    MagneticDipoleConfig,
+    ParticleState,
+    TrajectoryArrays,
+)
 
 
 class _AcceptedPairCheckpoint(Protocol):
@@ -445,6 +450,18 @@ def attempt_exact_pair_adaptive_step(
             driver_states=(midpoint.pair.driver.state,),
         ).candidate
 
+    def build_endpoint_local_candidate(
+        rider_states: tuple[ParticleState, ...],
+        driver_states: tuple[ParticleState, ...],
+        _accepted: AcceptedPairCausalLocalSourceHistory,
+    ) -> AcceptedPairCausalLocalSourceHistory:
+        if growable_causal_local_source_history is None:
+            raise RuntimeError("growable causal local source history is unavailable")
+        return growable_causal_local_source_history.preflight_states(
+            rider_states=rider_states,
+            driver_states=driver_states,
+        ).candidate
+
     trial = solve_exact_pair_step_doubling_trial(
         accepted_rider_history=accepted_rider,
         accepted_driver_history=accepted_driver,
@@ -470,6 +487,12 @@ def attempt_exact_pair_adaptive_step(
         ),
         build_causal_local_midpoint_candidate=(
             build_midpoint_local_candidate
+            if include_dipole_source
+            and growable_causal_local_source_history is not None
+            else None
+        ),
+        build_causal_local_endpoint_candidate=(
+            build_endpoint_local_candidate
             if include_dipole_source
             and growable_causal_local_source_history is not None
             else None

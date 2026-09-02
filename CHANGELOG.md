@@ -1,5 +1,18 @@
 # Changelog
 
+- Correct two startup boundaries exposed by the first live
+  `causal_local_jet` inbound-distance calibration. Constant-velocity seed
+  history now extends one resolved interval beyond the widest requested fit,
+  because interval-mean acceleration lives between position knots rather than
+  on the oldest knot. Endpoint canonical recomposition now sees a detached
+  provisional local-history tail when the close-separation retarded event lies
+  inside the current unpublished slab; rejected slabs still publish nothing.
+  Focused history, endpoint, adaptive-controller, checkpoint, and real
+  equations-of-motion tests pass. With the unchanged $10^{-3}$ nested-spread
+  limit, hard starts at $100\,\mathrm{pm}$ and $200\,\mathrm{pm}$ remain useful
+  negative controls, while a $500\,\mathrm{pm}$ coarse inbound calibration
+  completes ten slabs with finite state and nonzero Medina/LAD reaction work.
+
 - Add the opt-in `causal_local_jet` magnetic source-history route to the
   production exact-pair equations of motion. The full step and both refined
   half-steps now see the correct immutable accepted prefix; only an accepted
