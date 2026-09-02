@@ -12,7 +12,10 @@ import pytest
 
 from core.constants import C_MMNS, ELEMENTARY_CHARGE
 from core.causal_c5_source_history import CausalC5SourceHistory
-from core.external_fields import electric_field_v_per_m_to_native
+from core.external_fields import (
+    electric_field_v_per_m_to_native,
+    magnetic_field_tesla_to_native,
+)
 from core.integration_runner import (
     _causal_c5_inertial_time_offsets_ns,
     _estimate_inertial_prehistory_duration_ns,
@@ -923,6 +926,59 @@ def test_second_order_exact_projection_converges_one_order_faster() -> None:
         assert coarse / fine == pytest.approx(4.0, rel=0.12)
     for coarse, fine in zip(maximum, maximum[1:]):
         assert coarse / fine == pytest.approx(8.0, rel=0.12)
+
+
+def test_second_order_exact_update_differentiates_external_magnetic_force() -> None:
+    rider = _species_state(
+        "electron",
+        position_mm=(-5.0e-8, 0.0, 0.0),
+        beta=(0.0, 0.01, 0.0),
+        source_charge=0.0,
+    )
+    driver = _species_state(
+        "proton",
+        position_mm=(5.0e-8, 0.0, 0.0),
+        source_charge=0.0,
+    )
+    magnetic = MagneticDipoleConfig(
+        enabled=True,
+        spin_precession_enabled=True,
+        stern_gerlach_force_enabled=False,
+        exact_retarded_update="second_order_start_taylor_endpoint",
+    )
+    external_field = ExternalFieldConfig(
+        magnetic_field_native=(
+            0.0,
+            0.0,
+            magnetic_field_tesla_to_native(0.5),
+        )
+    )
+    proper_time_horizon_ns = 8.0e-4
+    cumulative: list[float] = []
+    maximum: list[float] = []
+
+    for interval_count in (8, 16, 32):
+        _, _, rider_soa, _, *_ = _run_simple_inertial(
+            rider,
+            driver,
+            steps=interval_count + 1,
+            h_step=proper_time_horizon_ns / interval_count,
+            external_field=external_field,
+            magnetic_dipole=magnetic,
+        )
+        assert rider_soa is not None
+        projection = np.abs(rider_soa.mass_shell_projection_energy[:, 0])
+        assert np.all(np.isfinite(projection))
+        cumulative.append(float(np.sum(projection)))
+        maximum.append(float(np.max(projection)))
+
+    # For a uniform magnetic field, the second-order Taylor momentum update
+    # cancels the O(h^2) norm error of explicit Euler.  The remaining local
+    # energy correction is O(h^4), and its fixed-horizon sum is O(h^3).
+    for coarse, fine in zip(cumulative, cumulative[1:]):
+        assert coarse / fine == pytest.approx(8.0, rel=0.04)
+    for coarse, fine in zip(maximum, maximum[1:]):
+        assert coarse / fine == pytest.approx(16.0, rel=0.04)
 
 
 def test_second_order_exact_force_contraction_stays_at_accepted_start_velocity(

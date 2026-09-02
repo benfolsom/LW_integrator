@@ -3709,6 +3709,31 @@ def retarded_equations_of_motion(
                     result["_intrinsic_spin_mass_amu"][particle_idx] = particle_mass
                     result["_intrinsic_spin_g_factor"][particle_idx] = g_factor
                 ordinary_force_derivative = np.zeros(4, dtype=float)
+                if external_field is not None and getattr(
+                    external_field, "enabled", False
+                ):
+                    # The first-order external impulse above is an ordinary
+                    # Lorentz force too.  Differentiate it with the same total
+                    # start acceleration used for the retarded source forces;
+                    # otherwise a uniform magnetic bend remains explicit Euler
+                    # inside an update advertised as second order.  The linear
+                    # field model is smooth away from configured hard window
+                    # boundaries, where no local Taylor method can represent
+                    # the discontinuity without explicit event handling.
+                    external_tensor, external_partial_f = _external_tensor_gradient(
+                        local_electric_field_native,
+                        local_magnetic_field_native,
+                        local_magnetic_gradient_native_per_mm,
+                    )
+                    ordinary_force_derivative += (
+                        mechanical_lorentz_four_force_derivative_native(
+                            four_velocity_mm_ns=start_four_velocity,
+                            four_acceleration_mm_ns2=start_four_acceleration,
+                            field_tensor=external_tensor,
+                            partial_f=external_partial_f,
+                            charge_native=float(force_particle_charge),
+                        )
+                    )
                 for interaction in (
                     exact_charge_source_interaction,
                     dipole_source_interaction,

@@ -1,5 +1,12 @@
 # Changelog
 
+- Complete the second-order exact-pair Taylor momentum update for prescribed
+  external electromagnetic fields. Uniform magnetic bends previously retained
+  a first-order Euler energy error even when
+  `second_order_start_taylor_endpoint` was selected; the update now includes
+  the external Lorentz-force derivative and has a focused projection-order
+  regression.
+
 - Increased the bounded shared-lab-time proper-step solve from 32 to 64
   iterations. A safeguarded secant proposal near a bracket edge deliberately
   falls back to bisection; at strict time tolerances, 32 bisections could stop
