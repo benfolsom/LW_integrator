@@ -822,7 +822,7 @@ class AcceptedPairCheckpointStore:
                 ),
                 "position_condition_number": np.zeros(0, dtype=np.float64),
                 "spin_condition_number": np.zeros(0, dtype=np.float64),
-                "position_window_indices": np.zeros((0, 2, 7), dtype=np.int64),
+                "position_window_indices": np.zeros((0, 2, 9), dtype=np.int64),
                 "spin_window_indices": np.zeros((0, 2, 15), dtype=np.int64),
             }
         return {
@@ -870,7 +870,10 @@ class AcceptedPairCheckpointStore:
         existing = self.manifest.get("causal_c5_source_history")
         if existing is not None and not isinstance(existing, dict):
             raise CheckpointError("causal C5 source metadata is invalid")
-        next_metadata: dict[str, Any] = {"schema_version": 1}
+        # Schema 2 stores nine velocity-knot indices for each endpoint's
+        # instantaneous-acceleration reconstruction. Older causal-C5 chunks
+        # must not be mixed with this source-history contract.
+        next_metadata: dict[str, Any] = {"schema_version": 2}
         for role, collection, trajectory in (
             ("rider", state.rider, rider),
             ("driver", state.driver, driver),
@@ -934,7 +937,7 @@ class AcceptedPairCheckpointStore:
         metadata = self.causal_c5_source_history_metadata
         if metadata is None:
             return None
-        if metadata.get("schema_version") != 1:
+        if metadata.get("schema_version") != 2:
             raise CheckpointCompatibilityError(
                 "unsupported causal C5 checkpoint metadata schema"
             )

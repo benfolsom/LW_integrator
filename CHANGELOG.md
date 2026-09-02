@@ -1,5 +1,24 @@
 # Changelog
 
+- Corrected the meaning of source acceleration used by retarded-field history
+  interpolation. The trajectory field named `bdot` remains a diagnostic for
+  the velocity change over the preceding accepted step; charge and live
+  causal-$C^5$ source histories now reconstruct an instantaneous knot
+  acceleration from accepted velocities and their actual coordinate times
+  instead of treating that interval average as an endpoint value. An analytic
+  circular-source check reduces representative magnetic-field errors by
+  several orders of magnitude, and the existing charge-only physics tests
+  remain unchanged. Analytic source histories that already supply exact
+  endpoint acceleration can select the explicit `instantaneous` semantics;
+  this keeps the independent radiation-flux oracle at its original strict
+  tolerance without confusing analytic data with production `bdot`. This
+  correction does not yet solve the live dipole
+  derivative problem: jerk and the third spin derivative still require a new
+  accepted-event source-derivative contract. The causal-$C^5$ checkpoint
+  sub-schema is now version 2 because its recorded acceleration provenance
+  uses nine velocity knots; version-1 causal-$C^5$ checkpoints fail explicitly
+  on resume. Nondipole checkpoint data and simulation routes are unchanged.
+
 - Complete the second-order exact-pair Taylor momentum update for prescribed
   external electromagnetic fields. Uniform magnetic bends previously retained
   a first-order Euler energy error even when

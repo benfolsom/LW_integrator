@@ -6,8 +6,10 @@ the readiness boundary explicit.  A caller may construct a candidate state
 for an adaptive trial, but the accepted state is unchanged unless that
 candidate is committed.
 
-Position derivatives through fifth order are reconstructed from a seven-knot
-window.  Unit rest spin is represented by two stereographic coordinates; a
+Instantaneous acceleration is first reconstructed from accepted velocity
+samples rather than from the preceding-interval ``bdot`` value. Position
+derivatives through fifth order then use a seven-acceleration, nine-velocity
+window. Unit rest spin is represented by two stereographic coordinates; a
 degree-ten fit over fifteen accepted knots estimates derivatives through fifth
 order.  Neighboring degree-eleven Hermite segments reuse the same knot
 derivatives and are therefore $C^5$ in the represented coordinates.
@@ -27,9 +29,14 @@ from typing import Mapping, Sequence, cast
 import numpy as np
 
 from .constants import C_MMNS
+from .source_kinematics import reconstruct_instantaneous_beta_prime_per_mm
 
-_CHECKPOINT_SCHEMA_VERSION = 1
+# Schema 2 records the nine-velocity-knot provenance required by the
+# instantaneous-acceleration reconstruction. Schema 1 stored seven indices and
+# cannot be resumed without silently changing already frozen source segments.
+_CHECKPOINT_SCHEMA_VERSION = 2
 _POSITION_HALF_WINDOW = 3
+_POSITION_VELOCITY_HALF_WINDOW = _POSITION_HALF_WINDOW + 1
 _SPIN_HALF_WINDOW = 7
 _SPIN_FIT_DEGREE = 10
 _CONTINUITY_ORDER = 5
@@ -162,12 +169,18 @@ def _position_derivatives_at_knot(
 ) -> tuple[np.ndarray, float, np.ndarray]:
     start = knot_index - _POSITION_HALF_WINDOW
     stop = knot_index + _POSITION_HALF_WINDOW + 1
-    if start < 0 or stop > history.sample_count:
+    velocity_start = knot_index - _POSITION_VELOCITY_HALF_WINDOW
+    velocity_stop = knot_index + _POSITION_VELOCITY_HALF_WINDOW + 1
+    if velocity_start < 0 or velocity_stop > history.sample_count:
         raise CausalC5HistoryUnavailableError(
             "position derivative window is not fully accepted"
         )
     times = history.time_ns[start:stop]
-    acceleration = C_MMNS**2 * history.beta_prime_per_mm[start:stop]
+    reconstructed_beta_prime = reconstruct_instantaneous_beta_prime_per_mm(
+        history.time_ns[velocity_start:velocity_stop],
+        history.beta[velocity_start:velocity_stop],
+    )[1:-1]
+    acceleration = C_MMNS**2 * reconstructed_beta_prime
     acceleration_delta = acceleration - acceleration[_POSITION_HALF_WINDOW]
     higher_derivatives: list[np.ndarray] = []
     conditions: list[float] = []
@@ -183,12 +196,16 @@ def _position_derivatives_at_knot(
         (
             history.position_mm[knot_index],
             C_MMNS * history.beta[knot_index],
-            C_MMNS**2 * history.beta_prime_per_mm[knot_index],
+            acceleration[_POSITION_HALF_WINDOW],
             *higher_derivatives,
         ),
         dtype=np.float64,
     )
-    return derivatives, max(conditions), np.arange(start, stop, dtype=np.int64)
+    return (
+        derivatives,
+        max(conditions),
+        np.arange(velocity_start, velocity_stop, dtype=np.int64),
+    )
 
 
 def _spin_to_stereographic(
@@ -344,7 +361,7 @@ class FrozenC5SourceSegment:
             "position_window_indices",
             _readonly_index_array(
                 self.position_window_indices,
-                shape=(2, 7),
+                shape=(2, 9),
                 name="position_window_indices",
             ),
         )
@@ -509,8 +526,14 @@ class CausalC5SourceHistory:
                 raise ValueError("frozen C5 segment changed stereographic frame")
             expected_position_windows = np.stack(
                 (
-                    np.arange(left - _POSITION_HALF_WINDOW, left + 4),
-                    np.arange(left + 1 - _POSITION_HALF_WINDOW, left + 5),
+                    np.arange(
+                        left - _POSITION_VELOCITY_HALF_WINDOW,
+                        left + _POSITION_VELOCITY_HALF_WINDOW + 1,
+                    ),
+                    np.arange(
+                        left + 1 - _POSITION_VELOCITY_HALF_WINDOW,
+                        left + 1 + _POSITION_VELOCITY_HALF_WINDOW + 1,
+                    ),
                 )
             )
             expected_spin_windows = np.stack(

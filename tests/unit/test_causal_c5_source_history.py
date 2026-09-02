@@ -198,6 +198,7 @@ def test_unready_time_fails_closed() -> None:
 def test_checkpoint_roundtrip_preserves_frozen_coefficients_bitwise() -> None:
     history = _history(22)
     payload = json.loads(json.dumps(history.to_checkpoint_payload(), allow_nan=False))
+    assert payload["schema_version"] == 2
     restored = CausalC5SourceHistory.from_checkpoint_payload(payload)
     np.testing.assert_array_equal(restored.time_ns, history.time_ns)
     np.testing.assert_array_equal(restored.position_mm, history.position_mm)
@@ -216,6 +217,14 @@ def test_checkpoint_roundtrip_preserves_frozen_coefficients_bitwise() -> None:
             actual.spin_window_indices,
             expected.spin_window_indices,
         )
+
+
+def test_checkpoint_schema_one_is_rejected_after_acceleration_contract_change() -> None:
+    payload = _history(22).to_checkpoint_payload()
+    payload["schema_version"] = 1
+
+    with pytest.raises(ValueError, match="unsupported causal C5"):
+        CausalC5SourceHistory.from_checkpoint_payload(payload)
 
 
 def test_bounded_nonuniform_cadence_matches_incremental_history_bitwise() -> None:

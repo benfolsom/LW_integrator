@@ -850,6 +850,7 @@ def evaluate_retarded_radiation_sphere_native(
     root_tolerance_mm: float = 1.0e-21,
     max_root_iterations: int = 96,
     backend: str = "python",
+    charge_acceleration_semantics: str = "preceding_interval",
 ) -> RadiationSphereFluxResult:
     """Sample retarded charge/dipole fields and integrate their sphere flux.
 
@@ -857,6 +858,8 @@ def evaluate_retarded_radiation_sphere_native(
     evaluates both source sectors.  Either sector may be omitted by passing
     ``None``.  The default Python provider is intentionally slow and
     transparent; faster exact-retarded backends are explicit opt-ins.
+    ``charge_acceleration_semantics="instantaneous"`` is reserved for analytic
+    histories whose supplied ``bdot`` values are exact knot derivatives.
     """
 
     if charge_history is None and dipole_history is None:
@@ -897,6 +900,7 @@ def evaluate_retarded_radiation_sphere_native(
                 root_tolerance_mm=root_tolerance_mm,
                 max_root_iterations=max_root_iterations,
                 backend=backend,
+                source_acceleration_semantics=charge_acceleration_semantics,
             )
             charge_electric[sample_index] = charge.electric_field_native
             charge_magnetic[sample_index] = charge.magnetic_field_native

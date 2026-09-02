@@ -202,6 +202,7 @@ def test_pair_checkpoint_appends_and_restores_frozen_c5_coefficients(
 
     assert restored_c5 is not None
     assert reopened.causal_c5_source_history_metadata is not None
+    assert reopened.causal_c5_source_history_metadata["schema_version"] == 2
     for restored_collection, expected_collection in (
         (restored_c5.rider, accepted_c5.rider),
         (restored_c5.driver, accepted_c5.driver),

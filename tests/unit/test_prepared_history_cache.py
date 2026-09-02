@@ -372,11 +372,15 @@ def test_charge_and_dipole_appends_match_full_rebuild_after_every_row() -> None:
         )
 
         if step:
+            # The former final knot changes from a one-sided acceleration
+            # estimate to a centered estimate after the next accepted knot is
+            # appended. Only its left-hand segment may therefore be rebuilt.
+            stable_coefficient_stop = max(0, previous_coefficients.shape[0] - 1)
             np.testing.assert_array_equal(
                 cached_worldline.position_coefficients_mm[
-                    : previous_coefficients.shape[0]
+                    :stable_coefficient_stop
                 ],
-                previous_coefficients,
+                previous_coefficients[:stable_coefficient_stop],
             )
             # Only the former endpoint slope and the newly appended tail may
             # change; the older C1 spin prefix must remain bit-for-bit stable.
@@ -389,6 +393,7 @@ def test_charge_and_dipole_appends_match_full_rebuild_after_every_row() -> None:
         current_charge_ids = (
             id(cached_charge.arrays._time_buffer),
             id(cached_worldline._coefficient_buffer),
+            id(cached_worldline._beta_prime_buffer),
         )
         current_dipole_ids = (
             id(cached_dipole.arrays._time_buffer),
@@ -407,6 +412,36 @@ def test_charge_and_dipole_appends_match_full_rebuild_after_every_row() -> None:
 
     assert retarded_fields._CHARGE_PREPARED_HISTORY_CACHE.stats().appends == 7
     assert retarded_dipole_fields._DIPOLE_PREPARED_HISTORY_CACHE.stats().appends == 7
+
+
+def test_instantaneous_charge_acceleration_appends_match_full_rebuild() -> None:
+    retarded_fields._CHARGE_PREPARED_HISTORY_CACHE.clear()
+    builder = TrajectoryBuilder(8, 1, magnetic_dipole=True)
+    previous_coefficients = np.zeros((0, 6, 3))
+
+    for step in range(8):
+        builder.set_step(step, _magnetic_state(step))
+        history = builder.build_partial(step + 1)
+        cached = retarded_fields._prepare_history(
+            history,
+            (),
+            source_acceleration_semantics="instantaneous",
+        )
+        rebuilt = retarded_fields._prepare_history_uncached(
+            history,
+            (),
+            source_acceleration_semantics="instantaneous",
+        )
+        cached_worldline = cached.sources[0]
+        _assert_worldlines_equal(cached_worldline, rebuilt.sources[0])
+        if step:
+            np.testing.assert_array_equal(
+                cached_worldline.position_coefficients_mm[:-1],
+                previous_coefficients,
+            )
+        previous_coefficients = cached_worldline.position_coefficients_mm.copy()
+
+    assert retarded_fields._CHARGE_PREPARED_HISTORY_CACHE.stats().appends == 7
 
 
 def test_dipole_prepare_rejects_invalid_moment_and_active_shapes() -> None:

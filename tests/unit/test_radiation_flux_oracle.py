@@ -857,6 +857,7 @@ def test_periodic_charge_sphere_flux_closes_medina_cycle_balance() -> None:
                 sphere_center_mm=(0.0, 0.0, 0.0),
                 radius_mm=radius_mm,
                 charge_history=history,
+                charge_acceleration_semantics="instantaneous",
             )
             for source_time_ns in source_times_ns
         ]
