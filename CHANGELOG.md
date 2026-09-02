@@ -1,5 +1,19 @@
 # Changelog
 
+- Prevent provisional charge and legacy dipole history overlays from mutating
+  the append-aware cache of accepted source history. Reconstructing an
+  instantaneous charge acceleration from accepted velocity differences
+  correctly changes the former boundary estimate when a real knot is
+  appended, but the same operation was being performed through shallow NumPy
+  buffer copies for full-step and half-step candidates. A rejected or merely
+  unpublished trial could therefore change the cached last two worldline
+  segments. Trial preparation now owns the derivative, quintic-coefficient,
+  spin, and spin-slope buffers it may rewrite. A focused regression verifies
+  that both accepted caches remain bitwise equal to a clean rebuild after a
+  provisional tail is evaluated. This fix applies to the charge interpolator
+  used by dipole and nondipole exact-source calculations; it does not change
+  the stored `bdot` diagnostic or its preceding-interval meaning.
+
 - Correct two startup boundaries exposed by the first live
   `causal_local_jet` inbound-distance calibration. Constant-velocity seed
   history now extends one resolved interval beyond the widest requested fit,

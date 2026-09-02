@@ -577,6 +577,49 @@ def _append_history_array_tail(
     return extended, old_stop
 
 
+def _clone_prepared_source_history_for_trial(
+    source: _PreparedSourceHistory,
+) -> _PreparedSourceHistory:
+    """Detach buffers that a provisional tail is allowed to rewrite.
+
+    Appending a knot changes the reconstructed acceleration at the former
+    right boundary, so :func:`_append_prepared_source_history` intentionally
+    rewrites the last prepared coefficients.  A normal accepted append owns
+    those buffers.  A trial overlay does not: its shallow object copy would
+    otherwise mutate the accepted cache through the shared NumPy storage.
+    """
+
+    result = copy(source)
+    buffer_specs = (
+        (
+            "_duration_buffer",
+            "segment_duration_ns",
+            int(source.segment_duration_ns.size),
+        ),
+        (
+            "_coefficient_buffer",
+            "position_coefficients_mm",
+            int(source.position_coefficients_mm.shape[0]),
+        ),
+        (
+            "_beta_prime_buffer",
+            "beta_prime_per_mm",
+            int(source.beta_prime_per_mm.shape[0]),
+        ),
+    )
+    for buffer_name, visible_name, visible_stop in buffer_specs:
+        buffer = getattr(source, buffer_name)
+        visible = np.asarray(getattr(source, visible_name))
+        if buffer is None:
+            setattr(result, visible_name, np.array(visible, copy=True))
+            continue
+        detached = np.empty_like(buffer)
+        detached[:visible_stop] = buffer[:visible_stop]
+        setattr(result, buffer_name, detached)
+        setattr(result, visible_name, detached[:visible_stop])
+    return result
+
+
 def _prepare_trial_history(
     history: TrialTrajectoryHistory,
     excluded_source_indices: Sequence[int],
@@ -593,7 +636,7 @@ def _prepare_trial_history(
     arrays, old_stop = _append_history_array_tail(accepted.arrays, tail_arrays)
     sources: dict[int, _PreparedSourceHistory] = {}
     for source_index, source in accepted.sources.items():
-        trial_source = copy(source)
+        trial_source = _clone_prepared_source_history_for_trial(source)
         trial_source._maximum_capacity = arrays._maximum_capacity
         _append_prepared_source_history(trial_source, arrays, old_stop)
         sources[source_index] = trial_source
@@ -825,9 +868,9 @@ def _append_prepared_source_history(
     assert previous._beta_prime_buffer is not None
     if new_alive_stop > previous._beta_prime_buffer.shape[0]:
         raise ValueError("prepared source append exceeded beta-prime capacity")
-    previous._beta_prime_buffer[
-        derivative_update_start:new_alive_stop
-    ] = updated_beta_primes
+    previous._beta_prime_buffer[derivative_update_start:new_alive_stop] = (
+        updated_beta_primes
+    )
 
     new_durations, new_coefficients = _quintic_position_coefficients_mm(
         history.time_ns[coefficient_start:new_alive_stop, source_index],

@@ -15,6 +15,7 @@ from core.types import (
     IndexedTrajectoryArrays,
     StaleTrajectoryViewError,
     TrajectoryBuilder,
+    TrialTrajectoryHistory,
 )
 
 
@@ -377,9 +378,7 @@ def test_charge_and_dipole_appends_match_full_rebuild_after_every_row() -> None:
             # appended. Only its left-hand segment may therefore be rebuilt.
             stable_coefficient_stop = max(0, previous_coefficients.shape[0] - 1)
             np.testing.assert_array_equal(
-                cached_worldline.position_coefficients_mm[
-                    :stable_coefficient_stop
-                ],
+                cached_worldline.position_coefficients_mm[:stable_coefficient_stop],
                 previous_coefficients[:stable_coefficient_stop],
             )
             # Only the former endpoint slope and the newly appended tail may
@@ -412,6 +411,97 @@ def test_charge_and_dipole_appends_match_full_rebuild_after_every_row() -> None:
 
     assert retarded_fields._CHARGE_PREPARED_HISTORY_CACHE.stats().appends == 7
     assert retarded_dipole_fields._DIPOLE_PREPARED_HISTORY_CACHE.stats().appends == 7
+
+
+def test_trial_tail_preparation_does_not_mutate_accepted_cache() -> None:
+    retarded_fields._CHARGE_PREPARED_HISTORY_CACHE.clear()
+    retarded_dipole_fields._DIPOLE_PREPARED_HISTORY_CACHE.clear()
+    builder = TrajectoryBuilder(8, 1, magnetic_dipole=True)
+    for step in range(6):
+        builder.set_step(step, _magnetic_state(step))
+    accepted_history = builder.build_partial(6)
+    accepted_charge = retarded_fields._prepare_history(accepted_history, ())
+    accepted_dipole = retarded_dipole_fields._prepare_dipole_history(
+        accepted_history,
+        source_identities=("electron",),
+        observer_source_identity=None,
+        excluded_source_identities=(),
+        spin_interpolation_model="causal_frozen_c1",
+    )
+    charge_coefficients = np.array(
+        accepted_charge.sources[0].position_coefficients_mm,
+        copy=True,
+    )
+    charge_beta_prime = np.array(
+        accepted_charge.sources[0].beta_prime_per_mm,
+        copy=True,
+    )
+    dipole_coefficients = np.array(
+        accepted_dipole.sources[0].worldline.position_coefficients_mm,
+        copy=True,
+    )
+    dipole_slopes = np.array(
+        accepted_dipole.sources[0].rest_spin_derivative_per_ns,
+        copy=True,
+    )
+
+    trial_history = TrialTrajectoryHistory(
+        accepted_history,
+        (_magnetic_state(6),),
+    )
+    retarded_fields._prepare_history(trial_history, ())
+    retarded_dipole_fields._prepare_dipole_history(
+        trial_history,
+        source_identities=("electron",),
+        observer_source_identity=None,
+        excluded_source_identities=(),
+        spin_interpolation_model="causal_frozen_c1",
+    )
+
+    np.testing.assert_array_equal(
+        accepted_charge.sources[0].position_coefficients_mm,
+        charge_coefficients,
+    )
+    np.testing.assert_array_equal(
+        accepted_charge.sources[0].beta_prime_per_mm,
+        charge_beta_prime,
+    )
+    np.testing.assert_array_equal(
+        accepted_dipole.sources[0].worldline.position_coefficients_mm,
+        dipole_coefficients,
+    )
+    np.testing.assert_array_equal(
+        accepted_dipole.sources[0].rest_spin_derivative_per_ns,
+        dipole_slopes,
+    )
+
+    rebuilt_charge = retarded_fields._prepare_history_uncached(
+        accepted_history,
+        (),
+    )
+    rebuilt_dipole = retarded_dipole_fields._prepare_dipole_history_uncached(
+        accepted_history,
+        source_identities=("electron",),
+        observer_source_identity=None,
+        excluded_source_identities=(),
+        spin_interpolation_model="causal_frozen_c1",
+    )
+    _assert_worldlines_equal(
+        accepted_charge.sources[0],
+        rebuilt_charge.sources[0],
+    )
+    _assert_worldlines_equal(
+        accepted_dipole.sources[0].worldline,
+        rebuilt_dipole.sources[0].worldline,
+    )
+    np.testing.assert_array_equal(
+        accepted_dipole.sources[0].rest_spin,
+        rebuilt_dipole.sources[0].rest_spin,
+    )
+    np.testing.assert_array_equal(
+        accepted_dipole.sources[0].rest_spin_derivative_per_ns,
+        rebuilt_dipole.sources[0].rest_spin_derivative_per_ns,
+    )
 
 
 def test_instantaneous_charge_acceleration_appends_match_full_rebuild() -> None:
