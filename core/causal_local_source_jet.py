@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
-from typing import TYPE_CHECKING, Any, Sequence
+from typing import TYPE_CHECKING, Any, Literal, Sequence
 
 import numpy as np
 
@@ -48,12 +48,14 @@ class LocalSourceJetFitConfig:
     half_width_ns: float
     acceleration_degree: int = 5
     spin_degree: int = 5
+    window_weighting: Literal["tricube", "uniform"] = "tricube"
     maximum_condition_number: float = 1.0e5
 
     def __post_init__(self) -> None:
         width = float(self.half_width_ns)
         acceleration_degree = int(self.acceleration_degree)
         spin_degree = int(self.spin_degree)
+        window_weighting = str(self.window_weighting)
         maximum_condition = float(self.maximum_condition_number)
         if not np.isfinite(width) or width <= 0.0:
             raise ValueError("half_width_ns must be finite and positive")
@@ -61,6 +63,8 @@ class LocalSourceJetFitConfig:
             raise ValueError("acceleration_degree must be at least three")
         if spin_degree < 5:
             raise ValueError("spin_degree must be at least five")
+        if window_weighting not in {"tricube", "uniform"}:
+            raise ValueError("window_weighting must be 'tricube' or 'uniform'")
         if not np.isfinite(maximum_condition) or maximum_condition <= 1.0:
             raise ValueError(
                 "maximum_condition_number must be finite and greater than one"
@@ -68,7 +72,53 @@ class LocalSourceJetFitConfig:
         object.__setattr__(self, "half_width_ns", width)
         object.__setattr__(self, "acceleration_degree", acceleration_degree)
         object.__setattr__(self, "spin_degree", spin_degree)
+        object.__setattr__(self, "window_weighting", window_weighting)
         object.__setattr__(self, "maximum_condition_number", maximum_condition)
+
+
+@dataclass(frozen=True)
+class LocalSourceJetModelSpreadConfig:
+    """Narrow and wide fits used to test local-model sensitivity."""
+
+    narrow_fit: LocalSourceJetFitConfig
+    wide_fit: LocalSourceJetFitConfig
+    maximum_relative_spread: float = 1.0e-3
+
+    def __post_init__(self) -> None:
+        maximum = float(self.maximum_relative_spread)
+        if not np.isfinite(maximum) or maximum <= 0.0:
+            raise ValueError("maximum_relative_spread must be finite and positive")
+        object.__setattr__(self, "maximum_relative_spread", maximum)
+
+
+@dataclass(frozen=True)
+class LocalSourceJetModelSpread:
+    """Largest pairwise response difference across nested local fits."""
+
+    four_potential: float
+    partial_a: float
+    field_tensor: float
+    partial_f: float
+
+    def __post_init__(self) -> None:
+        for name in ("four_potential", "partial_a", "field_tensor", "partial_f"):
+            value = float(getattr(self, name))
+            if not np.isfinite(value) or value < 0.0:
+                raise ValueError(f"{name} model spread must be finite and non-negative")
+            object.__setattr__(self, name, value)
+
+    @property
+    def maximum(self) -> float:
+        return max(
+            self.four_potential,
+            self.partial_a,
+            self.field_tensor,
+            self.partial_f,
+        )
+
+
+class CausalLocalSourceJetModelSpreadError(CausalC5HistoryUnavailableError):
+    """Raised when nested fits do not define a stable local response plateau."""
 
 
 @dataclass(frozen=True)
@@ -81,6 +131,7 @@ class LocalSourceJetDiagnostics:
     acceleration_condition_number: float
     spin_condition_number: float
     light_cone_residual_mm: float
+    model_spread: LocalSourceJetModelSpread | None = None
 
     def __post_init__(self) -> None:
         if int(self.root_segment_index) < 0:
@@ -105,6 +156,11 @@ class LocalSourceJetDiagnostics:
             raise ValueError("light_cone_residual_mm must be finite")
         object.__setattr__(self, "root_segment_index", int(self.root_segment_index))
         object.__setattr__(self, "light_cone_residual_mm", residual)
+        if self.model_spread is not None and not isinstance(
+            self.model_spread,
+            LocalSourceJetModelSpread,
+        ):
+            raise TypeError("model_spread must be a LocalSourceJetModelSpread")
 
 
 @dataclass(frozen=True)
@@ -289,6 +345,7 @@ def _local_polynomial_derivatives(
     half_width_ns: float,
     degree: int,
     maximum_derivative: int,
+    window_weighting: Literal["tricube", "uniform"],
     maximum_condition_number: float,
     sample_indices: np.ndarray,
     label: str,
@@ -323,12 +380,25 @@ def _local_polynomial_derivatives(
     normalized = (selected_times - target_time_ns) / scale
     design = np.vander(normalized, N=degree + 1, increasing=True)
     reference = selected_values[int(np.argmin(np.abs(normalized)))]
+    if window_weighting == "tricube":
+        window_coordinate = np.abs(
+            (selected_times - float(target_time_ns)) / float(half_width_ns)
+        )
+        weights = np.maximum(0.0, 1.0 - window_coordinate**3) ** 3
+    else:
+        weights = np.ones(selected_times.size, dtype=np.float64)
+    square_root_weight = np.sqrt(weights)
+    weighted_design = design * square_root_weight[:, np.newaxis]
+    value_weight_shape = (selected_times.size,) + (1,) * (selected_values.ndim - 1)
+    weighted_values = (selected_values - reference) * square_root_weight.reshape(
+        value_weight_shape
+    )
     coefficients, _, rank, _ = np.linalg.lstsq(
-        design,
-        selected_values - reference,
+        weighted_design,
+        weighted_values,
         rcond=None,
     )
-    condition = float(np.linalg.cond(design))
+    condition = float(np.linalg.cond(weighted_design))
     if rank != degree + 1:
         raise CausalC5HistoryUnavailableError(f"local {label} fit is rank deficient")
     if condition > maximum_condition_number:
@@ -365,12 +435,49 @@ def _centered_taylor_coefficients(
     return coefficients
 
 
+def _relative_response_difference(
+    left: DipoleHertzResponseJetResult,
+    right: DipoleHertzResponseJetResult,
+    name: str,
+) -> float:
+    first = np.asarray(getattr(left, name), dtype=np.float64)
+    second = np.asarray(getattr(right, name), dtype=np.float64)
+    scale = max(
+        float(np.linalg.norm(first)),
+        float(np.linalg.norm(second)),
+        np.finfo(np.float64).tiny,
+    )
+    return float(np.linalg.norm(first - second) / scale)
+
+
+def _response_model_spread(
+    responses: Sequence[DipoleHertzResponseJetResult],
+) -> LocalSourceJetModelSpread:
+    if len(responses) < 2:
+        raise ValueError("model spread needs at least two response fits")
+
+    def largest(name: str) -> float:
+        return max(
+            _relative_response_difference(responses[left], responses[right], name)
+            for left in range(len(responses))
+            for right in range(left + 1, len(responses))
+        )
+
+    return LocalSourceJetModelSpread(
+        four_potential=largest("four_potential"),
+        partial_a=largest("partial_a"),
+        field_tensor=largest("field_tensor"),
+        partial_f=largest("partial_f"),
+    )
+
+
 def evaluate_causal_local_source_jet_native(
     history: Any,
     observer_event: "ObserverEvent",
     *,
     magnetic_moment_native: float,
     fit: LocalSourceJetFitConfig,
+    model_spread: LocalSourceJetModelSpreadConfig | None = None,
     root_tolerance_mm: float = 1.0e-21,
     max_root_iterations: int = 96,
     minimum_separation_mm: float = 1.0e-15,
@@ -402,6 +509,7 @@ def evaluate_causal_local_source_jet_native(
             half_width_ns=fit.half_width_ns,
             degree=fit.acceleration_degree,
             maximum_derivative=3,
+            window_weighting=fit.window_weighting,
             maximum_condition_number=fit.maximum_condition_number,
             sample_indices=acceleration_knots,
             label="acceleration",
@@ -420,6 +528,7 @@ def evaluate_causal_local_source_jet_native(
             half_width_ns=fit.half_width_ns,
             degree=fit.spin_degree,
             maximum_derivative=5,
+            window_weighting=fit.window_weighting,
             maximum_condition_number=fit.maximum_condition_number,
             sample_indices=spin_indices,
             label="spin",
@@ -446,6 +555,35 @@ def evaluate_causal_local_source_jet_native(
         preserved_rest_spin_magnitude=None,
         retarded_time_ns=root_time,
     )
+    measured_spread = None
+    if model_spread is not None:
+        if not (
+            model_spread.narrow_fit.half_width_ns
+            < fit.half_width_ns
+            < model_spread.wide_fit.half_width_ns
+        ):
+            raise ValueError(
+                "model-spread fits must have narrow < primary < wide half-widths"
+            )
+        comparison_responses = [response]
+        for comparison_fit in (model_spread.narrow_fit, model_spread.wide_fit):
+            comparison_response, _ = evaluate_causal_local_source_jet_native(
+                history,
+                observer_event,
+                magnetic_moment_native=magnetic_moment_native,
+                fit=comparison_fit,
+                root_tolerance_mm=root_tolerance_mm,
+                max_root_iterations=max_root_iterations,
+                minimum_separation_mm=minimum_separation_mm,
+            )
+            comparison_responses.append(comparison_response)
+        measured_spread = _response_model_spread(comparison_responses)
+        if measured_spread.maximum > model_spread.maximum_relative_spread:
+            raise CausalLocalSourceJetModelSpreadError(
+                "local source-jet nested fits exceed their response-spread limit: "
+                f"{measured_spread.maximum:.6e} > "
+                f"{model_spread.maximum_relative_spread:.6e}"
+            )
     return response, LocalSourceJetDiagnostics(
         root_segment_index=segment,
         acceleration_sample_indices=acceleration_indices,
@@ -453,6 +591,7 @@ def evaluate_causal_local_source_jet_native(
         acceleration_condition_number=acceleration_condition,
         spin_condition_number=spin_condition,
         light_cone_residual_mm=residual,
+        model_spread=measured_spread,
     )
 
 
@@ -461,6 +600,7 @@ def evaluate_causal_local_source_jet_collection_native(
     observer_event: "ObserverEvent",
     *,
     fit: LocalSourceJetFitConfig,
+    model_spread: LocalSourceJetModelSpreadConfig | None = None,
     excluded_source_identities: Sequence[str] = (),
     root_tolerance_mm: float = 1.0e-21,
     max_root_iterations: int = 96,
@@ -483,6 +623,7 @@ def evaluate_causal_local_source_jet_collection_native(
                 observer_event,
                 magnetic_moment_native=source.magnetic_moment_native,
                 fit=fit,
+                model_spread=model_spread,
                 root_tolerance_mm=root_tolerance_mm,
                 max_root_iterations=max_root_iterations,
                 minimum_separation_mm=minimum_separation_mm,
@@ -517,10 +658,13 @@ def evaluate_causal_local_source_jet_collection_native(
 
 
 __all__ = [
+    "CausalLocalSourceJetModelSpreadError",
     "CausalLocalSourceJetEvaluation",
     "CausalLocalSourceJetProviderResult",
     "LocalSourceJetDiagnostics",
     "LocalSourceJetFitConfig",
+    "LocalSourceJetModelSpread",
+    "LocalSourceJetModelSpreadConfig",
     "evaluate_causal_local_source_jet_collection_native",
     "evaluate_causal_local_source_jet_native",
 ]

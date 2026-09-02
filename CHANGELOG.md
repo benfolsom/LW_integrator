@@ -1,5 +1,14 @@
 # Changelog
 
+- Make the opt-in local source-jet fit continuous when accepted samples enter
+  or leave its physical window by applying a compact tricube weight by
+  default; retain uniform weighting for diagnostics. Add a nested narrow,
+  primary, and wide fit comparison that reports the largest relative change
+  in $A$, $\partial A$, $F$, and $\partial F$ and fails closed when the
+  declared response-stability threshold is exceeded. Exact circular-source,
+  unequal-sampling, root-boundary, and fit-window-boundary tests now exercise
+  the complete analytical response.
+
 - Add an opt-in local retarded source-jet provider primitive. A cubic curve
   fixed by accepted position and velocity now locates the light-cone event;
   local least-squares fits of the explicitly timed equations-of-motion
