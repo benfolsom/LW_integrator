@@ -38,11 +38,13 @@ from core.retarded_fields import (
 from core.self_consistency import SelfConsistencyConfig
 from core.species import get_species
 from core.types import (
+    AdaptivePairReturnConfig,
     CheckpointConfig,
     DipoleSourceConfig,
     ExternalFieldConfig,
     MagneticDipoleConfig,
     MagneticDipoleParticleConfig,
+    ParticleLossConfig,
     SimulationType,
     StartupMode,
 )
@@ -237,6 +239,8 @@ def _run_simple_inertial(
     magnetic_dipole: MagneticDipoleConfig | None = None,
     self_consistency: SelfConsistencyConfig | None = None,
     checkpoint: CheckpointConfig | None = None,
+    adaptive_pair_return: AdaptivePairReturnConfig | None = None,
+    particle_loss: ParticleLossConfig | None = None,
     progress_callback=None,
     cancel_callback=None,
 ):
@@ -262,9 +266,184 @@ def _run_simple_inertial(
         ),
         use_numba=False,
         checkpoint=checkpoint,
+        adaptive_pair_return=adaptive_pair_return,
+        particle_loss=particle_loss,
         progress_callback=progress_callback,
         cancel_callback=cancel_callback,
     )
+
+
+def test_causal_c5_adaptive_start_uses_sixteen_preflight_knots(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def stop_after_preflight(**kwargs):
+        captured.update(kwargs)
+        raise RuntimeError("preflight captured")
+
+    monkeypatch.setattr(
+        "core.exact_pair_integration.run_exact_pair_adaptive_integrator",
+        stop_after_preflight,
+    )
+    rider = _species_state(
+        "electron",
+        position_mm=(-5.0e-8, 0.0, 0.0),
+    )
+    driver = _species_state(
+        "proton",
+        position_mm=(5.0e-8, 0.0, 0.0),
+    )
+    magnetic = MagneticDipoleConfig(
+        enabled=True,
+        exact_retarded_update="second_order_start_taylor_endpoint",
+        source=DipoleSourceConfig(
+            model="covariant_retarded_point",
+            history_model="causal_c5",
+        ),
+        rider=MagneticDipoleParticleConfig(species="electron"),
+        driver=MagneticDipoleParticleConfig(species="proton"),
+    )
+
+    with pytest.raises(RuntimeError, match="preflight captured"):
+        _run_simple_inertial(
+            rider,
+            driver,
+            steps=3,
+            h_step=1.0e-11,
+            magnetic_dipole=magnetic,
+            adaptive_pair_return=AdaptivePairReturnConfig(
+                enabled=True,
+                target_lab_time_ns=2.0e-11,
+            ),
+            checkpoint=CheckpointConfig(
+                enabled=True,
+                directory=str(tmp_path / "causal-c5.checkpoint"),
+            ),
+            particle_loss=ParticleLossConfig(enabled=False),
+        )
+
+    rider_seed = captured["rider_seed"]
+    driver_seed = captured["driver_seed"]
+    assert len(rider_seed) == len(driver_seed) == 16
+    accepted_c5 = captured["initial_causal_c5_source_history"]
+    assert accepted_c5.rider.sources[0].history.sample_count == 16
+    assert accepted_c5.driver.sources[0].history.sample_count == 16
+    assert len(accepted_c5.rider.sources[0].history.frozen_segments) == 1
+    assert len(accepted_c5.driver.sources[0].history.frozen_segments) == 1
+
+
+def test_causal_c5_rejects_unwired_fixed_step_path() -> None:
+    rider = _species_state(
+        "electron",
+        position_mm=(-5.0e-8, 0.0, 0.0),
+    )
+    driver = _species_state(
+        "proton",
+        position_mm=(5.0e-8, 0.0, 0.0),
+    )
+    magnetic = MagneticDipoleConfig(
+        enabled=True,
+        exact_retarded_update="second_order_start_taylor_endpoint",
+        source=DipoleSourceConfig(
+            model="covariant_retarded_point",
+            history_model="causal_c5",
+        ),
+        rider=MagneticDipoleParticleConfig(species="electron"),
+        driver=MagneticDipoleParticleConfig(species="proton"),
+    )
+
+    with pytest.raises(
+        NotImplementedError,
+        match="fixed-step publication is not yet implemented",
+    ):
+        _run_simple_inertial(
+            rider,
+            driver,
+            steps=3,
+            h_step=1.0e-11,
+            magnetic_dipole=magnetic,
+            particle_loss=ParticleLossConfig(enabled=False),
+        )
+
+
+def test_short_causal_c5_adaptive_run_uses_live_dipole_provider(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    from core import causal_c5_dipole_provider
+
+    provider_event_times: list[float] = []
+    original_provider = (
+        causal_c5_dipole_provider.evaluate_causal_c5_dipole_source_collection_native
+    )
+
+    def monitored_provider(collection, observer_event, **kwargs):
+        provider_event_times.append(float(observer_event.time_ns))
+        return original_provider(collection, observer_event, **kwargs)
+
+    monkeypatch.setattr(
+        causal_c5_dipole_provider,
+        "evaluate_causal_c5_dipole_source_collection_native",
+        monitored_provider,
+    )
+    rider = _species_state(
+        "electron",
+        position_mm=(-5.0e-8, 0.0, 0.0),
+        beta=(0.0, 1.0e-4, 0.0),
+    )
+    driver = _species_state(
+        "proton",
+        position_mm=(5.0e-8, 0.0, 0.0),
+        beta=(0.0, -1.0e-4, 0.0),
+    )
+    magnetic = MagneticDipoleConfig(
+        enabled=True,
+        exact_retarded_update="second_order_start_taylor_endpoint",
+        source=DipoleSourceConfig(
+            model="covariant_retarded_point",
+            history_model="causal_c5",
+        ),
+        rider=MagneticDipoleParticleConfig(species="electron"),
+        driver=MagneticDipoleParticleConfig(species="proton"),
+    )
+
+    result = _run_simple_inertial(
+        rider,
+        driver,
+        steps=3,
+        h_step=1.0e-11,
+        radiation_reaction_mode="off",
+        magnetic_dipole=magnetic,
+        self_consistency=SelfConsistencyConfig.standard(),
+        adaptive_pair_return=AdaptivePairReturnConfig(
+            enabled=True,
+            target_lab_time_ns=2.0e-11,
+            tolerance_scale=1.0e6,
+            minimum_step_factor=1.0 / 64.0,
+            maximum_step_factor=1.0,
+            maximum_attempts=64,
+            maximum_accepted_slabs=32,
+        ),
+        checkpoint=CheckpointConfig(
+            enabled=True,
+            directory=str(tmp_path / "causal-c5-live.checkpoint"),
+            interval_steps=1,
+            interval_seconds=0.0,
+        ),
+        particle_loss=ParticleLossConfig(enabled=False),
+    )
+
+    rider_soa, driver_soa = result[2:4]
+    assert rider_soa is not None and driver_soa is not None
+    summary = result[0][-1]["_adaptive_pair_return"]
+    assert summary["completed"] is True
+    assert summary["dipole_source_history"] == "causal_c5"
+    assert provider_event_times
+    assert any(time_ns > 0.0 for time_ns in provider_event_times)
+    assert np.all(np.isfinite(rider_soa.Pt))
+    assert np.all(np.isfinite(driver_soa.Pt))
 
 
 def _independent_total_canonical_offset(
@@ -1064,6 +1243,88 @@ def test_analytic_endpoint_uses_matching_dipole_hertz_potential(
     assert call["root_tolerance_mm"] == 5.0e-20
     assert call["max_root_iterations"] == 73
     assert call["spin_interpolation_model"] == "causal_frozen_c1"
+
+
+def test_causal_c5_endpoint_uses_separate_dipole_history(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import core.causal_c5_dipole_provider as c5_provider
+    import core.retarded_dipole_fields as dipole_fields
+    import core.retarded_fields as charge_fields
+
+    charge_potential = np.asarray((0.1, 0.2, 0.3, 0.4))
+    dipole_potential = np.asarray((-0.4, -0.3, -0.2, -0.1))
+    c5_history = object()
+    observed: dict[str, object] = {}
+
+    def fake_charge(history, *args, **kwargs):
+        del args, kwargs
+        observed["charge_history"] = history
+        return SimpleNamespace(four_potential=charge_potential)
+
+    monkeypatch.setattr(
+        charge_fields,
+        "evaluate_retarded_charge_field_native",
+        fake_charge,
+    )
+
+    def fake_c5(history, *args, **kwargs):
+        observed["dipole_history"] = history
+        observed["dipole_options"] = dict(kwargs)
+        return SimpleNamespace(four_potential=dipole_potential)
+
+    monkeypatch.setattr(
+        c5_provider,
+        "evaluate_causal_c5_dipole_source_collection_native",
+        fake_c5,
+    )
+    monkeypatch.setattr(
+        dipole_fields,
+        "evaluate_retarded_dipole_potential_native",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("causal C5 endpoint must not use legacy dipole history")
+        ),
+    )
+    observer = {
+        "x": np.array([1.0]),
+        "y": np.array([2.0]),
+        "z": np.array([3.0]),
+        "t": np.array([4.0]),
+        "_exact_source_endpoint_rebase_required": np.array([True]),
+    }
+    particle = MagneticDipoleParticleConfig(species="proton")
+    magnetic = MagneticDipoleConfig(
+        enabled=True,
+        source=DipoleSourceConfig(
+            model="covariant_retarded_point",
+            minimum_separation_mm=4.0e-15,
+            root_tolerance_mm=5.0e-20,
+            max_root_iterations=73,
+        ),
+        rider=particle,
+        driver=particle,
+    )
+    charge_history = object()
+
+    actual = _evaluate_exact_endpoint_four_potential(
+        observer,
+        charge_history,
+        magnetic_dipole=magnetic,
+        include_dipole_source=True,
+        dipole_source_collection=c5_history,
+    )
+
+    np.testing.assert_array_equal(
+        actual,
+        (charge_potential + dipole_potential)[np.newaxis, :],
+    )
+    assert observed["charge_history"] is charge_history
+    assert observed["dipole_history"] is c5_history
+    assert observed["dipole_options"] == {
+        "minimum_separation_mm": 4.0e-15,
+        "root_tolerance_mm": 5.0e-20,
+        "max_root_iterations": 73,
+    }
 
 
 def test_inertial_preflight_forwards_shared_exact_retarded_backend(

@@ -1,5 +1,19 @@
 # Changelog
 
+- Promoted the causally frozen ``C5`` intrinsic-dipole source history into the
+  opt-in exact-pair adaptive equations of motion. Charge fields continue to use
+  their established accepted chronology, while dipole ``A``, ``F``, and
+  ``partial F`` come from the independent smooth history and the existing
+  canonical-momentum and RFS force contractions. Start and endpoint canonical
+  momentum now use the same C5 potential representation. Adaptive full-step
+  and two-half-step trials see only private candidates; rejected trials publish
+  nothing, accepted midpoint/endpoints commit jointly, and checkpoint restart
+  restores the frozen coefficients. The JSON, CLI, GUI, run log, and summary
+  surfaces now preserve ``source.history_model``. C5 currently requires the
+  checkpointed exact-pair adaptive controller; fixed-step selection fails
+  explicitly rather than falling back to C1. This changes mutual dipole-source
+  fields only and does not yet apply the diagnostic ``q*mu`` or missing
+  ``mu^2`` self-reaction sectors.
 - Added the internal ordered multi-source layer for causally frozen ``C5``
   dipole histories. Stable string identities now define both exclusion and
   floating-point summation order; each source solves the full relativistic

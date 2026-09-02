@@ -167,6 +167,7 @@ DEFAULT_MAGNETIC_DIPOLE: Dict[str, Any] = {
     "intrinsic_spin_self_reaction_mode": "off",
     "source": {
         "model": "off",
+        "history_model": "causal_frozen_c1",
         "minimum_separation_mm": 2.0e-9,
         "relative_stencil_step": 1.0e-3,
         "minimum_stencil_step_mm": 1.0e-15,
@@ -708,6 +709,17 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         help=(
             "Strict minimum observer/source separation in mm for the point "
             "dipole field. Crossing it aborts the run; it is not softening."
+        ),
+    )
+    parser.add_argument(
+        "--dipole-source-history",
+        dest="dipole_source_history_model",
+        choices=("causal-frozen-c1", "causal-c5"),
+        help=(
+            "Dipole trajectory interpolation: causal-frozen-c1 keeps the "
+            "legacy piecewise-cubic source, while causal-c5 uses smooth "
+            "accepted-history segments and currently requires "
+            "--adaptive-pair-return."
         ),
     )
     parser.add_argument(
@@ -1395,6 +1407,7 @@ def _build_testbed_report(
     if options is not None:
         report["magnetic_dipole_source"] = {
             "model": str(options.magnetic_dipole_source_model),
+            "history_model": str(options.magnetic_dipole_source_history_model),
         }
         report["exact_retarded"] = _exact_retarded_report(
             str(options.magnetic_dipole_exact_retarded_backend)
@@ -1951,6 +1964,8 @@ def _merge_simulation_payload(
     dipole_source = magnetic_dipole["source"]
     if getattr(args, "dipole_source_model", None) is not None:
         dipole_source["model"] = args.dipole_source_model
+    if getattr(args, "dipole_source_history_model", None) is not None:
+        dipole_source["history_model"] = args.dipole_source_history_model
     if getattr(args, "exact_retarded_backend", None) is not None:
         magnetic_dipole["exact_retarded_backend"] = args.exact_retarded_backend
     if getattr(args, "exact_retarded_update", None) is not None:
@@ -3264,6 +3279,7 @@ def build_report(
     if magnetic_dipole is not None:
         report["magnetic_dipole_source"] = {
             "model": magnetic_dipole.source.model,
+            "history_model": magnetic_dipole.source.history_model,
         }
         report["exact_retarded"] = _exact_retarded_report(
             magnetic_dipole.exact_retarded_backend

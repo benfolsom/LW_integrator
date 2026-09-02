@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import copy
 from dataclasses import dataclass, replace
-from typing import Any, Callable, cast
+from typing import TYPE_CHECKING, Any, Callable, cast
 
 import numpy as np
 
@@ -40,6 +40,17 @@ from .types import (
 )
 
 AdvanceRoleTrial = Callable[[float, ParticleState, ParticleState, Any], ParticleState]
+
+if TYPE_CHECKING:
+    from .causal_c5_dipole_provider import AcceptedPairCausalC5SourceHistory
+
+
+@dataclass(frozen=True)
+class ExactRoleSourceHistory:
+    """Charge chronology plus an optional independent dipole history."""
+
+    charge_history: Any
+    dipole_source_collection: Any = None
 
 
 @dataclass(frozen=True)
@@ -111,6 +122,11 @@ def make_exact_role_eom_advance(options: ExactPairEOMOptions) -> AdvanceRoleTria
         source_start: ParticleState,
         exact_source_history: Any,
     ) -> ParticleState:
+        charge_history = exact_source_history
+        dipole_source_collection = None
+        if isinstance(exact_source_history, ExactRoleSourceHistory):
+            charge_history = exact_source_history.charge_history
+            dipole_source_collection = exact_source_history.dipole_source_collection
         return cast(
             ParticleState,
             self_consistent_step(
@@ -129,7 +145,8 @@ def make_exact_role_eom_advance(options: ExactPairEOMOptions) -> AdvanceRoleTria
                 radiation_reaction_mode=options.radiation_reaction_mode,
                 external_field=options.external_field,
                 magnetic_dipole=options.magnetic_dipole,
-                exact_source_history=exact_source_history,
+                exact_source_history=charge_history,
+                exact_dipole_source_collection=dipole_source_collection,
                 exact_source_spin_interpolation_model=(
                     options.spin_interpolation_model
                 ),
@@ -194,6 +211,7 @@ def solve_exact_pair_slab_trial(
     include_dipole_source: bool,
     rider_prior_tail: tuple[ParticleState, ...] = (),
     driver_prior_tail: tuple[ParticleState, ...] = (),
+    causal_c5_source_history: AcceptedPairCausalC5SourceHistory | None = None,
     spin_interpolation_model: str = "causal_frozen_c1",
     absolute_tolerance_ns: float = 1.0e-18,
     relative_tolerance: float = 1.0e-12,
@@ -244,8 +262,25 @@ def solve_exact_pair_slab_trial(
         raise SharedLabTimeError("rider and driver trial starts are not synchronized")
     start_time_ns = 0.5 * (rider_start_time + driver_start_time)
 
-    rider_source_history = _source_history(accepted_driver_history, driver_prior_tail)
-    driver_source_history = _source_history(accepted_rider_history, rider_prior_tail)
+    rider_charge_history = _source_history(
+        accepted_driver_history,
+        driver_prior_tail,
+    )
+    driver_charge_history = _source_history(
+        accepted_rider_history,
+        rider_prior_tail,
+    )
+    rider_source_history: Any = rider_charge_history
+    driver_source_history: Any = driver_charge_history
+    if include_dipole_source and causal_c5_source_history is not None:
+        rider_source_history = ExactRoleSourceHistory(
+            charge_history=rider_charge_history,
+            dipole_source_collection=causal_c5_source_history.driver,
+        )
+        driver_source_history = ExactRoleSourceHistory(
+            charge_history=driver_charge_history,
+            dipole_source_collection=causal_c5_source_history.rider,
+        )
     provisional = solve_shared_lab_time_pair(
         advance_rider=lambda h: advance_rider(
             h,
@@ -285,6 +320,16 @@ def solve_exact_pair_slab_trial(
         driver_endpoint_history=provisional_driver_history,
         magnetic_dipole=magnetic_dipole,
         include_dipole_source=include_dipole_source,
+        rider_dipole_source_collection=(
+            None
+            if causal_c5_source_history is None or not include_dipole_source
+            else causal_c5_source_history.rider
+        ),
+        driver_dipole_source_collection=(
+            None
+            if causal_c5_source_history is None or not include_dipole_source
+            else causal_c5_source_history.driver
+        ),
         spin_interpolation_model=spin_interpolation_model,
     )
     finalized = replace(
@@ -318,6 +363,14 @@ def solve_exact_pair_step_doubling_trial(
     include_dipole_source: bool,
     tolerances: StepDoublingTolerances,
     method_order: int = 1,
+    causal_c5_source_history: AcceptedPairCausalC5SourceHistory | None = None,
+    build_causal_c5_midpoint_candidate: (
+        Callable[
+            [ExactPairSlabTrial, AcceptedPairCausalC5SourceHistory],
+            AcceptedPairCausalC5SourceHistory,
+        ]
+        | None
+    ) = None,
     spin_interpolation_model: str = "causal_frozen_c1",
     absolute_time_tolerance_ns: float = 1.0e-18,
     relative_time_tolerance: float = 1.0e-12,
@@ -334,6 +387,7 @@ def solve_exact_pair_step_doubling_trial(
         driver_proper_step_ns: float,
         rider_tail: tuple[ParticleState, ...] = (),
         driver_tail: tuple[ParticleState, ...] = (),
+        slab_causal_c5_source_history: AcceptedPairCausalC5SourceHistory | None = None,
     ) -> ExactPairSlabTrial:
         return solve_exact_pair_slab_trial(
             accepted_rider_history=accepted_rider_history,
@@ -347,6 +401,7 @@ def solve_exact_pair_step_doubling_trial(
             include_dipole_source=include_dipole_source,
             rider_prior_tail=rider_tail,
             driver_prior_tail=driver_tail,
+            causal_c5_source_history=slab_causal_c5_source_history,
             spin_interpolation_model=spin_interpolation_model,
             absolute_tolerance_ns=absolute_time_tolerance_ns,
             relative_tolerance=relative_time_tolerance,
@@ -359,19 +414,42 @@ def solve_exact_pair_step_doubling_trial(
         slab_time_ns=delta_time_ns,
         rider_proper_step_ns=rider_initial_proper_step_ns,
         driver_proper_step_ns=driver_initial_proper_step_ns,
+        slab_causal_c5_source_history=causal_c5_source_history,
     )
     half_time_ns = 0.5 * float(delta_time_ns)
     midpoint = solve_slab(
         slab_time_ns=half_time_ns,
         rider_proper_step_ns=0.5 * float(rider_initial_proper_step_ns),
         driver_proper_step_ns=0.5 * float(driver_initial_proper_step_ns),
+        slab_causal_c5_source_history=causal_c5_source_history,
     )
+    refined_c5_source_history = causal_c5_source_history
+    if causal_c5_source_history is not None:
+        if build_causal_c5_midpoint_candidate is None:
+            from .causal_c5_dipole_provider import (
+                AcceptedPairCausalC5SourceHistory,
+            )
+
+            refined_c5_source_history = AcceptedPairCausalC5SourceHistory(
+                rider=causal_c5_source_history.rider.append_accepted_state(
+                    midpoint.pair.rider.state
+                ),
+                driver=causal_c5_source_history.driver.append_accepted_state(
+                    midpoint.pair.driver.state
+                ),
+            )
+        else:
+            refined_c5_source_history = build_causal_c5_midpoint_candidate(
+                midpoint,
+                causal_c5_source_history,
+            )
     refined = solve_slab(
         slab_time_ns=half_time_ns,
         rider_proper_step_ns=midpoint.pair.rider.proper_step_ns,
         driver_proper_step_ns=midpoint.pair.driver.proper_step_ns,
         rider_tail=(midpoint.pair.rider.state,),
         driver_tail=(midpoint.pair.driver.state,),
+        slab_causal_c5_source_history=refined_c5_source_history,
     )
     full_state = build_pair_step_doubling_state(
         rider_states=(full.pair.rider.state,),
@@ -558,6 +636,7 @@ def commit_accepted_exact_pair_step_doubling_trial(
 
 __all__ = [
     "AdvanceRoleTrial",
+    "ExactRoleSourceHistory",
     "ExactPairEOMOptions",
     "ExactPairSlabTrial",
     "ExactPairStepDoublingTrial",

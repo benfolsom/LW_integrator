@@ -1771,6 +1771,7 @@ def retarded_equations_of_motion(
     beamline_geometry: Optional[BeamlineGeometryConfig] = None,
     magnetic_dipole: Optional[MagneticDipoleConfig] = None,
     exact_source_history: Optional[Any] = None,
+    exact_dipole_source_collection: Optional[Any] = None,
     exact_source_spin_interpolation_model: str = "centered_c1",
 ) -> ParticleState:
     """Core equations of motion preserving the validated reference behavior.
@@ -1801,6 +1802,11 @@ def retarded_equations_of_motion(
     exact_source_history:
         Optional immutable source-history view used by exact charge and dipole
         providers without replacing the accepted chronology/gating history.
+    exact_dipole_source_collection:
+        Optional ordered causal-$C^5$ dipole history.  Charge providers continue
+        to use ``exact_source_history``; only the intrinsic-dipole Maxwell source
+        is replaced.  This separation prevents a spin-history experiment from
+        changing the already validated charge chronology.
     exact_source_spin_interpolation_model:
         Spin interpolation contract for ``exact_source_history``. Trial overlays
         require ``"causal_frozen_c1"`` so accepted spin segments stay fixed.
@@ -1857,6 +1863,14 @@ def retarded_equations_of_motion(
         )
         result["_exact_source_endpoint_rebase_required"] = np.zeros(
             num_particles, dtype=bool
+        )
+    if exact_dipole_source_collection is not None and not (
+        exact_endpoint_recomposition_selected
+        and magnetic_dipole is not None
+        and magnetic_dipole.source.active
+    ):
+        raise ValueError(
+            "causal C5 dipole history requires the exact inertial dipole-source path"
         )
     if second_order_exact_source_selected:
         # Private accepted-trial metadata for the diagnostic intrinsic-spin
@@ -3172,6 +3186,11 @@ def retarded_equations_of_motion(
                 )
                 from .retarded_fields import ObserverEvent, RetardedHistoryError
 
+                if exact_dipole_source_collection is not None:
+                    from .causal_c5_dipole_provider import (
+                        evaluate_causal_c5_dipole_source_collection_native,
+                    )
+
                 if sc_convergence_mode == "variable_geometry" and sc_iteration > 0:
                     dipole_source_position = (
                         float(working_x),
@@ -3191,7 +3210,26 @@ def retarded_equations_of_motion(
                     ):
                         dipole_source_field = dipole_source_field_cache
                     else:
-                        if (
+                        if exact_dipole_source_collection is not None:
+                            dipole_source_field = (
+                                evaluate_causal_c5_dipole_source_collection_native(
+                                    exact_dipole_source_collection,
+                                    ObserverEvent(
+                                        time_ns=float(current_state["t"][particle_idx]),
+                                        position_mm=dipole_source_position,
+                                    ),
+                                    root_tolerance_mm=(
+                                        magnetic_dipole.source.root_tolerance_mm
+                                    ),
+                                    max_root_iterations=(
+                                        magnetic_dipole.source.max_root_iterations
+                                    ),
+                                    minimum_separation_mm=(
+                                        magnetic_dipole.source.minimum_separation_mm
+                                    ),
+                                )
+                            )
+                        elif (
                             exact_endpoint_recomposition_selected
                             and magnetic_dipole.exact_retarded_backend
                             == "numba_analytic_charge_dipole_response_serial"

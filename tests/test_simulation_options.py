@@ -278,6 +278,19 @@ def test_adaptive_pair_return_roundtrip_preserves_production_controls() -> None:
     assert restored.adaptive_pair_maximum_accepted_slabs == 567
 
 
+def test_causal_c5_dipole_history_roundtrips_in_nested_config() -> None:
+    options = SimulationOptions(
+        magnetic_dipole_source_model="covariant_retarded_point",
+        magnetic_dipole_source_history_model="causal_c5",
+    )
+
+    payload = options.to_dict()
+    restored = SimulationOptions.from_dict(payload)
+
+    assert payload["magnetic_dipole"]["source"]["history_model"] == "causal_c5"
+    assert restored.magnetic_dipole_source_history_model == "causal_c5"
+
+
 def test_flat_checkpoint_fields_remain_loadable(tmp_path: Path) -> None:
     restored = SimulationOptions.from_dict(
         {

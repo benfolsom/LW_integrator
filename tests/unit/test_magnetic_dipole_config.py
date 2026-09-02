@@ -92,6 +92,22 @@ def test_retarded_dipole_source_normalizes_alias_and_nested_mapping() -> None:
     assert config.source.relative_stencil_step == 5.0e-4
 
 
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    (("c1", "causal_frozen_c1"), ("causal-c5", "causal_c5")),
+)
+def test_retarded_dipole_source_normalizes_history_model(
+    value: str,
+    expected: str,
+) -> None:
+    assert DipoleSourceConfig(history_model=value).history_model == expected
+
+
+def test_retarded_dipole_source_rejects_unknown_history_model() -> None:
+    with pytest.raises(ValueError, match="history_model"):
+        DipoleSourceConfig(history_model="future_spline")
+
+
 def test_magnetic_dipole_accepts_full_strict_exact_retarded_backend() -> None:
     config = MagneticDipoleConfig(exact_retarded_backend="numba_full_strict_serial")
 

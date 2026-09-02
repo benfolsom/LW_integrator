@@ -1,8 +1,9 @@
 """Ordered multi-source dispatch for causally frozen dipole histories.
 
-The objects in this module are still an opt-in validation surface.  They do
-not alter the equations of motion.  Their purpose is to make three production
-contracts explicit before a self-reaction force is enabled:
+The objects in this module remain an opt-in validation surface.  The exact-pair
+adaptive integrator may now use them for the ordinary field sourced by
+intrinsic magnetic moments; this remains separate from the not-yet-enabled
+intrinsic-spin self-reaction force.  Their production contracts are:
 
 * source identity and summation order are stable;
 * an adaptive trial produces a detached candidate and publishes it only after

@@ -21,6 +21,7 @@ from .causal_c5_dipole_provider import (
 )
 from .exact_pair_trial import (
     AdvanceRoleTrial,
+    ExactPairSlabTrial,
     ExactPairStepDoublingTrial,
     commit_accepted_exact_pair_step_doubling_trial,
     solve_exact_pair_step_doubling_trial,
@@ -372,8 +373,33 @@ def attempt_exact_pair_adaptive_step(
             "intrinsic-spin history and candidate builder must be supplied together"
         )
 
+    if (
+        causal_c5_source_history is not None
+        and growable_causal_c5_source_history is not None
+    ):
+        raise ValueError(
+            "immutable and growable causal C5 histories cannot both be supplied"
+        )
+
     accepted_rider = rider_builder.build_current()
     accepted_driver = driver_builder.build_current()
+    current_c5_history = (
+        growable_causal_c5_source_history.build_current()
+        if growable_causal_c5_source_history is not None
+        else causal_c5_source_history
+    )
+
+    def build_midpoint_c5_candidate(
+        midpoint: ExactPairSlabTrial,
+        _accepted: AcceptedPairCausalC5SourceHistory,
+    ) -> AcceptedPairCausalC5SourceHistory:
+        if growable_causal_c5_source_history is None:
+            raise RuntimeError("growable causal C5 source history is unavailable")
+        return growable_causal_c5_source_history.preflight_states(
+            rider_states=(midpoint.pair.rider.state,),
+            driver_states=(midpoint.pair.driver.state,),
+        ).candidate
+
     trial = solve_exact_pair_step_doubling_trial(
         accepted_rider_history=accepted_rider,
         accepted_driver_history=accepted_driver,
@@ -386,6 +412,14 @@ def attempt_exact_pair_adaptive_step(
         include_dipole_source=include_dipole_source,
         tolerances=tolerances,
         method_order=controller_config.method_order,
+        causal_c5_source_history=(
+            current_c5_history if include_dipole_source else None
+        ),
+        build_causal_c5_midpoint_candidate=(
+            build_midpoint_c5_candidate
+            if include_dipole_source and growable_causal_c5_source_history is not None
+            else None
+        ),
         spin_interpolation_model=spin_interpolation_model,
         absolute_time_tolerance_ns=absolute_time_tolerance_ns,
         relative_time_tolerance=relative_time_tolerance,
@@ -416,14 +450,6 @@ def attempt_exact_pair_adaptive_step(
     scale = next_step_ns / controller_state.current_step_ns
     rider_guess = 2.0 * trial.refined.pair.rider.proper_step_ns * scale
     driver_guess = 2.0 * trial.refined.pair.driver.proper_step_ns * scale
-
-    if (
-        causal_c5_source_history is not None
-        and growable_causal_c5_source_history is not None
-    ):
-        raise ValueError(
-            "immutable and growable causal C5 histories cannot both be supplied"
-        )
 
     committed_rows = None
     next_intrinsic_spin_history = intrinsic_spin_reduction_history

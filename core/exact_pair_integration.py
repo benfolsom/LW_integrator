@@ -18,6 +18,10 @@ from .adaptive_pair_return import (
     IntrinsicSpinReductionCandidate,
     run_exact_pair_adaptive_window,
 )
+from .causal_c5_dipole_provider import (
+    AcceptedPairCausalC5SourceHistory,
+    GrowableAcceptedPairCausalC5SourceHistory,
+)
 from .exact_pair_trial import ExactPairEOMOptions, make_exact_role_eom_advance
 from .integration_checkpoint import AcceptedPairCheckpointStore
 from .self_consistency import SelfConsistencyConfig
@@ -88,6 +92,7 @@ def run_exact_pair_adaptive_integrator(
     compatibility_payload: dict[str, Any],
     progress_callback: Callable[[int, int], None] | None = None,
     cancel_callback: Callable[[], bool] | None = None,
+    initial_causal_c5_source_history: AcceptedPairCausalC5SourceHistory | None = None,
 ) -> tuple[
     Trajectory,
     Trajectory,
@@ -120,6 +125,11 @@ def run_exact_pair_adaptive_integrator(
     reduction_diagnostic_enabled = bool(
         magnetic_dipole.exact_retarded_update == "second_order_start_taylor_endpoint"
     )
+    causal_c5_enabled = bool(
+        magnetic_dipole.source.active
+        and magnetic_dipole.source.history_model == "causal_c5"
+    )
+    growable_c5_history: GrowableAcceptedPairCausalC5SourceHistory | None = None
     if resume:
         rider_builder = GrowableTrajectoryBuilder(8, 1, magnetic_dipole=True)
         driver_builder = GrowableTrajectoryBuilder(8, 1, magnetic_dipole=True)
@@ -142,6 +152,18 @@ def run_exact_pair_adaptive_integrator(
                     payload
                 )
             )
+        if causal_c5_enabled:
+            restored_c5 = store.restore_causal_c5_source_history(
+                rider_builder.build_current(),
+                driver_builder.build_current(),
+            )
+            if restored_c5 is None:
+                raise ValueError(
+                    "causal C5 exact-pair checkpoint has no frozen source history"
+                )
+            growable_c5_history = (
+                GrowableAcceptedPairCausalC5SourceHistory.from_accepted(restored_c5)
+            )
         active_row = public_output.selected_rows[0]
     else:
         rider_builder = _new_builder_from_seed(
@@ -157,6 +179,16 @@ def run_exact_pair_adaptive_integrator(
         active_row = len(rider_seed) - 1
         if reduction_diagnostic_enabled:
             reduction_history = AcceptedPairIntrinsicSpinReductionHistory.empty()
+        if causal_c5_enabled:
+            accepted_c5 = initial_causal_c5_source_history
+            if accepted_c5 is None:
+                accepted_c5 = AcceptedPairCausalC5SourceHistory.from_trajectory_arrays(
+                    rider_builder.build_current(),
+                    driver_builder.build_current(),
+                )
+            growable_c5_history = (
+                GrowableAcceptedPairCausalC5SourceHistory.from_accepted(accepted_c5)
+            )
 
     if reduction_diagnostic_enabled:
         reduction_candidate_builder = (
@@ -234,6 +266,7 @@ def run_exact_pair_adaptive_integrator(
         accepted_progress_callback=progress,
         intrinsic_spin_reduction_history=reduction_history,
         build_intrinsic_spin_reduction_candidate=reduction_candidate_builder,
+        growable_causal_c5_source_history=growable_c5_history,
     )
     if progress_callback is not None and result.completed:
         progress_callback(
@@ -272,6 +305,9 @@ def run_exact_pair_adaptive_integrator(
                 "rider": result.intrinsic_spin_reduction_history.rider.sample_count,
                 "driver": result.intrinsic_spin_reduction_history.driver.sample_count,
             }
+        ),
+        "dipole_source_history": (
+            "causal_c5" if causal_c5_enabled else "causal_frozen_c1"
         ),
         "intrinsic_spin_self_reaction_diagnostics": (
             None

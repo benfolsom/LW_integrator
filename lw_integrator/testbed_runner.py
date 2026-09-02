@@ -79,6 +79,11 @@ DIPOLE_SOURCE_MODEL_OPTIONS: Tuple[Tuple[str, str], ...] = (
     ("Full retarded point (experimental)", "covariant_retarded_point"),
 )
 
+DIPOLE_SOURCE_HISTORY_OPTIONS: Tuple[Tuple[str, str], ...] = (
+    ("Frozen C1 (legacy)", "causal_frozen_c1"),
+    ("Causal C5 (adaptive exact-pair)", "causal_c5"),
+)
+
 EXACT_RETARDED_BACKEND_OPTIONS: Tuple[Tuple[str, str], ...] = (
     ("Python reference", "python"),
     ("Numba roots-exact CPU", "numba_roots_exact_serial"),
@@ -453,6 +458,7 @@ class SimulationOptions:
     magnetic_dipole_exact_retarded_update: str = "first_order_endpoint"
     magnetic_dipole_intrinsic_spin_self_reaction_mode: str = "off"
     magnetic_dipole_source_model: str = "off"
+    magnetic_dipole_source_history_model: str = "causal_frozen_c1"
     magnetic_dipole_source_minimum_separation_mm: float = 2.0e-9
     magnetic_dipole_source_relative_stencil_step: float = 1.0e-3
     magnetic_dipole_source_minimum_stencil_step_mm: float = 1.0e-15
@@ -788,6 +794,7 @@ class SimulationOptions:
                 ),
                 "source": {
                     "model": self.magnetic_dipole_source_model,
+                    "history_model": self.magnetic_dipole_source_history_model,
                     "minimum_separation_mm": (
                         self.magnetic_dipole_source_minimum_separation_mm
                     ),
@@ -1629,6 +1636,9 @@ class SimulationOptions:
                 _magnetic_value("intrinsic_spin_self_reaction_mode", "off")
             ),
             magnetic_dipole_source_model=str(_magnetic_source_value("model", "off")),
+            magnetic_dipole_source_history_model=str(
+                _magnetic_source_value("history_model", "causal_frozen_c1")
+            ),
             magnetic_dipole_source_minimum_separation_mm=float(
                 _magnetic_source_value("minimum_separation_mm", 2.0e-9)
             ),
@@ -2983,6 +2993,7 @@ def build_magnetic_dipole_config(options: SimulationOptions) -> object:
         ),
         source=DipoleSourceConfig(
             model=options.magnetic_dipole_source_model,
+            history_model=options.magnetic_dipole_source_history_model,
             minimum_separation_mm=(
                 options.magnetic_dipole_source_minimum_separation_mm
             ),
@@ -3209,7 +3220,11 @@ def run_testbed(
         f"  Adaptive timestep: {options.adaptive_timestep_enabled} (threshold={options.adaptive_timestep_threshold * 100:.0f}%, reduction={options.adaptive_timestep_reduction_factor}x)"
     )
     _log(f"  Radiation reaction: {options.radiation_reaction_mode}")
-    _log(f"  Magnetic dipole source: {options.magnetic_dipole_source_model}")
+    _log(
+        "  Magnetic dipole source: "
+        f"{options.magnetic_dipole_source_model} "
+        f"(history={options.magnetic_dipole_source_history_model})"
+    )
     _log(f"  Exact-retarded backend: {options.magnetic_dipole_exact_retarded_backend}")
     _log(f"  Exact-retarded update: {options.magnetic_dipole_exact_retarded_update}")
     _log(
@@ -5340,6 +5355,7 @@ __all__ = [
     "EXACT_RETARDED_BACKEND_OPTIONS",
     "EXACT_RETARDED_UPDATE_OPTIONS",
     "INTRINSIC_SPIN_SELF_REACTION_OPTIONS",
+    "DIPOLE_SOURCE_HISTORY_OPTIONS",
     "DIPOLE_SOURCE_MODEL_OPTIONS",
     "SimulationOptions",
     "InitialSummary",

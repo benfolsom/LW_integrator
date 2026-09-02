@@ -10,9 +10,11 @@ from core.adaptive_pair_return import (
     AdaptivePairControllerState,
     run_exact_pair_adaptive_window,
 )
+from core.causal_c5_dipole_provider import AcceptedPairCausalC5SourceHistory
 from core.constants import C_MMNS, ELEMENTARY_CHARGE
 from core.exact_pair_trial import (
     ExactPairEOMOptions,
+    ExactRoleSourceHistory,
     commit_accepted_exact_pair_step_doubling_trial,
     make_exact_role_eom_advance,
     solve_exact_pair_slab_trial,
@@ -434,16 +436,74 @@ def test_eom_adapter_forwards_trial_history_and_causal_spin_contract(
     observer = _state(0.0, -1.0)
     source = _state(0.0, 1.0)
 
-    callback(0.01, observer, source, accepted)
+    dipole_history = object()
+    callback(
+        0.01,
+        observer,
+        source,
+        ExactRoleSourceHistory(
+            charge_history=accepted,
+            dipole_source_collection=dipole_history,
+        ),
+    )
 
     args = received["args"]
     assert args[7] is options.self_consistency  # type: ignore[index]
     assert args[8] is ChronoMatchingMode.FAST  # type: ignore[index]
     assert args[9] is StartupMode.INERTIAL_PREHISTORY  # type: ignore[index]
     assert received["exact_source_history"] is accepted
+    assert received["exact_dipole_source_collection"] is dipole_history
     assert received["exact_source_spin_interpolation_model"] == "causal_frozen_c1"
     assert received["radiation_reaction_mode"] == "medina_lad"
     assert received["magnetic_dipole"] is magnetic
+
+
+def test_step_doubling_exposes_causal_c5_midpoint_without_publishing() -> None:
+    rider_builder, driver_builder, magnetic = _charged_accepted_pair(
+        include_dipole_source=True
+    )
+    accepted_rider = rider_builder.build_current()
+    accepted_driver = driver_builder.build_current()
+    accepted_c5 = AcceptedPairCausalC5SourceHistory.from_trajectory_arrays(
+        accepted_rider,
+        accepted_driver,
+    )
+    rider_seen: list[object] = []
+    driver_seen: list[object] = []
+    loose = StepDoublingTolerances(
+        position_mm=ErrorScale(1.0, 1.0),
+        mechanical_momentum_native=ErrorScale(1.0, 1.0),
+        rest_spin=ErrorScale(1.0, 1.0),
+        diagnostics_native=ErrorScale(1.0, 1.0),
+    )
+
+    solve_exact_pair_step_doubling_trial(
+        accepted_rider_history=accepted_rider,
+        accepted_driver_history=accepted_driver,
+        advance_rider=_advance(2.0, rider_seen),
+        advance_driver=_advance(4.0, driver_seen),
+        delta_time_ns=0.2,
+        rider_initial_proper_step_ns=0.1,
+        driver_initial_proper_step_ns=0.05,
+        magnetic_dipole=magnetic,
+        include_dipole_source=True,
+        tolerances=loose,
+        causal_c5_source_history=accepted_c5,
+    )
+
+    combined = rider_seen + driver_seen
+    assert combined
+    assert all(isinstance(item, ExactRoleSourceHistory) for item in combined)
+    dipole_sample_counts = {
+        item.dipole_source_collection.sources[0].history.sample_count
+        for item in combined
+    }
+    assert dipole_sample_counts == {
+        accepted_rider.n_steps,
+        accepted_rider.n_steps + 1,
+    }
+    assert rider_builder.accepted_steps == accepted_rider.n_steps
+    assert driver_builder.accepted_steps == accepted_driver.n_steps
 
 
 def test_eom_adapter_rejects_variable_geometry() -> None:

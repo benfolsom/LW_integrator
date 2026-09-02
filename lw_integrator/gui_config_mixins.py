@@ -19,6 +19,7 @@ from optimization.mode_helpers import SWEEP_OR_OPTIMIZATION_MODES
 
 from .testbed_runner import (
     CORE_PARAM_DEFAULTS,
+    DIPOLE_SOURCE_HISTORY_OPTIONS,
     DIPOLE_SOURCE_MODEL_OPTIONS,
     EXACT_RETARDED_BACKEND_OPTIONS,
     EXACT_RETARDED_UPDATE_OPTIONS,
@@ -43,6 +44,10 @@ _DIPOLE_SOURCE_LABEL_BY_MODEL.update(
         ],
     }
 )
+_DIPOLE_SOURCE_HISTORY_BY_LABEL = dict(DIPOLE_SOURCE_HISTORY_OPTIONS)
+_DIPOLE_SOURCE_LABEL_BY_HISTORY = {
+    history: label for label, history in DIPOLE_SOURCE_HISTORY_OPTIONS
+}
 _EXACT_RETARDED_BACKEND_BY_LABEL = dict(EXACT_RETARDED_BACKEND_OPTIONS)
 _EXACT_RETARDED_LABEL_BY_BACKEND = {
     backend: label for label, backend in EXACT_RETARDED_BACKEND_OPTIONS
@@ -158,6 +163,21 @@ class IntegratorGUIConfigMixin:
         )
         self.magnetic_dipole_source_model_var.set(
             _DIPOLE_SOURCE_LABEL_BY_MODEL.get(source_model, source_model)
+        )
+        source_history = (
+            str(
+                getattr(
+                    options,
+                    "magnetic_dipole_source_history_model",
+                    "causal_frozen_c1",
+                )
+            )
+            .strip()
+            .lower()
+            .replace("-", "_")
+        )
+        self.magnetic_dipole_source_history_var.set(
+            _DIPOLE_SOURCE_LABEL_BY_HISTORY.get(source_history, source_history)
         )
         exact_retarded_backend = (
             str(
@@ -312,6 +332,23 @@ class IntegratorGUIConfigMixin:
                 "Select Off or Full retarded point (experimental) for the "
                 "dipole source."
             )
+        source_history_selection = str(
+            self.magnetic_dipole_source_history_var.get()
+        ).strip()
+        source_history_model = _DIPOLE_SOURCE_HISTORY_BY_LABEL.get(
+            source_history_selection,
+            source_history_selection.lower().replace("-", "_"),
+        )
+        source_history_model = {
+            "c1": "causal_frozen_c1",
+            "frozen_c1": "causal_frozen_c1",
+            "c5": "causal_c5",
+        }.get(source_history_model, source_history_model)
+        if source_history_model not in _DIPOLE_SOURCE_LABEL_BY_HISTORY:
+            raise ValueError(
+                "Select Frozen C1 (legacy) or Causal C5 (adaptive exact-pair) "
+                "for the dipole source history."
+            )
         backend_selection = str(
             self.magnetic_dipole_exact_retarded_backend_var.get()
         ).strip()
@@ -388,6 +425,7 @@ class IntegratorGUIConfigMixin:
                 self, "_magnetic_dipole_stern_gerlach_model", "rfs_full_g"
             ),
             "magnetic_dipole_source_model": source_model,
+            "magnetic_dipole_source_history_model": source_history_model,
             "magnetic_dipole_exact_retarded_backend": exact_retarded_backend,
             "magnetic_dipole_exact_retarded_update": exact_retarded_update,
             "magnetic_dipole_intrinsic_spin_self_reaction_mode": (

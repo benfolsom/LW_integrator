@@ -552,6 +552,7 @@ class DipoleSourceConfig:
     """
 
     model: str = "off"
+    history_model: str = "causal_frozen_c1"
     minimum_separation_mm: float = 2.0e-9
     relative_stencil_step: float = 1.0e-3
     minimum_stencil_step_mm: float = 1.0e-15
@@ -570,6 +571,21 @@ class DipoleSourceConfig:
         if self.model not in {"off", "covariant_retarded_point"}:
             raise ValueError(
                 "dipole source model must be one of: off, " "covariant_retarded_point"
+            )
+        self.history_model = str(self.history_model).strip().lower().replace("-", "_")
+        history_aliases = {
+            "c1": "causal_frozen_c1",
+            "frozen_c1": "causal_frozen_c1",
+            "c5": "causal_c5",
+        }
+        self.history_model = history_aliases.get(
+            self.history_model,
+            self.history_model,
+        )
+        if self.history_model not in {"causal_frozen_c1", "causal_c5"}:
+            raise ValueError(
+                "dipole source history_model must be one of: "
+                "causal_frozen_c1, causal_c5"
             )
         for name in (
             "minimum_separation_mm",

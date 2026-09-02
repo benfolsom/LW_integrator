@@ -47,6 +47,7 @@ from .gui_tab_mixins import IntegratorGUITabMixin
 from .optimization_plugin import OptimizationPlugin
 from .testbed_runner import (
     CORE_PARAM_DEFAULTS,
+    DIPOLE_SOURCE_HISTORY_OPTIONS,
     DIPOLE_SOURCE_MODEL_OPTIONS,
     EXACT_RETARDED_BACKEND_OPTIONS,
     EXACT_RETARDED_UPDATE_OPTIONS,
@@ -324,6 +325,22 @@ class IntegratorGUI(
         )
         self.magnetic_dipole_source_model_var = tk.StringVar(
             value=dipole_source_label_by_model.get(dipole_source_model, "Off")
+        )
+        dipole_source_history_label_by_name = {
+            history: label for label, history in DIPOLE_SOURCE_HISTORY_OPTIONS
+        }
+        dipole_source_history = str(
+            getattr(
+                self.options,
+                "magnetic_dipole_source_history_model",
+                "causal_frozen_c1",
+            )
+        )
+        self.magnetic_dipole_source_history_var = tk.StringVar(
+            value=dipole_source_history_label_by_name.get(
+                dipole_source_history,
+                "Frozen C1 (legacy)",
+            )
         )
         exact_retarded_backend_label_by_name = {
             backend: label for label, backend in EXACT_RETARDED_BACKEND_OPTIONS

@@ -393,13 +393,17 @@ first ready segment or in the unready tail raises the named history error.
 Checkpoint restore reproduces :math:`A`, :math:`F`, and :math:`\partial F`
 bit-for-bit at the same event.
 
-This adapter is intentionally not selected by production multi-source
-dispatch or the equations of motion yet.  The next integration step must
-prove that rejected adaptive trials publish no segment, that accepted fixed
-and adaptive histories select the same frozen segment at the same source
-time, and that an interrupted/resumed run reproduces the uninterrupted
-response.  Until those tests pass, the current production provider and all
-applied forces are unchanged.
+The adapter is now available to the live exact-pair adaptive equations as the
+explicit ``source.history_model=causal_c5`` option.  The ordinary charge
+provider keeps its established accepted history; only the mutual field sourced
+by intrinsic magnetic moments uses the C5 collection.  Both the force at the
+accepted start event and the endpoint canonical-momentum reconstruction use
+the same C5 potential representation.
+
+This is not a magnetic self-reaction switch.  The live route changes the
+ordinary field one particle receives from the *other* particle's magnetic
+moment.  The linear :math:`q\mu` self-force remains diagnostic-only, and the
+pure :math:`\mu^2` self-reaction remains absent.
 
 ``AcceptedIntrinsicSpinReductionHistory`` is the first state-lifecycle layer
 for the boundary route.  It retains only the newest six accepted proper-time
@@ -540,11 +544,11 @@ loads those coefficients rather than refitting the past; the same observer
 event consequently reproduces :math:`A`, :math:`F`, and
 :math:`\partial F` bit-for-bit in the focused restart test.
 
-This boundary is still opt-in internal state. The live charge/dipole provider
-and the equations of motion do not select it yet, and it applies neither the
-linear :math:`q\mu` self-force nor the pure :math:`\mu^2` reaction. Before
-promotion, unequal adaptive step sequences must be shown to remain below the
-declared conditioning limit without weakening that guard.
+This boundary is now an opt-in live source-history choice for checkpointed
+exact-pair adaptive runs.  It applies neither the linear :math:`q\mu`
+self-force nor the pure :math:`\mu^2` reaction.  The fixed-step integrator is
+not wired to publish C5 source samples, so selecting C5 there raises an
+explicit error instead of silently using the older C1 provider.
 
 A bounded test now varies accepted intervals smoothly by 20 percent.
 Incremental publication and one-pass reconstruction produce the same frozen
@@ -569,12 +573,31 @@ reproduce the immutable oracle coefficients and :math:`A`, :math:`F`, and
 :math:`\partial F` bit-for-bit. Concurrent mutation and evaluation of one
 builder remains unsupported.
 
-The next milestone is numerical validation of this live route trace.  Compare
-the analytical, causal, and centered-reference values on weak smooth motion;
-measure phase error at route transitions and conditioning under unequal
-adaptive proper-time intervals; and prove checkpoint/resume trace equality.
-Production injection stays blocked until those tests pass and the existing
-Medina charge term is shown to enter exactly once.
+The live bridge has four direct regression checks.  A short electron--proton
+adaptive run observes C5 evaluations after the initial event and finishes with
+finite canonical momenta.  The same smooth two-source history agrees with the
+older analytical C1 provider to relative differences of about
+:math:`3.1\times10^{-11}` in :math:`A`, :math:`6.2\times10^{-10}` in
+:math:`\partial A`, :math:`2.5\times10^{-9}` in :math:`F`, and
+:math:`1.9\times10^{-8}` in :math:`\partial F`.  Rejected trials preserve the
+published sample count, and interrupted/resumed tests reproduce the frozen
+coefficients and response bit-for-bit.
+
+The readiness delay is a real operating limit, not merely startup bookkeeping.
+A segment ending at accepted knot :math:`i+1` is frozen only after knot
+:math:`i+8` exists.  Every retarded source event used by a trial must therefore
+remain behind that frozen boundary.  If close separation or an enlarged
+adaptive step reaches the unready tail, the provider fails closed; it neither
+extrapolates nor falls back to C1.  A future controller refinement may turn
+that condition into a predeclared step-size bound, but the present behavior is
+the safer validation default.
+
+The next milestone is a three-level live refinement with moving, precessing
+sources and unequal accepted steps.  It must measure trajectory differences,
+mass-shell projection, readiness margin, fit conditioning, and restart parity
+before this source-history option is used for a full close pass.  Applying the
+linear :math:`q\mu` self-force remains a later and separately gated change;
+the existing Medina charge term must still enter exactly once.
 
 References
 ----------

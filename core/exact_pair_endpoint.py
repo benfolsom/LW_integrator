@@ -29,16 +29,19 @@ def evaluate_exact_endpoint_four_potential(
     *,
     magnetic_dipole: MagneticDipoleConfig,
     include_dipole_source: bool,
+    dipole_source_collection: Any = None,
     spin_interpolation_model: str = "centered_c1",
 ) -> np.ndarray:
     """Evaluate ``A_charge + A_dipole`` at provisional observer endpoints."""
 
     from .retarded_fields import evaluate_retarded_charge_field_native
 
-    if include_dipole_source:
+    if include_dipole_source and dipole_source_collection is None:
         from .retarded_dipole_fields import (
             evaluate_retarded_dipole_potential_native,
         )
+    if dipole_source_collection is not None and not include_dipole_source:
+        raise ValueError("causal C5 dipole history requires an active dipole source")
 
     particle_count = len(np.asarray(observer_state.get("x", [])))
     potentials: np.ndarray = np.zeros((particle_count, 4), dtype=float)
@@ -78,7 +81,20 @@ def evaluate_exact_endpoint_four_potential(
         )
         potentials[particle_idx] += charge_field.four_potential
         if include_dipole_source:
-            if (
+            if dipole_source_collection is not None:
+                from .causal_c5_dipole_provider import (
+                    evaluate_causal_c5_dipole_source_collection_native,
+                )
+
+                dipole_response = evaluate_causal_c5_dipole_source_collection_native(
+                    dipole_source_collection,
+                    event,
+                    minimum_separation_mm=float(source_options.minimum_separation_mm),
+                    root_tolerance_mm=float(source_options.root_tolerance_mm),
+                    max_root_iterations=int(source_options.max_root_iterations),
+                )
+                potentials[particle_idx] += dipole_response.four_potential
+            elif (
                 magnetic_dipole.exact_retarded_backend
                 == "numba_analytic_charge_dipole_response_serial"
             ):
@@ -195,6 +211,8 @@ def finalize_exact_source_canonical_pair_states(
     driver_endpoint_history: Any,
     magnetic_dipole: MagneticDipoleConfig,
     include_dipole_source: bool,
+    rider_dipole_source_collection: Any = None,
+    driver_dipole_source_collection: Any = None,
     spin_interpolation_model: str = "centered_c1",
 ) -> tuple[ParticleState, ParticleState]:
     """Return detached endpoint-canonical states without publishing either row.
@@ -211,6 +229,7 @@ def finalize_exact_source_canonical_pair_states(
         driver_endpoint_history,
         magnetic_dipole=magnetic_dipole,
         include_dipole_source=include_dipole_source,
+        dipole_source_collection=driver_dipole_source_collection,
         spin_interpolation_model=spin_interpolation_model,
     )
     driver_endpoint = evaluate_exact_endpoint_four_potential(
@@ -218,6 +237,7 @@ def finalize_exact_source_canonical_pair_states(
         rider_endpoint_history,
         magnetic_dipole=magnetic_dipole,
         include_dipole_source=include_dipole_source,
+        dipole_source_collection=rider_dipole_source_collection,
         spin_interpolation_model=spin_interpolation_model,
     )
     replace_exact_source_endpoint_potential(rider, rider_endpoint)

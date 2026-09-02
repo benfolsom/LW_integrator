@@ -198,6 +198,7 @@ def _make_args(**overrides) -> argparse.Namespace:
         "radiation_reaction_mode": None,
         "magnetic_dipole_enabled": None,
         "dipole_source_model": None,
+        "dipole_source_history_model": None,
         "exact_retarded_backend": None,
         "dipole_source_minimum_separation_mm": None,
         "rider_magnetic_species": None,
@@ -410,6 +411,8 @@ class TestCliConfigParsing:
                 "--stern-gerlach",
                 "--dipole-source",
                 "full-retarded-point",
+                "--dipole-source-history",
+                "causal-c5",
                 "--exact-retarded-backend",
                 "numba_roots_exact_serial",
                 "--exact-retarded-update",
@@ -428,6 +431,7 @@ class TestCliConfigParsing:
         assert args.driver_spin == [1.0, 0.0, 0.0]
         assert args.stern_gerlach_force_enabled is True
         assert args.dipole_source_model == "full-retarded-point"
+        assert args.dipole_source_history_model == "causal-c5"
         assert args.exact_retarded_backend == "numba_roots_exact_serial"
         assert args.exact_retarded_update == "second_order_start_taylor_endpoint"
         assert args.intrinsic_spin_self_reaction_mode == "diagnostic"
@@ -948,6 +952,7 @@ class TestCliBuildRequest:
                     "exact_retarded_backend": "python",
                     "source": {
                         "model": "covariant_retarded_point",
+                        "history_model": "causal_c5",
                         "minimum_separation_mm": 4.0e-9,
                         "relative_stencil_step": 2.0e-3,
                         "minimum_stencil_step_mm": 3.0e-15,
@@ -969,6 +974,7 @@ class TestCliBuildRequest:
                 stern_gerlach_force_enabled=False,
                 spin_precession_enabled=False,
                 dipole_source_model="off",
+                dipole_source_history_model="causal-frozen-c1",
                 exact_retarded_backend="numba_roots_exact_serial",
                 dipole_source_minimum_separation_mm=8.0e-9,
             ),
@@ -981,6 +987,7 @@ class TestCliBuildRequest:
         assert magnetic["exact_retarded_backend"] == "numba_roots_exact_serial"
         assert magnetic["source"] == {
             "model": "off",
+            "history_model": "causal-frozen-c1",
             "minimum_separation_mm": 8.0e-9,
             "relative_stencil_step": 2.0e-3,
             "minimum_stencil_step_mm": 3.0e-15,
@@ -1190,6 +1197,7 @@ class TestCliBuildRequest:
                 driver_spin=[1.0, 0.0, 0.0],
                 stern_gerlach_force_enabled=True,
                 dipole_source_model="full-retarded-point",
+                dipole_source_history_model="causal-c5",
                 exact_retarded_backend="numba_roots_exact_serial",
                 dipole_source_minimum_separation_mm=6.0e-9,
             )
@@ -1203,6 +1211,7 @@ class TestCliBuildRequest:
         assert magnetic.driver.species == "antiproton"
         assert magnetic.driver.rest_spin == pytest.approx((1.0, 0.0, 0.0))
         assert magnetic.source.model == "covariant_retarded_point"
+        assert magnetic.source.history_model == "causal_c5"
         assert magnetic.exact_retarded_backend == "numba_roots_exact_serial"
         assert magnetic.source.minimum_separation_mm == pytest.approx(6.0e-9)
         assert request.config.radiation_reaction_mode == "off"
@@ -2069,6 +2078,7 @@ class TestCliMain:
                 "exact_retarded_backend": "numba_roots_exact_serial",
                 "source": {
                     "model": "covariant_retarded_point",
+                    "history_model": "causal_c5",
                 },
             }
         )
@@ -2077,6 +2087,7 @@ class TestCliMain:
 
         assert report["magnetic_dipole_source"] == {
             "model": "covariant_retarded_point",
+            "history_model": "causal_c5",
         }
         assert report["exact_retarded"] == {
             "backend": "numba_roots_exact_serial",
@@ -2103,6 +2114,7 @@ class TestCliMain:
         )
         options = SimulationOptions(
             magnetic_dipole_source_model="covariant_retarded_point",
+            magnetic_dipole_source_history_model="causal_c5",
             magnetic_dipole_exact_retarded_backend="numba_full_strict_serial",
         )
 
@@ -2110,6 +2122,7 @@ class TestCliMain:
 
         assert report["magnetic_dipole_source"] == {
             "model": "covariant_retarded_point",
+            "history_model": "causal_c5",
         }
         assert report["exact_retarded"] == {
             "backend": "numba_full_strict_serial",
