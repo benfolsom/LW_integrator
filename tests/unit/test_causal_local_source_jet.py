@@ -7,9 +7,9 @@ import math
 import numpy as np
 import pytest
 
-from core.causal_c5_source_history import (
-    CausalC5HistoryUnavailableError,
-    CausalC5SourceHistory,
+from core.causal_local_source_history import (
+    CausalLocalSourceHistory,
+    CausalLocalSourceHistoryUnavailableError,
 )
 from core.causal_local_source_jet import (
     CausalLocalSourceJetModelSpreadError,
@@ -84,7 +84,7 @@ def _relative_response_component(
     return float(np.linalg.norm(first - second) / scale)
 
 
-def _analytic_history(*, acceleration_ready: bool = True) -> CausalC5SourceHistory:
+def _analytic_history(*, acceleration_ready: bool = True) -> CausalLocalSourceHistory:
     count = 81
     nominal = np.linspace(-0.04, 0.04, count)
     times = nominal + 1.0e-5 * np.sin(np.arange(count) * 0.7)
@@ -93,19 +93,18 @@ def _analytic_history(*, acceleration_ready: bool = True) -> CausalC5SourceHisto
     beta = np.asarray([value[1] / C_MMNS for value in derivatives])
     beta_prime = np.asarray([value[2] / C_MMNS**2 for value in derivatives])
     spin = np.asarray([_spin_from_chart(_chart_derivatives(time)[0]) for time in times])
-    step_start = np.zeros_like(beta_prime)
-    step_start[1:] = beta_prime[:-1]
-    ready = np.full(count, acceleration_ready, dtype=bool)
-    ready[0] = False
-    return CausalC5SourceHistory.from_accepted_samples(
+    return CausalLocalSourceHistory.from_accepted_samples(
         time_ns=times,
         position_mm=positions,
         beta=beta,
-        beta_prime_per_mm=beta_prime,
         rest_spin=spin,
         stereographic_frame=np.eye(3),
-        step_start_beta_prime_per_mm=step_start,
-        step_start_beta_prime_ready=ready,
+        interval_start_beta_prime_per_mm=beta_prime[:-1],
+        interval_start_acceleration_ready=np.full(
+            count - 1,
+            acceleration_ready,
+            dtype=bool,
+        ),
     )
 
 
@@ -146,7 +145,7 @@ def _circular_chart_derivatives(
     )
 
 
-def _circular_history(*, sample_count: int = 241) -> CausalC5SourceHistory:
+def _circular_history(*, sample_count: int = 241) -> CausalLocalSourceHistory:
     nominal_times = np.linspace(-0.05, 0.08, sample_count)
     nominal_step = float(nominal_times[1] - nominal_times[0])
     times = nominal_times + 0.13 * nominal_step * np.sin(0.73 * np.arange(sample_count))
@@ -160,19 +159,14 @@ def _circular_history(*, sample_count: int = 241) -> CausalC5SourceHistory:
     spin = np.asarray(
         [_spin_from_chart(_circular_chart_derivatives(time, 0)) for time in times]
     )
-    step_start = np.zeros_like(beta_prime)
-    step_start[1:] = beta_prime[:-1]
-    ready = np.ones(sample_count, dtype=bool)
-    ready[0] = False
-    return CausalC5SourceHistory.from_accepted_samples(
+    return CausalLocalSourceHistory.from_accepted_samples(
         time_ns=times,
         position_mm=positions,
         beta=beta,
-        beta_prime_per_mm=beta_prime,
         rest_spin=spin,
         stereographic_frame=np.eye(3),
-        step_start_beta_prime_per_mm=step_start,
-        step_start_beta_prime_ready=ready,
+        interval_start_beta_prime_per_mm=beta_prime[:-1],
+        interval_start_acceleration_ready=np.ones(sample_count - 1, dtype=bool),
     )
 
 
@@ -217,7 +211,7 @@ def _exact_circular_response(event: ObserverEvent) -> DipoleHertzResponseJetResu
 
 
 def _event_with_prescribed_cubic_root(
-    history: CausalC5SourceHistory,
+    history: CausalLocalSourceHistory,
     root_time_ns: float,
 ) -> ObserverEvent:
     segment = int(np.searchsorted(history.time_ns, root_time_ns) - 1)
@@ -340,15 +334,18 @@ def test_past_only_source_jet_is_independent_of_later_accepted_samples() -> None
         fit=fit,
     )
     stop = int(np.searchsorted(history.time_ns, complete.retarded_time_ns) + 1)
-    truncated = CausalC5SourceHistory.from_accepted_samples(
+    truncated = CausalLocalSourceHistory.from_accepted_samples(
         time_ns=history.time_ns[:stop],
         position_mm=history.position_mm[:stop],
         beta=history.beta[:stop],
-        beta_prime_per_mm=history.beta_prime_per_mm[:stop],
         rest_spin=history.rest_spin[:stop],
         stereographic_frame=history.stereographic_frame,
-        step_start_beta_prime_per_mm=(history.step_start_beta_prime_per_mm[:stop]),
-        step_start_beta_prime_ready=history.step_start_beta_prime_ready[:stop],
+        interval_start_beta_prime_per_mm=(
+            history.interval_start_beta_prime_per_mm[: stop - 1]
+        ),
+        interval_start_acceleration_ready=(
+            history.interval_start_acceleration_ready[: stop - 1]
+        ),
     )
     causal, _ = evaluate_causal_local_source_jet_native(
         truncated,
@@ -396,26 +393,25 @@ def test_local_source_jet_is_continuous_across_cubic_root_segment_boundary() -> 
 def test_tricube_fit_is_continuous_when_a_sample_leaves_the_window() -> None:
     history = _circular_history(sample_count=161)
     departing_index = 75
-    perturbed_step_start = np.array(
-        history.step_start_beta_prime_per_mm,
+    perturbed_interval_start = np.array(
+        history.interval_start_beta_prime_per_mm,
         copy=True,
     )
-    perturbed_step_start[departing_index + 1] *= 1.08
+    perturbed_interval_start[departing_index] *= 1.08
     perturbed_spin = np.array(history.rest_spin, copy=True)
     chart = _circular_chart_derivatives(
         float(history.time_ns[departing_index]),
         0,
     ) + np.asarray((0.02, -0.015))
     perturbed_spin[departing_index] = _spin_from_chart(chart)
-    history = CausalC5SourceHistory.from_accepted_samples(
+    history = CausalLocalSourceHistory.from_accepted_samples(
         time_ns=history.time_ns,
         position_mm=history.position_mm,
         beta=history.beta,
-        beta_prime_per_mm=history.beta_prime_per_mm,
         rest_spin=perturbed_spin,
         stereographic_frame=history.stereographic_frame,
-        step_start_beta_prime_per_mm=perturbed_step_start,
-        step_start_beta_prime_ready=history.step_start_beta_prime_ready,
+        interval_start_beta_prime_per_mm=perturbed_interval_start,
+        interval_start_acceleration_ready=(history.interval_start_acceleration_ready),
     )
     half_width = 0.01
     sample_boundary_time = float(history.time_ns[departing_index]) + half_width
@@ -511,8 +507,8 @@ def test_local_source_jet_requires_complete_exact_acceleration_window() -> None:
     event = ObserverEvent(0.02, (1.0, 0.25, -0.05))
 
     with pytest.raises(
-        CausalC5HistoryUnavailableError,
-        match="acceleration fit has no accepted exact samples",
+        CausalLocalSourceHistoryUnavailableError,
+        match="unavailable exact sample inside",
     ):
         evaluate_causal_local_source_jet_native(
             history,
@@ -522,12 +518,53 @@ def test_local_source_jet_requires_complete_exact_acceleration_window() -> None:
         )
 
 
+def test_local_source_jet_rejects_missing_exact_acceleration_inside_window() -> None:
+    history = _analytic_history()
+    event = ObserverEvent(0.02, (1.0, 0.25, -0.05))
+    fit = LocalSourceJetFitConfig(half_width_ns=0.015)
+    reference, _ = evaluate_causal_local_source_jet_native(
+        history,
+        event,
+        magnetic_moment_native=-1.7,
+        fit=fit,
+    )
+    missing = np.array(history.interval_start_acceleration_ready, copy=True)
+    missing_index = int(
+        np.argmin(
+            np.abs(
+                history.time_ns[: history.interval_count] - reference.retarded_time_ns
+            )
+        )
+    )
+    missing[missing_index] = False
+    incomplete = CausalLocalSourceHistory.from_accepted_samples(
+        time_ns=history.time_ns,
+        position_mm=history.position_mm,
+        beta=history.beta,
+        rest_spin=history.rest_spin,
+        stereographic_frame=history.stereographic_frame,
+        interval_start_beta_prime_per_mm=(history.interval_start_beta_prime_per_mm),
+        interval_start_acceleration_ready=missing,
+    )
+
+    with pytest.raises(
+        CausalLocalSourceHistoryUnavailableError,
+        match="unavailable exact sample inside",
+    ):
+        evaluate_causal_local_source_jet_native(
+            incomplete,
+            event,
+            magnetic_moment_native=-1.7,
+            fit=fit,
+        )
+
+
 def test_local_source_jet_rejects_truncated_physical_window() -> None:
     history = _analytic_history()
     event = ObserverEvent(0.0036, (1.0, 0.25, -0.05))
 
     with pytest.raises(
-        CausalC5HistoryUnavailableError,
+        CausalLocalSourceHistoryUnavailableError,
         match="full physical window",
     ):
         evaluate_causal_local_source_jet_native(

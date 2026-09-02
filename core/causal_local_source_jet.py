@@ -24,14 +24,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
-from typing import TYPE_CHECKING, Any, Literal, Sequence
+from typing import TYPE_CHECKING, Literal, Sequence
 
 import numpy as np
 
-from .causal_c5_dipole_provider import CausalC5DipoleSourceCollection
-from .causal_c5_source_history import (
-    CausalC5HistoryUnavailableError,
-    _spin_to_stereographic,
+from .causal_local_source_history import (
+    CausalLocalDipoleSourceCollection,
+    CausalLocalHistoryView,
+    CausalLocalSourceHistoryUnavailableError,
+    spin_to_stereographic,
 )
 from .constants import C_MMNS
 from .dipole_hertz_jet import (
@@ -130,7 +131,7 @@ class LocalSourceJetModelSpread:
         )
 
 
-class CausalLocalSourceJetModelSpreadError(CausalC5HistoryUnavailableError):
+class CausalLocalSourceJetModelSpreadError(CausalLocalSourceHistoryUnavailableError):
     """Raised when nested fits do not define a stable local response plateau."""
 
 
@@ -217,7 +218,7 @@ class CausalLocalSourceJetProviderResult:
 
 
 def _cubic_position_velocity(
-    history: Any,
+    history: CausalLocalHistoryView,
     segment_index: int,
     source_time_ns: float,
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -252,7 +253,7 @@ def _cubic_position_velocity(
 
 
 def _solve_cubic_retarded_root(
-    history: Any,
+    history: CausalLocalHistoryView,
     observer_event: "ObserverEvent",
     *,
     root_tolerance_mm: float,
@@ -276,7 +277,7 @@ def _solve_cubic_retarded_root(
         raise ValueError("minimum_separation_mm must be finite and positive")
     count = int(history.sample_count)
     if count < 2:
-        raise CausalC5HistoryUnavailableError(
+        raise CausalLocalSourceHistoryUnavailableError(
             "local source jet needs at least two accepted source knots"
         )
 
@@ -287,11 +288,11 @@ def _solve_cubic_retarded_root(
         return C_MMNS * (observer_time - float(history.time_ns[knot])) - separation
 
     if knot_residual(0) < 0.0:
-        raise CausalC5HistoryUnavailableError(
+        raise CausalLocalSourceHistoryUnavailableError(
             "observer light cone predates the accepted source history"
         )
     if knot_residual(count - 1) > 0.0:
-        raise CausalC5HistoryUnavailableError(
+        raise CausalLocalSourceHistoryUnavailableError(
             "observer light cone reaches the unaccepted source future"
         )
     lower = 0
@@ -374,13 +375,13 @@ def _local_polynomial_derivatives(
         window_start = float(target_time_ns) - 2.0 * float(half_width_ns)
         window_end = float(target_time_ns)
     if times.size == 0:
-        raise CausalC5HistoryUnavailableError(
+        raise CausalLocalSourceHistoryUnavailableError(
             f"local {label} fit has no accepted exact samples"
         )
     if times[0] > window_start or (
         window_alignment == "centered" and times[-1] < window_end
     ):
-        raise CausalC5HistoryUnavailableError(
+        raise CausalLocalSourceHistoryUnavailableError(
             f"local {label} fit does not have its full physical window in the "
             "accepted source history"
         )
@@ -393,7 +394,7 @@ def _local_polynomial_derivatives(
         or selected_times[0] >= target_time_ns
         or (window_alignment == "centered" and selected_times[-1] <= target_time_ns)
     ):
-        raise CausalC5HistoryUnavailableError(
+        raise CausalLocalSourceHistoryUnavailableError(
             f"local {label} fit window does not contain enough accepted samples"
         )
     scale = float(np.max(np.abs(selected_times - target_time_ns)))
@@ -426,9 +427,11 @@ def _local_polynomial_derivatives(
     )
     condition = float(np.linalg.cond(weighted_design))
     if rank != degree + 1:
-        raise CausalC5HistoryUnavailableError(f"local {label} fit is rank deficient")
+        raise CausalLocalSourceHistoryUnavailableError(
+            f"local {label} fit is rank deficient"
+        )
     if condition > maximum_condition_number:
-        raise CausalC5HistoryUnavailableError(
+        raise CausalLocalSourceHistoryUnavailableError(
             f"local {label} fit exceeds its condition-number limit"
         )
     derivatives = []
@@ -498,7 +501,7 @@ def _response_model_spread(
 
 
 def evaluate_causal_local_source_jet_native(
-    history: Any,
+    history: CausalLocalHistoryView,
     observer_event: "ObserverEvent",
     *,
     magnetic_moment_native: float,
@@ -517,19 +520,37 @@ def evaluate_causal_local_source_jet_native(
         max_root_iterations=max_root_iterations,
         minimum_separation_mm=minimum_separation_mm,
     )
-    source_knots = np.arange(history.sample_count - 1, dtype=np.int64)
-    step_rows = source_knots + 1
-    ready = np.asarray(history.step_start_beta_prime_ready, dtype=bool)[step_rows]
+    source_knots = np.arange(history.interval_count, dtype=np.int64)
+    ready = np.asarray(history.interval_start_acceleration_ready, dtype=bool)
+    acceleration_times = np.asarray(
+        history.time_ns[: history.interval_count],
+        dtype=np.float64,
+    )
+    if fit.window_alignment == "centered":
+        acceleration_window_start = root_time - fit.half_width_ns
+        acceleration_window_end = root_time + fit.half_width_ns
+    else:
+        acceleration_window_start = root_time - 2.0 * fit.half_width_ns
+        acceleration_window_end = root_time
+    required_acceleration = (acceleration_times >= acceleration_window_start) & (
+        acceleration_times <= acceleration_window_end
+    )
+    if np.any(required_acceleration & ~ready):
+        raise CausalLocalSourceHistoryUnavailableError(
+            "local acceleration fit has an unavailable exact sample inside its "
+            "physical window"
+        )
     acceleration_knots = source_knots[ready]
     accelerations = (
         C_MMNS**2
-        * np.asarray(history.step_start_beta_prime_per_mm, dtype=np.float64)[
-            acceleration_knots + 1
-        ]
+        * np.asarray(
+            history.interval_start_beta_prime_per_mm,
+            dtype=np.float64,
+        )[acceleration_knots]
     )
     acceleration_derivatives, acceleration_condition, acceleration_indices = (
         _local_polynomial_derivatives(
-            sample_times_ns=history.time_ns[acceleration_knots],
+            sample_times_ns=acceleration_times[acceleration_knots],
             sample_values=accelerations,
             target_time_ns=root_time,
             half_width_ns=fit.half_width_ns,
@@ -542,7 +563,7 @@ def evaluate_causal_local_source_jet_native(
             label="acceleration",
         )
     )
-    spin_chart = _spin_to_stereographic(
+    spin_chart = spin_to_stereographic(
         np.asarray(history.rest_spin, dtype=np.float64),
         np.asarray(history.stereographic_frame, dtype=np.float64),
     )
@@ -632,7 +653,7 @@ def evaluate_causal_local_source_jet_native(
 
 
 def evaluate_causal_local_source_jet_collection_native(
-    collection: CausalC5DipoleSourceCollection,
+    collection: CausalLocalDipoleSourceCollection,
     observer_event: "ObserverEvent",
     *,
     fit: LocalSourceJetFitConfig,
@@ -664,8 +685,8 @@ def evaluate_causal_local_source_jet_collection_native(
                 max_root_iterations=max_root_iterations,
                 minimum_separation_mm=minimum_separation_mm,
             )
-        except CausalC5HistoryUnavailableError as exc:
-            raise CausalC5HistoryUnavailableError(
+        except CausalLocalSourceHistoryUnavailableError as exc:
+            raise CausalLocalSourceHistoryUnavailableError(
                 f"source identity {source.identity!r}: {exc}"
             ) from exc
         except ValueError as exc:

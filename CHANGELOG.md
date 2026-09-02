@@ -1,5 +1,20 @@
 # Changelog
 
+- Give the opt-in local source-jet provider its own accepted-history model,
+  independent of the causal-$C^5$ segment builder. The exact acceleration for
+  the accepted interval from $t_i$ to $t_{i+1}$ is now stored directly at
+  interval index $i$; the provider no longer has to shift an endpoint sidecar
+  backward by one row, and it never reads legacy `bdot`. A growable owner
+  preflights midpoint and endpoint rows beyond an immutable visible prefix and
+  publishes rider and driver histories only through a joint commit. The
+  compact history also has a versioned JSON-compatible checkpoint payload,
+  although exact-pair disk-checkpoint wiring remains part of the later
+  production integration step. Replaying the accepted $1\,\mathrm{mm}$
+  four-level calibration through the new history reproduces every numerical
+  response and acceptance gate exactly. The provider is still not selected by
+  the equations of motion, so existing dipole and nondipole trajectories are
+  unchanged.
+
 - Add an explicit past-only alignment to the opt-in local source-jet fit. It
   uses the same total duration as the centered window but ends at the retarded
   source event, with a smooth zero-weight boundary at both ends. An exact
