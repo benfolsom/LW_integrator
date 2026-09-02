@@ -8,16 +8,23 @@ import numpy as np
 import pytest
 
 from core.causal_local_source_history import (
+    CausalLocalDipoleSource,
+    CausalLocalDipoleSourceCollection,
     CausalLocalSourceHistory,
     CausalLocalSourceHistoryUnavailableError,
 )
 from core.causal_local_source_jet import (
     CausalLocalSourceJetModelSpreadError,
+    CausalLocalSourceJetScaleSelectionError,
     LocalSourceJetFitConfig,
     LocalSourceJetModelSpreadConfig,
+    LocalSourceJetMultiScaleConfig,
+    LocalSourceJetScaleConfig,
     _centered_taylor_coefficients,
     _cubic_position_velocity,
+    evaluate_causal_local_source_jet_collection_multiscale_native,
     evaluate_causal_local_source_jet_native,
+    evaluate_causal_local_source_jet_multiscale_native,
     local_source_jet_configs_from_source_options,
 )
 from core.constants import C_MMNS
@@ -84,6 +91,30 @@ def _relative_response_component(
         np.finfo(float).tiny,
     )
     return float(np.linalg.norm(first - second) / scale)
+
+
+def _past_scale(
+    name: str,
+    widths: tuple[float, float, float],
+    *,
+    maximum_internal_spread: float = 1.0e-5,
+) -> LocalSourceJetScaleConfig:
+    fits = tuple(
+        LocalSourceJetFitConfig(
+            half_width_ns=width,
+            window_alignment="past",
+        )
+        for width in widths
+    )
+    return LocalSourceJetScaleConfig(
+        name=name,
+        primary_fit=fits[1],
+        model_spread=LocalSourceJetModelSpreadConfig(
+            narrow_fit=fits[0],
+            wide_fit=fits[2],
+            maximum_relative_spread=maximum_internal_spread,
+        ),
+    )
 
 
 def _analytic_history(*, acceleration_ready: bool = True) -> CausalLocalSourceHistory:
@@ -508,6 +539,198 @@ def test_nested_fits_report_a_stable_circular_response_plateau() -> None:
     assert np.all(np.isfinite(response.partial_f))
     assert diagnostics.model_spread is not None
     assert diagnostics.model_spread.maximum < 4.0e-9
+
+
+def test_multiscale_source_jet_uses_longest_scale_for_sparse_history() -> None:
+    scales = LocalSourceJetMultiScaleConfig(
+        scales=(
+            _past_scale("short", (3.0e-4, 5.0e-4, 3.0e-3)),
+            _past_scale("long", (3.0e-3, 5.0e-3, 8.0e-3)),
+        ),
+        maximum_cross_scale_relative_spread=1.0e-5,
+    )
+
+    response, diagnostics = evaluate_causal_local_source_jet_multiscale_native(
+        _analytic_history(),
+        ObserverEvent(0.02, (1.0, 0.25, -0.05)),
+        magnetic_moment_native=-1.7,
+        scales=scales,
+    )
+
+    assert np.all(np.isfinite(response.partial_f))
+    assert diagnostics.selected_scale_name == "long"
+    assert diagnostics.selected_scale_index == 1
+    assert diagnostics.comparison_scale_name is None
+    assert diagnostics.cross_scale_spread is None
+    assert diagnostics.unavailable_scale_names == ("short",)
+
+
+def test_multiscale_source_jet_selects_shortest_ready_checked_scale() -> None:
+    history = _circular_history(sample_count=481)
+    event = ObserverEvent(0.03, (0.8, 0.2, 0.3))
+    short = _past_scale("short", (2.0e-3, 3.0e-3, 5.0e-3))
+    long = _past_scale("long", (5.0e-3, 7.0e-3, 1.0e-2))
+    scales = LocalSourceJetMultiScaleConfig(
+        scales=(short, long),
+        maximum_cross_scale_relative_spread=1.0e-5,
+    )
+    expected, _ = evaluate_causal_local_source_jet_native(
+        history,
+        event,
+        magnetic_moment_native=-1.7,
+        fit=short.primary_fit,
+        model_spread=short.model_spread,
+    )
+
+    response, diagnostics = evaluate_causal_local_source_jet_multiscale_native(
+        history,
+        event,
+        magnetic_moment_native=-1.7,
+        scales=scales,
+    )
+
+    np.testing.assert_array_equal(response.partial_f, expected.partial_f)
+    assert diagnostics.selected_scale_name == "short"
+    assert diagnostics.selected_scale_index == 0
+    assert diagnostics.comparison_scale_name == "long"
+    assert diagnostics.cross_scale_spread is not None
+    assert diagnostics.cross_scale_spread.maximum < 1.0e-5
+
+
+def test_multiscale_source_jet_fails_closed_when_ready_scales_disagree() -> None:
+    scales = LocalSourceJetMultiScaleConfig(
+        scales=(
+            _past_scale("short", (2.0e-3, 3.0e-3, 5.0e-3)),
+            _past_scale("long", (5.0e-3, 7.0e-3, 1.0e-2)),
+        ),
+        maximum_cross_scale_relative_spread=1.0e-20,
+    )
+
+    with pytest.raises(
+        CausalLocalSourceJetScaleSelectionError,
+        match="scales do not agree",
+    ):
+        evaluate_causal_local_source_jet_multiscale_native(
+            _circular_history(sample_count=481),
+            ObserverEvent(0.03, (0.8, 0.2, 0.3)),
+            magnetic_moment_native=-1.7,
+            scales=scales,
+        )
+
+
+def test_multiscale_source_jet_requires_a_longer_transition_comparison() -> None:
+    scales = LocalSourceJetMultiScaleConfig(
+        scales=(
+            _past_scale("short", (2.0e-3, 3.0e-3, 5.0e-3)),
+            _past_scale(
+                "middle",
+                (5.0e-3, 7.0e-3, 1.0e-2),
+                maximum_internal_spread=1.0e-20,
+            ),
+            _past_scale(
+                "long",
+                (1.0e-2, 1.5e-2, 2.0e-2),
+                maximum_internal_spread=1.0e-20,
+            ),
+        )
+    )
+
+    with pytest.raises(
+        CausalLocalSourceJetScaleSelectionError,
+        match="no valid adjacent longer overlap comparison",
+    ):
+        evaluate_causal_local_source_jet_multiscale_native(
+            _circular_history(sample_count=481),
+            ObserverEvent(0.03, (0.8, 0.2, 0.3)),
+            magnetic_moment_native=-1.7,
+            scales=scales,
+        )
+
+
+def test_multiscale_source_jet_does_not_skip_a_failed_adjacent_scale() -> None:
+    scales = LocalSourceJetMultiScaleConfig(
+        scales=(
+            _past_scale("short", (2.0e-3, 3.0e-3, 5.0e-3)),
+            _past_scale(
+                "middle",
+                (5.0e-3, 7.0e-3, 1.0e-2),
+                maximum_internal_spread=1.0e-20,
+            ),
+            _past_scale("long", (1.0e-2, 1.5e-2, 2.0e-2)),
+        )
+    )
+
+    with pytest.raises(
+        CausalLocalSourceJetScaleSelectionError,
+        match="no valid adjacent longer overlap comparison",
+    ):
+        evaluate_causal_local_source_jet_multiscale_native(
+            _circular_history(sample_count=481),
+            ObserverEvent(0.03, (0.8, 0.2, 0.3)),
+            magnetic_moment_native=-1.7,
+            scales=scales,
+        )
+
+
+def test_multiscale_collection_preserves_source_order_and_sums_responses() -> None:
+    history = _circular_history(sample_count=481)
+    collection = CausalLocalDipoleSourceCollection(
+        (
+            CausalLocalDipoleSource("first", 0, -1.7, history),
+            CausalLocalDipoleSource("second", 1, 0.4, history),
+        )
+    )
+    event = ObserverEvent(0.03, (0.8, 0.2, 0.3))
+    scales = LocalSourceJetMultiScaleConfig(
+        scales=(
+            _past_scale("short", (2.0e-3, 3.0e-3, 5.0e-3)),
+            _past_scale("long", (5.0e-3, 7.0e-3, 1.0e-2)),
+        ),
+        maximum_cross_scale_relative_spread=1.0e-5,
+    )
+
+    actual = evaluate_causal_local_source_jet_collection_multiscale_native(
+        collection,
+        event,
+        scales=scales,
+    )
+    expected = [
+        evaluate_causal_local_source_jet_multiscale_native(
+            history,
+            event,
+            magnetic_moment_native=moment,
+            scales=scales,
+        )[0]
+        for moment in (-1.7, 0.4)
+    ]
+
+    assert tuple(item.identity for item in actual.source_results) == (
+        "first",
+        "second",
+    )
+    np.testing.assert_allclose(
+        actual.four_potential,
+        expected[0].four_potential + expected[1].four_potential,
+        rtol=0.0,
+        atol=1.0e-30,
+    )
+    np.testing.assert_allclose(
+        actual.partial_f,
+        expected[0].partial_f + expected[1].partial_f,
+        rtol=0.0,
+        atol=1.0e-30,
+    )
+
+
+def test_multiscale_config_requires_ordered_overlapping_physical_scales() -> None:
+    short = _past_scale("short", (2.0e-3, 3.0e-3, 4.0e-3))
+    nonoverlapping = _past_scale("long", (5.0e-3, 7.0e-3, 1.0e-2))
+
+    with pytest.raises(ValueError, match="must overlap"):
+        LocalSourceJetMultiScaleConfig(scales=(short, nonoverlapping))
+
+    with pytest.raises(ValueError, match="shortest to longest"):
+        LocalSourceJetMultiScaleConfig(scales=(nonoverlapping, short))
 
 
 def test_nested_fits_fail_closed_without_a_declared_response_plateau() -> None:

@@ -1,5 +1,18 @@
 # Changelog
 
+- Add an internal, opt-in multi-scale selector for causal local source jets.
+  It accepts an ordered list of explicitly named physical window triplets,
+  chooses the shortest triplet that has enough trusted accepted history and
+  passes its own narrow/primary/wide response check, and requires agreement
+  with the immediately adjacent longer valid triplet before any scale
+  transition. It fails closed if
+  no scale is ready, adjacent scales disagree, or a shorter selected scale has
+  no valid overlap comparison. Diagnostics record the selected and comparison
+  scales, cross-scale response spread, and unavailable candidates. This is a
+  provider primitive only; it is not yet exposed through production config,
+  CLI, GUI, or equations-of-motion selection, and the existing single-scale
+  and legacy routes are unchanged.
+
 - Prevent provisional charge and legacy dipole history overlays from mutating
   the append-aware cache of accepted source history. Reconstructing an
   instantaneous charge acceleration from accepted velocity differences

@@ -22,7 +22,7 @@ acceleration over their complete physical window.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import math
 from typing import TYPE_CHECKING, Literal, Sequence, cast
 
@@ -118,6 +118,111 @@ class LocalSourceJetModelSpreadConfig:
 
 
 @dataclass(frozen=True)
+class LocalSourceJetScaleConfig:
+    """One named narrow/primary/wide physical-window triplet."""
+
+    name: str
+    primary_fit: LocalSourceJetFitConfig
+    model_spread: LocalSourceJetModelSpreadConfig
+
+    def __post_init__(self) -> None:
+        name = str(self.name).strip()
+        if not name:
+            raise ValueError("local source-jet scale name must not be empty")
+        narrow = self.model_spread.narrow_fit
+        primary = self.primary_fit
+        wide = self.model_spread.wide_fit
+        if not narrow.half_width_ns < primary.half_width_ns < wide.half_width_ns:
+            raise ValueError(
+                "local source-jet scale must have narrow < primary < wide "
+                "half-widths"
+            )
+        common_settings = (
+            "acceleration_degree",
+            "spin_degree",
+            "acceleration_samples",
+            "window_weighting",
+            "window_alignment",
+            "maximum_condition_number",
+        )
+        for setting in common_settings:
+            if not (
+                getattr(narrow, setting)
+                == getattr(primary, setting)
+                == getattr(wide, setting)
+            ):
+                raise ValueError(
+                    "all fits in one local source-jet scale must use the same "
+                    f"{setting}"
+                )
+        object.__setattr__(self, "name", name)
+
+
+@dataclass(frozen=True)
+class LocalSourceJetMultiScaleConfig:
+    """Ordered physical scales with a fail-closed overlap comparison.
+
+    Scales are ordered from shortest to longest primary half-width. The
+    shortest ready scale is selected. Except for the longest scale, selection
+    also requires the immediately adjacent longer scale to be valid and for
+    its complete response to agree within
+    ``maximum_cross_scale_relative_spread``. This makes every scale transition
+    an explicit numerical comparison rather than an implicit sample-count
+    rule.
+    """
+
+    scales: tuple[LocalSourceJetScaleConfig, ...]
+    maximum_cross_scale_relative_spread: float = 1.0e-4
+
+    def __post_init__(self) -> None:
+        scales = tuple(self.scales)
+        if len(scales) < 2:
+            raise ValueError("multi-scale local source jets need at least two scales")
+        if len({scale.name for scale in scales}) != len(scales):
+            raise ValueError("multi-scale local source-jet names must be unique")
+        primary_widths = [scale.primary_fit.half_width_ns for scale in scales]
+        if any(
+            right <= left
+            for left, right in zip(primary_widths[:-1], primary_widths[1:])
+        ):
+            raise ValueError(
+                "multi-scale local source jets must be ordered from shortest to "
+                "longest primary half-width"
+            )
+        for shorter, longer in zip(scales[:-1], scales[1:]):
+            if (
+                shorter.model_spread.wide_fit.half_width_ns
+                < longer.model_spread.narrow_fit.half_width_ns
+            ):
+                raise ValueError(
+                    "adjacent local source-jet scales must overlap in physical "
+                    "half-width"
+                )
+        first_fit = scales[0].primary_fit
+        common_settings = (
+            "acceleration_degree",
+            "spin_degree",
+            "acceleration_samples",
+            "window_weighting",
+            "window_alignment",
+            "maximum_condition_number",
+        )
+        for scale in scales[1:]:
+            for setting in common_settings:
+                if getattr(scale.primary_fit, setting) != getattr(first_fit, setting):
+                    raise ValueError(
+                        "all local source-jet scales must use the same " f"{setting}"
+                    )
+        maximum = float(self.maximum_cross_scale_relative_spread)
+        if not np.isfinite(maximum) or maximum <= 0.0:
+            raise ValueError(
+                "maximum_cross_scale_relative_spread must be finite and positive"
+            )
+        object.__setattr__(self, "scales", scales)
+        object.__setattr__(self, "maximum_cross_scale_relative_spread", maximum)
+
+
+@dataclass(frozen=True)
 class LocalSourceJetModelSpread:
     """Largest pairwise response difference across nested local fits."""
 
@@ -147,6 +252,10 @@ class CausalLocalSourceJetModelSpreadError(CausalLocalSourceHistoryUnavailableEr
     """Raised when nested fits do not define a stable local response plateau."""
 
 
+class CausalLocalSourceJetScaleSelectionError(CausalLocalSourceHistoryUnavailableError):
+    """Raised when no scale or no checked transition is numerically available."""
+
+
 @dataclass(frozen=True)
 class LocalSourceJetDiagnostics:
     """Auditable root and fit information for one source contribution."""
@@ -159,6 +268,11 @@ class LocalSourceJetDiagnostics:
     spin_condition_number: float
     light_cone_residual_mm: float
     model_spread: LocalSourceJetModelSpread | None = None
+    selected_scale_name: str | None = None
+    selected_scale_index: int | None = None
+    comparison_scale_name: str | None = None
+    cross_scale_spread: LocalSourceJetModelSpread | None = None
+    unavailable_scale_names: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if int(self.root_segment_index) < 0:
@@ -190,6 +304,25 @@ class LocalSourceJetDiagnostics:
             LocalSourceJetModelSpread,
         ):
             raise TypeError("model_spread must be a LocalSourceJetModelSpread")
+        if (self.selected_scale_name is None) != (self.selected_scale_index is None):
+            raise ValueError(
+                "selected local source-jet scale name and index must appear together"
+            )
+        if self.selected_scale_index is not None and self.selected_scale_index < 0:
+            raise ValueError(
+                "selected local source-jet scale index must be non-negative"
+            )
+        if self.comparison_scale_name is not None and self.cross_scale_spread is None:
+            raise ValueError(
+                "a comparison local source-jet scale requires cross-scale spread"
+            )
+        if self.cross_scale_spread is not None and not isinstance(
+            self.cross_scale_spread,
+            LocalSourceJetModelSpread,
+        ):
+            raise TypeError("cross_scale_spread must be a LocalSourceJetModelSpread")
+        unavailable = tuple(str(name) for name in self.unavailable_scale_names)
+        object.__setattr__(self, "unavailable_scale_names", unavailable)
 
 
 @dataclass(frozen=True)
@@ -751,6 +884,106 @@ def evaluate_causal_local_source_jet_native(
     )
 
 
+def evaluate_causal_local_source_jet_multiscale_native(
+    history: CausalLocalHistoryView,
+    observer_event: "ObserverEvent",
+    *,
+    magnetic_moment_native: float,
+    scales: LocalSourceJetMultiScaleConfig,
+    root_tolerance_mm: float = 1.0e-21,
+    max_root_iterations: int = 96,
+    minimum_separation_mm: float = 1.0e-15,
+) -> tuple[DipoleHertzResponseJetResult, LocalSourceJetDiagnostics]:
+    """Select the shortest ready physical scale with a checked overlap.
+
+    Candidate failures caused by missing history, poor conditioning, or lack
+    of an internal response plateau do not silently disable the guard. They
+    move initial selection to a longer declared scale. Once a non-longest
+    candidate succeeds, the immediately adjacent longer scale must also
+    succeed and agree with it; a failed rung may not be skipped.
+    """
+
+    failures: list[tuple[str, str]] = []
+    selected: (
+        tuple[
+            int,
+            LocalSourceJetScaleConfig,
+            DipoleHertzResponseJetResult,
+            LocalSourceJetDiagnostics,
+        ]
+        | None
+    ) = None
+    for index, scale in enumerate(scales.scales):
+        try:
+            response, diagnostics = evaluate_causal_local_source_jet_native(
+                history,
+                observer_event,
+                magnetic_moment_native=magnetic_moment_native,
+                fit=scale.primary_fit,
+                model_spread=scale.model_spread,
+                root_tolerance_mm=root_tolerance_mm,
+                max_root_iterations=max_root_iterations,
+                minimum_separation_mm=minimum_separation_mm,
+            )
+        except CausalLocalSourceHistoryUnavailableError as exc:
+            failures.append((scale.name, str(exc)))
+            continue
+        selected = (index, scale, response, diagnostics)
+        break
+
+    if selected is None:
+        detail = "; ".join(f"{name}: {reason}" for name, reason in failures)
+        raise CausalLocalSourceJetScaleSelectionError(
+            "no declared local source-jet physical scale is available"
+            + (f": {detail}" if detail else "")
+        )
+
+    selected_index, selected_scale, selected_response, selected_diagnostics = selected
+    comparison_name = None
+    cross_scale_spread = None
+    if selected_index != len(scales.scales) - 1:
+        comparison_scale = scales.scales[selected_index + 1]
+        try:
+            comparison_response, _ = evaluate_causal_local_source_jet_native(
+                history,
+                observer_event,
+                magnetic_moment_native=magnetic_moment_native,
+                fit=comparison_scale.primary_fit,
+                model_spread=comparison_scale.model_spread,
+                root_tolerance_mm=root_tolerance_mm,
+                max_root_iterations=max_root_iterations,
+                minimum_separation_mm=minimum_separation_mm,
+            )
+        except CausalLocalSourceHistoryUnavailableError as exc:
+            failures.append((comparison_scale.name, str(exc)))
+            detail = "; ".join(f"{name}: {reason}" for name, reason in failures)
+            raise CausalLocalSourceJetScaleSelectionError(
+                f"selected local source-jet scale {selected_scale.name!r} has no "
+                "valid adjacent longer overlap comparison"
+                + (f": {detail}" if detail else "")
+            ) from exc
+        comparison_name = comparison_scale.name
+        cross_scale_spread = _response_model_spread(
+            (selected_response, comparison_response)
+        )
+        if cross_scale_spread.maximum > scales.maximum_cross_scale_relative_spread:
+            raise CausalLocalSourceJetScaleSelectionError(
+                "adjacent local source-jet scales do not agree: "
+                f"{selected_scale.name!r} versus {comparison_scale.name!r}, "
+                f"{cross_scale_spread.maximum:.6e} > "
+                f"{scales.maximum_cross_scale_relative_spread:.6e}"
+            )
+
+    return selected_response, replace(
+        selected_diagnostics,
+        selected_scale_name=selected_scale.name,
+        selected_scale_index=selected_index,
+        comparison_scale_name=comparison_name,
+        cross_scale_spread=cross_scale_spread,
+        unavailable_scale_names=tuple(name for name, _ in failures),
+    )
+
+
 def evaluate_causal_local_source_jet_collection_native(
     collection: CausalLocalDipoleSourceCollection,
     observer_event: "ObserverEvent",
@@ -813,15 +1046,80 @@ def evaluate_causal_local_source_jet_collection_native(
     )
 
 
+def evaluate_causal_local_source_jet_collection_multiscale_native(
+    collection: CausalLocalDipoleSourceCollection,
+    observer_event: "ObserverEvent",
+    *,
+    scales: LocalSourceJetMultiScaleConfig,
+    excluded_source_identities: Sequence[str] = (),
+    root_tolerance_mm: float = 1.0e-21,
+    max_root_iterations: int = 96,
+    minimum_separation_mm: float = 1.0e-15,
+) -> CausalLocalSourceJetProviderResult:
+    """Evaluate multi-scale source jets and sum them in declared source order."""
+
+    excluded = set(str(identity) for identity in excluded_source_identities)
+    source_results: list[CausalLocalSourceJetEvaluation] = []
+    potential = np.zeros(4, dtype=np.float64)
+    partial_a = np.zeros((4, 4), dtype=np.float64)
+    field = np.zeros((4, 4), dtype=np.float64)
+    partial_f = np.zeros((4, 4, 4), dtype=np.float64)
+    for source in collection.sources:
+        if source.identity in excluded:
+            continue
+        try:
+            response, diagnostics = evaluate_causal_local_source_jet_multiscale_native(
+                source.history,
+                observer_event,
+                magnetic_moment_native=source.magnetic_moment_native,
+                scales=scales,
+                root_tolerance_mm=root_tolerance_mm,
+                max_root_iterations=max_root_iterations,
+                minimum_separation_mm=minimum_separation_mm,
+            )
+        except CausalLocalSourceHistoryUnavailableError as exc:
+            raise CausalLocalSourceHistoryUnavailableError(
+                f"source identity {source.identity!r}: {exc}"
+            ) from exc
+        except ValueError as exc:
+            raise ValueError(f"source identity {source.identity!r}: {exc}") from exc
+        potential += response.four_potential
+        partial_a += response.partial_a
+        field += response.field_tensor
+        partial_f += response.partial_f
+        source_results.append(
+            CausalLocalSourceJetEvaluation(
+                identity=source.identity,
+                response=response,
+                diagnostics=diagnostics,
+            )
+        )
+    electric, magnetic = fields_from_tensor_native(field)
+    return CausalLocalSourceJetProviderResult(
+        four_potential=potential,
+        partial_a=partial_a,
+        electric_field_native=electric,
+        magnetic_field_native=magnetic,
+        field_tensor=field,
+        partial_f=partial_f,
+        source_results=tuple(source_results),
+    )
+
+
 __all__ = [
     "CausalLocalSourceJetModelSpreadError",
+    "CausalLocalSourceJetScaleSelectionError",
     "CausalLocalSourceJetEvaluation",
     "CausalLocalSourceJetProviderResult",
     "LocalSourceJetDiagnostics",
     "LocalSourceJetFitConfig",
     "LocalSourceJetModelSpread",
     "LocalSourceJetModelSpreadConfig",
+    "LocalSourceJetMultiScaleConfig",
+    "LocalSourceJetScaleConfig",
     "evaluate_causal_local_source_jet_collection_native",
+    "evaluate_causal_local_source_jet_collection_multiscale_native",
+    "evaluate_causal_local_source_jet_multiscale_native",
     "evaluate_causal_local_source_jet_native",
     "local_source_jet_configs_from_source_options",
 ]
