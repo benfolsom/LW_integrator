@@ -1,5 +1,17 @@
 # Changelog
 
+- Add an opt-in `interval_mean` acceleration source for the local retarded
+  jet. It reconstructs the total acceleration from each accepted velocity
+  change, including a split radiation-reaction impulse, and locates that
+  centered estimate at the interval midpoint. It never reads legacy `bdot`.
+  A separate readiness mask distinguishes trusted dynamical intervals from
+  synthetic inertial prehistory; the provider fails closed if an untrusted
+  interval enters its fit window. `exact_start` remains the default while the
+  midpoint route is tested on Medina/LAD trajectories. The analytic circular
+  oracle converges under sample refinement, and the saved four-level
+  radiation-off trajectory retains its response-refinement gates. Existing
+  equations-of-motion selection and nondipole trajectories remain unchanged.
+
 - Give the opt-in local source-jet provider its own accepted-history model,
   independent of the causal-$C^5$ segment builder. The exact acceleration for
   the accepted interval from $t_i$ to $t_{i+1}$ is now stored directly at

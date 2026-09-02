@@ -105,6 +105,7 @@ def _analytic_history(*, acceleration_ready: bool = True) -> CausalLocalSourceHi
             acceleration_ready,
             dtype=bool,
         ),
+        interval_mean_acceleration_ready=np.ones(count - 1, dtype=bool),
     )
 
 
@@ -167,6 +168,7 @@ def _circular_history(*, sample_count: int = 241) -> CausalLocalSourceHistory:
         stereographic_frame=np.eye(3),
         interval_start_beta_prime_per_mm=beta_prime[:-1],
         interval_start_acceleration_ready=np.ones(sample_count - 1, dtype=bool),
+        interval_mean_acceleration_ready=np.ones(sample_count - 1, dtype=bool),
     )
 
 
@@ -320,12 +322,16 @@ def test_past_only_source_jet_tracks_exact_circular_source() -> None:
     assert diagnostics.acceleration_condition_number < 1.0e4
 
 
-def test_past_only_source_jet_is_independent_of_later_accepted_samples() -> None:
+@pytest.mark.parametrize("acceleration_samples", ("exact_start", "interval_mean"))
+def test_past_only_source_jet_is_independent_of_later_accepted_samples(
+    acceleration_samples: str,
+) -> None:
     history = _circular_history()
     event = ObserverEvent(0.03, (0.8, 0.2, 0.3))
     fit = LocalSourceJetFitConfig(
         half_width_ns=0.005,
         window_alignment="past",
+        acceleration_samples=acceleration_samples,
     )
     complete, _ = evaluate_causal_local_source_jet_native(
         history,
@@ -346,6 +352,9 @@ def test_past_only_source_jet_is_independent_of_later_accepted_samples() -> None
         interval_start_acceleration_ready=(
             history.interval_start_acceleration_ready[: stop - 1]
         ),
+        interval_mean_acceleration_ready=(
+            history.interval_mean_acceleration_ready[: stop - 1]
+        ),
     )
     causal, _ = evaluate_causal_local_source_jet_native(
         truncated,
@@ -357,6 +366,34 @@ def test_past_only_source_jet_is_independent_of_later_accepted_samples() -> None
     assert complete.retarded_time_ns == causal.retarded_time_ns
     for name in ("four_potential", "partial_a", "field_tensor", "partial_f"):
         np.testing.assert_array_equal(getattr(complete, name), getattr(causal, name))
+
+
+def test_interval_mean_acceleration_converges_to_exact_circular_response() -> None:
+    event = ObserverEvent(0.03, (0.8, 0.2, 0.3))
+    expected = _exact_circular_response(event)
+
+    def error(sample_count: int) -> tuple[float, str]:
+        actual, diagnostics = evaluate_causal_local_source_jet_native(
+            _circular_history(sample_count=sample_count),
+            event,
+            magnetic_moment_native=-1.7,
+            fit=LocalSourceJetFitConfig(
+                half_width_ns=0.005,
+                acceleration_samples="interval_mean",
+                window_alignment="past",
+            ),
+        )
+        relative = np.linalg.norm(
+            actual.partial_f - expected.partial_f
+        ) / np.linalg.norm(expected.partial_f)
+        return float(relative), diagnostics.acceleration_samples
+
+    coarse_error, coarse_semantics = error(121)
+    fine_error, fine_semantics = error(481)
+
+    assert coarse_semantics == fine_semantics == "interval_mean"
+    assert fine_error < 1.1e-9
+    assert fine_error < 0.2 * coarse_error
 
 
 def test_local_source_jet_is_continuous_across_cubic_root_segment_boundary() -> None:
@@ -412,6 +449,7 @@ def test_tricube_fit_is_continuous_when_a_sample_leaves_the_window() -> None:
         stereographic_frame=history.stereographic_frame,
         interval_start_beta_prime_per_mm=perturbed_interval_start,
         interval_start_acceleration_ready=(history.interval_start_acceleration_ready),
+        interval_mean_acceleration_ready=(history.interval_mean_acceleration_ready),
     )
     half_width = 0.01
     sample_boundary_time = float(history.time_ns[departing_index]) + half_width
@@ -502,13 +540,30 @@ def test_nested_fits_require_narrow_primary_wide_ordering() -> None:
         )
 
 
+def test_nested_fits_require_matching_acceleration_samples() -> None:
+    with pytest.raises(ValueError, match="same acceleration samples"):
+        evaluate_causal_local_source_jet_native(
+            _analytic_history(),
+            ObserverEvent(0.02, (1.0, 0.25, -0.05)),
+            magnetic_moment_native=-1.7,
+            fit=LocalSourceJetFitConfig(half_width_ns=0.015),
+            model_spread=LocalSourceJetModelSpreadConfig(
+                narrow_fit=LocalSourceJetFitConfig(half_width_ns=0.01),
+                wide_fit=LocalSourceJetFitConfig(
+                    half_width_ns=0.02,
+                    acceleration_samples="interval_mean",
+                ),
+            ),
+        )
+
+
 def test_local_source_jet_requires_complete_exact_acceleration_window() -> None:
     history = _analytic_history(acceleration_ready=False)
     event = ObserverEvent(0.02, (1.0, 0.25, -0.05))
 
     with pytest.raises(
         CausalLocalSourceHistoryUnavailableError,
-        match="unavailable exact sample inside",
+        match="unavailable trusted exact-start sample inside",
     ):
         evaluate_causal_local_source_jet_native(
             history,
@@ -545,11 +600,51 @@ def test_local_source_jet_rejects_missing_exact_acceleration_inside_window() -> 
         stereographic_frame=history.stereographic_frame,
         interval_start_beta_prime_per_mm=(history.interval_start_beta_prime_per_mm),
         interval_start_acceleration_ready=missing,
+        interval_mean_acceleration_ready=(history.interval_mean_acceleration_ready),
     )
 
     with pytest.raises(
         CausalLocalSourceHistoryUnavailableError,
-        match="unavailable exact sample inside",
+        match="unavailable trusted exact-start sample inside",
+    ):
+        evaluate_causal_local_source_jet_native(
+            incomplete,
+            event,
+            magnetic_moment_native=-1.7,
+            fit=fit,
+        )
+
+
+def test_local_source_jet_rejects_untrusted_interval_mean_inside_window() -> None:
+    history = _analytic_history()
+    event = ObserverEvent(0.02, (1.0, 0.25, -0.05))
+    fit = LocalSourceJetFitConfig(
+        half_width_ns=0.015,
+        acceleration_samples="interval_mean",
+    )
+    reference, _ = evaluate_causal_local_source_jet_native(
+        history,
+        event,
+        magnetic_moment_native=-1.7,
+        fit=fit,
+    )
+    sample_times = 0.5 * (history.time_ns[:-1] + history.time_ns[1:])
+    ready = np.array(history.interval_mean_acceleration_ready, copy=True)
+    ready[int(np.argmin(np.abs(sample_times - reference.retarded_time_ns)))] = False
+    incomplete = CausalLocalSourceHistory.from_accepted_samples(
+        time_ns=history.time_ns,
+        position_mm=history.position_mm,
+        beta=history.beta,
+        rest_spin=history.rest_spin,
+        stereographic_frame=history.stereographic_frame,
+        interval_start_beta_prime_per_mm=(history.interval_start_beta_prime_per_mm),
+        interval_start_acceleration_ready=(history.interval_start_acceleration_ready),
+        interval_mean_acceleration_ready=ready,
+    )
+
+    with pytest.raises(
+        CausalLocalSourceHistoryUnavailableError,
+        match="unavailable trusted interval-mean sample inside",
     ):
         evaluate_causal_local_source_jet_native(
             incomplete,
@@ -592,6 +687,10 @@ def test_local_source_jet_rejects_truncated_physical_window() -> None:
         (
             {"half_width_ns": 1.0, "window_alignment": "invalid"},
             "window_alignment",
+        ),
+        (
+            {"half_width_ns": 1.0, "acceleration_samples": "invalid"},
+            "acceleration_samples",
         ),
     ),
 )

@@ -51,12 +51,17 @@ class LocalSourceJetFitConfig:
 
     ``half_width_ns`` is half the total window duration for both alignments.
     A centered window is ``[t_ret - w, t_ret + w]``; a past-only window is
-    ``[t_ret - 2 w, t_ret]``.
+    ``[t_ret - 2 w, t_ret]``. ``exact_start`` uses explicitly retained
+    equations-of-motion acceleration. ``interval_mean`` reconstructs the
+    total acceleration, including split reaction impulses, from each accepted
+    velocity change and assigns that centered difference to the interval
+    midpoint.
     """
 
     half_width_ns: float
     acceleration_degree: int = 5
     spin_degree: int = 5
+    acceleration_samples: Literal["exact_start", "interval_mean"] = "exact_start"
     window_weighting: Literal["tricube", "uniform"] = "tricube"
     window_alignment: Literal["centered", "past"] = "centered"
     maximum_condition_number: float = 1.0e5
@@ -65,6 +70,7 @@ class LocalSourceJetFitConfig:
         width = float(self.half_width_ns)
         acceleration_degree = int(self.acceleration_degree)
         spin_degree = int(self.spin_degree)
+        acceleration_samples = str(self.acceleration_samples)
         window_weighting = str(self.window_weighting)
         window_alignment = str(self.window_alignment)
         maximum_condition = float(self.maximum_condition_number)
@@ -74,6 +80,10 @@ class LocalSourceJetFitConfig:
             raise ValueError("acceleration_degree must be at least three")
         if spin_degree < 5:
             raise ValueError("spin_degree must be at least five")
+        if acceleration_samples not in {"exact_start", "interval_mean"}:
+            raise ValueError(
+                "acceleration_samples must be 'exact_start' or 'interval_mean'"
+            )
         if window_weighting not in {"tricube", "uniform"}:
             raise ValueError("window_weighting must be 'tricube' or 'uniform'")
         if window_alignment not in {"centered", "past"}:
@@ -85,6 +95,7 @@ class LocalSourceJetFitConfig:
         object.__setattr__(self, "half_width_ns", width)
         object.__setattr__(self, "acceleration_degree", acceleration_degree)
         object.__setattr__(self, "spin_degree", spin_degree)
+        object.__setattr__(self, "acceleration_samples", acceleration_samples)
         object.__setattr__(self, "window_weighting", window_weighting)
         object.__setattr__(self, "window_alignment", window_alignment)
         object.__setattr__(self, "maximum_condition_number", maximum_condition)
@@ -140,6 +151,7 @@ class LocalSourceJetDiagnostics:
     """Auditable root and fit information for one source contribution."""
 
     root_segment_index: int
+    acceleration_samples: Literal["exact_start", "interval_mean"]
     acceleration_sample_indices: np.ndarray
     spin_sample_indices: np.ndarray
     acceleration_condition_number: float
@@ -150,6 +162,8 @@ class LocalSourceJetDiagnostics:
     def __post_init__(self) -> None:
         if int(self.root_segment_index) < 0:
             raise ValueError("root_segment_index must be non-negative")
+        if self.acceleration_samples not in {"exact_start", "interval_mean"}:
+            raise ValueError("acceleration_samples has an invalid value")
         for name in ("acceleration_sample_indices", "spin_sample_indices"):
             values = np.asarray(getattr(self, name), dtype=np.int64)
             if values.ndim != 1 or values.size == 0 or np.any(np.diff(values) <= 0):
@@ -520,12 +534,44 @@ def evaluate_causal_local_source_jet_native(
         max_root_iterations=max_root_iterations,
         minimum_separation_mm=minimum_separation_mm,
     )
-    source_knots = np.arange(history.interval_count, dtype=np.int64)
-    ready = np.asarray(history.interval_start_acceleration_ready, dtype=bool)
-    acceleration_times = np.asarray(
-        history.time_ns[: history.interval_count],
-        dtype=np.float64,
-    )
+    source_intervals = np.arange(history.interval_count, dtype=np.int64)
+    if fit.acceleration_samples == "exact_start":
+        ready = np.asarray(history.interval_start_acceleration_ready, dtype=bool)
+        acceleration_times = np.asarray(
+            history.time_ns[: history.interval_count],
+            dtype=np.float64,
+        )
+        accelerations = C_MMNS**2 * np.asarray(
+            history.interval_start_beta_prime_per_mm,
+            dtype=np.float64,
+        )
+    else:
+        interval_duration = np.diff(np.asarray(history.time_ns, dtype=np.float64))
+        acceleration_times = 0.5 * (
+            np.asarray(history.time_ns[:-1], dtype=np.float64)
+            + np.asarray(history.time_ns[1:], dtype=np.float64)
+        )
+        accelerations = (
+            C_MMNS
+            * np.diff(
+                np.asarray(history.beta, dtype=np.float64),
+                axis=0,
+            )
+            / interval_duration[:, np.newaxis]
+        )
+        ready = np.array(
+            history.interval_mean_acceleration_ready,
+            dtype=bool,
+            copy=True,
+        )
+        causally_available = np.ones(history.interval_count, dtype=bool)
+        if fit.window_alignment == "past":
+            # A centered interval difference needs both endpoints. Do not use
+            # a difference whose right endpoint is later than the retarded
+            # event in the explicitly one-sided reconstruction.
+            causally_available &= (
+                np.asarray(history.time_ns[1:], dtype=np.float64) <= root_time
+            )
     if fit.window_alignment == "centered":
         acceleration_window_start = root_time - fit.half_width_ns
         acceleration_window_end = root_time + fit.half_width_ns
@@ -536,22 +582,18 @@ def evaluate_causal_local_source_jet_native(
         acceleration_times <= acceleration_window_end
     )
     if np.any(required_acceleration & ~ready):
+        sample_label = fit.acceleration_samples.replace("_", "-")
         raise CausalLocalSourceHistoryUnavailableError(
-            "local acceleration fit has an unavailable exact sample inside its "
-            "physical window"
+            f"local acceleration fit has an unavailable trusted {sample_label} "
+            "sample inside its physical window"
         )
-    acceleration_knots = source_knots[ready]
-    accelerations = (
-        C_MMNS**2
-        * np.asarray(
-            history.interval_start_beta_prime_per_mm,
-            dtype=np.float64,
-        )[acceleration_knots]
-    )
+    if fit.acceleration_samples == "interval_mean":
+        ready &= causally_available
+    acceleration_intervals = source_intervals[ready]
     acceleration_derivatives, acceleration_condition, acceleration_indices = (
         _local_polynomial_derivatives(
-            sample_times_ns=acceleration_times[acceleration_knots],
-            sample_values=accelerations,
+            sample_times_ns=acceleration_times[acceleration_intervals],
+            sample_values=accelerations[acceleration_intervals],
             target_time_ns=root_time,
             half_width_ns=fit.half_width_ns,
             degree=fit.acceleration_degree,
@@ -559,7 +601,7 @@ def evaluate_causal_local_source_jet_native(
             window_weighting=fit.window_weighting,
             window_alignment=fit.window_alignment,
             maximum_condition_number=fit.maximum_condition_number,
-            sample_indices=acceleration_knots,
+            sample_indices=acceleration_intervals,
             label="acceleration",
         )
     )
@@ -615,6 +657,14 @@ def evaluate_causal_local_source_jet_native(
                 "nested model-spread fits must use the same window alignment"
             )
         if not (
+            model_spread.narrow_fit.acceleration_samples
+            == fit.acceleration_samples
+            == model_spread.wide_fit.acceleration_samples
+        ):
+            raise ValueError(
+                "nested model-spread fits must use the same acceleration samples"
+            )
+        if not (
             model_spread.narrow_fit.half_width_ns
             < fit.half_width_ns
             < model_spread.wide_fit.half_width_ns
@@ -643,6 +693,7 @@ def evaluate_causal_local_source_jet_native(
             )
     return response, LocalSourceJetDiagnostics(
         root_segment_index=segment,
+        acceleration_samples=fit.acceleration_samples,
         acceleration_sample_indices=acceleration_indices,
         spin_sample_indices=selected_spin_indices,
         acceleration_condition_number=acceleration_condition,

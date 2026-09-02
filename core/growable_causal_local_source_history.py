@@ -80,6 +80,13 @@ class CausalLocalPublishedHistory:
         )
 
     @property
+    def interval_mean_acceleration_ready(self) -> np.ndarray:
+        return _readonly_prefix(
+            self._owner._interval_mean_acceleration_ready,
+            max(0, self._sample_stop - 1),
+        )
+
+    @property
     def sample_count(self) -> int:
         return self._sample_stop
 
@@ -96,6 +103,7 @@ class CausalLocalPublishedHistory:
             stereographic_frame=self.stereographic_frame,
             interval_start_beta_prime_per_mm=(self.interval_start_beta_prime_per_mm),
             interval_start_acceleration_ready=(self.interval_start_acceleration_ready),
+            interval_mean_acceleration_ready=(self.interval_mean_acceleration_ready),
         )
 
 
@@ -136,6 +144,7 @@ class GrowableCausalLocalSourceHistory:
             dtype=np.float64,
         )
         self._interval_start_acceleration_ready = np.zeros(capacity, dtype=bool)
+        self._interval_mean_acceleration_ready = np.zeros(capacity, dtype=bool)
         self._sample_count = 0
         self._token = next(_TOKEN_COUNTER)
         self._generation = 0
@@ -167,6 +176,9 @@ class GrowableCausalLocalSourceHistory:
         result._interval_start_acceleration_ready[:interval_count] = (
             history.interval_start_acceleration_ready
         )
+        result._interval_mean_acceleration_ready[:interval_count] = (
+            history.interval_mean_acceleration_ready
+        )
         result._sample_count = count
         return result
 
@@ -194,6 +206,7 @@ class GrowableCausalLocalSourceHistory:
             ("_rest_spin", (capacity, 3)),
             ("_interval_start_beta_prime_per_mm", (capacity, 3)),
             ("_interval_start_acceleration_ready", (capacity,)),
+            ("_interval_mean_acceleration_ready", (capacity,)),
         )
         for name, shape in replacements:
             old = getattr(self, name)
@@ -237,6 +250,10 @@ class GrowableCausalLocalSourceHistory:
             [sample.interval_start_acceleration_ready for sample in rows],
             dtype=bool,
         )
+        interval_mean_ready = np.asarray(
+            [sample.interval_mean_acceleration_ready for sample in rows],
+            dtype=bool,
+        )
         start = self._sample_count
         stop = start + len(rows)
         self._ensure_capacity(stop)
@@ -246,6 +263,9 @@ class GrowableCausalLocalSourceHistory:
         self._rest_spin[start:stop] = spins
         self._interval_start_beta_prime_per_mm[start - 1 : stop - 1] = accelerations
         self._interval_start_acceleration_ready[start - 1 : stop - 1] = ready
+        self._interval_mean_acceleration_ready[start - 1 : stop - 1] = (
+            interval_mean_ready
+        )
         candidate = CausalLocalPublishedHistory(self, sample_stop=stop)
         return CausalLocalAppendTransaction(
             candidate=candidate,

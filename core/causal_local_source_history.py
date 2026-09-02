@@ -1,9 +1,9 @@
 """Accepted source samples for causal local-jet reconstruction.
 
 This history has one deliberately narrow purpose: retain the position,
-velocity, spin, and exact equations-of-motion acceleration needed by the local
-retarded source-jet provider.  It does not store the legacy ``bdot`` output or
-any frozen high-degree polynomial.
+velocity, spin, and acceleration information needed by the local retarded
+source-jet provider.  It does not store the legacy ``bdot`` output or any
+frozen high-degree polynomial.
 
 Acceleration belongs to an accepted interval, not its endpoint row.  For the
 interval from sample ``i`` to sample ``i + 1``,
@@ -11,6 +11,12 @@ interval from sample ``i`` to sample ``i + 1``,
 derivative of beta at sample ``i``.  This representation makes the timing
 contract explicit and avoids the historical row offset used by the C5
 history.
+
+The two acceleration-ready masks have different meanings.  An interval may
+have a trusted pair of accepted velocity endpoints even when its exact start
+acceleration is unavailable, as happens when a split radiation-reaction
+impulse is applied later in the step.  Synthetic prehistory has neither kind
+of trusted acceleration data.
 """
 
 from __future__ import annotations
@@ -26,7 +32,7 @@ if TYPE_CHECKING:
     from .exact_pair_trial import ExactPairStepDoublingTrial
     from .types import TrajectoryArrays
 
-_CHECKPOINT_SCHEMA_VERSION = 1
+_CHECKPOINT_SCHEMA_VERSION = 2
 _CHART_POLE_TOLERANCE = 1.0e-12
 
 
@@ -57,6 +63,9 @@ class CausalLocalHistoryView(Protocol):
 
     @property
     def interval_start_acceleration_ready(self) -> np.ndarray: ...
+
+    @property
+    def interval_mean_acceleration_ready(self) -> np.ndarray: ...
 
     @property
     def sample_count(self) -> int: ...
@@ -144,7 +153,7 @@ def spin_to_stereographic(rest_spin: np.ndarray, frame: np.ndarray) -> np.ndarra
 
 @dataclass(frozen=True)
 class AcceptedLocalSourceSample:
-    """One accepted endpoint and the exact acceleration at its interval start."""
+    """One accepted endpoint and acceleration metadata for its new interval."""
 
     time_ns: float
     position_mm: np.ndarray
@@ -152,6 +161,7 @@ class AcceptedLocalSourceSample:
     rest_spin: np.ndarray
     interval_start_beta_prime_per_mm: np.ndarray
     interval_start_acceleration_ready: bool
+    interval_mean_acceleration_ready: bool = True
 
     def __post_init__(self) -> None:
         time = float(self.time_ns)
@@ -182,6 +192,11 @@ class AcceptedLocalSourceSample:
             self,
             "interval_start_acceleration_ready",
             bool(self.interval_start_acceleration_ready),
+        )
+        object.__setattr__(
+            self,
+            "interval_mean_acceleration_ready",
+            bool(self.interval_mean_acceleration_ready),
         )
 
 
@@ -288,6 +303,7 @@ def accepted_local_source_sample_from_state(
             np.zeros(3, dtype=np.float64) if acceleration is None else acceleration
         ),
         interval_start_acceleration_ready=acceleration is not None,
+        interval_mean_acceleration_ready=True,
     )
 
 
@@ -302,6 +318,7 @@ class CausalLocalSourceHistory:
     stereographic_frame: np.ndarray
     interval_start_beta_prime_per_mm: np.ndarray
     interval_start_acceleration_ready: np.ndarray
+    interval_mean_acceleration_ready: np.ndarray
 
     def __post_init__(self) -> None:
         times = _readonly_float_array(self.time_ns, shape=None, name="time_ns")
@@ -338,6 +355,15 @@ class CausalLocalSourceHistory:
                 name="interval_start_acceleration_ready",
             ),
         )
+        object.__setattr__(
+            self,
+            "interval_mean_acceleration_ready",
+            _readonly_bool_array(
+                self.interval_mean_acceleration_ready,
+                shape=(interval_count,),
+                name="interval_mean_acceleration_ready",
+            ),
+        )
         if count and np.any(np.sum(self.beta * self.beta, axis=1) >= 1.0):
             raise ValueError("accepted source beta magnitude must be below one")
         if count and not np.allclose(
@@ -367,6 +393,7 @@ class CausalLocalSourceHistory:
             stereographic_frame=np.asarray(stereographic_frame, dtype=np.float64),
             interval_start_beta_prime_per_mm=np.zeros((0, 3)),
             interval_start_acceleration_ready=np.zeros(0, dtype=bool),
+            interval_mean_acceleration_ready=np.zeros(0, dtype=bool),
         )
 
     @classmethod
@@ -379,6 +406,7 @@ class CausalLocalSourceHistory:
         rest_spin: Sequence[Sequence[float]] | np.ndarray,
         interval_start_beta_prime_per_mm: Sequence[Sequence[float]] | np.ndarray,
         interval_start_acceleration_ready: Sequence[bool] | np.ndarray,
+        interval_mean_acceleration_ready: Sequence[bool] | np.ndarray,
         stereographic_frame: Sequence[Sequence[float]] | np.ndarray = np.eye(3),
     ) -> "CausalLocalSourceHistory":
         return cls(
@@ -393,6 +421,10 @@ class CausalLocalSourceHistory:
             ),
             interval_start_acceleration_ready=np.asarray(
                 interval_start_acceleration_ready,
+                dtype=bool,
+            ),
+            interval_mean_acceleration_ready=np.asarray(
+                interval_mean_acceleration_ready,
                 dtype=bool,
             ),
         )
@@ -433,6 +465,12 @@ class CausalLocalSourceHistory:
                     np.asarray((sample.interval_start_acceleration_ready,)),
                 )
             ),
+            interval_mean_acceleration_ready=np.concatenate(
+                (
+                    self.interval_mean_acceleration_ready,
+                    np.asarray((sample.interval_mean_acceleration_ready,)),
+                )
+            ),
         )
 
     def to_checkpoint_payload(self) -> dict[str, object]:
@@ -451,6 +489,9 @@ class CausalLocalSourceHistory:
             "interval_start_acceleration_ready": (
                 self.interval_start_acceleration_ready.tolist()
             ),
+            "interval_mean_acceleration_ready": (
+                self.interval_mean_acceleration_ready.tolist()
+            ),
         }
 
     @classmethod
@@ -461,12 +502,12 @@ class CausalLocalSourceHistory:
         """Restore a history without recomputing or reindexing acceleration."""
 
         version = int(cast(int, payload.get("schema_version", -1)))
-        if version != _CHECKPOINT_SCHEMA_VERSION:
+        if version not in {1, _CHECKPOINT_SCHEMA_VERSION}:
             raise ValueError(
                 "unsupported causal local source-history checkpoint schema: "
                 f"{version}"
             )
-        required = (
+        required = [
             "time_ns",
             "position_mm",
             "beta",
@@ -474,7 +515,9 @@ class CausalLocalSourceHistory:
             "stereographic_frame",
             "interval_start_beta_prime_per_mm",
             "interval_start_acceleration_ready",
-        )
+        ]
+        if version >= 2:
+            required.append("interval_mean_acceleration_ready")
         missing = tuple(name for name in required if name not in payload)
         if missing:
             raise ValueError(
@@ -496,6 +539,13 @@ class CausalLocalSourceHistory:
             ),
             interval_start_acceleration_ready=np.asarray(
                 payload["interval_start_acceleration_ready"],
+                dtype=bool,
+            ),
+            interval_mean_acceleration_ready=np.asarray(
+                payload.get(
+                    "interval_mean_acceleration_ready",
+                    payload["interval_start_acceleration_ready"],
+                ),
                 dtype=bool,
             ),
         )
@@ -650,6 +700,12 @@ class CausalLocalDipoleSourceCollection:
                 stereographic_frame=frame,
                 interval_start_beta_prime_per_mm=interval_beta_prime,
                 interval_start_acceleration_ready=(
+                    trajectory.source_start_beta_prime_ready[1:, particle]
+                ),
+                # Existing trajectory files do not yet carry a distinct mask.
+                # Exact-start readiness is a conservative marker for physical
+                # accepted intervals and excludes synthetic inertial history.
+                interval_mean_acceleration_ready=(
                     trajectory.source_start_beta_prime_ready[1:, particle]
                 ),
             )

@@ -78,6 +78,7 @@ def _history() -> CausalLocalSourceHistory:
             (np.arange(4, dtype=np.float64), np.zeros((4, 2)))
         ),
         interval_start_acceleration_ready=np.asarray((True, True, False, True)),
+        interval_mean_acceleration_ready=np.asarray((True, True, True, False)),
     )
 
 
@@ -96,6 +97,10 @@ def test_trajectory_conversion_aligns_interval_acceleration_and_ignores_bdot() -
         history.interval_start_acceleration_ready,
         np.ones(4, dtype=bool),
     )
+    np.testing.assert_array_equal(
+        history.interval_mean_acceleration_ready,
+        np.ones(4, dtype=bool),
+    )
     assert not np.any(history.interval_start_beta_prime_per_mm[:, 0] > 1000.0)
 
 
@@ -112,8 +117,24 @@ def test_checkpoint_round_trip_preserves_exact_timing_bitwise() -> None:
         "stereographic_frame",
         "interval_start_beta_prime_per_mm",
         "interval_start_acceleration_ready",
+        "interval_mean_acceleration_ready",
     ):
         np.testing.assert_array_equal(getattr(actual, name), getattr(expected, name))
+
+
+def test_version_one_checkpoint_uses_exact_readiness_as_safe_interval_fallback() -> (
+    None
+):
+    payload = _history().to_checkpoint_payload()
+    payload["schema_version"] = 1
+    del payload["interval_mean_acceleration_ready"]
+
+    restored = CausalLocalSourceHistory.from_checkpoint_payload(payload)
+
+    np.testing.assert_array_equal(
+        restored.interval_mean_acceleration_ready,
+        restored.interval_start_acceleration_ready,
+    )
 
 
 def test_rejected_preflight_leaves_published_prefix_unchanged() -> None:
