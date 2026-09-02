@@ -96,6 +96,23 @@ def test_proper_step_solver_matches_nonlinear_endpoint() -> None:
     assert abs(result.residual_ns) <= 1.0e-14
 
 
+def test_proper_step_solver_resolves_root_near_safeguarded_bracket_edge() -> None:
+    """The bisection fallback needs more than 32 trials for this tight root."""
+
+    result = solve_proper_step_to_lab_time(
+        lambda h: _time_state(h),
+        role="rider",
+        start_time_ns=0.0,
+        target_time_ns=1.0,
+        initial_proper_step_ns=1.0 + 1.0e-12,
+        absolute_tolerance_ns=1.0e-15,
+        relative_tolerance=0.0,
+    )
+
+    assert abs(result.residual_ns) <= 1.0e-15
+    assert result.evaluations > 33
+
+
 def test_proper_step_solver_rejects_nonmonotone_bracket() -> None:
     with pytest.raises(SharedLabTimeError, match="not monotone"):
         solve_proper_step_to_lab_time(

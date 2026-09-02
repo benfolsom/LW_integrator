@@ -1,5 +1,13 @@
 # Changelog
 
+- Increased the bounded shared-lab-time proper-step solve from 32 to 64
+  iterations. A safeguarded secant proposal near a bracket edge deliberately
+  falls back to bisection; at strict time tolerances, 32 bisections could stop
+  just above the requested residual even though the endpoint map remained
+  finite and monotone. The larger bound preserves the existing tolerance and
+  acceptance checks and changes only cases that previously raised without an
+  endpoint. A fine live-C5 calibration exposed the limit on its final clipped
+  slab.
 - Stabilized live causal ``C5`` startup and adaptive sampling without weakening
   the existing derivative-fit guard. The inertial prefix now retains coarse
   remote samples but tapers its interval by no more than 5 percent between
