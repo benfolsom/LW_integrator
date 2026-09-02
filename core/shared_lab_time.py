@@ -52,6 +52,7 @@ class SharedLabTimePair:
 
 
 AdvanceTrial = Callable[[float], ParticleState]
+DEFAULT_PROPER_TIME_ROOT_MAX_ITERATIONS = 64
 
 
 def _single_particle_time(state: ParticleState, role: str) -> float:
@@ -77,7 +78,7 @@ def solve_proper_step_to_lab_time(
     initial_proper_step_ns: float,
     absolute_tolerance_ns: float = 1.0e-18,
     relative_tolerance: float = 1.0e-12,
-    max_iterations: int = 64,
+    max_iterations: int = DEFAULT_PROPER_TIME_ROOT_MAX_ITERATIONS,
     max_bracket_expansions: int = 20,
     maximum_proper_step_ns: float = np.inf,
 ) -> ProperTimeEndpoint:
@@ -232,7 +233,7 @@ def solve_shared_lab_time_pair(
     driver_initial_proper_step_ns: float,
     absolute_tolerance_ns: float = 1.0e-18,
     relative_tolerance: float = 1.0e-12,
-    max_iterations: int = 64,
+    max_iterations: int = DEFAULT_PROPER_TIME_ROOT_MAX_ITERATIONS,
     max_bracket_expansions: int = 20,
     maximum_proper_step_ns: float = np.inf,
 ) -> SharedLabTimePair:
@@ -324,6 +325,7 @@ def commit_shared_lab_time_pair(
 
 
 __all__ = [
+    "DEFAULT_PROPER_TIME_ROOT_MAX_ITERATIONS",
     "ProperTimeEndpoint",
     "SharedLabTimeError",
     "SharedLabTimePair",

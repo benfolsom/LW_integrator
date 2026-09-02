@@ -295,6 +295,40 @@ def test_one_slab_trial_is_unpublished_and_endpoint_finalized() -> None:
         assert "_exact_source_endpoint_rebase_required" not in state
 
 
+def test_one_slab_trial_forwards_shared_root_iteration_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import core.exact_pair_trial as exact_pair_trial
+
+    rider_builder = _accepted(-1.0)
+    driver_builder = _accepted(1.0)
+    observed_iterations: list[int] = []
+    original = exact_pair_trial.solve_shared_lab_time_pair
+
+    def monitored_shared_solve(**kwargs):
+        observed_iterations.append(int(kwargs["max_iterations"]))
+        return original(**kwargs)
+
+    monkeypatch.setattr(
+        exact_pair_trial,
+        "solve_shared_lab_time_pair",
+        monitored_shared_solve,
+    )
+    solve_exact_pair_slab_trial(
+        accepted_rider_history=rider_builder.build_current(),
+        accepted_driver_history=driver_builder.build_current(),
+        advance_rider=_advance(2.0, []),
+        advance_driver=_advance(4.0, []),
+        delta_time_ns=0.2,
+        rider_initial_proper_step_ns=0.1,
+        driver_initial_proper_step_ns=0.1,
+        magnetic_dipole=MagneticDipoleConfig(),
+        include_dipole_source=False,
+    )
+
+    assert observed_iterations == [64]
+
+
 def test_next_slab_accepts_the_pair_commit_time_envelope() -> None:
     rider_builder = GrowableTrajectoryBuilder(2, 1)
     driver_builder = GrowableTrajectoryBuilder(2, 1)

@@ -17,6 +17,7 @@ import numpy as np
 from .exact_pair_endpoint import finalize_exact_source_canonical_pair_states
 from .self_consistency import SelfConsistencyConfig
 from .shared_lab_time import (
+    DEFAULT_PROPER_TIME_ROOT_MAX_ITERATIONS,
     SharedLabTimeError,
     SharedLabTimePair,
     solve_shared_lab_time_pair,
@@ -215,7 +216,7 @@ def solve_exact_pair_slab_trial(
     spin_interpolation_model: str = "causal_frozen_c1",
     absolute_tolerance_ns: float = 1.0e-18,
     relative_tolerance: float = 1.0e-12,
-    max_iterations: int = 32,
+    max_iterations: int = DEFAULT_PROPER_TIME_ROOT_MAX_ITERATIONS,
     max_bracket_expansions: int = 20,
     maximum_proper_step_ns: float = np.inf,
 ) -> ExactPairSlabTrial:
@@ -374,7 +375,7 @@ def solve_exact_pair_step_doubling_trial(
     spin_interpolation_model: str = "causal_frozen_c1",
     absolute_time_tolerance_ns: float = 1.0e-18,
     relative_time_tolerance: float = 1.0e-12,
-    max_iterations: int = 32,
+    max_iterations: int = DEFAULT_PROPER_TIME_ROOT_MAX_ITERATIONS,
     max_bracket_expansions: int = 20,
     maximum_proper_step_ns: float = np.inf,
 ) -> ExactPairStepDoublingTrial:
