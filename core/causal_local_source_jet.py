@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
-from typing import TYPE_CHECKING, Literal, Sequence
+from typing import TYPE_CHECKING, Literal, Sequence, cast
 
 import numpy as np
 
@@ -43,6 +43,7 @@ from .rfs import fields_from_tensor_native
 
 if TYPE_CHECKING:
     from .retarded_fields import ObserverEvent
+    from .types import DipoleSourceConfig
 
 
 @dataclass(frozen=True)
@@ -229,6 +230,53 @@ class CausalLocalSourceJetProviderResult:
             detached.setflags(write=False)
             object.__setattr__(self, name, detached)
         object.__setattr__(self, "source_results", tuple(self.source_results))
+
+
+def local_source_jet_configs_from_source_options(
+    source: "DipoleSourceConfig",
+) -> tuple[LocalSourceJetFitConfig, LocalSourceJetModelSpreadConfig]:
+    """Translate validated public options into one guarded local fit."""
+
+    if source.history_model != "causal_local_jet":
+        raise ValueError("local source-jet options require causal_local_jet history")
+    widths = (
+        source.local_jet_narrow_half_width_ns,
+        source.local_jet_primary_half_width_ns,
+        source.local_jet_wide_half_width_ns,
+    )
+    if any(value is None for value in widths):  # pragma: no cover - config invariant
+        raise ValueError("local source-jet physical half-widths are unavailable")
+
+    def fit(width: float | None) -> LocalSourceJetFitConfig:
+        if width is None:  # pragma: no cover - narrowed above
+            raise ValueError("local source-jet physical half-width is unavailable")
+        return LocalSourceJetFitConfig(
+            half_width_ns=width,
+            acceleration_degree=source.local_jet_acceleration_degree,
+            spin_degree=source.local_jet_spin_degree,
+            acceleration_samples=cast(
+                Literal["exact_start", "interval_mean"],
+                source.local_jet_acceleration_samples,
+            ),
+            window_weighting=cast(
+                Literal["tricube", "uniform"],
+                source.local_jet_window_weighting,
+            ),
+            window_alignment=cast(
+                Literal["centered", "past"],
+                source.local_jet_window_alignment,
+            ),
+            maximum_condition_number=source.local_jet_maximum_condition_number,
+        )
+
+    narrow = fit(widths[0])
+    primary = fit(widths[1])
+    wide = fit(widths[2])
+    return primary, LocalSourceJetModelSpreadConfig(
+        narrow_fit=narrow,
+        wide_fit=wide,
+        maximum_relative_spread=source.local_jet_maximum_relative_spread,
+    )
 
 
 def _cubic_position_velocity(
@@ -775,4 +823,5 @@ __all__ = [
     "LocalSourceJetModelSpreadConfig",
     "evaluate_causal_local_source_jet_collection_native",
     "evaluate_causal_local_source_jet_native",
+    "local_source_jet_configs_from_source_options",
 ]

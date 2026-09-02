@@ -558,6 +558,17 @@ class DipoleSourceConfig:
     minimum_stencil_step_mm: float = 1.0e-15
     root_tolerance_mm: float = 1.0e-21
     max_root_iterations: int = 96
+    local_jet_primary_half_width_ns: float | None = None
+    local_jet_narrow_half_width_ns: float | None = None
+    local_jet_wide_half_width_ns: float | None = None
+    local_jet_acceleration_degree: int = 5
+    local_jet_spin_degree: int = 5
+    local_jet_maximum_condition_number: float = 1.0e5
+    local_jet_maximum_relative_spread: float = 1.0e-3
+    local_jet_acceleration_samples: str = "interval_mean"
+    local_jet_window_alignment: str = "past"
+    local_jet_window_weighting: str = "tricube"
+    local_jet_inertial_prehistory: str = "untrusted"
 
     def __post_init__(self) -> None:
         self.model = str(self.model).strip().lower().replace("-", "_")
@@ -577,15 +588,21 @@ class DipoleSourceConfig:
             "c1": "causal_frozen_c1",
             "frozen_c1": "causal_frozen_c1",
             "c5": "causal_c5",
+            "local_jet": "causal_local_jet",
+            "causal_local": "causal_local_jet",
         }
         self.history_model = history_aliases.get(
             self.history_model,
             self.history_model,
         )
-        if self.history_model not in {"causal_frozen_c1", "causal_c5"}:
+        if self.history_model not in {
+            "causal_frozen_c1",
+            "causal_c5",
+            "causal_local_jet",
+        }:
             raise ValueError(
                 "dipole source history_model must be one of: "
-                "causal_frozen_c1, causal_c5"
+                "causal_frozen_c1, causal_c5, causal_local_jet"
             )
         for name in (
             "minimum_separation_mm",
@@ -602,6 +619,87 @@ class DipoleSourceConfig:
         self.max_root_iterations = int(self.max_root_iterations)
         if self.max_root_iterations <= 0:
             raise ValueError("dipole source max_root_iterations must be positive")
+        width_names = (
+            "local_jet_narrow_half_width_ns",
+            "local_jet_primary_half_width_ns",
+            "local_jet_wide_half_width_ns",
+        )
+        widths: list[float | None] = []
+        for name in width_names:
+            raw = getattr(self, name)
+            value = None if raw is None else float(raw)
+            if value is not None and (not np.isfinite(value) or value <= 0.0):
+                raise ValueError(f"dipole source {name} must be finite and positive")
+            setattr(self, name, value)
+            widths.append(value)
+        if self.history_model == "causal_local_jet":
+            if any(value is None for value in widths):
+                raise ValueError(
+                    "causal_local_jet requires narrow, primary, and wide physical "
+                    "half-widths"
+                )
+            narrow, primary, wide = cast(tuple[float, float, float], tuple(widths))
+            if not narrow < primary < wide:
+                raise ValueError(
+                    "causal_local_jet half-widths must satisfy narrow < primary < wide"
+                )
+        self.local_jet_acceleration_degree = int(self.local_jet_acceleration_degree)
+        self.local_jet_spin_degree = int(self.local_jet_spin_degree)
+        if self.local_jet_acceleration_degree < 3:
+            raise ValueError("local jet acceleration degree must be at least three")
+        if self.local_jet_spin_degree < 5:
+            raise ValueError("local jet spin degree must be at least five")
+        self.local_jet_maximum_condition_number = float(
+            self.local_jet_maximum_condition_number
+        )
+        if (
+            not np.isfinite(self.local_jet_maximum_condition_number)
+            or self.local_jet_maximum_condition_number <= 1.0
+        ):
+            raise ValueError(
+                "local jet maximum condition number must be finite and greater than "
+                "one"
+            )
+        self.local_jet_maximum_relative_spread = float(
+            self.local_jet_maximum_relative_spread
+        )
+        if (
+            not np.isfinite(self.local_jet_maximum_relative_spread)
+            or self.local_jet_maximum_relative_spread <= 0.0
+        ):
+            raise ValueError(
+                "local jet maximum relative spread must be finite and positive"
+            )
+        self.local_jet_acceleration_samples = (
+            str(self.local_jet_acceleration_samples).strip().lower().replace("-", "_")
+        )
+        if self.local_jet_acceleration_samples not in {
+            "exact_start",
+            "interval_mean",
+        }:
+            raise ValueError(
+                "local jet acceleration samples must be exact_start or interval_mean"
+            )
+        self.local_jet_window_alignment = (
+            str(self.local_jet_window_alignment).strip().lower().replace("-", "_")
+        )
+        if self.local_jet_window_alignment not in {"centered", "past"}:
+            raise ValueError("local jet window alignment must be centered or past")
+        self.local_jet_window_weighting = (
+            str(self.local_jet_window_weighting).strip().lower().replace("-", "_")
+        )
+        if self.local_jet_window_weighting not in {"tricube", "uniform"}:
+            raise ValueError("local jet window weighting must be tricube or uniform")
+        self.local_jet_inertial_prehistory = (
+            str(self.local_jet_inertial_prehistory).strip().lower().replace("-", "_")
+        )
+        if self.local_jet_inertial_prehistory not in {
+            "untrusted",
+            "assumed_inertial",
+        }:
+            raise ValueError(
+                "local jet inertial prehistory must be untrusted or assumed_inertial"
+            )
 
     @property
     def active(self) -> bool:

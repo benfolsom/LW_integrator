@@ -44,6 +44,7 @@ AdvanceRoleTrial = Callable[[float, ParticleState, ParticleState, Any], Particle
 
 if TYPE_CHECKING:
     from .causal_c5_dipole_provider import AcceptedPairCausalC5SourceHistory
+    from .causal_local_source_history import AcceptedPairCausalLocalSourceHistory
 
 
 @dataclass(frozen=True)
@@ -213,6 +214,7 @@ def solve_exact_pair_slab_trial(
     rider_prior_tail: tuple[ParticleState, ...] = (),
     driver_prior_tail: tuple[ParticleState, ...] = (),
     causal_c5_source_history: AcceptedPairCausalC5SourceHistory | None = None,
+    causal_local_source_history: AcceptedPairCausalLocalSourceHistory | None = None,
     spin_interpolation_model: str = "causal_frozen_c1",
     absolute_tolerance_ns: float = 1.0e-18,
     relative_tolerance: float = 1.0e-12,
@@ -234,6 +236,8 @@ def solve_exact_pair_slab_trial(
         raise SharedLabTimeError("rider and driver trial tails must be aligned")
     if len(rider_prior_tail) > 1:
         raise SharedLabTimeError("one slab may begin after at most one trial midpoint")
+    if causal_c5_source_history is not None and causal_local_source_history is not None:
+        raise ValueError("causal C5 and causal local histories are mutually exclusive")
 
     rider_start = _history_tail_state(
         accepted_rider_history, rider_prior_tail, role="rider"
@@ -273,14 +277,15 @@ def solve_exact_pair_slab_trial(
     )
     rider_source_history: Any = rider_charge_history
     driver_source_history: Any = driver_charge_history
-    if include_dipole_source and causal_c5_source_history is not None:
+    dipole_history = causal_c5_source_history or causal_local_source_history
+    if include_dipole_source and dipole_history is not None:
         rider_source_history = ExactRoleSourceHistory(
             charge_history=rider_charge_history,
-            dipole_source_collection=causal_c5_source_history.driver,
+            dipole_source_collection=dipole_history.driver,
         )
         driver_source_history = ExactRoleSourceHistory(
             charge_history=driver_charge_history,
-            dipole_source_collection=causal_c5_source_history.rider,
+            dipole_source_collection=dipole_history.rider,
         )
     provisional = solve_shared_lab_time_pair(
         advance_rider=lambda h: advance_rider(
@@ -323,13 +328,13 @@ def solve_exact_pair_slab_trial(
         include_dipole_source=include_dipole_source,
         rider_dipole_source_collection=(
             None
-            if causal_c5_source_history is None or not include_dipole_source
-            else causal_c5_source_history.rider
+            if dipole_history is None or not include_dipole_source
+            else dipole_history.rider
         ),
         driver_dipole_source_collection=(
             None
-            if causal_c5_source_history is None or not include_dipole_source
-            else causal_c5_source_history.driver
+            if dipole_history is None or not include_dipole_source
+            else dipole_history.driver
         ),
         spin_interpolation_model=spin_interpolation_model,
     )
@@ -365,10 +370,18 @@ def solve_exact_pair_step_doubling_trial(
     tolerances: StepDoublingTolerances,
     method_order: int = 1,
     causal_c5_source_history: AcceptedPairCausalC5SourceHistory | None = None,
+    causal_local_source_history: AcceptedPairCausalLocalSourceHistory | None = None,
     build_causal_c5_midpoint_candidate: (
         Callable[
             [ExactPairSlabTrial, AcceptedPairCausalC5SourceHistory],
             AcceptedPairCausalC5SourceHistory,
+        ]
+        | None
+    ) = None,
+    build_causal_local_midpoint_candidate: (
+        Callable[
+            [ExactPairSlabTrial, AcceptedPairCausalLocalSourceHistory],
+            AcceptedPairCausalLocalSourceHistory,
         ]
         | None
     ) = None,
@@ -381,6 +394,9 @@ def solve_exact_pair_step_doubling_trial(
 ) -> ExactPairStepDoublingTrial:
     """Evaluate full and two-half paths without mutating accepted state."""
 
+    if causal_c5_source_history is not None and causal_local_source_history is not None:
+        raise ValueError("causal C5 and causal local histories are mutually exclusive")
+
     def solve_slab(
         *,
         slab_time_ns: float,
@@ -389,6 +405,9 @@ def solve_exact_pair_step_doubling_trial(
         rider_tail: tuple[ParticleState, ...] = (),
         driver_tail: tuple[ParticleState, ...] = (),
         slab_causal_c5_source_history: AcceptedPairCausalC5SourceHistory | None = None,
+        slab_causal_local_source_history: (
+            AcceptedPairCausalLocalSourceHistory | None
+        ) = None,
     ) -> ExactPairSlabTrial:
         return solve_exact_pair_slab_trial(
             accepted_rider_history=accepted_rider_history,
@@ -403,6 +422,7 @@ def solve_exact_pair_step_doubling_trial(
             rider_prior_tail=rider_tail,
             driver_prior_tail=driver_tail,
             causal_c5_source_history=slab_causal_c5_source_history,
+            causal_local_source_history=slab_causal_local_source_history,
             spin_interpolation_model=spin_interpolation_model,
             absolute_tolerance_ns=absolute_time_tolerance_ns,
             relative_tolerance=relative_time_tolerance,
@@ -416,6 +436,7 @@ def solve_exact_pair_step_doubling_trial(
         rider_proper_step_ns=rider_initial_proper_step_ns,
         driver_proper_step_ns=driver_initial_proper_step_ns,
         slab_causal_c5_source_history=causal_c5_source_history,
+        slab_causal_local_source_history=causal_local_source_history,
     )
     half_time_ns = 0.5 * float(delta_time_ns)
     midpoint = solve_slab(
@@ -423,6 +444,7 @@ def solve_exact_pair_step_doubling_trial(
         rider_proper_step_ns=0.5 * float(rider_initial_proper_step_ns),
         driver_proper_step_ns=0.5 * float(driver_initial_proper_step_ns),
         slab_causal_c5_source_history=causal_c5_source_history,
+        slab_causal_local_source_history=causal_local_source_history,
     )
     refined_c5_source_history = causal_c5_source_history
     if causal_c5_source_history is not None:
@@ -444,6 +466,26 @@ def solve_exact_pair_step_doubling_trial(
                 midpoint,
                 causal_c5_source_history,
             )
+    refined_local_source_history = causal_local_source_history
+    if causal_local_source_history is not None:
+        if build_causal_local_midpoint_candidate is None:
+            from .causal_local_source_history import (
+                AcceptedPairCausalLocalSourceHistory,
+            )
+
+            refined_local_source_history = AcceptedPairCausalLocalSourceHistory(
+                rider=causal_local_source_history.rider.append_accepted_state(
+                    midpoint.pair.rider.state
+                ),
+                driver=causal_local_source_history.driver.append_accepted_state(
+                    midpoint.pair.driver.state
+                ),
+            )
+        else:
+            refined_local_source_history = build_causal_local_midpoint_candidate(
+                midpoint,
+                causal_local_source_history,
+            )
     refined = solve_slab(
         slab_time_ns=half_time_ns,
         rider_proper_step_ns=midpoint.pair.rider.proper_step_ns,
@@ -451,6 +493,7 @@ def solve_exact_pair_step_doubling_trial(
         rider_tail=(midpoint.pair.rider.state,),
         driver_tail=(midpoint.pair.driver.state,),
         slab_causal_c5_source_history=refined_c5_source_history,
+        slab_causal_local_source_history=refined_local_source_history,
     )
     full_state = build_pair_step_doubling_state(
         rider_states=(full.pair.rider.state,),

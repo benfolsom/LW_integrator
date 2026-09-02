@@ -509,6 +509,125 @@ def test_short_causal_c5_adaptive_run_uses_live_dipole_provider(
     assert np.all(np.isfinite(driver_soa.Pt))
 
 
+def test_short_causal_local_adaptive_run_uses_explicit_inertial_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    from core import causal_local_source_jet
+
+    provider_event_times: list[float] = []
+    retarded_source_times: list[float] = []
+    original_provider = (
+        causal_local_source_jet.evaluate_causal_local_source_jet_collection_native
+    )
+
+    def monitored_provider(collection, observer_event, **kwargs):
+        response = original_provider(collection, observer_event, **kwargs)
+        provider_event_times.append(float(observer_event.time_ns))
+        retarded_source_times.extend(
+            float(source.response.retarded_time_ns)
+            for source in response.source_results
+        )
+        return response
+
+    monkeypatch.setattr(
+        causal_local_source_jet,
+        "evaluate_causal_local_source_jet_collection_native",
+        monitored_provider,
+    )
+    rider = _species_state(
+        "electron",
+        position_mm=(-5.0e-9, 0.0, 0.0),
+        beta=(0.0, 1.0e-4, 0.0),
+    )
+    driver = _species_state(
+        "proton",
+        position_mm=(5.0e-9, 0.0, 0.0),
+        beta=(0.0, -1.0e-4, 0.0),
+    )
+    magnetic = MagneticDipoleConfig(
+        enabled=True,
+        exact_retarded_update="second_order_start_taylor_endpoint",
+        source=DipoleSourceConfig(
+            model="covariant_retarded_point",
+            history_model="causal_local_jet",
+            local_jet_narrow_half_width_ns=5.0e-12,
+            local_jet_primary_half_width_ns=7.5e-12,
+            local_jet_wide_half_width_ns=1.0e-11,
+            local_jet_inertial_prehistory="assumed_inertial",
+        ),
+        rider=MagneticDipoleParticleConfig(species="electron"),
+        driver=MagneticDipoleParticleConfig(species="proton"),
+    )
+
+    result = _run_simple_inertial(
+        rider,
+        driver,
+        steps=11,
+        h_step=2.0e-12,
+        radiation_reaction_mode="off",
+        magnetic_dipole=magnetic,
+        self_consistency=SelfConsistencyConfig.standard(),
+        adaptive_pair_return=AdaptivePairReturnConfig(
+            enabled=True,
+            target_lab_time_ns=2.0e-11,
+            tolerance_scale=1.0e8,
+            minimum_step_factor=1.0 / 64.0,
+            maximum_step_factor=1.0,
+            maximum_attempts=64,
+            maximum_accepted_slabs=32,
+        ),
+        checkpoint=CheckpointConfig(
+            enabled=True,
+            directory=str(tmp_path / "causal-local-live.checkpoint"),
+            interval_steps=1,
+            interval_seconds=0.0,
+        ),
+        particle_loss=ParticleLossConfig(enabled=False),
+    )
+
+    rider_soa, driver_soa = result[2:4]
+    assert rider_soa is not None and driver_soa is not None
+    summary = result[0][-1]["_adaptive_pair_return"]
+    assert summary["completed"] is True
+    assert summary["dipole_source_history"] == "causal_local_jet"
+    assert provider_event_times
+    assert max(retarded_source_times) < 0.0
+    assert np.all(np.isfinite(rider_soa.Pt))
+    assert np.all(np.isfinite(driver_soa.Pt))
+
+
+def test_causal_local_startup_rejects_an_implicit_synthetic_acceleration() -> None:
+    rider = _species_state("electron", position_mm=(-5.0e-9, 0.0, 0.0))
+    driver = _species_state("proton", position_mm=(5.0e-9, 0.0, 0.0))
+    magnetic = MagneticDipoleConfig(
+        enabled=True,
+        source=DipoleSourceConfig(
+            model="covariant_retarded_point",
+            history_model="causal_local_jet",
+            local_jet_narrow_half_width_ns=5.0e-12,
+            local_jet_primary_half_width_ns=7.5e-12,
+            local_jet_wide_half_width_ns=1.0e-11,
+        ),
+        rider=MagneticDipoleParticleConfig(species="electron"),
+        driver=MagneticDipoleParticleConfig(species="proton"),
+    )
+
+    with pytest.raises(ValueError, match="explicit.*assumed_inertial"):
+        _run_simple_inertial(
+            rider,
+            driver,
+            steps=3,
+            h_step=2.0e-12,
+            magnetic_dipole=magnetic,
+            adaptive_pair_return=AdaptivePairReturnConfig(
+                enabled=True,
+                target_lab_time_ns=2.0e-12,
+            ),
+            particle_loss=ParticleLossConfig(enabled=False),
+        )
+
+
 def _independent_total_canonical_offset(
     source_history: list[dict[str, np.ndarray]],
     observer_state: dict[str, np.ndarray],
@@ -1413,6 +1532,7 @@ def test_causal_c5_endpoint_uses_separate_dipole_history(
         enabled=True,
         source=DipoleSourceConfig(
             model="covariant_retarded_point",
+            history_model="causal_c5",
             minimum_separation_mm=4.0e-15,
             root_tolerance_mm=5.0e-20,
             max_root_iterations=73,
@@ -1441,6 +1561,76 @@ def test_causal_c5_endpoint_uses_separate_dipole_history(
         "root_tolerance_mm": 5.0e-20,
         "max_root_iterations": 73,
     }
+
+
+def test_causal_local_endpoint_uses_guarded_physical_fit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import core.causal_local_source_jet as local_provider
+    import core.retarded_fields as charge_fields
+
+    charge_potential = np.asarray((0.1, 0.2, 0.3, 0.4))
+    dipole_potential = np.asarray((-0.4, -0.3, -0.2, -0.1))
+    local_history = object()
+    observed: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        charge_fields,
+        "evaluate_retarded_charge_field_native",
+        lambda *args, **kwargs: SimpleNamespace(four_potential=charge_potential),
+    )
+
+    def fake_local(history, *args, **kwargs):
+        del args
+        observed["history"] = history
+        observed["fit"] = kwargs["fit"]
+        observed["spread"] = kwargs["model_spread"]
+        return SimpleNamespace(four_potential=dipole_potential)
+
+    monkeypatch.setattr(
+        local_provider,
+        "evaluate_causal_local_source_jet_collection_native",
+        fake_local,
+    )
+    observer = {
+        "x": np.array([1.0]),
+        "y": np.array([2.0]),
+        "z": np.array([3.0]),
+        "t": np.array([4.0]),
+        "_exact_source_endpoint_rebase_required": np.array([True]),
+    }
+    particle = MagneticDipoleParticleConfig(species="proton")
+    magnetic = MagneticDipoleConfig(
+        enabled=True,
+        source=DipoleSourceConfig(
+            model="covariant_retarded_point",
+            history_model="causal_local_jet",
+            local_jet_narrow_half_width_ns=1.0e-8,
+            local_jet_primary_half_width_ns=1.2e-8,
+            local_jet_wide_half_width_ns=1.5e-8,
+        ),
+        rider=particle,
+        driver=particle,
+    )
+
+    actual = _evaluate_exact_endpoint_four_potential(
+        observer,
+        object(),
+        magnetic_dipole=magnetic,
+        include_dipole_source=True,
+        dipole_source_collection=local_history,
+    )
+
+    np.testing.assert_array_equal(
+        actual,
+        (charge_potential + dipole_potential)[np.newaxis, :],
+    )
+    assert observed["history"] is local_history
+    assert observed["fit"].half_width_ns == 1.2e-8
+    assert observed["fit"].acceleration_samples == "interval_mean"
+    assert observed["fit"].window_alignment == "past"
+    assert observed["spread"].narrow_fit.half_width_ns == 1.0e-8
+    assert observed["spread"].wide_fit.half_width_ns == 1.5e-8
 
 
 def test_inertial_preflight_forwards_shared_exact_retarded_backend(

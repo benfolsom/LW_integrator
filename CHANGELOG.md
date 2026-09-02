@@ -1,5 +1,22 @@
 # Changelog
 
+- Add the opt-in `causal_local_jet` magnetic source-history route to the
+  production exact-pair equations of motion. The full step and both refined
+  half-steps now see the correct immutable accepted prefix; only an accepted
+  refined path publishes its midpoint and endpoint. Canonical endpoint
+  recomposition, disk resume, direct CLI settings, saved testbed configs, GUI
+  controls, console logs, and JSON reports all use the same three physical fit
+  widths and guarded reconstruction settings. Synthetic constant-velocity
+  prehistory remains unavailable unless the user explicitly selects it as a
+  boundary model. A short real-equations-of-motion smoke run inside that
+  boundary passes, while a deliberately hard-started $10\,\mathrm{pm}$ run is
+  correctly rejected when its nested response spread reaches
+  $2.518716\times10^{-2}$, above the $10^{-3}$ limit. This means a close
+  encounter must begin far enough inbound to replace the boundary with
+  accepted physical history. Existing magnetic history modes and the default
+  selection remain unchanged; focused charge, trajectory, checkpoint, and
+  magnetic-feature-off regressions pass.
+
 - Make accepted local source history transactional across the adaptive
   exact-pair boundary and resumable through the production disk checkpoint.
   A rejected step-doubling trial cannot publish its provisional midpoint or

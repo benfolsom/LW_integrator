@@ -67,6 +67,8 @@ class _MagneticHarness(IntegratorGUIConfigMixin):
         self.magnetic_dipole_exact_retarded_update_var = _Var()
         self.magnetic_dipole_intrinsic_spin_self_reaction_var = _Var()
         self.magnetic_dipole_source_minimum_separation_var = _Var()
+        self.magnetic_dipole_local_jet_width_vars = [_Var() for _label in range(3)]
+        self.magnetic_dipole_local_jet_assume_inertial_var = _Var(False)
         self.rider_magnetic_species_var = _Var()
         self.driver_magnetic_species_var = _Var()
         self.rider_rest_spin_vars = [_Var() for _axis in range(3)]
@@ -187,6 +189,46 @@ def test_full_strict_backend_round_trips_through_gui_label() -> None:
     )
     assert rebuilt.magnetic_dipole_exact_retarded_backend == (
         "numba_full_strict_serial"
+    )
+
+
+def test_causal_local_jet_round_trips_explicit_gui_controls() -> None:
+    source = SimulationOptions(
+        magnetic_dipole_source_history_model="causal_local_jet",
+        magnetic_dipole_source_local_jet_narrow_half_width_ns=1.0e-11,
+        magnetic_dipole_source_local_jet_primary_half_width_ns=2.0e-11,
+        magnetic_dipole_source_local_jet_wide_half_width_ns=4.0e-11,
+        magnetic_dipole_source_local_jet_maximum_relative_spread=2.5e-4,
+        magnetic_dipole_source_local_jet_inertial_prehistory="assumed_inertial",
+    )
+    harness = _MagneticHarness()
+
+    harness.apply(source)
+    rebuilt = SimulationOptions(**harness.build())
+
+    assert harness.magnetic_dipole_source_history_var.get() == (
+        "Causal local jet (adaptive exact-pair)"
+    )
+    assert [
+        float(var.get()) for var in harness.magnetic_dipole_local_jet_width_vars
+    ] == (pytest.approx([1.0e-11, 2.0e-11, 4.0e-11]))
+    assert harness.magnetic_dipole_local_jet_assume_inertial_var.get() is True
+    assert rebuilt.magnetic_dipole_source_history_model == "causal_local_jet"
+    assert rebuilt.magnetic_dipole_source_local_jet_narrow_half_width_ns == (
+        pytest.approx(1.0e-11)
+    )
+    assert rebuilt.magnetic_dipole_source_local_jet_primary_half_width_ns == (
+        pytest.approx(2.0e-11)
+    )
+    assert rebuilt.magnetic_dipole_source_local_jet_wide_half_width_ns == (
+        pytest.approx(4.0e-11)
+    )
+    assert rebuilt.magnetic_dipole_source_local_jet_maximum_relative_spread == (
+        pytest.approx(2.5e-4)
+    )
+    assert (
+        rebuilt.magnetic_dipole_source_local_jet_inertial_prehistory
+        == "assumed_inertial"
     )
 
 
@@ -443,6 +485,14 @@ def test_gui_labels_present_compact_rfs_controls() -> None:
         assert tuple(app.magnetic_dipole_source_history_combo.cget("values")) == (
             "Frozen C1 (legacy)",
             "Causal C5 (adaptive exact-pair)",
+            "Causal local jet (adaptive exact-pair)",
+        )
+        assert app.magnetic_dipole_local_jet_widths_label.cget("text") == (
+            "Local jet N/P/W widths (ns):"
+        )
+        assert len(app.magnetic_dipole_local_jet_width_entries) == 3
+        assert app.magnetic_dipole_local_jet_boundary_check.cget("text") == (
+            "Accept constant-velocity prehistory as an explicit boundary model"
         )
         assert app.magnetic_dipole_exact_retarded_backend_label.cget("text") == (
             "Exact-retarded backend:"

@@ -37,13 +37,19 @@ from .retarded_fields import ObserverEvent, TrajectoryHistory
 
 if TYPE_CHECKING:
     from .causal_c5_dipole_provider import CausalC5DipoleProviderResult
+    from .causal_local_source_jet import CausalLocalSourceJetProviderResult
 
 
 @dataclass(frozen=True)
 class RetardedDipoleSourceInteraction:
     """Dipole field plus canonical and mechanical observer-charge responses."""
 
-    field: RetardedDipoleFieldGradientResult | CausalC5DipoleProviderResult | None
+    field: (
+        RetardedDipoleFieldGradientResult
+        | CausalC5DipoleProviderResult
+        | CausalLocalSourceJetProviderResult
+        | None
+    )
     canonical_potential_momentum: np.ndarray
     canonical_four_force: np.ndarray | None
     canonical_four_impulse: np.ndarray | None
@@ -63,7 +69,11 @@ class RetardedDipoleSourceInteraction:
 
 
 def dipole_source_interaction_from_field_native(
-    field: RetardedDipoleFieldGradientResult | CausalC5DipoleProviderResult,
+    field: (
+        RetardedDipoleFieldGradientResult
+        | CausalC5DipoleProviderResult
+        | CausalLocalSourceJetProviderResult
+    ),
     *,
     four_velocity_mm_ns: Sequence[float] | np.ndarray,
     observer_charge_native: float,
@@ -71,9 +81,9 @@ def dipole_source_interaction_from_field_native(
 ) -> RetardedDipoleSourceInteraction:
     """Contract one materialized dipole field with the trial velocity.
 
-    Both the legacy retarded-field result and the causally frozen analytical
-    $C^5$ result expose the same physical payload: $A$, $\\partial A$, $F$, and
-    $\\partial F$.  Keeping the contraction here ensures that changing the
+    The legacy field result and both analytical history providers expose the
+    same physical payload: $A$, $\\partial A$, $F$, and $\\partial F$. Keeping the
+    contraction here ensures that changing the
     source-history representation does not introduce a second force law.
     """
 

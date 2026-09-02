@@ -628,8 +628,15 @@ class CausalLocalDipoleSourceCollection:
         particle_indices: Sequence[int] | None = None,
         source_identities: Sequence[str] | None = None,
         stereographic_frames: Sequence[np.ndarray] | None = None,
+        assume_inertial_boundary_intervals: bool = False,
     ) -> "CausalLocalDipoleSourceCollection":
-        """Construct local histories without consulting legacy ``bdot`` rows."""
+        """Construct local histories without consulting legacy ``bdot`` rows.
+
+        ``assume_inertial_boundary_intervals`` is reserved for an explicitly
+        selected constant-velocity prehistory boundary model. It makes the
+        velocity-derived zero acceleration usable, but does not claim an exact
+        equations-of-motion start acceleration for those synthetic intervals.
+        """
 
         trajectory.require_current_storage()
         if trajectory.n_steps < 1:
@@ -684,6 +691,8 @@ class CausalLocalDipoleSourceCollection:
             interval_mean_ready = exact_start_ready | np.isfinite(
                 trajectory.medina_external_force_sample_time[1:, particle]
             )
+            if assume_inertial_boundary_intervals:
+                interval_mean_ready = np.ones_like(interval_mean_ready, dtype=bool)
             history = CausalLocalSourceHistory.from_accepted_samples(
                 time_ns=trajectory.t[:, particle],
                 position_mm=np.column_stack(
@@ -743,15 +752,19 @@ class AcceptedPairCausalLocalSourceHistory:
         cls,
         rider: "TrajectoryArrays",
         driver: "TrajectoryArrays",
+        *,
+        assume_inertial_boundary_intervals: bool = False,
     ) -> "AcceptedPairCausalLocalSourceHistory":
         return cls(
             rider=CausalLocalDipoleSourceCollection.from_trajectory_arrays(
                 rider,
                 identity_prefix="rider",
+                assume_inertial_boundary_intervals=(assume_inertial_boundary_intervals),
             ),
             driver=CausalLocalDipoleSourceCollection.from_trajectory_arrays(
                 driver,
                 identity_prefix="driver",
+                assume_inertial_boundary_intervals=(assume_inertial_boundary_intervals),
             ),
         )
 

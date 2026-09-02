@@ -6,7 +6,7 @@ import json
 import math
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from core.external_fields import (
     magnetic_field_native_to_tesla,
@@ -273,6 +273,48 @@ class IntegratorGUIConfigMixin:
                 96,
             )
         )
+        local_width_variables = getattr(
+            self, "magnetic_dipole_local_jet_width_vars", ()
+        )
+        for label, variable in zip(
+            ("narrow", "primary", "wide"), local_width_variables
+        ):
+            value = getattr(
+                options,
+                f"magnetic_dipole_source_local_jet_{label}_half_width_ns",
+                None,
+            )
+            variable.set("" if value is None else _format_gui_float(value))
+        local_boundary_var = getattr(
+            self, "magnetic_dipole_local_jet_assume_inertial_var", None
+        )
+        if local_boundary_var is not None:
+            local_boundary_var.set(
+                getattr(
+                    options,
+                    "magnetic_dipole_source_local_jet_inertial_prehistory",
+                    "untrusted",
+                )
+                == "assumed_inertial"
+            )
+        for name, default in (
+            ("acceleration_degree", 5),
+            ("spin_degree", 5),
+            ("maximum_condition_number", 1.0e5),
+            ("maximum_relative_spread", 1.0e-3),
+            ("acceleration_samples", "interval_mean"),
+            ("window_alignment", "past"),
+            ("window_weighting", "tricube"),
+        ):
+            setattr(
+                self,
+                f"_magnetic_dipole_source_local_jet_{name}",
+                getattr(
+                    options,
+                    f"magnetic_dipole_source_local_jet_{name}",
+                    default,
+                ),
+            )
 
         rider_species = str(getattr(options, "rider_magnetic_species", "electron"))
         driver_species = str(getattr(options, "driver_magnetic_species", "proton"))
@@ -343,11 +385,13 @@ class IntegratorGUIConfigMixin:
             "c1": "causal_frozen_c1",
             "frozen_c1": "causal_frozen_c1",
             "c5": "causal_c5",
+            "local_jet": "causal_local_jet",
+            "causal_local": "causal_local_jet",
         }.get(source_history_model, source_history_model)
         if source_history_model not in _DIPOLE_SOURCE_LABEL_BY_HISTORY:
             raise ValueError(
-                "Select Frozen C1 (legacy) or Causal C5 (adaptive exact-pair) "
-                "for the dipole source history."
+                "Select Frozen C1, Causal C5, or Causal local jet for the "
+                "dipole source history."
             )
         backend_selection = str(
             self.magnetic_dipole_exact_retarded_backend_var.get()
@@ -410,6 +454,43 @@ class IntegratorGUIConfigMixin:
                 "Dipole source minimum separation must be finite and positive."
             )
 
+        local_widths: dict[str, float | None] = {}
+        local_width_variables = tuple(
+            getattr(self, "magnetic_dipole_local_jet_width_vars", ())
+        )
+        for index, label in enumerate(("narrow", "primary", "wide")):
+            if index < len(local_width_variables):
+                text = str(local_width_variables[index].get()).strip()
+                if not text:
+                    value = None
+                else:
+                    value = _parse_gui_float(text, f"Local jet {label} half-width")
+                    if not math.isfinite(value) or value <= 0.0:
+                        raise ValueError(
+                            f"Local jet {label} half-width must be finite and "
+                            "positive."
+                        )
+            else:
+                value = getattr(
+                    self,
+                    f"_magnetic_dipole_source_local_jet_{label}_half_width_ns",
+                    None,
+                )
+            local_widths[label] = value
+        if source_history_model == "causal_local_jet":
+            if any(value is None for value in local_widths.values()):
+                raise ValueError(
+                    "Causal local jet requires narrow, primary, and wide physical "
+                    "half-widths."
+                )
+            narrow = cast(float, local_widths["narrow"])
+            primary = cast(float, local_widths["primary"])
+            wide = cast(float, local_widths["wide"])
+            if not narrow < primary < wide:
+                raise ValueError(
+                    "Local jet half-widths must satisfy narrow < primary < wide."
+                )
+
         return {
             "magnetic_dipole_enabled": enabled,
             "magnetic_dipole_spin_precession_enabled": bool(
@@ -445,6 +526,59 @@ class IntegratorGUIConfigMixin:
             ),
             "magnetic_dipole_source_max_root_iterations": getattr(
                 self, "_magnetic_dipole_source_max_root_iterations", 96
+            ),
+            "magnetic_dipole_source_local_jet_narrow_half_width_ns": (
+                local_widths["narrow"]
+            ),
+            "magnetic_dipole_source_local_jet_primary_half_width_ns": (
+                local_widths["primary"]
+            ),
+            "magnetic_dipole_source_local_jet_wide_half_width_ns": (
+                local_widths["wide"]
+            ),
+            "magnetic_dipole_source_local_jet_acceleration_degree": getattr(
+                self,
+                "_magnetic_dipole_source_local_jet_acceleration_degree",
+                5,
+            ),
+            "magnetic_dipole_source_local_jet_spin_degree": getattr(
+                self, "_magnetic_dipole_source_local_jet_spin_degree", 5
+            ),
+            "magnetic_dipole_source_local_jet_maximum_condition_number": getattr(
+                self,
+                "_magnetic_dipole_source_local_jet_maximum_condition_number",
+                1.0e5,
+            ),
+            "magnetic_dipole_source_local_jet_maximum_relative_spread": getattr(
+                self,
+                "_magnetic_dipole_source_local_jet_maximum_relative_spread",
+                1.0e-3,
+            ),
+            "magnetic_dipole_source_local_jet_acceleration_samples": getattr(
+                self,
+                "_magnetic_dipole_source_local_jet_acceleration_samples",
+                "interval_mean",
+            ),
+            "magnetic_dipole_source_local_jet_window_alignment": getattr(
+                self,
+                "_magnetic_dipole_source_local_jet_window_alignment",
+                "past",
+            ),
+            "magnetic_dipole_source_local_jet_window_weighting": getattr(
+                self,
+                "_magnetic_dipole_source_local_jet_window_weighting",
+                "tricube",
+            ),
+            "magnetic_dipole_source_local_jet_inertial_prehistory": (
+                "assumed_inertial"
+                if getattr(
+                    self,
+                    "magnetic_dipole_local_jet_assume_inertial_var",
+                    None,
+                )
+                is not None
+                and self.magnetic_dipole_local_jet_assume_inertial_var.get()
+                else "untrusted"
             ),
             "rider_magnetic_species": selected_species(
                 self.rider_magnetic_species_var, "rider"

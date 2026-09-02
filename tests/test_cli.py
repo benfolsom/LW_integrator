@@ -16,7 +16,7 @@ import lw_integrator
 from core.external_fields import electric_field_v_per_m_to_native
 from core.types import ChronoMatchingMode, SimulationType, StartupMode
 from lw_integrator import cli
-from lw_integrator.testbed_runner import SimulationOptions
+from lw_integrator.testbed_runner import SimulationOptions, build_magnetic_dipole_config
 
 
 def test_cli_direct_checkpoint_flags_build_core_config(tmp_path: Path) -> None:
@@ -445,6 +445,49 @@ class TestCliConfigParsing:
         assert args.magnetic_dipole_enabled is False
         assert args.stern_gerlach_force_enabled is False
         assert args.spin_precession_enabled is False
+
+    def test_parse_args_accepts_causal_local_jet_controls(self):
+        args = cli.parse_args(
+            [
+                "--dipole-source-history",
+                "causal-local-jet",
+                "--dipole-local-jet-narrow-half-width-ns",
+                "1e-8",
+                "--dipole-local-jet-primary-half-width-ns",
+                "1.2e-8",
+                "--dipole-local-jet-wide-half-width-ns",
+                "1.5e-8",
+                "--dipole-local-jet-acceleration-samples",
+                "interval-mean",
+                "--dipole-local-jet-acceleration-degree",
+                "6",
+                "--dipole-local-jet-spin-degree",
+                "7",
+                "--dipole-local-jet-maximum-condition-number",
+                "2e5",
+                "--dipole-local-jet-maximum-relative-spread",
+                "2.5e-4",
+                "--dipole-local-jet-window-alignment",
+                "past",
+                "--dipole-local-jet-window-weighting",
+                "tricube",
+                "--dipole-local-jet-inertial-prehistory",
+                "assumed-inertial",
+            ]
+        )
+
+        assert args.dipole_source_history_model == "causal-local-jet"
+        assert args.dipole_local_jet_narrow_half_width_ns == pytest.approx(1.0e-8)
+        assert args.dipole_local_jet_primary_half_width_ns == pytest.approx(1.2e-8)
+        assert args.dipole_local_jet_wide_half_width_ns == pytest.approx(1.5e-8)
+        assert args.dipole_local_jet_acceleration_samples == "interval-mean"
+        assert args.dipole_local_jet_acceleration_degree == 6
+        assert args.dipole_local_jet_spin_degree == 7
+        assert args.dipole_local_jet_maximum_condition_number == pytest.approx(2.0e5)
+        assert args.dipole_local_jet_maximum_relative_spread == pytest.approx(2.5e-4)
+        assert args.dipole_local_jet_window_alignment == "past"
+        assert args.dipole_local_jet_window_weighting == "tricube"
+        assert args.dipole_local_jet_inertial_prehistory == "assumed-inertial"
 
     def test_parse_args_accepts_full_strict_exact_retarded_backend(self):
         args = cli.parse_args(["--exact-retarded-backend", "numba_full_strict_serial"])
@@ -1225,6 +1268,38 @@ class TestCliBuildRequest:
         )
 
         assert request.config.radiation_reaction_mode == "medina_lad"
+
+    def test_build_request_applies_causal_local_jet_contract(self):
+        request = cli.build_request(
+            _make_args(
+                dipole_source_history_model="causal-local-jet",
+                dipole_local_jet_narrow_half_width_ns=1.0e-11,
+                dipole_local_jet_primary_half_width_ns=2.0e-11,
+                dipole_local_jet_wide_half_width_ns=4.0e-11,
+                dipole_local_jet_acceleration_samples="interval-mean",
+                dipole_local_jet_acceleration_degree=6,
+                dipole_local_jet_spin_degree=7,
+                dipole_local_jet_maximum_condition_number=2.0e5,
+                dipole_local_jet_maximum_relative_spread=2.5e-4,
+                dipole_local_jet_window_alignment="past",
+                dipole_local_jet_window_weighting="tricube",
+                dipole_local_jet_inertial_prehistory="assumed-inertial",
+            )
+        )
+
+        source = request.config.magnetic_dipole.source
+        assert source.history_model == "causal_local_jet"
+        assert source.local_jet_narrow_half_width_ns == pytest.approx(1.0e-11)
+        assert source.local_jet_primary_half_width_ns == pytest.approx(2.0e-11)
+        assert source.local_jet_wide_half_width_ns == pytest.approx(4.0e-11)
+        assert source.local_jet_acceleration_samples == "interval_mean"
+        assert source.local_jet_acceleration_degree == 6
+        assert source.local_jet_spin_degree == 7
+        assert source.local_jet_maximum_condition_number == pytest.approx(2.0e5)
+        assert source.local_jet_maximum_relative_spread == pytest.approx(2.5e-4)
+        assert source.local_jet_window_alignment == "past"
+        assert source.local_jet_window_weighting == "tricube"
+        assert source.local_jet_inertial_prehistory == "assumed_inertial"
 
     def test_driver_from_rider_inherits_magnetic_species_unless_overridden(self):
         request = cli.build_request(
@@ -2128,6 +2203,65 @@ class TestCliMain:
             "backend": "numba_full_strict_serial",
             "update": "first_order_endpoint",
             "intrinsic_spin_self_reaction_mode": "off",
+        }
+
+    def test_reports_record_complete_causal_local_jet_contract(self, tmp_path: Path):
+        trajectory = [
+            {
+                "t": np.array([0.0]),
+                "z": np.array([1.0]),
+                "gamma": np.array([2.0]),
+                "bz": np.array([0.25]),
+            }
+        ]
+        options = SimulationOptions(
+            magnetic_dipole_source_model="covariant_retarded_point",
+            magnetic_dipole_source_history_model="causal_local_jet",
+            magnetic_dipole_source_local_jet_narrow_half_width_ns=1.0e-11,
+            magnetic_dipole_source_local_jet_primary_half_width_ns=2.0e-11,
+            magnetic_dipole_source_local_jet_wide_half_width_ns=4.0e-11,
+            magnetic_dipole_source_local_jet_acceleration_degree=6,
+            magnetic_dipole_source_local_jet_spin_degree=7,
+            magnetic_dipole_source_local_jet_maximum_condition_number=2.0e5,
+            magnetic_dipole_source_local_jet_maximum_relative_spread=2.5e-4,
+            magnetic_dipole_source_local_jet_inertial_prehistory="assumed_inertial",
+        )
+        magnetic = build_magnetic_dipole_config(options)
+        testbed_result = SimpleNamespace(
+            duration_s=1.25,
+            filename_base="capture",
+            halted_early=False,
+            halt_reason=None,
+            num_particles_dead=0,
+            rider_delta_e=0.0,
+            rider_gamma_initial=1.0,
+            rider_gamma_final=1.0,
+            driver_gamma_initial=1.0,
+            driver_gamma_final=1.0,
+            energy_ledger_metrics={},
+            saved_paths={},
+        )
+
+        direct = cli.build_report(trajectory, magnetic_dipole=magnetic)
+        testbed = cli._build_testbed_report(
+            testbed_result,
+            tmp_path / "capture.json",
+            options,
+        )
+
+        assert direct["magnetic_dipole_source"] == testbed["magnetic_dipole_source"]
+        assert direct["magnetic_dipole_source"]["local_jet"] == {
+            "narrow_half_width_ns": 1.0e-11,
+            "primary_half_width_ns": 2.0e-11,
+            "wide_half_width_ns": 4.0e-11,
+            "acceleration_samples": "interval_mean",
+            "acceleration_degree": 6,
+            "spin_degree": 7,
+            "maximum_condition_number": 2.0e5,
+            "maximum_relative_spread": 2.5e-4,
+            "window_alignment": "past",
+            "window_weighting": "tricube",
+            "inertial_prehistory": "assumed_inertial",
         }
 
     def test_metal_report_records_certification_and_fallback_counts(self, monkeypatch):

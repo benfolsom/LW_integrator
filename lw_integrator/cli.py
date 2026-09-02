@@ -714,12 +714,66 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--dipole-source-history",
         dest="dipole_source_history_model",
-        choices=("causal-frozen-c1", "causal-c5"),
+        choices=("causal-frozen-c1", "causal-c5", "causal-local-jet"),
         help=(
             "Dipole trajectory interpolation: causal-frozen-c1 keeps the "
-            "legacy piecewise-cubic source, while causal-c5 uses smooth "
-            "accepted-history segments and currently requires "
+            "legacy piecewise-cubic source, causal-c5 uses smooth global "
+            "segments, and causal-local-jet reconstructs derivatives in a "
+            "guarded physical time window. The latter two currently require "
             "--adaptive-pair-return."
+        ),
+    )
+    for label in ("narrow", "primary", "wide"):
+        parser.add_argument(
+            f"--dipole-local-jet-{label}-half-width-ns",
+            dest=f"dipole_local_jet_{label}_half_width_ns",
+            type=float,
+            help=(
+                f"Physical {label} half-width in ns for causal-local-jet. "
+                "All three widths are required and must increase strictly."
+            ),
+        )
+    parser.add_argument(
+        "--dipole-local-jet-acceleration-samples",
+        choices=("exact-start", "interval-mean"),
+        help="Use exact step-start or accepted interval-mean source acceleration.",
+    )
+    parser.add_argument(
+        "--dipole-local-jet-acceleration-degree",
+        type=int,
+        help="Polynomial degree used to reconstruct source acceleration derivatives.",
+    )
+    parser.add_argument(
+        "--dipole-local-jet-spin-degree",
+        type=int,
+        help="Polynomial degree used to reconstruct source spin derivatives.",
+    )
+    parser.add_argument(
+        "--dipole-local-jet-maximum-condition-number",
+        type=float,
+        help="Reject a local fit whose numerical condition number exceeds this value.",
+    )
+    parser.add_argument(
+        "--dipole-local-jet-maximum-relative-spread",
+        type=float,
+        help="Reject a response when the nested physical-width fits differ by more.",
+    )
+    parser.add_argument(
+        "--dipole-local-jet-window-alignment",
+        choices=("centered", "past"),
+        help="Center the physical fit window or end it at the retarded event.",
+    )
+    parser.add_argument(
+        "--dipole-local-jet-window-weighting",
+        choices=("tricube", "uniform"),
+        help="Weight local samples smoothly or uniformly inside the physical window.",
+    )
+    parser.add_argument(
+        "--dipole-local-jet-inertial-prehistory",
+        choices=("untrusted", "assumed-inertial"),
+        help=(
+            "Whether synthetic constant-velocity prehistory is unavailable as "
+            "acceleration data or is explicitly accepted as the inertial boundary."
         ),
     )
     parser.add_argument(
@@ -1405,10 +1459,45 @@ def _build_testbed_report(
         "saved_paths": {name: str(path) for name, path in result.saved_paths.items()},
     }
     if options is not None:
-        report["magnetic_dipole_source"] = {
+        source_report: dict[str, Any] = {
             "model": str(options.magnetic_dipole_source_model),
             "history_model": str(options.magnetic_dipole_source_history_model),
         }
+        if options.magnetic_dipole_source_history_model == "causal_local_jet":
+            source_report["local_jet"] = {
+                "narrow_half_width_ns": (
+                    options.magnetic_dipole_source_local_jet_narrow_half_width_ns
+                ),
+                "primary_half_width_ns": (
+                    options.magnetic_dipole_source_local_jet_primary_half_width_ns
+                ),
+                "wide_half_width_ns": (
+                    options.magnetic_dipole_source_local_jet_wide_half_width_ns
+                ),
+                "acceleration_samples": (
+                    options.magnetic_dipole_source_local_jet_acceleration_samples
+                ),
+                "acceleration_degree": (
+                    options.magnetic_dipole_source_local_jet_acceleration_degree
+                ),
+                "spin_degree": options.magnetic_dipole_source_local_jet_spin_degree,
+                "maximum_condition_number": (
+                    options.magnetic_dipole_source_local_jet_maximum_condition_number
+                ),
+                "maximum_relative_spread": (
+                    options.magnetic_dipole_source_local_jet_maximum_relative_spread
+                ),
+                "window_alignment": (
+                    options.magnetic_dipole_source_local_jet_window_alignment
+                ),
+                "window_weighting": (
+                    options.magnetic_dipole_source_local_jet_window_weighting
+                ),
+                "inertial_prehistory": (
+                    options.magnetic_dipole_source_local_jet_inertial_prehistory
+                ),
+            }
+        report["magnetic_dipole_source"] = source_report
         report["exact_retarded"] = _exact_retarded_report(
             str(options.magnetic_dipole_exact_retarded_backend)
         )
@@ -1966,6 +2055,29 @@ def _merge_simulation_payload(
         dipole_source["model"] = args.dipole_source_model
     if getattr(args, "dipole_source_history_model", None) is not None:
         dipole_source["history_model"] = args.dipole_source_history_model
+    for label in ("narrow", "primary", "wide"):
+        value = getattr(args, f"dipole_local_jet_{label}_half_width_ns", None)
+        if value is not None:
+            dipole_source[f"local_jet_{label}_half_width_ns"] = value
+    for argument, key in (
+        ("dipole_local_jet_acceleration_samples", "local_jet_acceleration_samples"),
+        ("dipole_local_jet_acceleration_degree", "local_jet_acceleration_degree"),
+        ("dipole_local_jet_spin_degree", "local_jet_spin_degree"),
+        (
+            "dipole_local_jet_maximum_condition_number",
+            "local_jet_maximum_condition_number",
+        ),
+        (
+            "dipole_local_jet_maximum_relative_spread",
+            "local_jet_maximum_relative_spread",
+        ),
+        ("dipole_local_jet_window_alignment", "local_jet_window_alignment"),
+        ("dipole_local_jet_window_weighting", "local_jet_window_weighting"),
+        ("dipole_local_jet_inertial_prehistory", "local_jet_inertial_prehistory"),
+    ):
+        value = getattr(args, argument, None)
+        if value is not None:
+            dipole_source[key] = value
     if getattr(args, "exact_retarded_backend", None) is not None:
         magnetic_dipole["exact_retarded_backend"] = args.exact_retarded_backend
     if getattr(args, "exact_retarded_update", None) is not None:
@@ -3277,10 +3389,41 @@ def build_report(
     if driver is not None:
         report["driver_summary"] = summarise_trajectory(driver)
     if magnetic_dipole is not None:
-        report["magnetic_dipole_source"] = {
+        source_report: dict[str, Any] = {
             "model": magnetic_dipole.source.model,
             "history_model": magnetic_dipole.source.history_model,
         }
+        if magnetic_dipole.source.history_model == "causal_local_jet":
+            source_report["local_jet"] = {
+                "narrow_half_width_ns": (
+                    magnetic_dipole.source.local_jet_narrow_half_width_ns
+                ),
+                "primary_half_width_ns": (
+                    magnetic_dipole.source.local_jet_primary_half_width_ns
+                ),
+                "wide_half_width_ns": (
+                    magnetic_dipole.source.local_jet_wide_half_width_ns
+                ),
+                "acceleration_samples": (
+                    magnetic_dipole.source.local_jet_acceleration_samples
+                ),
+                "acceleration_degree": (
+                    magnetic_dipole.source.local_jet_acceleration_degree
+                ),
+                "spin_degree": magnetic_dipole.source.local_jet_spin_degree,
+                "maximum_condition_number": (
+                    magnetic_dipole.source.local_jet_maximum_condition_number
+                ),
+                "maximum_relative_spread": (
+                    magnetic_dipole.source.local_jet_maximum_relative_spread
+                ),
+                "window_alignment": (magnetic_dipole.source.local_jet_window_alignment),
+                "window_weighting": (magnetic_dipole.source.local_jet_window_weighting),
+                "inertial_prehistory": (
+                    magnetic_dipole.source.local_jet_inertial_prehistory
+                ),
+            }
+        report["magnetic_dipole_source"] = source_report
         report["exact_retarded"] = _exact_retarded_report(
             magnetic_dipole.exact_retarded_backend
         )

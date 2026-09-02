@@ -214,6 +214,7 @@ def _attempt(
     growable_causal_c5_source_history=None,
     causal_local_source_history=None,
     growable_causal_local_source_history=None,
+    include_dipole_source: bool = False,
 ):
     return attempt_exact_pair_adaptive_step(
         rider_builder=rider,
@@ -226,7 +227,7 @@ def _attempt(
         minimum_step_ns=0.001,
         maximum_step_ns=1.0,
         magnetic_dipole=MagneticDipoleConfig(),
-        include_dipole_source=False,
+        include_dipole_source=include_dipole_source,
         intrinsic_spin_reduction_history=intrinsic_spin_reduction_history,
         build_intrinsic_spin_reduction_candidate=(
             build_intrinsic_spin_reduction_candidate
@@ -393,6 +394,7 @@ def test_rejected_attempt_cannot_enter_growable_causal_local_history() -> None:
         rider_advance=_advance(2.0),
         tolerances=_tolerances(1.0e-4),
         growable_causal_local_source_history=growable,
+        include_dipole_source=True,
     )
 
     assert not rejected.accepted
@@ -409,6 +411,7 @@ def test_rejected_attempt_cannot_enter_growable_causal_local_history() -> None:
         rider_advance=_advance(2.0),
         tolerances=_tolerances(1.0),
         growable_causal_local_source_history=growable,
+        include_dipole_source=True,
     )
     assert accepted.accepted
     assert accepted.causal_local_source_history is not None

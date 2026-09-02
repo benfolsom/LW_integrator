@@ -41,7 +41,7 @@ def evaluate_exact_endpoint_four_potential(
             evaluate_retarded_dipole_potential_native,
         )
     if dipole_source_collection is not None and not include_dipole_source:
-        raise ValueError("causal C5 dipole history requires an active dipole source")
+        raise ValueError("causal dipole history requires an active dipole source")
 
     particle_count = len(np.asarray(observer_state.get("x", [])))
     potentials: np.ndarray = np.zeros((particle_count, 4), dtype=float)
@@ -82,17 +82,49 @@ def evaluate_exact_endpoint_four_potential(
         potentials[particle_idx] += charge_field.four_potential
         if include_dipole_source:
             if dipole_source_collection is not None:
-                from .causal_c5_dipole_provider import (
-                    evaluate_causal_c5_dipole_source_collection_native,
-                )
+                if source_options.history_model == "causal_c5":
+                    from .causal_c5_dipole_provider import (
+                        evaluate_causal_c5_dipole_source_collection_native,
+                    )
 
-                dipole_response = evaluate_causal_c5_dipole_source_collection_native(
-                    dipole_source_collection,
-                    event,
-                    minimum_separation_mm=float(source_options.minimum_separation_mm),
-                    root_tolerance_mm=float(source_options.root_tolerance_mm),
-                    max_root_iterations=int(source_options.max_root_iterations),
-                )
+                    dipole_response = (
+                        evaluate_causal_c5_dipole_source_collection_native(
+                            dipole_source_collection,
+                            event,
+                            minimum_separation_mm=float(
+                                source_options.minimum_separation_mm
+                            ),
+                            root_tolerance_mm=float(source_options.root_tolerance_mm),
+                            max_root_iterations=int(source_options.max_root_iterations),
+                        )
+                    )
+                elif source_options.history_model == "causal_local_jet":
+                    from .causal_local_source_jet import (
+                        evaluate_causal_local_source_jet_collection_native,
+                        local_source_jet_configs_from_source_options,
+                    )
+
+                    fit, spread = local_source_jet_configs_from_source_options(
+                        source_options
+                    )
+                    dipole_response = (
+                        evaluate_causal_local_source_jet_collection_native(
+                            dipole_source_collection,
+                            event,
+                            fit=fit,
+                            model_spread=spread,
+                            minimum_separation_mm=float(
+                                source_options.minimum_separation_mm
+                            ),
+                            root_tolerance_mm=float(source_options.root_tolerance_mm),
+                            max_root_iterations=int(source_options.max_root_iterations),
+                        )
+                    )
+                else:
+                    raise ValueError(
+                        "an independent exact dipole history requires causal_c5 or "
+                        "causal_local_jet selection"
+                    )
                 potentials[particle_idx] += dipole_response.four_potential
             elif (
                 magnetic_dipole.exact_retarded_backend

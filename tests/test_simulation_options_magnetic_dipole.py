@@ -53,14 +53,15 @@ def test_magnetic_dipole_nested_config_round_trip() -> None:
     assert config.source.minimum_stencil_step_mm == pytest.approx(3.0e-15)
     assert config.source.root_tolerance_mm == pytest.approx(4.0e-21)
     assert config.source.max_root_iterations == 80
-    assert restored.to_dict()["magnetic_dipole"]["source"] == {
-        "model": "covariant_retarded_point",
-        "minimum_separation_mm": 7.0e-9,
-        "relative_stencil_step": 2.0e-3,
-        "minimum_stencil_step_mm": 3.0e-15,
-        "root_tolerance_mm": 4.0e-21,
-        "max_root_iterations": 80,
-    }
+    source_payload = restored.to_dict()["magnetic_dipole"]["source"]
+    assert source_payload["model"] == "covariant_retarded_point"
+    assert source_payload["history_model"] == "causal_frozen_c1"
+    assert source_payload["minimum_separation_mm"] == pytest.approx(7.0e-9)
+    assert source_payload["relative_stencil_step"] == pytest.approx(2.0e-3)
+    assert source_payload["minimum_stencil_step_mm"] == pytest.approx(3.0e-15)
+    assert source_payload["root_tolerance_mm"] == pytest.approx(4.0e-21)
+    assert source_payload["max_root_iterations"] == 80
+    assert source_payload["local_jet_primary_half_width_ns"] is None
     assert restored.to_dict()["magnetic_dipole"]["exact_retarded_backend"] == (
         "numba_roots_exact_serial"
     )
@@ -228,6 +229,35 @@ def test_custom_moment_round_trip_preserves_sign() -> None:
 
     assert restored.rider_magnetic_moment_j_per_t == pytest.approx(-1.25e-27)
     assert restored.rider_spin_quantum_number == pytest.approx(1.5)
+
+
+def test_causal_local_source_options_round_trip_and_build() -> None:
+    options = SimulationOptions.from_dict(
+        {
+            "magnetic_dipole": {
+                "enabled": True,
+                "source": {
+                    "model": "covariant_retarded_point",
+                    "history_model": "causal_local_jet",
+                    "local_jet_narrow_half_width_ns": 1.0e-8,
+                    "local_jet_primary_half_width_ns": 1.2e-8,
+                    "local_jet_wide_half_width_ns": 1.5e-8,
+                    "local_jet_inertial_prehistory": "assumed_inertial",
+                },
+            }
+        }
+    )
+
+    restored = SimulationOptions.from_dict(options.to_dict())
+    source = build_magnetic_dipole_config(restored).source
+
+    assert source.history_model == "causal_local_jet"
+    assert source.local_jet_narrow_half_width_ns == 1.0e-8
+    assert source.local_jet_primary_half_width_ns == 1.2e-8
+    assert source.local_jet_wide_half_width_ns == 1.5e-8
+    assert source.local_jet_acceleration_samples == "interval_mean"
+    assert source.local_jet_window_alignment == "past"
+    assert source.local_jet_inertial_prehistory == "assumed_inertial"
 
 
 def test_all_particle_visualization_tracks_preserve_particle_axis() -> None:

@@ -361,3 +361,85 @@ def test_public_exact_pair_runner_checkpoints_causal_c5_history(
     for role in (2, 3):
         np.testing.assert_array_equal(resumed[role].x, fresh[role].x)
         np.testing.assert_array_equal(resumed[role].t, fresh[role].t)
+
+
+def test_public_exact_pair_runner_checkpoints_causal_local_history(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        "core.exact_pair_integration.make_exact_role_eom_advance",
+        lambda _options: _advance(2.0),
+    )
+    directory = tmp_path / "causal-local-pair.checkpoint"
+    magnetic = MagneticDipoleConfig(
+        enabled=True,
+        source=DipoleSourceConfig(
+            model="covariant_retarded_point",
+            history_model="causal_local_jet",
+            local_jet_narrow_half_width_ns=0.01,
+            local_jet_primary_half_width_ns=0.02,
+            local_jet_wide_half_width_ns=0.03,
+        ),
+    )
+    adaptive = AdaptivePairReturnConfig(
+        enabled=True,
+        target_lab_time_ns=0.02,
+        tolerance_scale=1.0e12,
+        minimum_step_factor=0.01,
+        maximum_step_factor=5.0,
+        public_sample_interval_ns=0.01,
+    )
+    rider_seed = _causal_c5_seed(-1.0, 2.0e-6)
+    driver_seed = _causal_c5_seed(1.0, -3.0e-6)
+
+    fresh = run_exact_pair_adaptive_integrator(
+        rider_seed=rider_seed,
+        driver_seed=driver_seed,
+        initial_step_ns=0.01,
+        requested_public_samples=3,
+        aperture_radius_mm=10.0,
+        magnetic_dipole=magnetic,
+        self_consistency=None,
+        chrono_mode=ChronoMatchingMode.FAST,
+        radiation_reaction_mode="off",
+        external_field=None,
+        adaptive=adaptive,
+        checkpoint=CheckpointConfig(
+            enabled=True,
+            directory=str(directory),
+            interval_steps=1,
+            interval_seconds=0.0,
+        ),
+        compatibility_payload={"physics": "causal-local-production-test"},
+    )
+
+    summary = fresh[0][-1]["_adaptive_pair_return"]
+    assert summary["dipole_source_history"] == "causal_local_jet"
+    manifest = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["causal_local_source_history"] is not None
+    assert manifest["causal_c5_source_history"] is None
+
+    resumed = run_exact_pair_adaptive_integrator(
+        rider_seed=rider_seed,
+        driver_seed=driver_seed,
+        initial_step_ns=0.01,
+        requested_public_samples=3,
+        aperture_radius_mm=10.0,
+        magnetic_dipole=magnetic,
+        self_consistency=None,
+        chrono_mode=ChronoMatchingMode.FAST,
+        radiation_reaction_mode="off",
+        external_field=None,
+        adaptive=adaptive,
+        checkpoint=CheckpointConfig(
+            enabled=True,
+            resume_from=str(directory),
+            interval_steps=1,
+            interval_seconds=0.0,
+        ),
+        compatibility_payload={"physics": "causal-local-production-test"},
+    )
+    for role in (2, 3):
+        np.testing.assert_array_equal(resumed[role].x, fresh[role].x)
+        np.testing.assert_array_equal(resumed[role].t, fresh[role].t)

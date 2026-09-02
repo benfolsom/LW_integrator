@@ -417,6 +417,11 @@ def attempt_exact_pair_adaptive_step(
         if growable_causal_c5_source_history is not None
         else causal_c5_source_history
     )
+    current_local_history = (
+        growable_causal_local_source_history.build_current()
+        if growable_causal_local_source_history is not None
+        else causal_local_source_history
+    )
 
     def build_midpoint_c5_candidate(
         midpoint: ExactPairSlabTrial,
@@ -425,6 +430,17 @@ def attempt_exact_pair_adaptive_step(
         if growable_causal_c5_source_history is None:
             raise RuntimeError("growable causal C5 source history is unavailable")
         return growable_causal_c5_source_history.preflight_states(
+            rider_states=(midpoint.pair.rider.state,),
+            driver_states=(midpoint.pair.driver.state,),
+        ).candidate
+
+    def build_midpoint_local_candidate(
+        midpoint: ExactPairSlabTrial,
+        _accepted: AcceptedPairCausalLocalSourceHistory,
+    ) -> AcceptedPairCausalLocalSourceHistory:
+        if growable_causal_local_source_history is None:
+            raise RuntimeError("growable causal local source history is unavailable")
+        return growable_causal_local_source_history.preflight_states(
             rider_states=(midpoint.pair.rider.state,),
             driver_states=(midpoint.pair.driver.state,),
         ).candidate
@@ -447,6 +463,15 @@ def attempt_exact_pair_adaptive_step(
         build_causal_c5_midpoint_candidate=(
             build_midpoint_c5_candidate
             if include_dipole_source and growable_causal_c5_source_history is not None
+            else None
+        ),
+        causal_local_source_history=(
+            current_local_history if include_dipole_source else None
+        ),
+        build_causal_local_midpoint_candidate=(
+            build_midpoint_local_candidate
+            if include_dipole_source
+            and growable_causal_local_source_history is not None
             else None
         ),
         spin_interpolation_model=spin_interpolation_model,

@@ -394,6 +394,26 @@ class IntegratorGUI(
                 )
             )
         )
+        self.magnetic_dipole_local_jet_width_vars = []
+        for label in ("narrow", "primary", "wide"):
+            value = getattr(
+                self.options,
+                f"magnetic_dipole_source_local_jet_{label}_half_width_ns",
+                None,
+            )
+            self.magnetic_dipole_local_jet_width_vars.append(
+                tk.StringVar(value="" if value is None else str(value))
+            )
+        self.magnetic_dipole_local_jet_assume_inertial_var = tk.BooleanVar(
+            value=(
+                getattr(
+                    self.options,
+                    "magnetic_dipole_source_local_jet_inertial_prehistory",
+                    "untrusted",
+                )
+                == "assumed_inertial"
+            )
+        )
         self.rider_magnetic_species_var = tk.StringVar(
             value=self._magnetic_species_label_by_key.get(
                 getattr(self.options, "rider_magnetic_species", "electron"),

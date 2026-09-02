@@ -18,6 +18,7 @@ from core.causal_local_source_jet import (
     _centered_taylor_coefficients,
     _cubic_position_velocity,
     evaluate_causal_local_source_jet_native,
+    local_source_jet_configs_from_source_options,
 )
 from core.constants import C_MMNS
 from core.dipole_hertz_jet import (
@@ -25,6 +26,7 @@ from core.dipole_hertz_jet import (
     polynomial_dipole_hertz_response_jet_native,
 )
 from core.retarded_fields import ObserverEvent
+from core.types import DipoleSourceConfig
 
 
 def _position_derivatives(time_ns: float) -> list[np.ndarray]:
@@ -700,3 +702,25 @@ def test_local_source_jet_fit_config_rejects_invalid_values(
 ) -> None:
     with pytest.raises(ValueError, match=message):
         LocalSourceJetFitConfig(**arguments)  # type: ignore[arg-type]
+
+
+def test_public_local_source_options_build_primary_and_spread_fits() -> None:
+    source = DipoleSourceConfig(
+        history_model="causal_local_jet",
+        local_jet_narrow_half_width_ns=1.0e-8,
+        local_jet_primary_half_width_ns=1.2e-8,
+        local_jet_wide_half_width_ns=1.5e-8,
+        local_jet_acceleration_degree=6,
+        local_jet_spin_degree=7,
+    )
+
+    primary, spread = local_source_jet_configs_from_source_options(source)
+
+    assert primary.half_width_ns == 1.2e-8
+    assert primary.acceleration_degree == 6
+    assert primary.spin_degree == 7
+    assert primary.acceleration_samples == "interval_mean"
+    assert primary.window_alignment == "past"
+    assert spread.narrow_fit.half_width_ns == 1.0e-8
+    assert spread.wide_fit.half_width_ns == 1.5e-8
+    assert spread.maximum_relative_spread == 1.0e-3

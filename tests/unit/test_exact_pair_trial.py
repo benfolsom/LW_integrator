@@ -11,6 +11,7 @@ from core.adaptive_pair_return import (
     run_exact_pair_adaptive_window,
 )
 from core.causal_c5_dipole_provider import AcceptedPairCausalC5SourceHistory
+from core.causal_local_source_history import AcceptedPairCausalLocalSourceHistory
 from core.constants import C_MMNS, ELEMENTARY_CHARGE
 from core.exact_pair_trial import (
     ExactPairEOMOptions,
@@ -523,6 +524,54 @@ def test_step_doubling_exposes_causal_c5_midpoint_without_publishing() -> None:
         include_dipole_source=True,
         tolerances=loose,
         causal_c5_source_history=accepted_c5,
+    )
+
+    combined = rider_seen + driver_seen
+    assert combined
+    assert all(isinstance(item, ExactRoleSourceHistory) for item in combined)
+    dipole_sample_counts = {
+        item.dipole_source_collection.sources[0].history.sample_count
+        for item in combined
+    }
+    assert dipole_sample_counts == {
+        accepted_rider.n_steps,
+        accepted_rider.n_steps + 1,
+    }
+    assert rider_builder.accepted_steps == accepted_rider.n_steps
+    assert driver_builder.accepted_steps == accepted_driver.n_steps
+
+
+def test_step_doubling_exposes_causal_local_midpoint_without_publishing() -> None:
+    rider_builder, driver_builder, magnetic = _charged_accepted_pair(
+        include_dipole_source=True
+    )
+    accepted_rider = rider_builder.build_current()
+    accepted_driver = driver_builder.build_current()
+    accepted_local = AcceptedPairCausalLocalSourceHistory.from_trajectory_arrays(
+        accepted_rider,
+        accepted_driver,
+    )
+    rider_seen: list[object] = []
+    driver_seen: list[object] = []
+    loose = StepDoublingTolerances(
+        position_mm=ErrorScale(1.0, 1.0),
+        mechanical_momentum_native=ErrorScale(1.0, 1.0),
+        rest_spin=ErrorScale(1.0, 1.0),
+        diagnostics_native=ErrorScale(1.0, 1.0),
+    )
+
+    solve_exact_pair_step_doubling_trial(
+        accepted_rider_history=accepted_rider,
+        accepted_driver_history=accepted_driver,
+        advance_rider=_advance(2.0, rider_seen),
+        advance_driver=_advance(4.0, driver_seen),
+        delta_time_ns=0.2,
+        rider_initial_proper_step_ns=0.1,
+        driver_initial_proper_step_ns=0.05,
+        magnetic_dipole=magnetic,
+        include_dipole_source=True,
+        tolerances=loose,
+        causal_local_source_history=accepted_local,
     )
 
     combined = rider_seen + driver_seen

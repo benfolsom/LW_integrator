@@ -108,6 +108,28 @@ def test_retarded_dipole_source_rejects_unknown_history_model() -> None:
         DipoleSourceConfig(history_model="future_spline")
 
 
+def test_local_jet_requires_ordered_explicit_physical_windows() -> None:
+    with pytest.raises(ValueError, match="requires narrow, primary, and wide"):
+        DipoleSourceConfig(history_model="causal_local_jet")
+    with pytest.raises(ValueError, match="narrow < primary < wide"):
+        DipoleSourceConfig(
+            history_model="causal_local_jet",
+            local_jet_narrow_half_width_ns=2.0e-8,
+            local_jet_primary_half_width_ns=1.0e-8,
+            local_jet_wide_half_width_ns=3.0e-8,
+        )
+
+    config = DipoleSourceConfig(
+        history_model="local-jet",
+        local_jet_narrow_half_width_ns=1.0e-8,
+        local_jet_primary_half_width_ns=1.2e-8,
+        local_jet_wide_half_width_ns=1.5e-8,
+    )
+    assert config.history_model == "causal_local_jet"
+    assert config.local_jet_acceleration_samples == "interval_mean"
+    assert config.local_jet_window_alignment == "past"
+
+
 def test_magnetic_dipole_accepts_full_strict_exact_retarded_backend() -> None:
     config = MagneticDipoleConfig(exact_retarded_backend="numba_full_strict_serial")
 
