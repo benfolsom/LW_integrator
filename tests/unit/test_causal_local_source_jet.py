@@ -305,6 +305,63 @@ def test_local_source_jet_tracks_exact_circular_source_as_window_shrinks() -> No
     assert narrow_error < 0.02 * wide_error
 
 
+def test_past_only_source_jet_tracks_exact_circular_source() -> None:
+    history = _circular_history()
+    event = ObserverEvent(0.03, (0.8, 0.2, 0.3))
+    expected = _exact_circular_response(event)
+    actual, diagnostics = evaluate_causal_local_source_jet_native(
+        history,
+        event,
+        magnetic_moment_native=-1.7,
+        fit=LocalSourceJetFitConfig(
+            half_width_ns=0.005,
+            window_alignment="past",
+        ),
+    )
+    error = np.linalg.norm(actual.partial_f - expected.partial_f) / np.linalg.norm(
+        expected.partial_f
+    )
+
+    assert error < 8.0e-10
+    assert diagnostics.acceleration_condition_number < 1.0e4
+
+
+def test_past_only_source_jet_is_independent_of_later_accepted_samples() -> None:
+    history = _circular_history()
+    event = ObserverEvent(0.03, (0.8, 0.2, 0.3))
+    fit = LocalSourceJetFitConfig(
+        half_width_ns=0.005,
+        window_alignment="past",
+    )
+    complete, _ = evaluate_causal_local_source_jet_native(
+        history,
+        event,
+        magnetic_moment_native=-1.7,
+        fit=fit,
+    )
+    stop = int(np.searchsorted(history.time_ns, complete.retarded_time_ns) + 1)
+    truncated = CausalC5SourceHistory.from_accepted_samples(
+        time_ns=history.time_ns[:stop],
+        position_mm=history.position_mm[:stop],
+        beta=history.beta[:stop],
+        beta_prime_per_mm=history.beta_prime_per_mm[:stop],
+        rest_spin=history.rest_spin[:stop],
+        stereographic_frame=history.stereographic_frame,
+        step_start_beta_prime_per_mm=(history.step_start_beta_prime_per_mm[:stop]),
+        step_start_beta_prime_ready=history.step_start_beta_prime_ready[:stop],
+    )
+    causal, _ = evaluate_causal_local_source_jet_native(
+        truncated,
+        event,
+        magnetic_moment_native=-1.7,
+        fit=fit,
+    )
+
+    assert complete.retarded_time_ns == causal.retarded_time_ns
+    for name in ("four_potential", "partial_a", "field_tensor", "partial_f"):
+        np.testing.assert_array_equal(getattr(complete, name), getattr(causal, name))
+
+
 def test_local_source_jet_is_continuous_across_cubic_root_segment_boundary() -> None:
     history = _circular_history(sample_count=161)
     boundary_time = float(history.time_ns[80])
@@ -494,6 +551,10 @@ def test_local_source_jet_rejects_truncated_physical_window() -> None:
         (
             {"half_width_ns": 1.0, "window_weighting": "invalid"},
             "window_weighting",
+        ),
+        (
+            {"half_width_ns": 1.0, "window_alignment": "invalid"},
+            "window_alignment",
         ),
     ),
 )

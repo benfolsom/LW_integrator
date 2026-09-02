@@ -12,9 +12,12 @@ input adapter for the already validated Hertz-jet algebra. They are not joined
 into a global high-continuity worldline. This avoids amplifying small endpoint
 derivative inconsistencies through a degree-eleven Hermite segment.
 
-The route is currently an opt-in provider primitive. It fails closed when the
-accepted prefix does not contain a complete fit window around the retarded
-event or when exact equations-of-motion start acceleration is unavailable.
+The route is currently an opt-in provider primitive. Centered fits fail closed
+unless the accepted prefix contains their complete fit window around the
+retarded event. An explicit past-only alignment instead uses a smoothly
+tapered interval ending at the retarded event and is independent of later
+accepted samples. Both routes require exact equations-of-motion start
+acceleration over their complete physical window.
 """
 
 from __future__ import annotations
@@ -43,12 +46,18 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class LocalSourceJetFitConfig:
-    """Numerical differentiation settings for one local source jet."""
+    """Numerical differentiation settings for one local source jet.
+
+    ``half_width_ns`` is half the total window duration for both alignments.
+    A centered window is ``[t_ret - w, t_ret + w]``; a past-only window is
+    ``[t_ret - 2 w, t_ret]``.
+    """
 
     half_width_ns: float
     acceleration_degree: int = 5
     spin_degree: int = 5
     window_weighting: Literal["tricube", "uniform"] = "tricube"
+    window_alignment: Literal["centered", "past"] = "centered"
     maximum_condition_number: float = 1.0e5
 
     def __post_init__(self) -> None:
@@ -56,6 +65,7 @@ class LocalSourceJetFitConfig:
         acceleration_degree = int(self.acceleration_degree)
         spin_degree = int(self.spin_degree)
         window_weighting = str(self.window_weighting)
+        window_alignment = str(self.window_alignment)
         maximum_condition = float(self.maximum_condition_number)
         if not np.isfinite(width) or width <= 0.0:
             raise ValueError("half_width_ns must be finite and positive")
@@ -65,6 +75,8 @@ class LocalSourceJetFitConfig:
             raise ValueError("spin_degree must be at least five")
         if window_weighting not in {"tricube", "uniform"}:
             raise ValueError("window_weighting must be 'tricube' or 'uniform'")
+        if window_alignment not in {"centered", "past"}:
+            raise ValueError("window_alignment must be 'centered' or 'past'")
         if not np.isfinite(maximum_condition) or maximum_condition <= 1.0:
             raise ValueError(
                 "maximum_condition_number must be finite and greater than one"
@@ -73,6 +85,7 @@ class LocalSourceJetFitConfig:
         object.__setattr__(self, "acceleration_degree", acceleration_degree)
         object.__setattr__(self, "spin_degree", spin_degree)
         object.__setattr__(self, "window_weighting", window_weighting)
+        object.__setattr__(self, "window_alignment", window_alignment)
         object.__setattr__(self, "maximum_condition_number", maximum_condition)
 
 
@@ -346,6 +359,7 @@ def _local_polynomial_derivatives(
     degree: int,
     maximum_derivative: int,
     window_weighting: Literal["tricube", "uniform"],
+    window_alignment: Literal["centered", "past"],
     maximum_condition_number: float,
     sample_indices: np.ndarray,
     label: str,
@@ -353,37 +367,49 @@ def _local_polynomial_derivatives(
     times = np.asarray(sample_times_ns, dtype=np.float64)
     values = np.asarray(sample_values, dtype=np.float64)
     indices = np.asarray(sample_indices, dtype=np.int64)
-    window_start = float(target_time_ns) - float(half_width_ns)
-    window_end = float(target_time_ns) + float(half_width_ns)
+    if window_alignment == "centered":
+        window_start = float(target_time_ns) - float(half_width_ns)
+        window_end = float(target_time_ns) + float(half_width_ns)
+    else:
+        window_start = float(target_time_ns) - 2.0 * float(half_width_ns)
+        window_end = float(target_time_ns)
     if times.size == 0:
         raise CausalC5HistoryUnavailableError(
             f"local {label} fit has no accepted exact samples"
         )
-    if times[0] > window_start or times[-1] < window_end:
+    if times[0] > window_start or (
+        window_alignment == "centered" and times[-1] < window_end
+    ):
         raise CausalC5HistoryUnavailableError(
             f"local {label} fit does not have its full physical window in the "
             "accepted source history"
         )
-    selected_mask = np.abs(times - float(target_time_ns)) <= float(half_width_ns)
+    selected_mask = (times >= window_start) & (times <= window_end)
     selected_times = times[selected_mask]
     selected_values = values[selected_mask]
     selected_indices = indices[selected_mask]
     if (
         selected_times.size < degree + 1
         or selected_times[0] >= target_time_ns
-        or selected_times[-1] <= target_time_ns
+        or (window_alignment == "centered" and selected_times[-1] <= target_time_ns)
     ):
         raise CausalC5HistoryUnavailableError(
-            f"local {label} fit window is not fully accepted around the retarded event"
+            f"local {label} fit window does not contain enough accepted samples"
         )
     scale = float(np.max(np.abs(selected_times - target_time_ns)))
     normalized = (selected_times - target_time_ns) / scale
     design = np.vander(normalized, N=degree + 1, increasing=True)
     reference = selected_values[int(np.argmin(np.abs(normalized)))]
     if window_weighting == "tricube":
-        window_coordinate = np.abs(
-            (selected_times - float(target_time_ns)) / float(half_width_ns)
-        )
+        if window_alignment == "centered":
+            window_coordinate = np.abs(
+                (selected_times - float(target_time_ns)) / float(half_width_ns)
+            )
+        else:
+            normalized_window_position = (selected_times - window_start) / (
+                window_end - window_start
+            )
+            window_coordinate = np.abs(2.0 * normalized_window_position - 1.0)
         weights = np.maximum(0.0, 1.0 - window_coordinate**3) ** 3
     else:
         weights = np.ones(selected_times.size, dtype=np.float64)
@@ -510,6 +536,7 @@ def evaluate_causal_local_source_jet_native(
             degree=fit.acceleration_degree,
             maximum_derivative=3,
             window_weighting=fit.window_weighting,
+            window_alignment=fit.window_alignment,
             maximum_condition_number=fit.maximum_condition_number,
             sample_indices=acceleration_knots,
             label="acceleration",
@@ -529,6 +556,7 @@ def evaluate_causal_local_source_jet_native(
             degree=fit.spin_degree,
             maximum_derivative=5,
             window_weighting=fit.window_weighting,
+            window_alignment=fit.window_alignment,
             maximum_condition_number=fit.maximum_condition_number,
             sample_indices=spin_indices,
             label="spin",
@@ -557,6 +585,14 @@ def evaluate_causal_local_source_jet_native(
     )
     measured_spread = None
     if model_spread is not None:
+        if not (
+            model_spread.narrow_fit.window_alignment
+            == fit.window_alignment
+            == model_spread.wide_fit.window_alignment
+        ):
+            raise ValueError(
+                "nested model-spread fits must use the same window alignment"
+            )
         if not (
             model_spread.narrow_fit.half_width_ns
             < fit.half_width_ns

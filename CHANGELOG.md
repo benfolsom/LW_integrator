@@ -1,5 +1,13 @@
 # Changelog
 
+- Add an explicit past-only alignment to the opt-in local source-jet fit. It
+  uses the same total duration as the centered window but ends at the retarded
+  source event, with a smooth zero-weight boundary at both ends. An exact
+  circular-source test bounds its $\partial F$ error and a prefix-invariance
+  test proves that samples later than the retarded event cannot affect it.
+  Centered alignment remains the default while live close-pass evidence is
+  gathered.
+
 - Make the opt-in local source-jet fit continuous when accepted samples enter
   or leave its physical window by applying a compact tricube weight by
   default; retain uniform weighting for diagnostics. Add a nested narrow,
