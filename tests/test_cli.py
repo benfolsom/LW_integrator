@@ -489,6 +489,29 @@ class TestCliConfigParsing:
         assert args.dipole_local_jet_window_weighting == "tricube"
         assert args.dipole_local_jet_inertial_prehistory == "assumed-inertial"
 
+    def test_parse_args_accepts_named_local_jet_scale_ladder(self):
+        args = cli.parse_args(
+            [
+                "--dipole-local-jet-scale",
+                "near:2e-9:3e-9:5e-9",
+                "--dipole-local-jet-scale",
+                "far:5e-9:1.2e-8:1.5e-8",
+                "--dipole-local-jet-maximum-cross-scale-relative-spread",
+                "2.5e-4",
+            ]
+        )
+
+        assert [scale["name"] for scale in args.dipole_local_jet_scale] == [
+            "near",
+            "far",
+        ]
+        assert args.dipole_local_jet_scale[0]["primary_half_width_ns"] == (
+            pytest.approx(3.0e-9)
+        )
+        assert args.dipole_local_jet_maximum_cross_scale_relative_spread == (
+            pytest.approx(2.5e-4)
+        )
+
     def test_parse_args_accepts_full_strict_exact_retarded_backend(self):
         args = cli.parse_args(["--exact-retarded-backend", "numba_full_strict_serial"])
 
@@ -1300,6 +1323,38 @@ class TestCliBuildRequest:
         assert source.local_jet_window_alignment == "past"
         assert source.local_jet_window_weighting == "tricube"
         assert source.local_jet_inertial_prehistory == "assumed_inertial"
+
+    def test_build_request_applies_named_local_jet_scale_ladder(self):
+        scales = [
+            {
+                "name": "near",
+                "narrow_half_width_ns": 2.0e-9,
+                "primary_half_width_ns": 3.0e-9,
+                "wide_half_width_ns": 5.0e-9,
+            },
+            {
+                "name": "far",
+                "narrow_half_width_ns": 5.0e-9,
+                "primary_half_width_ns": 1.2e-8,
+                "wide_half_width_ns": 1.5e-8,
+            },
+        ]
+        request = cli.build_request(
+            _make_args(
+                dipole_source_history_model="causal-local-jet",
+                dipole_local_jet_scale=scales,
+                dipole_local_jet_maximum_cross_scale_relative_spread=2.5e-4,
+            )
+        )
+
+        source = request.config.magnetic_dipole.source
+        assert tuple(scale.name for scale in source.local_jet_scales) == (
+            "near",
+            "far",
+        )
+        assert source.local_jet_maximum_cross_scale_relative_spread == (
+            pytest.approx(2.5e-4)
+        )
 
     def test_driver_from_rider_inherits_magnetic_species_unless_overridden(self):
         request = cli.build_request(
@@ -2259,6 +2314,8 @@ class TestCliMain:
             "spin_degree": 7,
             "maximum_condition_number": 2.0e5,
             "maximum_relative_spread": 2.5e-4,
+            "scales": [],
+            "maximum_cross_scale_relative_spread": 1.0e-3,
             "window_alignment": "past",
             "window_weighting": "tricube",
             "inertial_prehistory": "assumed_inertial",

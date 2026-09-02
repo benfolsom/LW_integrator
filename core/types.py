@@ -12,7 +12,7 @@ import copy
 from dataclasses import dataclass, field, fields
 from enum import Enum, IntEnum, auto
 from itertools import count
-from typing import Dict, List, Sequence, cast
+from typing import Dict, List, Mapping, Sequence, cast
 
 import numpy as np
 
@@ -535,6 +535,59 @@ class MagneticDipoleParticleConfig:
             raise ValueError("polarization must be in [0, 1]")
 
 
+@dataclass(frozen=True)
+class DipoleLocalJetScaleConfig:
+    """One named public narrow/primary/wide local-jet scale."""
+
+    name: str
+    narrow_half_width_ns: float
+    primary_half_width_ns: float
+    wide_half_width_ns: float
+
+    def __post_init__(self) -> None:
+        name = str(self.name).strip()
+        widths = tuple(
+            float(value)
+            for value in (
+                self.narrow_half_width_ns,
+                self.primary_half_width_ns,
+                self.wide_half_width_ns,
+            )
+        )
+        if not name:
+            raise ValueError("local jet scale name must not be empty")
+        if not all(np.isfinite(value) and value > 0.0 for value in widths):
+            raise ValueError("local jet scale half-widths must be finite and positive")
+        if not widths[0] < widths[1] < widths[2]:
+            raise ValueError(
+                "local jet scale half-widths must satisfy narrow < primary < wide"
+            )
+        object.__setattr__(self, "name", name)
+        object.__setattr__(self, "narrow_half_width_ns", widths[0])
+        object.__setattr__(self, "primary_half_width_ns", widths[1])
+        object.__setattr__(self, "wide_half_width_ns", widths[2])
+
+    @classmethod
+    def from_mapping(cls, value: Mapping[str, object]) -> "DipoleLocalJetScaleConfig":
+        """Normalize one JSON-compatible named scale."""
+
+        required = (
+            "name",
+            "narrow_half_width_ns",
+            "primary_half_width_ns",
+            "wide_half_width_ns",
+        )
+        missing = tuple(name for name in required if name not in value)
+        if missing:
+            raise ValueError("local jet scale is missing: " + ", ".join(missing))
+        return cls(
+            name=str(value["name"]),
+            narrow_half_width_ns=float(cast(float, value["narrow_half_width_ns"])),
+            primary_half_width_ns=float(cast(float, value["primary_half_width_ns"])),
+            wide_half_width_ns=float(cast(float, value["wide_half_width_ns"])),
+        )
+
+
 @dataclass
 class DipoleSourceConfig:
     """Ordinary Maxwell field sourced by an intrinsic magnetic moment.
@@ -565,6 +618,8 @@ class DipoleSourceConfig:
     local_jet_spin_degree: int = 5
     local_jet_maximum_condition_number: float = 1.0e5
     local_jet_maximum_relative_spread: float = 1.0e-3
+    local_jet_scales: Sequence[DipoleLocalJetScaleConfig | Mapping[str, object]] = ()
+    local_jet_maximum_cross_scale_relative_spread: float = 1.0e-3
     local_jet_acceleration_samples: str = "interval_mean"
     local_jet_window_alignment: str = "past"
     local_jet_window_weighting: str = "tricube"
@@ -632,17 +687,54 @@ class DipoleSourceConfig:
                 raise ValueError(f"dipole source {name} must be finite and positive")
             setattr(self, name, value)
             widths.append(value)
+        normalized_scale_list: list[DipoleLocalJetScaleConfig] = []
+        for scale_value in self.local_jet_scales:
+            if isinstance(scale_value, DipoleLocalJetScaleConfig):
+                normalized_scale_list.append(scale_value)
+            elif isinstance(scale_value, Mapping):
+                normalized_scale_list.append(
+                    DipoleLocalJetScaleConfig.from_mapping(scale_value)
+                )
+            else:
+                raise ValueError("each local jet scale must be a named mapping")
+        normalized_scales = tuple(normalized_scale_list)
+        if normalized_scales:
+            if len(normalized_scales) < 2:
+                raise ValueError("multi-scale local jet requires at least two scales")
+            if any(value is not None for value in widths):
+                raise ValueError(
+                    "single-scale local jet half-widths and local_jet_scales are "
+                    "mutually exclusive"
+                )
+            if len({scale.name for scale in normalized_scales}) != len(
+                normalized_scales
+            ):
+                raise ValueError("local jet scale names must be unique")
+            for shorter, longer in zip(normalized_scales[:-1], normalized_scales[1:]):
+                if longer.primary_half_width_ns <= shorter.primary_half_width_ns:
+                    raise ValueError(
+                        "local jet scales must be ordered from shortest to longest "
+                        "primary half-width"
+                    )
+                if shorter.wide_half_width_ns < longer.narrow_half_width_ns:
+                    raise ValueError(
+                        "adjacent local jet scales must overlap in physical "
+                        "half-width"
+                    )
+        self.local_jet_scales = normalized_scales
         if self.history_model == "causal_local_jet":
-            if any(value is None for value in widths):
+            if not normalized_scales and any(value is None for value in widths):
                 raise ValueError(
-                    "causal_local_jet requires narrow, primary, and wide physical "
-                    "half-widths"
+                    "causal_local_jet requires either local_jet_scales or narrow, "
+                    "primary, and wide physical half-widths"
                 )
-            narrow, primary, wide = cast(tuple[float, float, float], tuple(widths))
-            if not narrow < primary < wide:
-                raise ValueError(
-                    "causal_local_jet half-widths must satisfy narrow < primary < wide"
-                )
+            if not normalized_scales:
+                narrow, primary, wide = cast(tuple[float, float, float], tuple(widths))
+                if not narrow < primary < wide:
+                    raise ValueError(
+                        "causal_local_jet half-widths must satisfy "
+                        "narrow < primary < wide"
+                    )
         self.local_jet_acceleration_degree = int(self.local_jet_acceleration_degree)
         self.local_jet_spin_degree = int(self.local_jet_spin_degree)
         if self.local_jet_acceleration_degree < 3:
@@ -669,6 +761,17 @@ class DipoleSourceConfig:
         ):
             raise ValueError(
                 "local jet maximum relative spread must be finite and positive"
+            )
+        self.local_jet_maximum_cross_scale_relative_spread = float(
+            self.local_jet_maximum_cross_scale_relative_spread
+        )
+        if (
+            not np.isfinite(self.local_jet_maximum_cross_scale_relative_spread)
+            or self.local_jet_maximum_cross_scale_relative_spread <= 0.0
+        ):
+            raise ValueError(
+                "local jet maximum cross-scale relative spread must be finite and "
+                "positive"
             )
         self.local_jet_acceleration_samples = (
             str(self.local_jet_acceleration_samples).strip().lower().replace("-", "_")
@@ -706,6 +809,12 @@ class DipoleSourceConfig:
         """Whether an intrinsic-dipole Maxwell source model is selected."""
 
         return self.model != "off"
+
+    @property
+    def local_jet_scale_configs(self) -> tuple[DipoleLocalJetScaleConfig, ...]:
+        """Return the normalized immutable scale ladder."""
+
+        return cast(tuple[DipoleLocalJetScaleConfig, ...], self.local_jet_scales)
 
 
 @dataclass
@@ -2648,6 +2757,7 @@ __all__ = [
     "Occluder",
     "BeamlineGeometryConfig",
     "DipoleSourceConfig",
+    "DipoleLocalJetScaleConfig",
     "MagneticDipoleConfig",
     "MagneticDipoleParticleConfig",
 ]

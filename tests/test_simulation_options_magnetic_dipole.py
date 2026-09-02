@@ -260,6 +260,41 @@ def test_causal_local_source_options_round_trip_and_build() -> None:
     assert source.local_jet_inertial_prehistory == "assumed_inertial"
 
 
+def test_causal_local_named_scales_round_trip_and_build() -> None:
+    scales = [
+        {
+            "name": "near",
+            "narrow_half_width_ns": 2.0e-9,
+            "primary_half_width_ns": 3.0e-9,
+            "wide_half_width_ns": 5.0e-9,
+        },
+        {
+            "name": "far",
+            "narrow_half_width_ns": 5.0e-9,
+            "primary_half_width_ns": 1.2e-8,
+            "wide_half_width_ns": 1.5e-8,
+        },
+    ]
+    options = SimulationOptions.from_dict(
+        {
+            "magnetic_dipole": {
+                "source": {
+                    "history_model": "causal_local_jet",
+                    "local_jet_scales": scales,
+                    "local_jet_maximum_cross_scale_relative_spread": 2.5e-4,
+                }
+            }
+        }
+    )
+
+    restored = SimulationOptions.from_dict(options.to_dict())
+    source = build_magnetic_dipole_config(restored).source
+
+    assert restored.magnetic_dipole_source_local_jet_scales == scales
+    assert tuple(scale.name for scale in source.local_jet_scales) == ("near", "far")
+    assert source.local_jet_maximum_cross_scale_relative_spread == 2.5e-4
+
+
 def test_all_particle_visualization_tracks_preserve_particle_axis() -> None:
     import numpy as np
 

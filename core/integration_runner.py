@@ -1030,7 +1030,11 @@ def _causal_c5_inertial_time_offsets_ns(
 def _causal_local_maximum_interval_ns(source: DipoleSourceConfig) -> float:
     """Largest seed interval that still resolves the narrowest local fit."""
 
-    narrow = source.local_jet_narrow_half_width_ns
+    narrow = (
+        source.local_jet_scale_configs[0].narrow_half_width_ns
+        if source.local_jet_scales
+        else source.local_jet_narrow_half_width_ns
+    )
     if narrow is None:  # pragma: no cover - DipoleSourceConfig invariant
         raise ValueError("causal local narrow physical half-width is unavailable")
     degree = max(
@@ -1093,8 +1097,7 @@ def _preflight_inertial_exact_histories(
             )
         if causal_local_source_history is not None:
             from .causal_local_source_jet import (
-                evaluate_causal_local_source_jet_collection_native,
-                local_source_jet_configs_from_source_options,
+                evaluate_configured_causal_local_source_jet_collection_native,
             )
 
     if causal_c5_source_history is not None and causal_local_source_history is not None:
@@ -1237,19 +1240,12 @@ def _preflight_inertial_exact_histories(
                         proper_time_step_ns=0.0,
                     )
                 else:
-                    local_fit, local_spread = (
-                        local_source_jet_configs_from_source_options(source_options)
-                    )
-                    local_field = evaluate_causal_local_source_jet_collection_native(
-                        exact_dipole_source_collection,
-                        event,
-                        fit=local_fit,
-                        model_spread=local_spread,
-                        minimum_separation_mm=float(
-                            source_options.minimum_separation_mm
-                        ),
-                        root_tolerance_mm=float(source_options.root_tolerance_mm),
-                        max_root_iterations=int(source_options.max_root_iterations),
+                    local_field = (
+                        evaluate_configured_causal_local_source_jet_collection_native(
+                            exact_dipole_source_collection,
+                            event,
+                            source_options=source_options,
+                        )
                     )
                     dipole_interaction = dipole_source_interaction_from_field_native(
                         local_field,
@@ -3373,7 +3369,11 @@ def retarded_integrator(
                 inertial_prehistory_time_offsets_ns.size
             )
         elif causal_local_enabled:
-            wide = magnetic_dipole.source.local_jet_wide_half_width_ns
+            wide = (
+                magnetic_dipole.source.local_jet_scale_configs[-1].wide_half_width_ns
+                if magnetic_dipole.source.local_jet_scales
+                else magnetic_dipole.source.local_jet_wide_half_width_ns
+            )
             if wide is None:  # pragma: no cover - configuration invariant
                 raise RuntimeError("causal local wide fit window is unavailable")
             # Interval-mean acceleration is located between trajectory knots,

@@ -734,6 +734,16 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
             ),
         )
     parser.add_argument(
+        "--dipole-local-jet-scale",
+        action="append",
+        type=_parse_local_jet_scale,
+        help=(
+            "Named causal-local-jet scale as NAME:NARROW_NS:PRIMARY_NS:WIDE_NS. "
+            "Repeat from shortest to longest; do not combine with the three "
+            "single-scale width options."
+        ),
+    )
+    parser.add_argument(
         "--dipole-local-jet-acceleration-samples",
         choices=("exact-start", "interval-mean"),
         help="Use exact step-start or accepted interval-mean source acceleration.",
@@ -757,6 +767,11 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         "--dipole-local-jet-maximum-relative-spread",
         type=float,
         help="Reject a response when the nested physical-width fits differ by more.",
+    )
+    parser.add_argument(
+        "--dipole-local-jet-maximum-cross-scale-relative-spread",
+        type=float,
+        help="Reject a transition when adjacent named-scale responses differ more.",
     )
     parser.add_argument(
         "--dipole-local-jet-window-alignment",
@@ -1320,6 +1335,36 @@ def _parse_magnetic_species(value: str) -> str:
         raise argparse.ArgumentTypeError(str(exc)) from exc
 
 
+def _parse_local_jet_scale(value: str) -> dict[str, object]:
+    """Parse one named physical local-jet scale from the command line."""
+
+    fields = value.split(":")
+    if len(fields) != 4 or not fields[0].strip():
+        raise argparse.ArgumentTypeError(
+            "local jet scale must be NAME:NARROW_NS:PRIMARY_NS:WIDE_NS"
+        )
+    try:
+        widths = tuple(float(item) for item in fields[1:])
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            "local jet scale widths must be numbers"
+        ) from exc
+    if not all(np.isfinite(width) and width > 0.0 for width in widths):
+        raise argparse.ArgumentTypeError(
+            "local jet scale widths must be finite and positive"
+        )
+    if not widths[0] < widths[1] < widths[2]:
+        raise argparse.ArgumentTypeError(
+            "local jet scale widths must satisfy narrow < primary < wide"
+        )
+    return {
+        "name": fields[0].strip(),
+        "narrow_half_width_ns": widths[0],
+        "primary_half_width_ns": widths[1],
+        "wide_half_width_ns": widths[2],
+    }
+
+
 # ---------------------------------------------------------------------------
 # Configuration handling
 # ---------------------------------------------------------------------------
@@ -1486,6 +1531,13 @@ def _build_testbed_report(
                 ),
                 "maximum_relative_spread": (
                     options.magnetic_dipole_source_local_jet_maximum_relative_spread
+                ),
+                "scales": [
+                    dict(scale)
+                    for scale in options.magnetic_dipole_source_local_jet_scales
+                ],
+                "maximum_cross_scale_relative_spread": (
+                    options.magnetic_dipole_source_local_jet_maximum_cross_scale_relative_spread
                 ),
                 "window_alignment": (
                     options.magnetic_dipole_source_local_jet_window_alignment
@@ -2055,10 +2107,27 @@ def _merge_simulation_payload(
         dipole_source["model"] = args.dipole_source_model
     if getattr(args, "dipole_source_history_model", None) is not None:
         dipole_source["history_model"] = args.dipole_source_history_model
-    for label in ("narrow", "primary", "wide"):
-        value = getattr(args, f"dipole_local_jet_{label}_half_width_ns", None)
-        if value is not None:
-            dipole_source[f"local_jet_{label}_half_width_ns"] = value
+    local_jet_width_overrides = {
+        label: getattr(args, f"dipole_local_jet_{label}_half_width_ns", None)
+        for label in ("narrow", "primary", "wide")
+    }
+    local_jet_scales = getattr(args, "dipole_local_jet_scale", None)
+    if local_jet_scales is not None and any(
+        value is not None for value in local_jet_width_overrides.values()
+    ):
+        raise SimulationConfigError(
+            "named --dipole-local-jet-scale options cannot be combined with "
+            "single-scale local jet width options"
+        )
+    if local_jet_scales is not None:
+        for label in local_jet_width_overrides:
+            dipole_source.pop(f"local_jet_{label}_half_width_ns", None)
+        dipole_source["local_jet_scales"] = local_jet_scales
+    elif any(value is not None for value in local_jet_width_overrides.values()):
+        dipole_source.pop("local_jet_scales", None)
+        for label, value in local_jet_width_overrides.items():
+            if value is not None:
+                dipole_source[f"local_jet_{label}_half_width_ns"] = value
     for argument, key in (
         ("dipole_local_jet_acceleration_samples", "local_jet_acceleration_samples"),
         ("dipole_local_jet_acceleration_degree", "local_jet_acceleration_degree"),
@@ -2070,6 +2139,10 @@ def _merge_simulation_payload(
         (
             "dipole_local_jet_maximum_relative_spread",
             "local_jet_maximum_relative_spread",
+        ),
+        (
+            "dipole_local_jet_maximum_cross_scale_relative_spread",
+            "local_jet_maximum_cross_scale_relative_spread",
         ),
         ("dipole_local_jet_window_alignment", "local_jet_window_alignment"),
         ("dipole_local_jet_window_weighting", "local_jet_window_weighting"),
@@ -3416,6 +3489,18 @@ def build_report(
                 ),
                 "maximum_relative_spread": (
                     magnetic_dipole.source.local_jet_maximum_relative_spread
+                ),
+                "scales": [
+                    {
+                        "name": scale.name,
+                        "narrow_half_width_ns": scale.narrow_half_width_ns,
+                        "primary_half_width_ns": scale.primary_half_width_ns,
+                        "wide_half_width_ns": scale.wide_half_width_ns,
+                    }
+                    for scale in magnetic_dipole.source.local_jet_scale_configs
+                ],
+                "maximum_cross_scale_relative_spread": (
+                    magnetic_dipole.source.local_jet_maximum_cross_scale_relative_spread
                 ),
                 "window_alignment": (magnetic_dipole.source.local_jet_window_alignment),
                 "window_weighting": (magnetic_dipole.source.local_jet_window_weighting),

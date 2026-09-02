@@ -100,24 +100,14 @@ def evaluate_exact_endpoint_four_potential(
                     )
                 elif source_options.history_model == "causal_local_jet":
                     from .causal_local_source_jet import (
-                        evaluate_causal_local_source_jet_collection_native,
-                        local_source_jet_configs_from_source_options,
+                        evaluate_configured_causal_local_source_jet_collection_native,
                     )
 
-                    fit, spread = local_source_jet_configs_from_source_options(
-                        source_options
-                    )
                     dipole_response = (
-                        evaluate_causal_local_source_jet_collection_native(
+                        evaluate_configured_causal_local_source_jet_collection_native(
                             dipole_source_collection,
                             event,
-                            fit=fit,
-                            model_spread=spread,
-                            minimum_separation_mm=float(
-                                source_options.minimum_separation_mm
-                            ),
-                            root_tolerance_mm=float(source_options.root_tolerance_mm),
-                            max_root_iterations=int(source_options.max_root_iterations),
+                            source_options=source_options,
                         )
                     )
                 else:

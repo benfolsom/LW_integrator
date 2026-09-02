@@ -404,6 +404,21 @@ class IntegratorGUI(
             self.magnetic_dipole_local_jet_width_vars.append(
                 tk.StringVar(value="" if value is None else str(value))
             )
+        self._magnetic_dipole_source_local_jet_scales = [
+            dict(scale)
+            for scale in getattr(
+                self.options,
+                "magnetic_dipole_source_local_jet_scales",
+                [],
+            )
+        ]
+        self._magnetic_dipole_source_local_jet_maximum_cross_scale_relative_spread = float(
+            getattr(
+                self.options,
+                "magnetic_dipole_source_local_jet_maximum_cross_scale_relative_spread",
+                1.0e-3,
+            )
+        )
         self.magnetic_dipole_local_jet_assume_inertial_var = tk.BooleanVar(
             value=(
                 getattr(

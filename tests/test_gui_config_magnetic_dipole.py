@@ -232,6 +232,43 @@ def test_causal_local_jet_round_trips_explicit_gui_controls() -> None:
     )
 
 
+def test_gui_preserves_loaded_named_local_jet_scale_ladder() -> None:
+    scales = [
+        {
+            "name": "near",
+            "narrow_half_width_ns": 2.0e-9,
+            "primary_half_width_ns": 3.0e-9,
+            "wide_half_width_ns": 5.0e-9,
+        },
+        {
+            "name": "far",
+            "narrow_half_width_ns": 5.0e-9,
+            "primary_half_width_ns": 1.2e-8,
+            "wide_half_width_ns": 1.5e-8,
+        },
+    ]
+    source = SimulationOptions(
+        magnetic_dipole_source_history_model="causal_local_jet",
+        magnetic_dipole_source_local_jet_scales=scales,
+        magnetic_dipole_source_local_jet_maximum_cross_scale_relative_spread=2.5e-4,
+    )
+    harness = _MagneticHarness()
+
+    harness.apply(source)
+    rebuilt = SimulationOptions(**harness.build())
+
+    assert [var.get() for var in harness.magnetic_dipole_local_jet_width_vars] == [
+        "",
+        "",
+        "",
+    ]
+    assert rebuilt.magnetic_dipole_source_local_jet_scales == scales
+    assert (
+        rebuilt.magnetic_dipole_source_local_jet_maximum_cross_scale_relative_spread
+        == pytest.approx(2.5e-4)
+    )
+
+
 def test_analytical_charge_backend_round_trips_through_gui_label() -> None:
     source = SimulationOptions(
         magnetic_dipole_exact_retarded_backend=("numba_analytic_charge_response_serial")

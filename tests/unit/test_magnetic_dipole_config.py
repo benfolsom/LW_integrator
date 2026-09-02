@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import pytest
 
-from core.types import DipoleSourceConfig, MagneticDipoleConfig
+from core.types import (
+    DipoleLocalJetScaleConfig,
+    DipoleSourceConfig,
+    MagneticDipoleConfig,
+)
 
 
 def test_magnetic_dipole_defaults_to_disabled_rfs_pair() -> None:
@@ -109,7 +113,7 @@ def test_retarded_dipole_source_rejects_unknown_history_model() -> None:
 
 
 def test_local_jet_requires_ordered_explicit_physical_windows() -> None:
-    with pytest.raises(ValueError, match="requires narrow, primary, and wide"):
+    with pytest.raises(ValueError, match="requires either local_jet_scales"):
         DipoleSourceConfig(history_model="causal_local_jet")
     with pytest.raises(ValueError, match="narrow < primary < wide"):
         DipoleSourceConfig(
@@ -128,6 +132,55 @@ def test_local_jet_requires_ordered_explicit_physical_windows() -> None:
     assert config.history_model == "causal_local_jet"
     assert config.local_jet_acceleration_samples == "interval_mean"
     assert config.local_jet_window_alignment == "past"
+
+
+def test_local_jet_accepts_ordered_named_physical_scales() -> None:
+    config = DipoleSourceConfig(
+        history_model="causal_local_jet",
+        local_jet_scales=(
+            {
+                "name": "near",
+                "narrow_half_width_ns": 2.0e-9,
+                "primary_half_width_ns": 3.0e-9,
+                "wide_half_width_ns": 5.0e-9,
+            },
+            DipoleLocalJetScaleConfig(
+                name="far",
+                narrow_half_width_ns=5.0e-9,
+                primary_half_width_ns=1.2e-8,
+                wide_half_width_ns=1.5e-8,
+            ),
+        ),
+        local_jet_maximum_cross_scale_relative_spread=2.5e-4,
+    )
+
+    assert tuple(scale.name for scale in config.local_jet_scales) == ("near", "far")
+    assert config.local_jet_scales[0].primary_half_width_ns == 3.0e-9
+    assert config.local_jet_maximum_cross_scale_relative_spread == 2.5e-4
+
+
+def test_local_jet_rejects_ambiguous_or_unchecked_scale_ladders() -> None:
+    near = DipoleLocalJetScaleConfig("near", 2.0e-9, 3.0e-9, 4.0e-9)
+    far = DipoleLocalJetScaleConfig("far", 5.0e-9, 7.0e-9, 1.0e-8)
+
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        DipoleSourceConfig(
+            history_model="causal_local_jet",
+            local_jet_narrow_half_width_ns=1.0e-9,
+            local_jet_primary_half_width_ns=2.0e-9,
+            local_jet_wide_half_width_ns=3.0e-9,
+            local_jet_scales=(near, far),
+        )
+    with pytest.raises(ValueError, match="must overlap"):
+        DipoleSourceConfig(
+            history_model="causal_local_jet",
+            local_jet_scales=(near, far),
+        )
+    with pytest.raises(ValueError, match="at least two"):
+        DipoleSourceConfig(
+            history_model="causal_local_jet",
+            local_jet_scales=(near,),
+        )
 
 
 def test_magnetic_dipole_accepts_full_strict_exact_retarded_backend() -> None:

@@ -3203,8 +3203,7 @@ def retarded_equations_of_motion(
                         )
                     elif magnetic_dipole.source.history_model == "causal_local_jet":
                         from .causal_local_source_jet import (
-                            evaluate_causal_local_source_jet_collection_native,
-                            local_source_jet_configs_from_source_options,
+                            evaluate_configured_causal_local_source_jet_collection_native,
                         )
                     else:
                         raise ValueError(
@@ -3254,32 +3253,13 @@ def retarded_equations_of_motion(
                                     )
                                 )
                             else:
-                                local_fit, local_spread = (
-                                    local_source_jet_configs_from_source_options(
-                                        magnetic_dipole.source
-                                    )
-                                )
-                                dipole_source_field = (
-                                    evaluate_causal_local_source_jet_collection_native(
-                                        exact_dipole_source_collection,
-                                        ObserverEvent(
-                                            time_ns=float(
-                                                current_state["t"][particle_idx]
-                                            ),
-                                            position_mm=dipole_source_position,
-                                        ),
-                                        fit=local_fit,
-                                        model_spread=local_spread,
-                                        root_tolerance_mm=(
-                                            magnetic_dipole.source.root_tolerance_mm
-                                        ),
-                                        max_root_iterations=(
-                                            magnetic_dipole.source.max_root_iterations
-                                        ),
-                                        minimum_separation_mm=(
-                                            magnetic_dipole.source.minimum_separation_mm
-                                        ),
-                                    )
+                                dipole_source_field = evaluate_configured_causal_local_source_jet_collection_native(
+                                    exact_dipole_source_collection,
+                                    ObserverEvent(
+                                        time_ns=float(current_state["t"][particle_idx]),
+                                        position_mm=dipole_source_position,
+                                    ),
+                                    source_options=magnetic_dipole.source,
                                 )
                         elif (
                             exact_endpoint_recomposition_selected

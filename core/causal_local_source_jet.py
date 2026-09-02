@@ -380,35 +380,83 @@ def local_source_jet_configs_from_source_options(
     if any(value is None for value in widths):  # pragma: no cover - config invariant
         raise ValueError("local source-jet physical half-widths are unavailable")
 
-    def fit(width: float | None) -> LocalSourceJetFitConfig:
-        if width is None:  # pragma: no cover - narrowed above
-            raise ValueError("local source-jet physical half-width is unavailable")
-        return LocalSourceJetFitConfig(
-            half_width_ns=width,
-            acceleration_degree=source.local_jet_acceleration_degree,
-            spin_degree=source.local_jet_spin_degree,
-            acceleration_samples=cast(
-                Literal["exact_start", "interval_mean"],
-                source.local_jet_acceleration_samples,
-            ),
-            window_weighting=cast(
-                Literal["tricube", "uniform"],
-                source.local_jet_window_weighting,
-            ),
-            window_alignment=cast(
-                Literal["centered", "past"],
-                source.local_jet_window_alignment,
-            ),
-            maximum_condition_number=source.local_jet_maximum_condition_number,
-        )
-
-    narrow = fit(widths[0])
-    primary = fit(widths[1])
-    wide = fit(widths[2])
+    if source.local_jet_scales:
+        raise ValueError("single local source-jet options received a scale ladder")
+    narrow = _local_source_jet_fit_from_source_options(source, widths[0])
+    primary = _local_source_jet_fit_from_source_options(source, widths[1])
+    wide = _local_source_jet_fit_from_source_options(source, widths[2])
     return primary, LocalSourceJetModelSpreadConfig(
         narrow_fit=narrow,
         wide_fit=wide,
         maximum_relative_spread=source.local_jet_maximum_relative_spread,
+    )
+
+
+def _local_source_jet_fit_from_source_options(
+    source: "DipoleSourceConfig",
+    width: float | None,
+) -> LocalSourceJetFitConfig:
+    if width is None:
+        raise ValueError("local source-jet physical half-width is unavailable")
+    return LocalSourceJetFitConfig(
+        half_width_ns=width,
+        acceleration_degree=source.local_jet_acceleration_degree,
+        spin_degree=source.local_jet_spin_degree,
+        acceleration_samples=cast(
+            Literal["exact_start", "interval_mean"],
+            source.local_jet_acceleration_samples,
+        ),
+        window_weighting=cast(
+            Literal["tricube", "uniform"],
+            source.local_jet_window_weighting,
+        ),
+        window_alignment=cast(
+            Literal["centered", "past"],
+            source.local_jet_window_alignment,
+        ),
+        maximum_condition_number=source.local_jet_maximum_condition_number,
+    )
+
+
+def local_source_jet_multiscale_config_from_source_options(
+    source: "DipoleSourceConfig",
+) -> LocalSourceJetMultiScaleConfig:
+    """Translate a validated public named scale ladder into provider settings."""
+
+    if source.history_model != "causal_local_jet":
+        raise ValueError("local source-jet options require causal_local_jet history")
+    if not source.local_jet_scales:
+        raise ValueError("multi-scale local source-jet options need a scale ladder")
+    scales = []
+    for public_scale in source.local_jet_scale_configs:
+        narrow = _local_source_jet_fit_from_source_options(
+            source,
+            public_scale.narrow_half_width_ns,
+        )
+        primary = _local_source_jet_fit_from_source_options(
+            source,
+            public_scale.primary_half_width_ns,
+        )
+        wide = _local_source_jet_fit_from_source_options(
+            source,
+            public_scale.wide_half_width_ns,
+        )
+        scales.append(
+            LocalSourceJetScaleConfig(
+                name=public_scale.name,
+                primary_fit=primary,
+                model_spread=LocalSourceJetModelSpreadConfig(
+                    narrow_fit=narrow,
+                    wide_fit=wide,
+                    maximum_relative_spread=(source.local_jet_maximum_relative_spread),
+                ),
+            )
+        )
+    return LocalSourceJetMultiScaleConfig(
+        scales=tuple(scales),
+        maximum_cross_scale_relative_spread=(
+            source.local_jet_maximum_cross_scale_relative_spread
+        ),
     )
 
 
@@ -1106,6 +1154,40 @@ def evaluate_causal_local_source_jet_collection_multiscale_native(
     )
 
 
+def evaluate_configured_causal_local_source_jet_collection_native(
+    collection: CausalLocalDipoleSourceCollection,
+    observer_event: "ObserverEvent",
+    *,
+    source_options: "DipoleSourceConfig",
+    excluded_source_identities: Sequence[str] = (),
+) -> CausalLocalSourceJetProviderResult:
+    """Evaluate the explicitly configured single fit or named scale ladder."""
+
+    if source_options.local_jet_scales:
+        return evaluate_causal_local_source_jet_collection_multiscale_native(
+            collection,
+            observer_event,
+            scales=local_source_jet_multiscale_config_from_source_options(
+                source_options
+            ),
+            excluded_source_identities=excluded_source_identities,
+            root_tolerance_mm=source_options.root_tolerance_mm,
+            max_root_iterations=source_options.max_root_iterations,
+            minimum_separation_mm=source_options.minimum_separation_mm,
+        )
+    fit, spread = local_source_jet_configs_from_source_options(source_options)
+    return evaluate_causal_local_source_jet_collection_native(
+        collection,
+        observer_event,
+        fit=fit,
+        model_spread=spread,
+        excluded_source_identities=excluded_source_identities,
+        root_tolerance_mm=source_options.root_tolerance_mm,
+        max_root_iterations=source_options.max_root_iterations,
+        minimum_separation_mm=source_options.minimum_separation_mm,
+    )
+
+
 __all__ = [
     "CausalLocalSourceJetModelSpreadError",
     "CausalLocalSourceJetScaleSelectionError",
@@ -1120,6 +1202,8 @@ __all__ = [
     "evaluate_causal_local_source_jet_collection_native",
     "evaluate_causal_local_source_jet_collection_multiscale_native",
     "evaluate_causal_local_source_jet_multiscale_native",
+    "evaluate_configured_causal_local_source_jet_collection_native",
     "evaluate_causal_local_source_jet_native",
     "local_source_jet_configs_from_source_options",
+    "local_source_jet_multiscale_config_from_source_options",
 ]

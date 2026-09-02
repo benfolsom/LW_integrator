@@ -1,5 +1,12 @@
 # Changelog
 
+- Expose the opt-in guarded local-source-jet scale ladder through direct JSON,
+  testbed configuration, repeated `--dipole-local-jet-scale` CLI options, and
+  lossless GUI config load/save. Live equations-of-motion, endpoint
+  recomposition, and inertial-prehistory sizing now use the same configured
+  evaluator. Named ladders remain mutually exclusive with the original single
+  narrow/primary/wide fields, and no default history route changes.
+
 - Add an internal, opt-in multi-scale selector for causal local source jets.
   It accepts an ordered list of explicitly named physical window triplets,
   chooses the shortest triplet that has enough trusted accepted history and

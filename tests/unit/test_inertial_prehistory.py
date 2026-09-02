@@ -658,6 +658,102 @@ def test_short_causal_local_adaptive_run_uses_explicit_inertial_boundary(
     assert np.all(np.isfinite(driver_soa.Pt))
 
 
+def test_short_causal_local_adaptive_run_uses_named_scale_ladder(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    from core import causal_local_source_jet
+
+    selections: list[tuple[str | None, str | None]] = []
+    original_provider = (
+        causal_local_source_jet.evaluate_causal_local_source_jet_collection_multiscale_native
+    )
+
+    def monitored_provider(collection, observer_event, **kwargs):
+        response = original_provider(collection, observer_event, **kwargs)
+        selections.extend(
+            (
+                source.diagnostics.selected_scale_name,
+                source.diagnostics.comparison_scale_name,
+            )
+            for source in response.source_results
+        )
+        return response
+
+    monkeypatch.setattr(
+        causal_local_source_jet,
+        "evaluate_causal_local_source_jet_collection_multiscale_native",
+        monitored_provider,
+    )
+    rider = _species_state(
+        "electron",
+        position_mm=(-5.0e-9, 0.0, 0.0),
+        beta=(0.0, 1.0e-4, 0.0),
+    )
+    driver = _species_state(
+        "proton",
+        position_mm=(5.0e-9, 0.0, 0.0),
+        beta=(0.0, -1.0e-4, 0.0),
+    )
+    magnetic = MagneticDipoleConfig(
+        enabled=True,
+        exact_retarded_update="second_order_start_taylor_endpoint",
+        source=DipoleSourceConfig(
+            model="covariant_retarded_point",
+            history_model="causal_local_jet",
+            local_jet_scales=(
+                {
+                    "name": "near",
+                    "narrow_half_width_ns": 5.0e-12,
+                    "primary_half_width_ns": 7.5e-12,
+                    "wide_half_width_ns": 1.0e-11,
+                },
+                {
+                    "name": "far",
+                    "narrow_half_width_ns": 1.0e-11,
+                    "primary_half_width_ns": 1.5e-11,
+                    "wide_half_width_ns": 2.0e-11,
+                },
+            ),
+            local_jet_inertial_prehistory="assumed_inertial",
+        ),
+        rider=MagneticDipoleParticleConfig(species="electron"),
+        driver=MagneticDipoleParticleConfig(species="proton"),
+    )
+
+    result = _run_simple_inertial(
+        rider,
+        driver,
+        steps=11,
+        h_step=2.0e-12,
+        radiation_reaction_mode="off",
+        magnetic_dipole=magnetic,
+        self_consistency=SelfConsistencyConfig.standard(),
+        adaptive_pair_return=AdaptivePairReturnConfig(
+            enabled=True,
+            target_lab_time_ns=2.0e-11,
+            tolerance_scale=1.0e8,
+            minimum_step_factor=1.0 / 64.0,
+            maximum_step_factor=1.0,
+            maximum_attempts=64,
+            maximum_accepted_slabs=32,
+        ),
+        checkpoint=CheckpointConfig(
+            enabled=True,
+            directory=str(tmp_path / "causal-local-multiscale-live.checkpoint"),
+            interval_steps=1,
+            interval_seconds=0.0,
+        ),
+        particle_loss=ParticleLossConfig(enabled=False),
+    )
+
+    assert result[0][-1]["_adaptive_pair_return"]["completed"] is True
+    assert selections
+    assert set(selections) == {("near", "far")}
+    assert np.all(np.isfinite(result[2].Pt))
+    assert np.all(np.isfinite(result[3].Pt))
+
+
 def test_causal_local_startup_rejects_an_implicit_synthetic_acceleration() -> None:
     rider = _species_state("electron", position_mm=(-5.0e-9, 0.0, 0.0))
     driver = _species_state("proton", position_mm=(5.0e-9, 0.0, 0.0))

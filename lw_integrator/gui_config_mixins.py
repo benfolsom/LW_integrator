@@ -285,6 +285,21 @@ class IntegratorGUIConfigMixin:
                 None,
             )
             variable.set("" if value is None else _format_gui_float(value))
+        self._magnetic_dipole_source_local_jet_scales = [
+            dict(scale)
+            for scale in getattr(
+                options,
+                "magnetic_dipole_source_local_jet_scales",
+                [],
+            )
+        ]
+        self._magnetic_dipole_source_local_jet_maximum_cross_scale_relative_spread = float(
+            getattr(
+                options,
+                "magnetic_dipole_source_local_jet_maximum_cross_scale_relative_spread",
+                1.0e-3,
+            )
+        )
         local_boundary_var = getattr(
             self, "magnetic_dipole_local_jet_assume_inertial_var", None
         )
@@ -477,7 +492,25 @@ class IntegratorGUIConfigMixin:
                     None,
                 )
             local_widths[label] = value
-        if source_history_model == "causal_local_jet":
+        local_scales = [
+            dict(scale)
+            for scale in getattr(
+                self,
+                "_magnetic_dipole_source_local_jet_scales",
+                [],
+            )
+        ]
+        entered_width_count = sum(value is not None for value in local_widths.values())
+        if local_scales and entered_width_count == len(local_widths):
+            # Filling all three visible boxes is an explicit GUI replacement
+            # of a named ladder loaded from JSON. Blank boxes preserve it.
+            local_scales = []
+        elif local_scales and entered_width_count:
+            raise ValueError(
+                "Fill all three local jet width boxes to replace the loaded named "
+                "scale ladder, or leave all three blank to preserve it."
+            )
+        if source_history_model == "causal_local_jet" and not local_scales:
             if any(value is None for value in local_widths.values()):
                 raise ValueError(
                     "Causal local jet requires narrow, primary, and wide physical "
@@ -552,6 +585,12 @@ class IntegratorGUIConfigMixin:
             "magnetic_dipole_source_local_jet_maximum_relative_spread": getattr(
                 self,
                 "_magnetic_dipole_source_local_jet_maximum_relative_spread",
+                1.0e-3,
+            ),
+            "magnetic_dipole_source_local_jet_scales": local_scales,
+            "magnetic_dipole_source_local_jet_maximum_cross_scale_relative_spread": getattr(
+                self,
+                "_magnetic_dipole_source_local_jet_maximum_cross_scale_relative_spread",
                 1.0e-3,
             ),
             "magnetic_dipole_source_local_jet_acceleration_samples": getattr(

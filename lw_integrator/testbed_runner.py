@@ -472,6 +472,10 @@ class SimulationOptions:
     magnetic_dipole_source_local_jet_spin_degree: int = 5
     magnetic_dipole_source_local_jet_maximum_condition_number: float = 1.0e5
     magnetic_dipole_source_local_jet_maximum_relative_spread: float = 1.0e-3
+    magnetic_dipole_source_local_jet_scales: list[dict[str, object]] = field(
+        default_factory=list
+    )
+    magnetic_dipole_source_local_jet_maximum_cross_scale_relative_spread: float = 1.0e-3
     magnetic_dipole_source_local_jet_acceleration_samples: str = "interval_mean"
     magnetic_dipole_source_local_jet_window_alignment: str = "past"
     magnetic_dipole_source_local_jet_window_weighting: str = "tricube"
@@ -843,6 +847,13 @@ class SimulationOptions:
                     "local_jet_maximum_relative_spread": (
                         self.magnetic_dipole_source_local_jet_maximum_relative_spread
                     ),
+                    "local_jet_scales": [
+                        dict(scale)
+                        for scale in self.magnetic_dipole_source_local_jet_scales
+                    ],
+                    "local_jet_maximum_cross_scale_relative_spread": (
+                        self.magnetic_dipole_source_local_jet_maximum_cross_scale_relative_spread
+                    ),
                     "local_jet_acceleration_samples": (
                         self.magnetic_dipole_source_local_jet_acceleration_samples
                     ),
@@ -1074,6 +1085,24 @@ class SimulationOptions:
                 return float(value)  # type: ignore[arg-type]
             except (TypeError, ValueError):
                 return None
+
+        def _magnetic_source_scales() -> list[dict[str, object]]:
+            value = _magnetic_source_value("local_jet_scales", [])
+            if value is None:
+                return []
+            if not isinstance(value, list):
+                raise ValueError(
+                    "magnetic_dipole.source.local_jet_scales must be a list"
+                )
+            scales = []
+            for item in value:
+                if not isinstance(item, dict):
+                    raise ValueError(
+                        "each magnetic_dipole.source.local_jet_scales item must "
+                        "be an object"
+                    )
+                scales.append(dict(item))
+            return scales
 
         def _magnetic_spin(
             role: str,
@@ -1728,6 +1757,13 @@ class SimulationOptions:
             ),
             magnetic_dipole_source_local_jet_maximum_relative_spread=float(
                 _magnetic_source_value("local_jet_maximum_relative_spread", 1.0e-3)
+            ),
+            magnetic_dipole_source_local_jet_scales=_magnetic_source_scales(),
+            magnetic_dipole_source_local_jet_maximum_cross_scale_relative_spread=float(
+                _magnetic_source_value(
+                    "local_jet_maximum_cross_scale_relative_spread",
+                    1.0e-3,
+                )
             ),
             magnetic_dipole_source_local_jet_acceleration_samples=str(
                 _magnetic_source_value(
@@ -3115,6 +3151,10 @@ def build_magnetic_dipole_config(options: SimulationOptions) -> object:
             local_jet_maximum_relative_spread=(
                 options.magnetic_dipole_source_local_jet_maximum_relative_spread
             ),
+            local_jet_scales=(options.magnetic_dipole_source_local_jet_scales),
+            local_jet_maximum_cross_scale_relative_spread=(
+                options.magnetic_dipole_source_local_jet_maximum_cross_scale_relative_spread
+            ),
             local_jet_acceleration_samples=(
                 options.magnetic_dipole_source_local_jet_acceleration_samples
             ),
@@ -3348,18 +3388,26 @@ def run_testbed(
         f"(history={options.magnetic_dipole_source_history_model})"
     )
     if options.magnetic_dipole_source_history_model == "causal_local_jet":
-        _log(
-            "    Local jet widths (narrow/primary/wide ns): "
-            f"{options.magnetic_dipole_source_local_jet_narrow_half_width_ns}/"
-            f"{options.magnetic_dipole_source_local_jet_primary_half_width_ns}/"
-            f"{options.magnetic_dipole_source_local_jet_wide_half_width_ns}"
-        )
+        if options.magnetic_dipole_source_local_jet_scales:
+            _log(
+                "    Local jet named physical scales: "
+                f"{options.magnetic_dipole_source_local_jet_scales}"
+            )
+        else:
+            _log(
+                "    Local jet widths (narrow/primary/wide ns): "
+                f"{options.magnetic_dipole_source_local_jet_narrow_half_width_ns}/"
+                f"{options.magnetic_dipole_source_local_jet_primary_half_width_ns}/"
+                f"{options.magnetic_dipole_source_local_jet_wide_half_width_ns}"
+            )
         _log(
             "    Local jet reconstruction: "
             f"acceleration={options.magnetic_dipole_source_local_jet_acceleration_samples}, "
             f"alignment={options.magnetic_dipole_source_local_jet_window_alignment}, "
             f"weighting={options.magnetic_dipole_source_local_jet_window_weighting}, "
             f"spread limit={options.magnetic_dipole_source_local_jet_maximum_relative_spread:g}, "
+            "cross-scale limit="
+            f"{options.magnetic_dipole_source_local_jet_maximum_cross_scale_relative_spread:g}, "
             "boundary="
             f"{options.magnetic_dipole_source_local_jet_inertial_prehistory}"
         )

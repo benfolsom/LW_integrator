@@ -22,10 +22,12 @@ from core.causal_local_source_jet import (
     LocalSourceJetScaleConfig,
     _centered_taylor_coefficients,
     _cubic_position_velocity,
+    evaluate_configured_causal_local_source_jet_collection_native,
     evaluate_causal_local_source_jet_collection_multiscale_native,
     evaluate_causal_local_source_jet_native,
     evaluate_causal_local_source_jet_multiscale_native,
     local_source_jet_configs_from_source_options,
+    local_source_jet_multiscale_config_from_source_options,
 )
 from core.constants import C_MMNS
 from core.dipole_hertz_jet import (
@@ -947,3 +949,46 @@ def test_public_local_source_options_build_primary_and_spread_fits() -> None:
     assert spread.narrow_fit.half_width_ns == 1.0e-8
     assert spread.wide_fit.half_width_ns == 1.5e-8
     assert spread.maximum_relative_spread == 1.0e-3
+
+
+def test_public_multiscale_options_build_and_dispatch_named_scale_ladder() -> None:
+    history = _circular_history(sample_count=481)
+    collection = CausalLocalDipoleSourceCollection(
+        (CausalLocalDipoleSource("source", 0, -1.7, history),)
+    )
+    event = ObserverEvent(0.03, (0.8, 0.2, 0.3))
+    source = DipoleSourceConfig(
+        history_model="causal_local_jet",
+        local_jet_scales=(
+            {
+                "name": "short",
+                "narrow_half_width_ns": 2.0e-3,
+                "primary_half_width_ns": 3.0e-3,
+                "wide_half_width_ns": 5.0e-3,
+            },
+            {
+                "name": "long",
+                "narrow_half_width_ns": 5.0e-3,
+                "primary_half_width_ns": 7.0e-3,
+                "wide_half_width_ns": 1.0e-2,
+            },
+        ),
+        local_jet_maximum_relative_spread=1.0e-5,
+        local_jet_maximum_cross_scale_relative_spread=1.0e-5,
+    )
+
+    scales = local_source_jet_multiscale_config_from_source_options(source)
+    actual = evaluate_configured_causal_local_source_jet_collection_native(
+        collection,
+        event,
+        source_options=source,
+    )
+    expected = evaluate_causal_local_source_jet_collection_multiscale_native(
+        collection,
+        event,
+        scales=scales,
+    )
+
+    assert tuple(scale.name for scale in scales.scales) == ("short", "long")
+    np.testing.assert_array_equal(actual.partial_f, expected.partial_f)
+    assert actual.source_results[0].diagnostics.selected_scale_name == "short"
