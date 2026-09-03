@@ -329,6 +329,50 @@ internal charge and radius used to realize a given magnetic moment.  Matching
 that dependence to an intrinsic-particle effective theory remains necessary
 before production use.
 
+Neutral-shell pulse energy ledger
+---------------------------------
+
+``evaluate_neutral_spinning_shell_pulse_energy_balance_native`` extends the
+same exact response from one harmonic to a sampled, fixed-axis rotation
+pulse.  It Fourier-decomposes the prescribed angular velocity, evaluates the
+exact shell self-torque coefficient at every frequency, and integrates its
+work.  Independently, it evaluates the outward magnetic radiation from
+
+.. math::
+
+   \widetilde\mu(\omega)
+   ={qR^2\over3}\widetilde\Omega(\omega)
+
+with the finite-shell form factor
+
+.. math::
+
+   \left[{3(\sin x-x\cos x)\over x^3}\right]^2,
+   \qquad x={\omega R\over c}.
+
+For a one-shot pulse, the sampled window must include quiet intervals before
+and after the rotation.  Then the initial and final source states agree and
+there is no *net* bound-field endpoint change.  The maintained smooth-pulse
+test consequently verifies
+
+.. math::
+
+   W_{\rm self}+E_{\rm out}=0.
+
+The result reports the angular velocity at the window boundaries relative to
+its peak and the fraction of radiated energy in the upper ten percent of the
+sampled frequency band.  These expose a poorly isolated pulse or inadequate
+time resolution instead of silently treating its periodic Fourier extension
+as a physical transient.
+
+This is an integrated :math:`\mu^2` dissipation check for the explicit neutral
+two-shell source.  It does **not** provide the instantaneous bound energy,
+the time-local intrinsic-dipole self-torque, or a translational recoil law.
+Earlier point- and accelerated-dipole calculations also find magnetic
+radiation-reaction effects [Itoh1991]_ [Unruh1999]_, but their source models
+and approximations do not by themselves perform this finite-source-to-
+intrinsic-particle matching.
+
 Required convergence checks
 ---------------------------
 
@@ -435,3 +479,13 @@ References
    *Proceedings of SPIE* **11462**, 114620W (2020),
    `doi:10.1117/12.2569137 <https://doi.org/10.1117/12.2569137>`_,
    `arXiv:2008.11264 <https://arxiv.org/abs/2008.11264>`_.
+
+.. [Itoh1991] N. Itoh, "Radiation reaction due to magnetic dipole
+   radiation," *Physical Review A* **43**, 1002 (1991),
+   `doi:10.1103/PhysRevA.43.1002
+   <https://doi.org/10.1103/PhysRevA.43.1002>`_.
+
+.. [Unruh1999] W. G. Unruh, "Radiation reaction fields for an accelerated
+   dipole for scalar and electromagnetic radiation," *Physical Review A*
+   **59**, 131 (1999), `doi:10.1103/PhysRevA.59.131
+   <https://doi.org/10.1103/PhysRevA.59.131>`_.

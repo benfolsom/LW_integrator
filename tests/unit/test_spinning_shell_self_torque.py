@@ -17,6 +17,7 @@ from core.spinning_shell_self_torque import (
     evaluate_harmonic_spinning_shell_response_native,
     evaluate_harmonic_spinning_shell_transfer_native,
     evaluate_neutral_counterrotating_shell_response_native,
+    evaluate_neutral_spinning_shell_pulse_energy_balance_native,
     evaluate_spinning_shell_angular_balance_native,
     evaluate_spinning_shell_local_self_torque_native,
     reconstruct_harmonic_spinning_shell_impulse_response_native,
@@ -584,4 +585,82 @@ def test_neutral_counterrotating_shell_rejects_nonpositive_internal_charge() -> 
             shell_radius_mm=1.0,
             drive_angular_frequency_per_ns=1.0,
             angular_velocity_amplitude_per_ns=1.0,
+        )
+
+
+def test_neutral_shell_smooth_pulse_self_work_balances_mu_squared_radiation() -> None:
+    radius_mm = 0.7
+    sample_count = 4096
+    observation_window_ns = 80.0 * radius_mm / C_MMNS
+    times_ns = np.arange(sample_count) * observation_window_ns / sample_count
+    phase = (times_ns / observation_window_ns - 0.25) * 2.0
+    pulse = np.zeros(sample_count)
+    active = (phase >= 0.0) & (phase <= 1.0)
+    pulse[active] = np.sin(np.pi * phase[active]) ** 4
+    angular_velocities_per_ns = 0.01 * C_MMNS / radius_mm * pulse
+
+    result = evaluate_neutral_spinning_shell_pulse_energy_balance_native(
+        internal_charge_magnitude_native=ELEMENTARY_CHARGE,
+        shell_radius_mm=radius_mm,
+        sample_times_ns=times_ns,
+        angular_velocities_per_ns=angular_velocities_per_ns,
+    )
+
+    assert result.maximum_surface_beta == pytest.approx(0.01, rel=2.0e-6)
+    assert result.maximum_boundary_angular_velocity_fraction == 0.0
+    assert result.nyquist_radiated_energy_fraction < 1.0e-20
+    assert result.radiated_energy_native > 0.0
+    assert result.self_torque_work_native == pytest.approx(
+        -result.radiated_energy_native,
+        rel=2.0e-13,
+    )
+    assert abs(result.energy_balance_residual_native) < (
+        2.0e-13 * result.radiated_energy_native
+    )
+    assert result.radiated_energy_native < result.point_dipole_radiated_energy_native
+
+
+def test_neutral_shell_spectral_ledger_matches_one_harmonic_period() -> None:
+    radius_mm = 0.7
+    frequency_per_ns = 0.2 * C_MMNS / radius_mm
+    angular_velocity_amplitude_per_ns = 0.01 * C_MMNS / radius_mm
+    period_ns = 2.0 * np.pi / frequency_per_ns
+    sample_count = 1024
+    times_ns = np.arange(sample_count) * period_ns / sample_count
+    angular_velocities_per_ns = angular_velocity_amplitude_per_ns * np.cos(
+        frequency_per_ns * times_ns
+    )
+
+    spectral = evaluate_neutral_spinning_shell_pulse_energy_balance_native(
+        internal_charge_magnitude_native=ELEMENTARY_CHARGE,
+        shell_radius_mm=radius_mm,
+        sample_times_ns=times_ns,
+        angular_velocities_per_ns=angular_velocities_per_ns,
+    )
+    harmonic = evaluate_harmonic_spinning_shell_response_native(
+        charge_native=ELEMENTARY_CHARGE,
+        shell_radius_mm=radius_mm,
+        drive_angular_frequency_per_ns=frequency_per_ns,
+        angular_velocity_amplitude_per_ns=angular_velocity_amplitude_per_ns,
+    )
+
+    assert spectral.radiated_energy_native == pytest.approx(
+        harmonic.radiated_power_native * period_ns,
+        rel=8.0e-14,
+    )
+    assert spectral.self_torque_work_native == pytest.approx(
+        harmonic.average_self_torque_work_rate_native * period_ns,
+        rel=8.0e-14,
+    )
+
+
+def test_neutral_shell_pulse_rejects_nonuniform_samples() -> None:
+    times_ns = np.linspace(0.0, 1.0, 16, endpoint=False)
+    times_ns[8] += 1.0e-3
+    with pytest.raises(ValueError, match="uniformly spaced"):
+        evaluate_neutral_spinning_shell_pulse_energy_balance_native(
+            internal_charge_magnitude_native=ELEMENTARY_CHARGE,
+            shell_radius_mm=1.0,
+            sample_times_ns=times_ns,
+            angular_velocities_per_ns=np.zeros(16),
         )

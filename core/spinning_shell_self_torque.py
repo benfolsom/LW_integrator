@@ -241,6 +241,33 @@ class NeutralCounterRotatingShellResponseResult:
     effective_one_shell_response: HarmonicSpinningShellResponseResult
 
 
+@dataclass(frozen=True)
+class NeutralSpinningShellPulseEnergyBalanceResult:
+    """Frequency-resolved energy ledger for a prescribed neutral-shell pulse.
+
+    The sampled angular velocity is periodically extended by the discrete
+    Fourier transform.  A physical one-shot pulse should therefore include a
+    quiescent buffer at both ends.  The two reported boundary diagnostics let
+    callers check that assumption and that radiation near the Nyquist limit is
+    negligible.
+
+    This result establishes an integrated ``mu^2`` dissipation balance for
+    the explicit counter-rotating two-shell source.  It does not identify a
+    time-local bound energy or define a point-particle self-torque.
+    """
+
+    sample_count: int
+    sample_interval_ns: float
+    observation_window_ns: float
+    maximum_surface_beta: float
+    maximum_boundary_angular_velocity_fraction: float
+    nyquist_radiated_energy_fraction: float
+    self_torque_work_native: float
+    radiated_energy_native: float
+    point_dipole_radiated_energy_native: float
+    energy_balance_residual_native: float
+
+
 def _finite_complex(value: complex, *, name: str) -> complex:
     result = complex(value)
     if not np.isfinite(result.real) or not np.isfinite(result.imag):
@@ -668,6 +695,127 @@ def evaluate_neutral_counterrotating_shell_response_native(
     )
 
 
+def evaluate_neutral_spinning_shell_pulse_energy_balance_native(
+    *,
+    internal_charge_magnitude_native: float,
+    shell_radius_mm: float,
+    sample_times_ns: Sequence[float],
+    angular_velocities_per_ns: Sequence[float],
+) -> NeutralSpinningShellPulseEnergyBalanceResult:
+    """Evaluate an exact finite-shell ``mu^2`` pulse-energy balance.
+
+    This uses Mansuripur--Jakobsen's exact harmonic self-torque independently
+    at every discrete Fourier frequency.  The outward energy is evaluated
+    from the magnetic-dipole radiation spectrum with the finite-shell form
+    factor, rather than copied from the self-torque coefficient.
+
+    Samples must be real, finite, uniformly spaced, and must not repeat the
+    periodic endpoint.  For a one-shot pulse, callers should supply zero or
+    negligible angular velocity near both ends of the observation window.
+    """
+
+    charge_c = _charge_coulomb(internal_charge_magnitude_native)
+    if charge_c <= 0.0:
+        raise ValueError("internal_charge_magnitude_native must be positive")
+    radius_m = _positive_length_m(shell_radius_mm, name="shell_radius_mm")
+    times_ns = np.asarray(sample_times_ns, dtype=float)
+    angular_velocity_per_ns = np.asarray(angular_velocities_per_ns, dtype=float)
+    if times_ns.ndim != 1 or times_ns.size < 16:
+        raise ValueError("sample_times_ns must contain at least 16 samples")
+    if angular_velocity_per_ns.shape != times_ns.shape:
+        raise ValueError("angular_velocities_per_ns must match sample_times_ns")
+    if not np.all(np.isfinite(times_ns)) or not np.all(
+        np.isfinite(angular_velocity_per_ns)
+    ):
+        raise ValueError("pulse samples must be finite")
+    intervals_ns = np.diff(times_ns)
+    if np.any(intervals_ns <= 0.0):
+        raise ValueError("sample_times_ns must increase strictly")
+    sample_interval_ns = float(intervals_ns[0])
+    if not np.allclose(intervals_ns, sample_interval_ns, rtol=2.0e-12, atol=0.0):
+        raise ValueError("sample_times_ns must be uniformly spaced")
+
+    sample_count = times_ns.size
+    sample_interval_s = sample_interval_ns / _NS_PER_S
+    angular_velocity_per_s = angular_velocity_per_ns * _NS_PER_S
+    frequencies_per_s = 2.0 * np.pi * np.fft.fftfreq(
+        sample_count, d=sample_interval_s
+    )
+    angular_velocity_transform = (
+        sample_interval_s * np.fft.fft(angular_velocity_per_s)
+    )
+    frequency_spacing_per_s = 2.0 * np.pi / (
+        sample_count * sample_interval_s
+    )
+
+    gamma_imaginary_si = np.empty(sample_count)
+    finite_size_power_ratio = np.empty(sample_count)
+    for index, frequency_per_s in enumerate(frequencies_per_s):
+        x = frequency_per_s * radius_m / _C_M_S
+        gamma_imaginary_si[index] = _radiation_reaction_coefficient_si(
+            charge_coulomb=charge_c,
+            dimensionless_frequency=x,
+            response_model="exact",
+        ).imag
+        finite_size_power_ratio[index] = (
+            3.0 * _sin_minus_x_cos_over_x_cubed(abs(x))
+        ) ** 2
+
+    spectral_measure = frequency_spacing_per_s / (2.0 * np.pi)
+    transform_norm = np.abs(angular_velocity_transform) ** 2
+    self_work_si = -spectral_measure * float(
+        np.sum(gamma_imaginary_si * transform_norm)
+    )
+
+    moment_transform_si = charge_c * radius_m**2 * angular_velocity_transform / 3.0
+    point_spectral_energy_si = (
+        _MU_0_SI
+        * frequencies_per_s**4
+        * np.abs(moment_transform_si) ** 2
+        / (6.0 * np.pi * _C_M_S**3)
+        * spectral_measure
+    )
+    radiated_spectrum_si = point_spectral_energy_si * finite_size_power_ratio
+    radiated_energy_si = float(np.sum(radiated_spectrum_si))
+    point_energy_si = float(np.sum(point_spectral_energy_si))
+
+    peak_angular_velocity = float(np.max(np.abs(angular_velocity_per_ns)))
+    boundary_fraction = (
+        float(
+            max(
+                abs(angular_velocity_per_ns[0]),
+                abs(angular_velocity_per_ns[-1]),
+            )
+            / peak_angular_velocity
+        )
+        if peak_angular_velocity > 0.0
+        else 0.0
+    )
+    absolute_frequency = np.abs(frequencies_per_s)
+    nyquist_band = absolute_frequency >= 0.9 * float(np.max(absolute_frequency))
+    nyquist_fraction = (
+        float(np.sum(radiated_spectrum_si[nyquist_band]) / radiated_energy_si)
+        if radiated_energy_si > 0.0
+        else 0.0
+    )
+    energy_unit = NATIVE_ENERGY_UNIT_J
+    return NeutralSpinningShellPulseEnergyBalanceResult(
+        sample_count=sample_count,
+        sample_interval_ns=sample_interval_ns,
+        observation_window_ns=sample_count * sample_interval_ns,
+        maximum_surface_beta=(
+            peak_angular_velocity * _NS_PER_S * radius_m / _C_M_S
+        ),
+        maximum_boundary_angular_velocity_fraction=boundary_fraction,
+        nyquist_radiated_energy_fraction=nyquist_fraction,
+        self_torque_work_native=self_work_si / energy_unit,
+        radiated_energy_native=radiated_energy_si / energy_unit,
+        point_dipole_radiated_energy_native=point_energy_si / energy_unit,
+        energy_balance_residual_native=(self_work_si + radiated_energy_si)
+        / energy_unit,
+    )
+
+
 def evaluate_harmonic_spinning_shell_response_native(
     *,
     charge_native: float,
@@ -907,12 +1055,14 @@ __all__ = [
     "HarmonicSpinningShellPoleCountResult",
     "HarmonicSpinningShellTransferResult",
     "NeutralCounterRotatingShellResponseResult",
+    "NeutralSpinningShellPulseEnergyBalanceResult",
     "SpinningShellAngularBalanceResult",
     "SpinningShellLocalTorqueResult",
     "count_harmonic_spinning_shell_transfer_poles_native",
     "evaluate_harmonic_spinning_shell_response_native",
     "evaluate_harmonic_spinning_shell_transfer_native",
     "evaluate_neutral_counterrotating_shell_response_native",
+    "evaluate_neutral_spinning_shell_pulse_energy_balance_native",
     "evaluate_spinning_shell_angular_balance_native",
     "evaluate_spinning_shell_local_self_torque_native",
     "reconstruct_harmonic_spinning_shell_impulse_response_native",
