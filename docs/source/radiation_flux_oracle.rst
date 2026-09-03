@@ -569,6 +569,46 @@ involving proper acceleration and its derivative [Unruh1999]_.  The inertial
 formula must not be inserted into a flyby until those terms have been
 translated into this project's conventions and tested independently.
 
+Planar-acceleration comparator
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``evaluate_unruh_planar_accelerated_dipole_torque_comparator_native`` records
+the torque-relevant part of Unruh's Eq. (60) without applying it.  Let
+:math:`A^\mu=du^\mu/d\tau`, define
+:math:`\kappa^2=-A_\mu A^\mu/c^2`, and let :math:`D_{\rm FW}` denote the
+Fermi--Walker derivative with respect to proper time.  After fixing the
+overall sign and normalization with the finite-shell inertial limit, the
+candidate torque is
+
+.. math::
+
+   N^\mu_{\rm U}={\mu_0\over6\pi c^3}
+   \epsilon^\mu{}_{\nu\rho\sigma}\mu^\nu
+   \left[D_{\rm FW}^3\mu^\rho
+   +{3\over2}\kappa^2D_{\rm FW}\mu^\rho\right]
+   {u^\sigma\over c}.
+
+Unruh's reaction magnetic field has one further term proportional to
+:math:`\mu^\rho f\dot f`.  It is parallel to the moment, so it makes exactly
+zero contribution to :math:`\boldsymbol\mu\mathbin\times\boldsymbol B_{RR}`.
+It is omitted only from this torque comparator, not declared absent from the
+complete self-field.
+
+The implementation requires callers to supply the first and third
+Fermi--Walker moment derivatives explicitly.  It checks that velocity,
+acceleration, moment, and both derivatives satisfy their required
+orthogonality relations.  Tests establish exact recovery of the inertial
+oracle, covariance of the acceleration term under a finite boost, invariance
+of :math:`\kappa^2`, and orthogonality of the resulting torque to velocity and
+moment.
+
+This still does not authorize an applied accelerated torque.  Unruh derives
+the field for acceleration confined to a plane and explicitly notes that the
+result was not independently proved from the conventional radiated
+energy--momentum calculation.  The reaction electric field, translational
+force, nonplanar motion, moving-source balance, and reduction of order remain
+separate gates.
+
 Required convergence checks
 ---------------------------
 
