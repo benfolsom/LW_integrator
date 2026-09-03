@@ -14,6 +14,7 @@ from core.radiation_flux_oracle import (
 )
 from core.spinning_shell_self_torque import (
     count_harmonic_spinning_shell_transfer_poles_native,
+    evaluate_concentric_neutral_shell_angular_momentum_balance_native,
     evaluate_harmonic_spinning_shell_response_native,
     evaluate_harmonic_spinning_shell_transfer_native,
     evaluate_neutral_counterrotating_shell_response_native,
@@ -764,3 +765,133 @@ def test_neutral_shell_finite_sphere_pulse_ledger_refines_quadratically() -> Non
     assert residuals[1] < residuals[0] / 3.9
     assert residuals[2] < residuals[1] / 3.9
     assert residuals[2] < 3.0e-4 * field_scales[2]
+
+
+def test_distinct_neutral_shells_store_static_internal_angular_momentum() -> None:
+    shell_radius_mm = 0.7
+    sample_count = 64
+    angular_velocity = np.array((0.0, 0.0, 0.01 * C_MMNS / shell_radius_mm))
+    shell_velocities = np.empty((sample_count, 2, 3))
+    shell_velocities[:, 0] = angular_velocity
+    shell_velocities[:, 1] = -angular_velocity
+
+    result = evaluate_concentric_neutral_shell_angular_momentum_balance_native(
+        internal_charge_magnitude_native=ELEMENTARY_CHARGE,
+        shell_radii_mm=(0.95 * shell_radius_mm, 1.05 * shell_radius_mm),
+        observation_radius_mm=4.0 * shell_radius_mm,
+        sample_times_ns=np.arange(sample_count, dtype=float),
+        shell_angular_velocities_per_ns=shell_velocities,
+    )
+
+    assert result.shell_charges_native == pytest.approx(
+        (0.5 * ELEMENTARY_CHARGE, -0.5 * ELEMENTARY_CHARGE),
+        rel=2.0e-16,
+        abs=0.0,
+    )
+    assert np.all(result.field_angular_momentum_native[:, 2] != 0.0)
+    np.testing.assert_allclose(
+        result.field_angular_momentum_native,
+        np.broadcast_to(
+            result.field_angular_momentum_native[0],
+            result.field_angular_momentum_native.shape,
+        ),
+        rtol=2.0e-15,
+        atol=0.0,
+    )
+    np.testing.assert_allclose(result.total_electromagnetic_torque_native, 0.0)
+    np.testing.assert_allclose(result.outward_angular_momentum_rate_native, 0.0)
+    np.testing.assert_allclose(result.cumulative_balance_residual_native, 0.0)
+
+
+def test_distinct_neutral_shell_angular_ledger_refines_quadratically() -> None:
+    shell_radius_mm = 0.7
+    shell_radii_mm = (0.95 * shell_radius_mm, 1.05 * shell_radius_mm)
+    observation_window_ns = 40.0 * shell_radius_mm / C_MMNS
+    residuals = []
+    field_scales = []
+    for sample_count in (128, 256, 512):
+        times_ns = np.arange(sample_count) * observation_window_ns / sample_count
+        phase = (times_ns / observation_window_ns - 0.2) / 0.3
+        envelope = np.zeros(sample_count)
+        active = (phase >= 0.0) & (phase <= 1.0)
+        envelope[active] = np.sin(np.pi * phase[active]) ** 4
+        carrier_phase = 16.0 * np.pi * times_ns / observation_window_ns
+        base_velocity = np.zeros((sample_count, 3))
+        base_velocity[:, 0] = envelope * np.cos(carrier_phase)
+        base_velocity[:, 1] = envelope * np.sin(carrier_phase)
+        base_velocity *= 0.01 * C_MMNS / shell_radius_mm
+        shell_velocities = np.stack((base_velocity, -base_velocity), axis=1)
+
+        result = evaluate_concentric_neutral_shell_angular_momentum_balance_native(
+            internal_charge_magnitude_native=ELEMENTARY_CHARGE,
+            shell_radii_mm=shell_radii_mm,
+            observation_radius_mm=4.0 * shell_radius_mm,
+            sample_times_ns=times_ns,
+            shell_angular_velocities_per_ns=shell_velocities,
+            radial_quadrature_order_per_region=20,
+            retarded_integral_order=32,
+        )
+        residuals.append(result.maximum_absolute_balance_residual_native)
+        field_scales.append(
+            float(np.max(np.linalg.norm(result.field_angular_momentum_native, axis=1)))
+        )
+
+    assert residuals[1] < residuals[0] / 3.9
+    assert residuals[2] < residuals[1] / 3.9
+    assert residuals[2] < 1.1e-3 * field_scales[2]
+
+
+def test_distinct_shell_limit_separates_internal_q_mu_from_mu_squared() -> None:
+    shell_radius_mm = 0.7
+    sample_count = 256
+    observation_window_ns = 40.0 * shell_radius_mm / C_MMNS
+    times_ns = np.arange(sample_count) * observation_window_ns / sample_count
+    phase = (times_ns / observation_window_ns - 0.2) / 0.3
+    envelope = np.zeros(sample_count)
+    active = (phase >= 0.0) & (phase <= 1.0)
+    envelope[active] = np.sin(np.pi * phase[active]) ** 4
+    carrier_phase = 16.0 * np.pi * times_ns / observation_window_ns
+    base_velocity = np.zeros((sample_count, 3))
+    base_velocity[:, 0] = envelope * np.cos(carrier_phase)
+    base_velocity[:, 1] = envelope * np.sin(carrier_phase)
+    base_velocity *= 0.01 * C_MMNS / shell_radius_mm
+    shell_velocities = np.stack((base_velocity, -base_velocity), axis=1)
+
+    transverse_torque = []
+    transverse_field_momentum = []
+    axial_torque = []
+    axial_field_momentum = []
+    axial_outward_rate = []
+    for relative_separation in (0.025, 0.0125, 0.00625):
+        result = evaluate_concentric_neutral_shell_angular_momentum_balance_native(
+            internal_charge_magnitude_native=ELEMENTARY_CHARGE,
+            shell_radii_mm=(
+                shell_radius_mm * (1.0 - 0.5 * relative_separation),
+                shell_radius_mm * (1.0 + 0.5 * relative_separation),
+            ),
+            observation_radius_mm=4.0 * shell_radius_mm,
+            sample_times_ns=times_ns,
+            shell_angular_velocities_per_ns=shell_velocities,
+            radial_quadrature_order_per_region=20,
+            retarded_integral_order=32,
+        )
+        torque_peak = np.max(
+            np.abs(result.total_electromagnetic_torque_native), axis=0
+        )
+        field_peak = np.max(np.abs(result.field_angular_momentum_native), axis=0)
+        outward_peak = np.max(
+            np.abs(result.outward_angular_momentum_rate_native), axis=0
+        )
+        transverse_torque.append(float(np.linalg.norm(torque_peak[:2])))
+        transverse_field_momentum.append(float(np.linalg.norm(field_peak[:2])))
+        axial_torque.append(float(torque_peak[2]))
+        axial_field_momentum.append(float(field_peak[2]))
+        axial_outward_rate.append(float(outward_peak[2]))
+
+    # The internal charge--moment reservoir vanishes linearly with shell
+    # separation, while the neutral exterior mu^2 sector has a finite limit.
+    for values in (transverse_torque, transverse_field_momentum):
+        assert values[1] == pytest.approx(0.5 * values[0], rel=8.0e-4)
+        assert values[2] == pytest.approx(0.5 * values[1], rel=8.0e-4)
+    for values in (axial_torque, axial_field_momentum, axial_outward_rate):
+        assert values[2] == pytest.approx(values[1], rel=1.0e-4)

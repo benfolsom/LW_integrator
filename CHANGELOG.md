@@ -1,5 +1,13 @@
 # Changelog
 
+- Add a vector angular-momentum ledger for two distinct concentric shells with
+  opposite charges. Direct surface Lorentz torques, electromagnetic angular
+  momentum inside a finite sphere, and outward angular-momentum flux close
+  with second-order time refinement. The calculation retains the reversible
+  charge--moment reservoir between the shells; a separation ladder shows that
+  reservoir vanishing linearly while the exterior pure-magnetic sector tends
+  to a finite limit.
+
 - Add an independent finite-sphere field-energy oracle for the neutral
   counter-rotating shell. It evaluates the exact causal vector potential
   inside and outside the material shell, integrates electromagnetic energy in

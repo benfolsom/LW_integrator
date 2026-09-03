@@ -431,6 +431,60 @@ This establishes the energy ledger independently for the explicit finite
 source.  A corresponding pure-:math:`\mu^2` angular-momentum ledger,
 arbitrary-axis motion, and intrinsic-particle matching remain open.
 
+Distinct-shell angular-momentum ledger
+--------------------------------------
+
+``evaluate_concentric_neutral_shell_angular_momentum_balance_native`` keeps
+the two countercharged shells at distinct radii while allowing each angular
+velocity to be a three-vector.  The exact retarded shell potential is summed
+before calculating fields.  Direct angular integration of the surface
+Lorentz force gives the electromagnetic torque on shell :math:`i`,
+
+.. math::
+
+   \boldsymbol N_i={\mu_0q_iR_i\over6\pi}
+   \left[
+   \boldsymbol\Omega_i\mathbin\times\boldsymbol{\cal G}(t,R_i)
+   -\partial_t\boldsymbol{\cal G}(t,R_i)
+   \right].
+
+This is the total vector torque on that shell.  It is not the scalar
+generalized torque conjugate to the relative counterrotation in the harmonic
+energy model.
+
+For distinct radii, charge neutrality holds outside both shells but not in
+the annulus between them.  The radial field-angular-momentum density therefore
+contains both a magnetic :math:`\mu^2` term and an internal reversible
+:math:`q\mu` term,
+
+.. math::
+
+   {d\boldsymbol J_{\rm field}\over dr}
+   ={\mu_0r^2\over6\pi c^2}
+   \boldsymbol{\cal G}\mathbin\times\partial_t\boldsymbol{\cal G}
+   -{\mu_0Q_{\rm enclosed}r\over6\pi}
+   \left(\partial_r\boldsymbol{\cal G}
+   +{\boldsymbol{\cal G}\over r}\right).
+
+The second term is essential.  Omitting it gives a nonconvergent transient
+ledger even though a quiet final boundary can misleadingly close.  With both
+terms present, the maintained rotating-pulse test closes
+
+.. math::
+
+   \Delta\boldsymbol J_{\rm field}
+   +\int\left(\sum_i\boldsymbol N_i
+   +\dot{\boldsymbol J}_{\rm outward}\right)dt=0
+
+with second-order time refinement.
+
+A shell-separation ladder distinguishes the sectors.  The transverse internal
+:math:`q\mu` torque and field momentum decrease linearly with
+:math:`|R_+-R_-|`.  The axial torque, field momentum, and neutral exterior
+:math:`\mu^2` flux approach finite values.  This supplies the first controlled
+coincident-shell angular-momentum limit, but it remains a nonrelativistic
+finite-source oracle rather than an intrinsic-particle torque law.
+
 Required convergence checks
 ---------------------------
 

@@ -288,6 +288,21 @@ class NeutralSpinningShellFiniteSphereEnergyResult:
     maximum_absolute_balance_residual_native: float
 
 
+@dataclass(frozen=True)
+class ConcentricShellAngularMomentumBalanceResult:
+    """Electromagnetic angular-momentum ledger for two concentric shells."""
+
+    shell_radii_mm: tuple[float, float]
+    shell_charges_native: tuple[float, float]
+    observation_radius_mm: float
+    electromagnetic_torque_by_shell_native: np.ndarray
+    total_electromagnetic_torque_native: np.ndarray
+    field_angular_momentum_native: np.ndarray
+    outward_angular_momentum_rate_native: np.ndarray
+    cumulative_balance_residual_native: np.ndarray
+    maximum_absolute_balance_residual_native: float
+
+
 def _finite_complex(value: complex, *, name: str) -> complex:
     result = complex(value)
     if not np.isfinite(result.real) or not np.isfinite(result.imag):
@@ -1095,6 +1110,211 @@ def evaluate_neutral_spinning_shell_finite_sphere_energy_native(
     )
 
 
+def evaluate_concentric_neutral_shell_angular_momentum_balance_native(
+    *,
+    internal_charge_magnitude_native: float,
+    shell_radii_mm: Sequence[float],
+    observation_radius_mm: float,
+    sample_times_ns: Sequence[float],
+    shell_angular_velocities_per_ns: Sequence[Sequence[Sequence[float]]],
+    radial_quadrature_order_per_region: int = 20,
+    retarded_integral_order: int = 32,
+) -> ConcentricShellAngularMomentumBalanceResult:
+    """Close angular momentum for two distinct countercharged shells.
+
+    The shells carry charges ``(+q/2, -q/2)``.  Their angular velocities are
+    supplied independently with shape ``(sample_count, 2, 3)``.  The total
+    electromagnetic torque on each shell is obtained from its surface Lorentz
+    force, including both shells' exact retarded vector potentials.  This is
+    distinct from the generalized relative-rotation torque used by the scalar
+    harmonic energy response.  Between distinct radii the enclosed charge is
+    nonzero, so the field angular momentum includes a reversible ``q mu``
+    contribution in addition to the neutral exterior ``mu^2`` contribution.
+    """
+
+    charge_c = _charge_coulomb(internal_charge_magnitude_native)
+    if charge_c <= 0.0:
+        raise ValueError("internal_charge_magnitude_native must be positive")
+    radii_mm = np.asarray(shell_radii_mm, dtype=float)
+    if radii_mm.shape != (2,) or not np.all(np.isfinite(radii_mm)):
+        raise ValueError("shell_radii_mm must contain two finite radii")
+    if np.any(radii_mm <= 0.0) or radii_mm[0] == radii_mm[1]:
+        raise ValueError("shell radii must be positive and distinct")
+    radii_m = radii_mm * 1.0e-3
+    observation_radius_m = _positive_length_m(
+        observation_radius_mm, name="observation_radius_mm"
+    )
+    if observation_radius_m <= float(np.max(radii_m)):
+        raise ValueError("observation radius must enclose both shells")
+    radial_order = int(radial_quadrature_order_per_region)
+    delay_order = int(retarded_integral_order)
+    if radial_order < 8 or delay_order < 8:
+        raise ValueError("quadrature orders must be at least 8")
+
+    times_ns = np.asarray(sample_times_ns, dtype=float)
+    angular_velocity_per_ns = np.asarray(
+        shell_angular_velocities_per_ns, dtype=float
+    )
+    if times_ns.ndim != 1 or times_ns.size < 16:
+        raise ValueError("sample_times_ns must contain at least 16 samples")
+    if angular_velocity_per_ns.shape != (times_ns.size, 2, 3):
+        raise ValueError(
+            "shell_angular_velocities_per_ns must have shape "
+            "(sample_count, 2, 3)"
+        )
+    if not np.all(np.isfinite(times_ns)) or not np.all(
+        np.isfinite(angular_velocity_per_ns)
+    ):
+        raise ValueError("shell rotation samples must be finite")
+    intervals_ns = np.diff(times_ns)
+    if np.any(intervals_ns <= 0.0):
+        raise ValueError("sample_times_ns must increase strictly")
+    sample_interval_ns = float(intervals_ns[0])
+    if not np.allclose(intervals_ns, sample_interval_ns, rtol=2.0e-12, atol=0.0):
+        raise ValueError("sample_times_ns must be uniformly spaced")
+
+    sample_count = times_ns.size
+    sample_interval_s = sample_interval_ns / _NS_PER_S
+    frequencies_per_s = 2.0 * np.pi * np.fft.fftfreq(
+        sample_count, d=sample_interval_s
+    )
+    angular_velocity_per_s = angular_velocity_per_ns * _NS_PER_S
+    shell_charges_c = np.asarray((0.5 * charge_c, -0.5 * charge_c))
+    moment_si = (
+        shell_charges_c[np.newaxis, :, np.newaxis]
+        * radii_m[np.newaxis, :, np.newaxis] ** 2
+        * angular_velocity_per_s
+        / 3.0
+    )
+    moment_spectrum = np.fft.fft(moment_si, axis=0)
+
+    def total_gamma_at_radius(
+        radius_m: float,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        gamma_spectrum = np.zeros((sample_count, 3), dtype=complex)
+        gamma_radial_spectrum = np.zeros_like(gamma_spectrum)
+        for source_index, source_radius_m in enumerate(radii_m):
+            transfer, radial_derivative = _spinning_shell_radial_transfer_si(
+                shell_radius_m=float(source_radius_m),
+                field_radius_m=float(radius_m),
+                angular_frequencies_per_s=-frequencies_per_s,
+                retarded_integral_order=delay_order,
+            )
+            gamma_spectrum += (
+                transfer[:, np.newaxis] * moment_spectrum[:, source_index]
+            )
+            gamma_radial_spectrum += (
+                radial_derivative[:, np.newaxis]
+                * moment_spectrum[:, source_index]
+            )
+        gamma = np.fft.ifft(gamma_spectrum, axis=0).real
+        gamma_time_derivative = np.fft.ifft(
+            1.0j * frequencies_per_s[:, np.newaxis] * gamma_spectrum,
+            axis=0,
+        ).real
+        gamma_radial_derivative = np.fft.ifft(
+            gamma_radial_spectrum, axis=0
+        ).real
+        return gamma, gamma_time_derivative, gamma_radial_derivative
+
+    torque_by_shell_si = np.empty((sample_count, 2, 3))
+    for shell_index, (shell_radius_m, shell_charge_c) in enumerate(
+        zip(radii_m, shell_charges_c)
+    ):
+        gamma, gamma_time_derivative, _ = total_gamma_at_radius(
+            float(shell_radius_m)
+        )
+        coefficient = _MU_0_SI * shell_charge_c * shell_radius_m / (6.0 * np.pi)
+        torque_by_shell_si[:, shell_index] = coefficient * (
+            np.cross(angular_velocity_per_s[:, shell_index], gamma)
+            - gamma_time_derivative
+        )
+    total_torque_si = np.sum(torque_by_shell_si, axis=1)
+
+    standard_nodes, standard_weights = np.polynomial.legendre.leggauss(
+        radial_order
+    )
+    boundaries = np.r_[0.0, np.sort(radii_m), observation_radius_m]
+    radial_nodes: list[np.ndarray] = []
+    radial_weights: list[np.ndarray] = []
+    for lower, upper in zip(boundaries[:-1], boundaries[1:]):
+        half_width = 0.5 * (upper - lower)
+        radial_nodes.append(0.5 * (upper + lower) + half_width * standard_nodes)
+        radial_weights.append(half_width * standard_weights)
+    field_angular_momentum_si = np.zeros((sample_count, 3))
+    for radius_m, weight in zip(
+        np.concatenate(radial_nodes), np.concatenate(radial_weights)
+    ):
+        gamma, gamma_time_derivative, gamma_radial_derivative = (
+            total_gamma_at_radius(float(radius_m))
+        )
+        # The scalar electric fields cancel outside both shells, but not in
+        # the annulus between them.  Its E_radial x B_moment momentum is the
+        # internal q-mu reservoir that vanishes in the coincident-shell limit.
+        enclosed_charge_c = float(np.sum(shell_charges_c[radii_m < radius_m]))
+        charge_moment_angular_density_si = (
+            -_MU_0_SI
+            * enclosed_charge_c
+            * radius_m
+            / (6.0 * np.pi)
+            * (gamma_radial_derivative + gamma / radius_m)
+        )
+        field_angular_momentum_si += weight * (
+            _MU_0_SI
+            * radius_m**2
+            / (6.0 * np.pi * _C_M_S**2)
+            * np.cross(gamma, gamma_time_derivative)
+            + charge_moment_angular_density_si
+        )
+
+    surface_gamma, _, surface_gamma_radial_derivative = total_gamma_at_radius(
+        observation_radius_m
+    )
+    outward_rate_si = -_MU_0_SI * observation_radius_m**2 / (6.0 * np.pi) * (
+        np.cross(surface_gamma, surface_gamma_radial_derivative)
+    )
+    rate_sum_si = total_torque_si + outward_rate_si
+    cumulative_exchange_si = np.zeros_like(rate_sum_si)
+    cumulative_exchange_si[1:] = np.cumsum(
+        0.5
+        * (rate_sum_si[:-1] + rate_sum_si[1:])
+        * sample_interval_s,
+        axis=0,
+    )
+    residual_si = (
+        field_angular_momentum_si
+        - field_angular_momentum_si[0]
+        + cumulative_exchange_si
+    )
+
+    charge_scale = ELEMENTARY_CHARGE_COULOMB / ELEMENTARY_CHARGE
+    readonly_arrays = (
+        torque_by_shell_si / NATIVE_ENERGY_UNIT_J,
+        total_torque_si / NATIVE_ENERGY_UNIT_J,
+        field_angular_momentum_si / NATIVE_ACTION_UNIT_J_S,
+        outward_rate_si / NATIVE_ENERGY_UNIT_J,
+        residual_si / NATIVE_ACTION_UNIT_J_S,
+    )
+    for array in readonly_arrays:
+        array.setflags(write=False)
+    return ConcentricShellAngularMomentumBalanceResult(
+        shell_radii_mm=(float(radii_mm[0]), float(radii_mm[1])),
+        shell_charges_native=(
+            float(shell_charges_c[0] / charge_scale),
+            float(shell_charges_c[1] / charge_scale),
+        ),
+        observation_radius_mm=float(observation_radius_mm),
+        electromagnetic_torque_by_shell_native=readonly_arrays[0],
+        total_electromagnetic_torque_native=readonly_arrays[1],
+        field_angular_momentum_native=readonly_arrays[2],
+        outward_angular_momentum_rate_native=readonly_arrays[3],
+        cumulative_balance_residual_native=readonly_arrays[4],
+        maximum_absolute_balance_residual_native=float(
+            np.max(np.linalg.norm(readonly_arrays[4], axis=1))
+        ),
+    )
+
+
 def evaluate_harmonic_spinning_shell_response_native(
     *,
     charge_native: float,
@@ -1329,6 +1549,7 @@ def evaluate_spinning_shell_local_self_torque_native(
 
 
 __all__ = [
+    "ConcentricShellAngularMomentumBalanceResult",
     "HarmonicSpinningShellImpulseResponseResult",
     "HarmonicSpinningShellResponseResult",
     "HarmonicSpinningShellPoleCountResult",
@@ -1339,6 +1560,7 @@ __all__ = [
     "SpinningShellAngularBalanceResult",
     "SpinningShellLocalTorqueResult",
     "count_harmonic_spinning_shell_transfer_poles_native",
+    "evaluate_concentric_neutral_shell_angular_momentum_balance_native",
     "evaluate_harmonic_spinning_shell_response_native",
     "evaluate_harmonic_spinning_shell_transfer_native",
     "evaluate_neutral_counterrotating_shell_response_native",
