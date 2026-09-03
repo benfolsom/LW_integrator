@@ -18,6 +18,7 @@ from .constants import C_MMNS
 from .magnetic_dipole import minkowski_dot
 from .spin_self_force_reduction_oracle import (
     ArrayLike,
+    PotentialDirectionalIntrinsicSpinReductionResult,
     _finite_difference_weights,
     _sample_matrix,
 )
@@ -328,6 +329,57 @@ def evaluate_causal_sampled_fermi_walker_magnetic_torque_reduction_native(
     )
 
 
+def _evaluate_magnetic_torque_from_leading_rfs_jet_native(
+    *,
+    four_velocity_mm_ns: VectorLike,
+    normalized_spin_four_vector: VectorLike,
+    magnetic_moment_native: float,
+    leading: PotentialDirectionalRFSReductionJet,
+) -> PotentialDirectionalMagneticTorqueReductionResult:
+    velocity = np.asarray(four_velocity_mm_ns, dtype=float)
+    spin = np.asarray(normalized_spin_four_vector, dtype=float)
+    moment = float(magnetic_moment_native)
+    if velocity.shape != (4,) or not np.all(np.isfinite(velocity)):
+        raise ValueError("four_velocity_mm_ns must be a finite four-vector")
+    if spin.shape != (4,) or not np.all(np.isfinite(spin)):
+        raise ValueError("normalized_spin_four_vector must be a finite four-vector")
+    if not np.isfinite(moment):
+        raise ValueError("magnetic_moment_native must be finite")
+    moment_four = moment * spin
+    derivatives = fermi_walker_magnetic_moment_derivatives_from_local_jet_native(
+        four_velocity_mm_ns=velocity,
+        four_acceleration_mm_ns2=leading.four_acceleration,
+        four_jerk_mm_ns3=leading.four_jerk,
+        magnetic_moment_first_derivative_native=(
+            moment * leading.normalized_spin_first_derivative
+        ),
+        magnetic_moment_second_derivative_native=(
+            moment * leading.normalized_spin_second_derivative
+        ),
+        magnetic_moment_third_derivative_native=(
+            moment * leading.normalized_spin_third_derivative
+        ),
+    )
+    comparator = evaluate_unruh_planar_accelerated_dipole_torque_comparator_native(
+        four_velocity_mm_ns=velocity,
+        four_acceleration_mm_ns2=(derivatives.projected_four_acceleration_mm_ns2),
+        magnetic_moment_four_vector_native=moment_four,
+        magnetic_moment_first_fermi_walker_derivative_native=(
+            derivatives.first_fermi_walker_derivative_native
+        ),
+        magnetic_moment_third_fermi_walker_derivative_native=(
+            derivatives.third_fermi_walker_derivative_native
+        ),
+    )
+    return PotentialDirectionalMagneticTorqueReductionResult(
+        leading_dynamics=leading,
+        fermi_walker_derivatives=derivatives,
+        torque_comparator=comparator,
+        analytical_potential_derivatives_only=True,
+        reduction_of_order_performed=True,
+    )
+
+
 def evaluate_potential_directional_magnetic_torque_reduction_native(
     *,
     four_velocity_mm_ns: VectorLike,
@@ -372,38 +424,34 @@ def evaluate_potential_directional_magnetic_torque_reduction_native(
         magnetic_moment_native=moment,
         invariant_spin_native=invariant_spin_native,
     )
-    moment_four = moment * spin
-    derivatives = fermi_walker_magnetic_moment_derivatives_from_local_jet_native(
+    return _evaluate_magnetic_torque_from_leading_rfs_jet_native(
         four_velocity_mm_ns=velocity,
-        four_acceleration_mm_ns2=leading.four_acceleration,
-        four_jerk_mm_ns3=leading.four_jerk,
-        magnetic_moment_first_derivative_native=(
-            moment * leading.normalized_spin_first_derivative
-        ),
-        magnetic_moment_second_derivative_native=(
-            moment * leading.normalized_spin_second_derivative
-        ),
-        magnetic_moment_third_derivative_native=(
-            moment * leading.normalized_spin_third_derivative
-        ),
+        normalized_spin_four_vector=spin,
+        magnetic_moment_native=moment,
+        leading=leading,
     )
-    comparator = evaluate_unruh_planar_accelerated_dipole_torque_comparator_native(
-        four_velocity_mm_ns=velocity,
-        four_acceleration_mm_ns2=(derivatives.projected_four_acceleration_mm_ns2),
-        magnetic_moment_four_vector_native=moment_four,
-        magnetic_moment_first_fermi_walker_derivative_native=(
-            derivatives.first_fermi_walker_derivative_native
+
+
+def evaluate_magnetic_torque_from_intrinsic_spin_reduction_native(
+    *,
+    four_velocity_mm_ns: VectorLike,
+    normalized_spin_four_vector: VectorLike,
+    intrinsic_spin_reduction: PotentialDirectionalIntrinsicSpinReductionResult,
+) -> PotentialDirectionalMagneticTorqueReductionResult:
+    """Attach the passive magnetic torque to an existing retarded reduction.
+
+    The linear-in-spin self-force and pure-magnetic torque use the same
+    leading non-self RFS jet.  This adapter reuses that jet, so a diagnostic
+    caller does not repeat either retarded-provider pass.
+    """
+
+    return _evaluate_magnetic_torque_from_leading_rfs_jet_native(
+        four_velocity_mm_ns=four_velocity_mm_ns,
+        normalized_spin_four_vector=normalized_spin_four_vector,
+        magnetic_moment_native=(
+            intrinsic_spin_reduction.intrinsic_magnetic_moment_native
         ),
-        magnetic_moment_third_fermi_walker_derivative_native=(
-            derivatives.third_fermi_walker_derivative_native
-        ),
-    )
-    return PotentialDirectionalMagneticTorqueReductionResult(
-        leading_dynamics=leading,
-        fermi_walker_derivatives=derivatives,
-        torque_comparator=comparator,
-        analytical_potential_derivatives_only=True,
-        reduction_of_order_performed=True,
+        leading=intrinsic_spin_reduction.leading_dynamics,
     )
 
 
@@ -412,6 +460,7 @@ __all__ = [
     "PotentialDirectionalMagneticTorqueReductionResult",
     "SampledFermiWalkerMagneticTorqueReductionResult",
     "evaluate_causal_sampled_fermi_walker_magnetic_torque_reduction_native",
+    "evaluate_magnetic_torque_from_intrinsic_spin_reduction_native",
     "evaluate_potential_directional_magnetic_torque_reduction_native",
     "evaluate_sampled_fermi_walker_magnetic_torque_reduction_native",
     "fermi_walker_magnetic_moment_derivatives_from_local_jet_native",

@@ -22,6 +22,9 @@ from core.spin_self_force_reduction_oracle import (
     evaluate_sampled_intrinsic_spin_reduction_native,
     evaluate_retarded_potential_intrinsic_spin_reduction_native,
 )
+from core.spin_self_torque_reduction_oracle import (
+    evaluate_magnetic_torque_from_intrinsic_spin_reduction_native,
+)
 
 
 def _static_segment(distance_mm: float) -> tuple[float, np.ndarray]:
@@ -446,6 +449,15 @@ def test_retarded_history_evaluates_complete_potential_only_spin_reduction() -> 
             result.reduction.radiation_balance.self_force.linear_spin_self_force_native
         )
     )
+    torque = evaluate_magnetic_torque_from_intrinsic_spin_reduction_native(
+        four_velocity_mm_ns=velocity,
+        normalized_spin_four_vector=normalized_spin,
+        intrinsic_spin_reduction=result.reduction,
+    )
+    assert np.all(np.isfinite(torque.torque_comparator.total_spin_torque_native))
+    assert torque.leading_dynamics is result.reduction.leading_dynamics
+    assert torque.analytical_potential_derivatives_only
+    assert torque.reduction_of_order_performed
     # The point source is off the observer and both source sectors are active.
     np.testing.assert_array_equal(result.charge_provider.valid_sources, (True,))
     np.testing.assert_array_equal(result.dipole_provider.valid_sources, (True,))

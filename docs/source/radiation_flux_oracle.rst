@@ -670,6 +670,14 @@ the algebraic reduction-of-order sub-gate, but not the physical limitations
 of the underlying planar accelerated-dipole law.  The analytical result is
 still passive and is not used by the trajectory update.
 
+For a retarded event that has already been evaluated by the linear-spin
+self-force diagnostic,
+``evaluate_magnetic_torque_from_intrinsic_spin_reduction_native`` attaches
+the magnetic torque to the same leading RFS jet.  It performs no additional
+retarded root solve or potential evaluation.  This adapter is the intended
+entry point for sparse trajectory-event reporting while both self-reaction
+sectors remain passive.
+
 Required convergence checks
 ---------------------------
 
