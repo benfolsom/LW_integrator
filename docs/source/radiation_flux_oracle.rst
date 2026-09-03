@@ -534,6 +534,41 @@ Consequently, a quiet-boundary pulse can agree after integration even when
 the two rates differ substantially during the pulse.  This distinction must
 be retained when the oracle is later matched to an intrinsic spin equation.
 
+Inertial covariant point-torque oracle
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``evaluate_inertial_point_magnetic_dipole_self_torque_native`` provides the
+next deliberately limited bridge.  Along an inertial worldline it promotes
+the rest-frame point torque to the four-vector
+
+.. math::
+
+   N^\mu_{\rm RR}={\mu_0\over6\pi c^3}
+   \epsilon^\mu{}_{\nu\rho\sigma}\,
+   \mu^\nu {d^3\mu^\rho\over d\tau^3}{u^\sigma\over c}.
+
+Its rest frame is exactly the three-vector law above.  Maintained tests boost
+arbitrary, nonparallel moment and third-derivative vectors to a frame with
+:math:`|\boldsymbol\beta|\simeq0.77` and recover the Lorentz transform of the
+rest-frame torque.  The construction also gives
+
+.. math::
+
+   u_\mu N^\mu_{\rm RR}=0,
+   \qquad
+   \mu_\mu N^\mu_{\rm RR}=0.
+
+Thus it is compatible with the spin supplementary condition and, when
+:math:`\boldsymbol\mu` is proportional to spin, does not change spin
+magnitude.
+
+The word *inertial* in the function name is an important physics boundary,
+not merely an implementation status.  For an accelerated dipole, Unruh's
+reaction field contains Fermi--Walker derivatives plus additional terms
+involving proper acceleration and its derivative [Unruh1999]_.  The inertial
+formula must not be inserted into a flyby until those terms have been
+translated into this project's conventions and tested independently.
+
 Required convergence checks
 ---------------------------
 

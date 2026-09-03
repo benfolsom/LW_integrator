@@ -65,7 +65,7 @@ def _minkowski_dot(left: np.ndarray, right: np.ndarray) -> float:
     return float(left @ MINKOWSKI_METRIC @ right)
 
 
-def _body_frame_cross(
+def body_frame_cross(
     left: np.ndarray, right: np.ndarray, frame_vector: np.ndarray
 ) -> np.ndarray:
     """Return ``epsilon^mu_(nu rho sigma) left^nu right^rho frame^sigma``."""
@@ -239,13 +239,13 @@ def evaluate_jakobsen_linear_spin_self_force_native(
     subtracted_moment = moment - minimal_spin_moment
     subtracted_moment_derivative = moment_derivative - minimal_spin_moment_derivative
 
-    moment_derivative_cross = _body_frame_cross(
+    moment_derivative_cross = body_frame_cross(
         jerk, moment_derivative, normalized_velocity
     )
     cross_product_derivative = (
-        _body_frame_cross(snap, subtracted_moment, normalized_velocity)
-        + _body_frame_cross(jerk, subtracted_moment_derivative, normalized_velocity)
-        + _body_frame_cross(jerk, subtracted_moment, normalized_velocity_derivative)
+        body_frame_cross(snap, subtracted_moment, normalized_velocity)
+        + body_frame_cross(jerk, subtracted_moment_derivative, normalized_velocity)
+        + body_frame_cross(jerk, subtracted_moment, normalized_velocity_derivative)
     )
     bracket = moment_derivative_cross + cross_product_derivative
     projected_bracket = _orthogonal_projection(bracket, velocity)
@@ -254,7 +254,7 @@ def evaluate_jakobsen_linear_spin_self_force_native(
     linear_spin_force = spin_prefactor * projected_bracket
     projected_jerk = _orthogonal_projection(jerk, velocity)
     charge_radiative_electric_field = 2.0 * charge / (3.0 * C_MMNS**3) * projected_jerk
-    radiative_field_cross = _body_frame_cross(
+    radiative_field_cross = body_frame_cross(
         acceleration,
         charge_radiative_electric_field,
         normalized_velocity,
@@ -370,35 +370,35 @@ def evaluate_jakobsen_intrinsic_spin_radiation_balance_native(
         ),
     )
 
-    acceleration_cross_spin_derivative = _body_frame_cross(
+    acceleration_cross_spin_derivative = body_frame_cross(
         acceleration, spin_derivative, normalized_velocity
     )
-    jerk_cross_spin = _body_frame_cross(jerk, spin, normalized_velocity)
+    jerk_cross_spin = body_frame_cross(jerk, spin, normalized_velocity)
     bound_prefactor = charge**2 / (3.0 * mass * C_MMNS**5)
     bound_momentum = bound_prefactor * (
         g_value * acceleration_cross_spin_derivative + (g_value - 2.0) * jerk_cross_spin
     )
 
     acceleration_cross_spin_derivative_rate = (
-        _body_frame_cross(jerk, spin_derivative, normalized_velocity)
-        + _body_frame_cross(acceleration, spin_second_derivative, normalized_velocity)
-        + _body_frame_cross(
+        body_frame_cross(jerk, spin_derivative, normalized_velocity)
+        + body_frame_cross(acceleration, spin_second_derivative, normalized_velocity)
+        + body_frame_cross(
             acceleration,
             spin_derivative,
             normalized_velocity_derivative,
         )
     )
     jerk_cross_spin_rate = (
-        _body_frame_cross(snap, spin, normalized_velocity)
-        + _body_frame_cross(jerk, spin_derivative, normalized_velocity)
-        + _body_frame_cross(jerk, spin, normalized_velocity_derivative)
+        body_frame_cross(snap, spin, normalized_velocity)
+        + body_frame_cross(jerk, spin_derivative, normalized_velocity)
+        + body_frame_cross(jerk, spin, normalized_velocity_derivative)
     )
     bound_momentum_derivative = bound_prefactor * (
         g_value * acceleration_cross_spin_derivative_rate
         + (g_value - 2.0) * jerk_cross_spin_rate
     )
 
-    acceleration_cross_jerk = _body_frame_cross(acceleration, jerk, normalized_velocity)
+    acceleration_cross_jerk = body_frame_cross(acceleration, jerk, normalized_velocity)
     spin_acceleration_jerk_scalar = _minkowski_dot(spin, acceleration_cross_jerk)
     radiated_particle_momentum_rate = (
         charge**2
@@ -406,7 +406,7 @@ def evaluate_jakobsen_intrinsic_spin_radiation_balance_native(
         / (3.0 * mass)
         * (
             normalized_velocity * spin_acceleration_jerk_scalar / C_MMNS**6
-            + _body_frame_cross(
+            + body_frame_cross(
                 spin_second_derivative,
                 acceleration,
                 normalized_velocity,
@@ -431,6 +431,7 @@ def evaluate_jakobsen_intrinsic_spin_radiation_balance_native(
 __all__ = [
     "JakobsenIntrinsicSpinRadiationBalanceResult",
     "JakobsenLinearSpinSelfForceResult",
+    "body_frame_cross",
     "evaluate_jakobsen_intrinsic_spin_radiation_balance_native",
     "evaluate_jakobsen_linear_spin_self_force_native",
 ]
