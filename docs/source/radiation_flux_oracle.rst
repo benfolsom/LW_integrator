@@ -485,6 +485,55 @@ A shell-separation ladder distinguishes the sectors.  The transverse internal
 coincident-shell angular-momentum limit, but it remains a nonrelativistic
 finite-source oracle rather than an intrinsic-particle torque law.
 
+Retarded/advanced split and point-dipole limit
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The full retarded shell torque contains two physically different effects.  A
+time-symmetric part changes the object's electromagnetic inertia and exchanges
+angular momentum reversibly with its nearby field.  A radiation-sensitive
+part remains after subtracting the corresponding advanced-field solution.
+The oracle reports these separately as
+
+.. math::
+
+   \boldsymbol N_{\rm symmetric}
+   ={\boldsymbol N_{\rm ret}+\boldsymbol N_{\rm adv}\over2},\qquad
+   \boldsymbol N_{\rm RR}
+   ={\boldsymbol N_{\rm ret}-\boldsymbol N_{\rm adv}\over2}.
+
+This split explains why comparing the complete retarded torque directly with
+a point radiation-reaction law gives a worse result as the motion is slowed:
+the reversible electromagnetic-inertia term has not been removed.  After the
+split, the radiation-sensitive torque approaches the standard point-dipole
+expression [StumpPollack1997]_
+
+.. math::
+
+   \boldsymbol N_{\rm RR}^{\rm point}
+   ={\mu_0\over6\pi c^3}
+   \boldsymbol\mu\mathbin\times\boldsymbol\mu^{(3)}.
+
+For the maintained rotating pulse, increasing its duration from 80 to 160 to
+320 shell light-crossing times reduces the axial relative error from 14.1% to
+3.73% to 0.945%.  Thus each factor-two slowdown reduces the leading error by
+approximately four, consistent with a finite-size correction of order
+:math:`(R/cT)^2`.
+
+The instantaneous reaction torque is not generally minus the simultaneous
+far-zone angular-momentum flux.  Their difference is the time derivative of
+near-field, or Schott, angular momentum [Duviryak2022]_.  For the point term,
+
+.. math::
+
+   \boldsymbol\mu\mathbin\times\boldsymbol\mu^{(3)}
+   ={d\over dt}\left(
+   \boldsymbol\mu\mathbin\times\ddot{\boldsymbol\mu}\right)
+   -\dot{\boldsymbol\mu}\mathbin\times\ddot{\boldsymbol\mu}.
+
+Consequently, a quiet-boundary pulse can agree after integration even when
+the two rates differ substantially during the pulse.  This distinction must
+be retained when the oracle is later matched to an intrinsic spin equation.
+
 Required convergence checks
 ---------------------------
 
@@ -601,3 +650,12 @@ References
    dipole for scalar and electromagnetic radiation," *Physical Review A*
    **59**, 131 (1999), `doi:10.1103/PhysRevA.59.131
    <https://doi.org/10.1103/PhysRevA.59.131>`_.
+
+.. [StumpPollack1997] D. R. Stump and G. L. Pollack, "Magnetic dipole
+   oscillations and radiation damping," *American Journal of Physics* **65**,
+   81 (1997), `doi:10.1119/1.18523
+   <https://doi.org/10.1119/1.18523>`_.
+
+.. [Duviryak2022] A. Duviryak, "On the free rotation of a polarized
+   spinning-top as a test of the correct radiation reaction torque,"
+   `arXiv:2204.01519 <https://arxiv.org/abs/2204.01519>`_ (2022).

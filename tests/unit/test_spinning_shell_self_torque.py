@@ -799,6 +799,11 @@ def test_distinct_neutral_shells_store_static_internal_angular_momentum() -> Non
         atol=0.0,
     )
     np.testing.assert_allclose(result.total_electromagnetic_torque_native, 0.0)
+    np.testing.assert_allclose(result.time_symmetric_torque_native, 0.0)
+    np.testing.assert_allclose(result.radiation_reaction_torque_native, 0.0)
+    np.testing.assert_allclose(
+        result.point_dipole_radiation_reaction_torque_native, 0.0
+    )
     np.testing.assert_allclose(result.outward_angular_momentum_rate_native, 0.0)
     np.testing.assert_allclose(result.cumulative_balance_residual_native, 0.0)
 
@@ -895,3 +900,68 @@ def test_distinct_shell_limit_separates_internal_q_mu_from_mu_squared() -> None:
         assert values[2] == pytest.approx(0.5 * values[1], rel=8.0e-4)
     for values in (axial_torque, axial_field_momentum, axial_outward_rate):
         assert values[2] == pytest.approx(values[1], rel=1.0e-4)
+
+
+def test_distinct_shell_reaction_torque_approaches_point_dipole_limit() -> None:
+    shell_radius_mm = 0.7
+    relative_separation = 0.00625
+    sample_count = 512
+    relative_errors = []
+    for duration_in_light_crossing_times in (80.0, 160.0, 320.0):
+        observation_window_ns = (
+            duration_in_light_crossing_times * shell_radius_mm / C_MMNS
+        )
+        times_ns = (
+            np.arange(sample_count) * observation_window_ns / sample_count
+        )
+        phase = (times_ns / observation_window_ns - 0.2) / 0.3
+        envelope = np.zeros(sample_count)
+        active = (phase >= 0.0) & (phase <= 1.0)
+        envelope[active] = np.sin(np.pi * phase[active]) ** 4
+        carrier_phase = 16.0 * np.pi * times_ns / observation_window_ns
+        base_velocity = np.zeros((sample_count, 3))
+        base_velocity[:, 0] = envelope * np.cos(carrier_phase)
+        base_velocity[:, 1] = envelope * np.sin(carrier_phase)
+        base_velocity *= 0.01 * C_MMNS / shell_radius_mm
+        shell_velocities = np.stack((base_velocity, -base_velocity), axis=1)
+
+        result = evaluate_concentric_neutral_shell_angular_momentum_balance_native(
+            internal_charge_magnitude_native=ELEMENTARY_CHARGE,
+            shell_radii_mm=(
+                shell_radius_mm * (1.0 - 0.5 * relative_separation),
+                shell_radius_mm * (1.0 + 0.5 * relative_separation),
+            ),
+            observation_radius_mm=4.0 * shell_radius_mm,
+            sample_times_ns=times_ns,
+            shell_angular_velocities_per_ns=shell_velocities,
+            radial_quadrature_order_per_region=20,
+            retarded_integral_order=32,
+        )
+
+        reconstruction_scale = float(
+            np.max(np.abs(result.total_electromagnetic_torque_native))
+        )
+        np.testing.assert_allclose(
+            result.time_symmetric_torque_native
+            + result.radiation_reaction_torque_native,
+            result.total_electromagnetic_torque_native,
+            rtol=2.0e-15,
+            atol=2.0e-15 * reconstruction_scale,
+        )
+
+        # In this planar rotation the physical point-limit torque is axial.
+        # The exact finite-shell reaction differs first at order (R/cT)^2,
+        # so doubling the pulse duration should reduce its relative error by
+        # approximately four.
+        reaction = result.radiation_reaction_torque_native[:, 2]
+        point_limit = result.point_dipole_radiation_reaction_torque_native[:, 2]
+        relative_errors.append(
+            float(
+                np.linalg.norm(reaction - point_limit)
+                / np.linalg.norm(point_limit)
+            )
+        )
+
+    assert relative_errors[1] < relative_errors[0] / 3.7
+    assert relative_errors[2] < relative_errors[1] / 3.7
+    assert relative_errors[2] < 0.01

@@ -297,6 +297,9 @@ class ConcentricShellAngularMomentumBalanceResult:
     observation_radius_mm: float
     electromagnetic_torque_by_shell_native: np.ndarray
     total_electromagnetic_torque_native: np.ndarray
+    time_symmetric_torque_native: np.ndarray
+    radiation_reaction_torque_native: np.ndarray
+    point_dipole_radiation_reaction_torque_native: np.ndarray
     field_angular_momentum_native: np.ndarray
     outward_angular_momentum_rate_native: np.ndarray
     cumulative_balance_residual_native: np.ndarray
@@ -1130,6 +1133,18 @@ def evaluate_concentric_neutral_shell_angular_momentum_balance_native(
     harmonic energy response.  Between distinct radii the enclosed charge is
     nonzero, so the field angular momentum includes a reversible ``q mu``
     contribution in addition to the neutral exterior ``mu^2`` contribution.
+
+    The returned retarded torque is also split into its half-retarded plus
+    half-advanced (time-symmetric) and half-retarded minus half-advanced
+    (radiation-reaction) parts.  The point-dipole comparison is the leading
+    slow-variation limit
+
+    ``N_RR = mu_0 * mu x d^3(mu)/dt^3 / (6*pi*c^3)``.
+
+    It is an instantaneous reaction torque, including the near-field Schott
+    exchange.  It therefore need not equal minus the angular-momentum flux at
+    the observation sphere at each time, although complete quiet-boundary
+    pulses agree after time integration.
     """
 
     charge_c = _charge_coulomb(internal_charge_magnitude_native)
@@ -1187,17 +1202,36 @@ def evaluate_concentric_neutral_shell_angular_momentum_balance_native(
         / 3.0
     )
     moment_spectrum = np.fft.fft(moment_si, axis=0)
+    total_moment_si = np.sum(moment_si, axis=1)
+    total_moment_third_derivative_si = np.fft.ifft(
+        (1.0j * frequencies_per_s[:, np.newaxis]) ** 3
+        * np.fft.fft(total_moment_si, axis=0),
+        axis=0,
+    ).real
+    point_reaction_torque_si = (
+        _MU_0_SI
+        / (6.0 * np.pi * _C_M_S**3)
+        * np.cross(total_moment_si, total_moment_third_derivative_si)
+    )
 
     def total_gamma_at_radius(
         radius_m: float,
+        *,
+        boundary_condition: str = "retarded",
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        if boundary_condition == "retarded":
+            response_frequencies_per_s = -frequencies_per_s
+        elif boundary_condition == "advanced":
+            response_frequencies_per_s = frequencies_per_s
+        else:
+            raise ValueError("boundary_condition must be 'retarded' or 'advanced'")
         gamma_spectrum = np.zeros((sample_count, 3), dtype=complex)
         gamma_radial_spectrum = np.zeros_like(gamma_spectrum)
         for source_index, source_radius_m in enumerate(radii_m):
             transfer, radial_derivative = _spinning_shell_radial_transfer_si(
                 shell_radius_m=float(source_radius_m),
                 field_radius_m=float(radius_m),
-                angular_frequencies_per_s=-frequencies_per_s,
+                angular_frequencies_per_s=response_frequencies_per_s,
                 retarded_integral_order=delay_order,
             )
             gamma_spectrum += (
@@ -1218,6 +1252,7 @@ def evaluate_concentric_neutral_shell_angular_momentum_balance_native(
         return gamma, gamma_time_derivative, gamma_radial_derivative
 
     torque_by_shell_si = np.empty((sample_count, 2, 3))
+    advanced_torque_by_shell_si = np.empty_like(torque_by_shell_si)
     for shell_index, (shell_radius_m, shell_charge_c) in enumerate(
         zip(radii_m, shell_charges_c)
     ):
@@ -1229,7 +1264,21 @@ def evaluate_concentric_neutral_shell_angular_momentum_balance_native(
             np.cross(angular_velocity_per_s[:, shell_index], gamma)
             - gamma_time_derivative
         )
+        advanced_gamma, advanced_gamma_time_derivative, _ = total_gamma_at_radius(
+            float(shell_radius_m), boundary_condition="advanced"
+        )
+        advanced_torque_by_shell_si[:, shell_index] = coefficient * (
+            np.cross(angular_velocity_per_s[:, shell_index], advanced_gamma)
+            - advanced_gamma_time_derivative
+        )
     total_torque_si = np.sum(torque_by_shell_si, axis=1)
+    total_advanced_torque_si = np.sum(advanced_torque_by_shell_si, axis=1)
+    time_symmetric_torque_si = 0.5 * (
+        total_torque_si + total_advanced_torque_si
+    )
+    radiation_reaction_torque_si = 0.5 * (
+        total_torque_si - total_advanced_torque_si
+    )
 
     standard_nodes, standard_weights = np.polynomial.legendre.leggauss(
         radial_order
@@ -1291,6 +1340,9 @@ def evaluate_concentric_neutral_shell_angular_momentum_balance_native(
     readonly_arrays = (
         torque_by_shell_si / NATIVE_ENERGY_UNIT_J,
         total_torque_si / NATIVE_ENERGY_UNIT_J,
+        time_symmetric_torque_si / NATIVE_ENERGY_UNIT_J,
+        radiation_reaction_torque_si / NATIVE_ENERGY_UNIT_J,
+        point_reaction_torque_si / NATIVE_ENERGY_UNIT_J,
         field_angular_momentum_si / NATIVE_ACTION_UNIT_J_S,
         outward_rate_si / NATIVE_ENERGY_UNIT_J,
         residual_si / NATIVE_ACTION_UNIT_J_S,
@@ -1306,11 +1358,14 @@ def evaluate_concentric_neutral_shell_angular_momentum_balance_native(
         observation_radius_mm=float(observation_radius_mm),
         electromagnetic_torque_by_shell_native=readonly_arrays[0],
         total_electromagnetic_torque_native=readonly_arrays[1],
-        field_angular_momentum_native=readonly_arrays[2],
-        outward_angular_momentum_rate_native=readonly_arrays[3],
-        cumulative_balance_residual_native=readonly_arrays[4],
+        time_symmetric_torque_native=readonly_arrays[2],
+        radiation_reaction_torque_native=readonly_arrays[3],
+        point_dipole_radiation_reaction_torque_native=readonly_arrays[4],
+        field_angular_momentum_native=readonly_arrays[5],
+        outward_angular_momentum_rate_native=readonly_arrays[6],
+        cumulative_balance_residual_native=readonly_arrays[7],
         maximum_absolute_balance_residual_native=float(
-            np.max(np.linalg.norm(readonly_arrays[4], axis=1))
+            np.max(np.linalg.norm(readonly_arrays[7], axis=1))
         ),
     )
 
