@@ -609,6 +609,50 @@ energy--momentum calculation.  The reaction electric field, translational
 force, nonplanar motion, moving-source balance, and reduction of order remain
 separate gates.
 
+Sampled reduction-of-order reference
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``evaluate_sampled_fermi_walker_magnetic_torque_reduction_native`` supplies
+an independent reference for the next gate.  It differentiates seven or more
+samples from a leading-order trajectory in which magnetic self-reaction is
+absent.  This is the meaning of *reduction of order*: high derivatives inside
+the already-small self-reaction correction are evaluated from the ordinary
+non-self dynamics, instead of becoming new dynamical variables that admit
+runaway solutions.
+
+Let :math:`w=u/c` and let
+
+.. math::
+
+   P^\mu{}_\nu=\delta^\mu{}_\nu-w^\mu w_\nu
+
+project a four-vector into the particle's instantaneous rest space.  For a
+spatial magnetic moment, one Fermi--Walker derivative is
+
+.. math::
+
+   {D_{\rm FW}\mu\over D\tau}=P{d\mu\over d\tau}.
+
+The implementation differentiates this expression twice more, including the
+first and second derivatives of :math:`P`; it does not merely project the raw
+third derivative once.  That distinction matters whenever the worldline is
+accelerated because the instantaneous rest space itself then changes.
+
+The centered form deliberately uses samples on both sides of the evaluation
+event and is therefore a validation oracle only.  A separately named causal
+form uses the newest seven-or-more accepted samples and no future state.  It
+is still diagnostic: callers must ensure that rejected trial steps and any
+self-reaction-corrected states never enter its history.  Both forms report the
+scaled interpolation-matrix condition number and violations of velocity
+normalization and moment orthogonality, so an apparently precise torque can
+be rejected when its derivative reconstruction is ill-conditioned.
+
+The maintained accelerated-worldline test uses hyperbolic motion with a
+moment prescribed in a Fermi--Walker-transported basis.  The reconstructed
+third derivative converges at fourth order under step halving.  This sampled
+route is the reference answer for a later sparse analytical implementation;
+it is not connected to the trajectory update.
+
 Required convergence checks
 ---------------------------
 
