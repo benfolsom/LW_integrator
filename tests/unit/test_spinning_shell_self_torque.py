@@ -6,8 +6,8 @@ import numpy as np
 import pytest
 
 from core.constants import C_MMNS, ELECTRON_MASS_AMU, ELEMENTARY_CHARGE
-from core.external_fields import AMU_KG
-from core.magnetic_dipole import NATIVE_ACTION_UNIT_J_S
+from core.external_fields import AMU_KG, ELEMENTARY_CHARGE_COULOMB
+from core.magnetic_dipole import NATIVE_ACTION_UNIT_J_S, NATIVE_ENERGY_UNIT_J
 from core.radiation_flux_oracle import (
     gauss_legendre_sphere_quadrature,
     integrate_radiation_sphere_flux_native,
@@ -17,6 +17,7 @@ from core.spinning_shell_self_torque import (
     evaluate_harmonic_spinning_shell_response_native,
     evaluate_harmonic_spinning_shell_transfer_native,
     evaluate_neutral_counterrotating_shell_response_native,
+    evaluate_neutral_spinning_shell_finite_sphere_energy_native,
     evaluate_neutral_spinning_shell_pulse_energy_balance_native,
     evaluate_spinning_shell_angular_balance_native,
     evaluate_spinning_shell_local_self_torque_native,
@@ -681,3 +682,85 @@ def test_neutral_shell_pulse_rejects_nonuniform_samples() -> None:
             sample_times_ns=times_ns,
             angular_velocities_per_ns=np.zeros(16),
         )
+
+
+def test_neutral_shell_static_finite_sphere_field_energy_matches_closed_form() -> None:
+    shell_radius_mm = 0.7
+    observation_radius_mm = 4.0 * shell_radius_mm
+    angular_velocity_per_ns = 0.01 * C_MMNS / shell_radius_mm
+    sample_count = 64
+    times_ns = np.arange(sample_count, dtype=float)
+
+    result = evaluate_neutral_spinning_shell_finite_sphere_energy_native(
+        internal_charge_magnitude_native=ELEMENTARY_CHARGE,
+        shell_radius_mm=shell_radius_mm,
+        observation_radius_mm=observation_radius_mm,
+        sample_times_ns=times_ns,
+        angular_velocities_per_ns=np.full(sample_count, angular_velocity_per_ns),
+        radial_quadrature_order_per_region=16,
+        retarded_integral_order=24,
+    )
+
+    shell_radius_m = shell_radius_mm * 1.0e-3
+    observation_radius_m = observation_radius_mm * 1.0e-3
+    angular_velocity_per_s = angular_velocity_per_ns * 1.0e9
+    moment_si = (
+        ELEMENTARY_CHARGE_COULOMB
+        * shell_radius_m**2
+        * angular_velocity_per_s
+        / 3.0
+    )
+    expected_energy_si = (
+        4.0e-7 * np.pi * moment_si**2 / (4.0 * np.pi * shell_radius_m**3)
+        - 4.0e-7
+        * np.pi
+        * moment_si**2
+        / (12.0 * np.pi * observation_radius_m**3)
+    )
+    np.testing.assert_allclose(
+        result.field_energy_native,
+        expected_energy_si / NATIVE_ENERGY_UNIT_J,
+        rtol=1.0e-12,
+        atol=0.0,
+    )
+    np.testing.assert_allclose(result.outward_power_native, 0.0, atol=0.0)
+    np.testing.assert_allclose(
+        result.cumulative_balance_residual_native, 0.0, atol=0.0
+    )
+
+
+def test_neutral_shell_finite_sphere_pulse_ledger_refines_quadratically() -> None:
+    shell_radius_mm = 0.7
+    observation_radius_mm = 4.0 * shell_radius_mm
+    observation_window_ns = 40.0 * shell_radius_mm / C_MMNS
+    residuals = []
+    field_scales = []
+    for sample_count in (128, 256, 512):
+        times_ns = (
+            np.arange(sample_count) * observation_window_ns / sample_count
+        )
+        phase = (times_ns / observation_window_ns - 0.2) / 0.3
+        angular_velocities_per_ns = np.zeros(sample_count)
+        active = (phase >= 0.0) & (phase <= 1.0)
+        angular_velocities_per_ns[active] = (
+            0.01
+            * C_MMNS
+            / shell_radius_mm
+            * np.sin(np.pi * phase[active]) ** 4
+        )
+        result = evaluate_neutral_spinning_shell_finite_sphere_energy_native(
+            internal_charge_magnitude_native=ELEMENTARY_CHARGE,
+            shell_radius_mm=shell_radius_mm,
+            observation_radius_mm=observation_radius_mm,
+            sample_times_ns=times_ns,
+            angular_velocities_per_ns=angular_velocities_per_ns,
+            radial_quadrature_order_per_region=24,
+            retarded_integral_order=32,
+        )
+        residuals.append(result.maximum_absolute_balance_residual_native)
+        field_scales.append(float(np.max(result.field_energy_native)))
+        assert result.field_energy_native[-1] < 1.0e-12 * field_scales[-1]
+
+    assert residuals[1] < residuals[0] / 3.9
+    assert residuals[2] < residuals[1] / 3.9
+    assert residuals[2] < 3.0e-4 * field_scales[2]

@@ -274,6 +274,20 @@ class NeutralSpinningShellPulseEnergyBalanceResult:
     energy_balance_residual_native: float
 
 
+@dataclass(frozen=True)
+class NeutralSpinningShellFiniteSphereEnergyResult:
+    """Independent field-energy ledger inside one observation sphere."""
+
+    observation_radius_mm: float
+    radial_quadrature_order_per_region: int
+    retarded_integral_order: int
+    field_energy_native: np.ndarray
+    self_torque_work_rate_native: np.ndarray
+    outward_power_native: np.ndarray
+    cumulative_balance_residual_native: np.ndarray
+    maximum_absolute_balance_residual_native: float
+
+
 def _finite_complex(value: complex, *, name: str) -> complex:
     result = complex(value)
     if not np.isfinite(result.real) or not np.isfinite(result.imag):
@@ -876,6 +890,211 @@ def evaluate_neutral_spinning_shell_pulse_energy_balance_native(
     )
 
 
+def _spinning_shell_radial_transfer_si(
+    *,
+    shell_radius_m: float,
+    field_radius_m: float,
+    angular_frequencies_per_s: np.ndarray,
+    retarded_integral_order: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return the exact shell ``G`` and radial-derivative transfer factors."""
+
+    radius = float(field_radius_m)
+    shell_radius = float(shell_radius_m)
+    nodes, weights = np.polynomial.legendre.leggauss(retarded_integral_order)
+    lower_delay = abs(radius - shell_radius) / _C_M_S
+    upper_delay = (radius + shell_radius) / _C_M_S
+    half_width = 0.5 * (upper_delay - lower_delay)
+    delays = 0.5 * (upper_delay + lower_delay) + half_width * nodes
+    delay_weights = half_width * weights
+    kernel = (
+        radius**2 + shell_radius**2 - (_C_M_S * delays) ** 2
+    )
+    phase = np.exp(
+        1.0j * np.outer(delays, angular_frequencies_per_s)
+    )
+    integral = np.sum(
+        delay_weights[:, np.newaxis] * phase * kernel[:, np.newaxis],
+        axis=0,
+    )
+    phase_integral = np.sum(
+        delay_weights[:, np.newaxis] * phase,
+        axis=0,
+    )
+
+    lower_derivative = (-1.0 if radius < shell_radius else 1.0) / _C_M_S
+    upper_derivative = 1.0 / _C_M_S
+    lower_value = (
+        np.exp(1.0j * angular_frequencies_per_s * lower_delay)
+        * (2.0 * radius * shell_radius)
+    )
+    upper_value = (
+        np.exp(1.0j * angular_frequencies_per_s * upper_delay)
+        * (-2.0 * radius * shell_radius)
+    )
+    integral_radial_derivative = (
+        2.0 * radius * phase_integral
+        + upper_value * upper_derivative
+        - lower_value * lower_derivative
+    )
+    prefactor = 3.0 * _C_M_S / (
+        4.0 * shell_radius**3 * radius**2
+    )
+    transfer = prefactor * integral
+    radial_derivative = prefactor * (
+        integral_radial_derivative - 2.0 * integral / radius
+    )
+    return transfer, radial_derivative
+
+
+def evaluate_neutral_spinning_shell_finite_sphere_energy_native(
+    *,
+    internal_charge_magnitude_native: float,
+    shell_radius_mm: float,
+    observation_radius_mm: float,
+    sample_times_ns: Sequence[float],
+    angular_velocities_per_ns: Sequence[float],
+    radial_quadrature_order_per_region: int = 24,
+    retarded_integral_order: int = 32,
+) -> NeutralSpinningShellFiniteSphereEnergyResult:
+    """Integrate the exact neutral-shell field energy inside a finite sphere.
+
+    The scalar potentials of the two counter-rotating shells cancel.  Their
+    vector potentials add and are evaluated from Bonga--Poisson--Yang Eq. 26.
+    Radial Gaussian quadrature is split at the material shell.  The returned
+    conservation convention is
+
+    ``field change + integrated self work + integrated outward flux``.
+    """
+
+    charge_c = _charge_coulomb(internal_charge_magnitude_native)
+    if charge_c <= 0.0:
+        raise ValueError("internal_charge_magnitude_native must be positive")
+    shell_radius_m = _positive_length_m(shell_radius_mm, name="shell_radius_mm")
+    observation_radius_m = _positive_length_m(
+        observation_radius_mm, name="observation_radius_mm"
+    )
+    if observation_radius_m <= shell_radius_m:
+        raise ValueError("observation_radius_mm must exceed shell_radius_mm")
+    radial_order = int(radial_quadrature_order_per_region)
+    delay_order = int(retarded_integral_order)
+    if radial_order < 8 or delay_order < 8:
+        raise ValueError("quadrature orders must be at least 8")
+
+    pulse = evaluate_neutral_spinning_shell_pulse_energy_balance_native(
+        internal_charge_magnitude_native=internal_charge_magnitude_native,
+        shell_radius_mm=shell_radius_mm,
+        sample_times_ns=sample_times_ns,
+        angular_velocities_per_ns=angular_velocities_per_ns,
+    )
+    times_ns = np.asarray(sample_times_ns, dtype=float)
+    angular_velocity_per_ns = np.asarray(angular_velocities_per_ns, dtype=float)
+    sample_count = times_ns.size
+    sample_interval_s = pulse.sample_interval_ns / _NS_PER_S
+    frequencies_per_s = 2.0 * np.pi * np.fft.fftfreq(
+        sample_count, d=sample_interval_s
+    )
+    moment_si = (
+        charge_c
+        * shell_radius_m**2
+        * angular_velocity_per_ns
+        * _NS_PER_S
+        / 3.0
+    )
+    moment_spectrum = np.fft.fft(moment_si)
+
+    standard_nodes, standard_weights = np.polynomial.legendre.leggauss(
+        radial_order
+    )
+    radial_nodes: list[np.ndarray] = []
+    radial_weights: list[np.ndarray] = []
+    for lower, upper in (
+        (0.0, shell_radius_m),
+        (shell_radius_m, observation_radius_m),
+    ):
+        half_width = 0.5 * (upper - lower)
+        radial_nodes.append(0.5 * (upper + lower) + half_width * standard_nodes)
+        radial_weights.append(half_width * standard_weights)
+    radii = np.concatenate(radial_nodes)
+    weights = np.concatenate(radial_weights)
+
+    radial_energy_density_si = np.empty((radii.size, sample_count))
+    for radial_index, radius_m in enumerate(radii):
+        transfer, transfer_radial_derivative = _spinning_shell_radial_transfer_si(
+            shell_radius_m=shell_radius_m,
+            field_radius_m=float(radius_m),
+            angular_frequencies_per_s=-frequencies_per_s,
+            retarded_integral_order=delay_order,
+        )
+        gamma_spectrum = transfer * moment_spectrum
+        gamma = np.fft.ifft(gamma_spectrum).real
+        gamma_time_derivative = np.fft.ifft(
+            1.0j * frequencies_per_s * gamma_spectrum
+        ).real
+        gamma_radial_derivative = np.fft.ifft(
+            transfer_radial_derivative * moment_spectrum
+        ).real
+        radial_energy_density_si[radial_index] = _MU_0_SI / (12.0 * np.pi) * (
+            radius_m**2 * gamma_time_derivative**2 / _C_M_S**2
+            + (gamma + radius_m * gamma_radial_derivative) ** 2
+            + 2.0 * gamma**2
+        )
+    field_energy_si = np.sum(
+        weights[:, np.newaxis] * radial_energy_density_si,
+        axis=0,
+    )
+
+    surface_transfer, surface_radial_derivative = _spinning_shell_radial_transfer_si(
+        shell_radius_m=shell_radius_m,
+        field_radius_m=observation_radius_m,
+        angular_frequencies_per_s=-frequencies_per_s,
+        retarded_integral_order=delay_order,
+    )
+    surface_gamma_spectrum = surface_transfer * moment_spectrum
+    surface_gamma = np.fft.ifft(surface_gamma_spectrum).real
+    surface_gamma_time_derivative = np.fft.ifft(
+        1.0j * frequencies_per_s * surface_gamma_spectrum
+    ).real
+    surface_gamma_radial_derivative = np.fft.ifft(
+        surface_radial_derivative * moment_spectrum
+    ).real
+    outward_power_si = -_MU_0_SI / (6.0 * np.pi) * observation_radius_m * (
+        surface_gamma_time_derivative
+        * (surface_gamma + observation_radius_m * surface_gamma_radial_derivative)
+    )
+
+    self_power_si = pulse.self_torque_work_rate_native * _NATIVE_POWER_UNIT_W
+    rate_sum_si = self_power_si + outward_power_si
+    cumulative_exchange_si = np.zeros(sample_count)
+    cumulative_exchange_si[1:] = np.cumsum(
+        0.5 * (rate_sum_si[:-1] + rate_sum_si[1:]) * sample_interval_s
+    )
+    balance_residual_si = (
+        field_energy_si - field_energy_si[0] + cumulative_exchange_si
+    )
+    energy_unit = NATIVE_ENERGY_UNIT_J
+    readonly_arrays = (
+        field_energy_si / energy_unit,
+        pulse.self_torque_work_rate_native.copy(),
+        outward_power_si / _NATIVE_POWER_UNIT_W,
+        balance_residual_si / energy_unit,
+    )
+    for array in readonly_arrays:
+        array.setflags(write=False)
+    return NeutralSpinningShellFiniteSphereEnergyResult(
+        observation_radius_mm=float(observation_radius_mm),
+        radial_quadrature_order_per_region=radial_order,
+        retarded_integral_order=delay_order,
+        field_energy_native=readonly_arrays[0],
+        self_torque_work_rate_native=readonly_arrays[1],
+        outward_power_native=readonly_arrays[2],
+        cumulative_balance_residual_native=readonly_arrays[3],
+        maximum_absolute_balance_residual_native=float(
+            np.max(np.abs(readonly_arrays[3]))
+        ),
+    )
+
+
 def evaluate_harmonic_spinning_shell_response_native(
     *,
     charge_native: float,
@@ -1116,6 +1335,7 @@ __all__ = [
     "HarmonicSpinningShellTransferResult",
     "NeutralCounterRotatingShellResponseResult",
     "NeutralSpinningShellPulseEnergyBalanceResult",
+    "NeutralSpinningShellFiniteSphereEnergyResult",
     "SpinningShellAngularBalanceResult",
     "SpinningShellLocalTorqueResult",
     "count_harmonic_spinning_shell_transfer_poles_native",
@@ -1123,6 +1343,7 @@ __all__ = [
     "evaluate_harmonic_spinning_shell_transfer_native",
     "evaluate_neutral_counterrotating_shell_response_native",
     "evaluate_neutral_spinning_shell_pulse_energy_balance_native",
+    "evaluate_neutral_spinning_shell_finite_sphere_energy_native",
     "evaluate_spinning_shell_angular_balance_native",
     "evaluate_spinning_shell_local_self_torque_native",
     "reconstruct_harmonic_spinning_shell_impulse_response_native",

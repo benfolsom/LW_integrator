@@ -390,6 +390,47 @@ radiation-reaction effects [Itoh1991]_ [Unruh1999]_, but their source models
 and approximations do not by themselves perform this finite-source-to-
 intrinsic-particle matching.
 
+``evaluate_neutral_spinning_shell_finite_sphere_energy_native`` supplies the
+independent near-field calculation for the same fixed-axis source.  It uses
+the exact causal shell potential of Bonga--Poisson--Yang Eq. (26), valid on
+both sides of the material shell,
+
+.. math::
+
+   A_\phi={\mu_0\over4\pi}{\cal G}(t,r)\sin\theta.
+
+After performing the angular integral analytically, the remaining radial
+energy density is
+
+.. math::
+
+   {dU_{\rm em}\over dr}={\mu_0\over12\pi}
+   \left[
+   {r^2\over c^2}{\cal G}_t^2
+   +({\cal G}+r{\cal G}_r)^2+2{\cal G}^2
+   \right].
+
+Gaussian radial quadrature is split at :math:`r=R`; no point-dipole
+singularity or extrapolation through the shell is used.  The Poynting flux is
+evaluated independently on a finite observation sphere at the same coordinate
+time.  The maintained pulse test closes
+
+.. math::
+
+   \Delta U_{\rm em}
+   +\int P_{\rm self}\,dt
+   +\int P_{\rm outward}\,dt=0.
+
+The maximum residual decreases by approximately four on each factor-two time
+refinement from 128 through 512 samples.  At the finest level it is below
+:math:`3\times10^{-4}` of the largest stored field energy.  A static control
+matches the analytic field energy inside the selected observation sphere to
+:math:`10^{-12}` relative and has exactly zero flux and balance residual.
+
+This establishes the energy ledger independently for the explicit finite
+source.  A corresponding pure-:math:`\mu^2` angular-momentum ledger,
+arbitrary-axis motion, and intrinsic-particle matching remain open.
+
 Required convergence checks
 ---------------------------
 

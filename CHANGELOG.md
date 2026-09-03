@@ -1,5 +1,14 @@
 # Changelog
 
+- Add an independent finite-sphere field-energy oracle for the neutral
+  counter-rotating shell. It evaluates the exact causal vector potential
+  inside and outside the material shell, integrates electromagnetic energy in
+  two radial regions, and evaluates Poynting flux at the same coordinate time.
+  A static control matches the closed form, while a smooth transient closes
+  field change plus self-work plus outward flux with second-order convergence.
+  This remains a fixed-axis finite-source diagnostic, not an applied
+  intrinsic-particle torque.
+
 - Add a diagnostic energy ledger for a smooth rotation pulse of the explicit
   neutral counter-rotating shell. It compares exact finite-shell self-torque
   work with an independently evaluated finite-size magnetic-radiation
