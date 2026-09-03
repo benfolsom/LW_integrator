@@ -192,6 +192,47 @@ def _circular_intrinsic_source_history(
     return history
 
 
+def _uniformly_moving_rotating_dipole_history(
+    *,
+    times_ns: np.ndarray,
+    beta_x: float,
+    magnetic_moment_native: float,
+    proper_angular_frequency_per_ns: float,
+    lab_cycle_duration_ns: float,
+) -> list[dict[str, np.ndarray]]:
+    """Return a neutral dipole rotating in its uniformly moving rest frame."""
+
+    gamma = 1.0 / math.sqrt(1.0 - beta_x**2)
+    history = []
+    for time_ns in times_ns:
+        proper_phase = proper_angular_frequency_per_ns * time_ns / gamma
+        history.append(
+            {
+                "t": np.array([time_ns]),
+                "x": np.array(
+                    [beta_x * C_MMNS * (time_ns - 0.5 * lab_cycle_duration_ns)]
+                ),
+                "y": np.array([0.0]),
+                "z": np.array([0.0]),
+                "bx": np.array([beta_x]),
+                "by": np.array([0.0]),
+                "bz": np.array([0.0]),
+                "bdotx": np.array([0.0]),
+                "bdoty": np.array([0.0]),
+                "bdotz": np.array([0.0]),
+                "q": np.array([0.0]),
+                "q_source": np.array([0.0]),
+                "spin_x": np.array([0.0]),
+                "spin_y": np.array([math.cos(proper_phase)]),
+                "spin_z": np.array([math.sin(proper_phase)]),
+                "magnetic_moment_native": np.array([magnetic_moment_native]),
+                "magnetic_dipole_active": np.array([1.0]),
+                "_dead_particles": np.array([False]),
+            }
+        )
+    return history
+
+
 @pytest.mark.slow
 def test_fully_retarded_periodic_intrinsic_spin_flux_balances_local_impulse() -> None:
     """Compare the local oracle with the maintained retarded field providers.
@@ -618,3 +659,121 @@ def test_nonperiodic_bound_momentum_closes_on_matched_light_cones() -> None:
         atol=2.0e-6 * abs(expected_outward_four_momentum[0]),
     )
     assert abs(null_infinity[3]) < 1.0e-12 * abs(null_infinity[0])
+
+
+@pytest.mark.slow
+def test_uniformly_moving_rotating_dipole_flux_is_a_four_vector() -> None:
+    """Recover the Lorentz transform of a pure-magnetic radiation cycle.
+
+    Every angular ray is evaluated on the future light cone of the same
+    source event. Multiplying by ``dt_observer/dt_source`` then integrates a
+    common proper-time cycle even though those rays reach the fixed sphere at
+    different observer times.
+
+    This is a radiation-transport test, not a local recoil-force test. A
+    periodic rest-frame source emits no net rest-frame linear momentum, so its
+    cycle-integrated radiated four-momentum has a simple boost target.
+    """
+
+    beta_x = 0.55
+    gamma = 1.0 / math.sqrt(1.0 - beta_x**2)
+    moment_native = 1.4e-8
+    proper_angular_frequency_per_ns = 20.0
+    proper_period_ns = 2.0 * math.pi / proper_angular_frequency_per_ns
+    lab_period_ns = gamma * proper_period_ns
+    history = _uniformly_moving_rotating_dipole_history(
+        times_ns=np.linspace(-0.2 * lab_period_ns, 1.2 * lab_period_ns, 2241),
+        beta_x=beta_x,
+        magnetic_moment_native=moment_native,
+        proper_angular_frequency_per_ns=proper_angular_frequency_per_ns,
+        lab_cycle_duration_ns=lab_period_ns,
+    )
+    quadrature = gauss_legendre_sphere_quadrature(
+        polar_order=6,
+        azimuthal_order=12,
+    )
+    zeros = np.zeros((quadrature.sample_count, 3))
+    source_times_ns = np.linspace(0.0, lab_period_ns, 25)
+    rest_power_native = (
+        2.0 * moment_native**2 * proper_angular_frequency_per_ns**4 / (3.0 * C_MMNS**3)
+    )
+    rest_cycle_energy_native = rest_power_native * proper_period_ns
+    expected_four_momentum = np.array(
+        (
+            gamma * rest_cycle_energy_native / C_MMNS,
+            gamma * beta_x * rest_cycle_energy_native / C_MMNS,
+            0.0,
+            0.0,
+        )
+    )
+
+    radial_four_momenta = []
+    for radius_mm in (400.0, 800.0):
+        samples = []
+        for source_time_ns in source_times_ns:
+            source_position = np.array(
+                (
+                    beta_x * C_MMNS * (source_time_ns - 0.5 * lab_period_ns),
+                    0.0,
+                    0.0,
+                )
+            )
+            dipole_electric = np.empty((quadrature.sample_count, 3))
+            dipole_magnetic = np.empty((quadrature.sample_count, 3))
+            time_jacobian = np.empty(quadrature.sample_count)
+            for sample_index, direction in enumerate(quadrature.directions):
+                observer_position = radius_mm * direction
+                separation = observer_position - source_position
+                distance = float(np.linalg.norm(separation))
+                source_to_observer = separation / distance
+                result = evaluate_retarded_dipole_field_gradient_native(
+                    history,
+                    ObserverEvent(
+                        time_ns=float(source_time_ns + distance / C_MMNS),
+                        position_mm=tuple(float(value) for value in observer_position),
+                    ),
+                    source_identities=("uniformly-moving-rotating-dipole",),
+                    require_complete_history=True,
+                    stencil_step_mm=0.04,
+                    backend="python",
+                )
+                dipole_electric[sample_index] = result.electric_field_native
+                dipole_magnetic[sample_index] = result.magnetic_field_native
+                time_jacobian[sample_index] = 1.0 - beta_x * source_to_observer[0]
+                assert result.hertz.retarded_time_ns[0] == pytest.approx(
+                    source_time_ns,
+                    abs=2.0e-14,
+                )
+
+            samples.append(
+                integrate_radiation_sphere_flux_native(
+                    quadrature=quadrature,
+                    radius_mm=radius_mm,
+                    charge_electric_field_native=zeros,
+                    charge_magnetic_field_native=zeros,
+                    dipole_electric_field_native=dipole_electric,
+                    dipole_magnetic_field_native=dipole_magnetic,
+                    observation_time_ns=float(source_time_ns),
+                    sample_time_jacobian=time_jacobian,
+                )
+            )
+
+        outward = integrate_radiation_sphere_flux_history_native(samples).mu_squared
+        radial_four_momenta.append(
+            np.r_[outward.energy_native / C_MMNS, outward.momentum_native]
+        )
+
+    radial_values = np.asarray(radial_four_momenta)
+    for measured in radial_values:
+        np.testing.assert_allclose(
+            measured,
+            expected_four_momentum,
+            rtol=3.0e-3,
+            atol=3.0e-5 * expected_four_momentum[0],
+        )
+    np.testing.assert_allclose(
+        radial_values[1],
+        radial_values[0],
+        rtol=2.0e-3,
+        atol=2.0e-5 * expected_four_momentum[0],
+    )
