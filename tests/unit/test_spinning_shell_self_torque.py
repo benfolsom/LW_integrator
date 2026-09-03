@@ -618,6 +618,23 @@ def test_neutral_shell_smooth_pulse_self_work_balances_mu_squared_radiation() ->
         2.0e-13 * result.radiated_energy_native
     )
     assert result.radiated_energy_native < result.point_dipole_radiated_energy_native
+    assert result.self_torque_native.shape == (sample_count,)
+    assert result.outward_power_native.shape == (sample_count,)
+    assert result.energy_boundary_times_ns.shape == (sample_count + 1,)
+    assert result.inferred_bound_energy_change_native.shape == (sample_count + 1,)
+    assert not result.self_torque_native.flags.writeable
+    assert result.inferred_bound_energy_change_native[0] == 0.0
+    assert abs(result.inferred_bound_energy_change_native[-1]) < (
+        2.0e-13 * result.radiated_energy_native
+    )
+    # Reversible field storage is much larger than the net emitted energy in
+    # this slow pulse, but it is returned when the source comes back to rest.
+    assert np.max(np.abs(result.inferred_bound_energy_change_native)) > (
+        200.0 * result.radiated_energy_native
+    )
+    assert result.maximum_self_torque_imaginary_residual_native < (
+        1.0e-12 * np.max(np.abs(result.self_torque_native))
+    )
 
 
 def test_neutral_shell_spectral_ledger_matches_one_harmonic_period() -> None:

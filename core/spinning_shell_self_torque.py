@@ -262,6 +262,12 @@ class NeutralSpinningShellPulseEnergyBalanceResult:
     maximum_surface_beta: float
     maximum_boundary_angular_velocity_fraction: float
     nyquist_radiated_energy_fraction: float
+    self_torque_native: np.ndarray
+    self_torque_work_rate_native: np.ndarray
+    outward_power_native: np.ndarray
+    energy_boundary_times_ns: np.ndarray
+    inferred_bound_energy_change_native: np.ndarray
+    maximum_self_torque_imaginary_residual_native: float
     self_torque_work_native: float
     radiated_energy_native: float
     point_dipole_radiated_energy_native: float
@@ -741,33 +747,51 @@ def evaluate_neutral_spinning_shell_pulse_energy_balance_native(
     frequencies_per_s = 2.0 * np.pi * np.fft.fftfreq(
         sample_count, d=sample_interval_s
     )
-    angular_velocity_transform = (
-        sample_interval_s * np.fft.fft(angular_velocity_per_s)
-    )
+    angular_velocity_spectrum = np.fft.fft(angular_velocity_per_s)
+    angular_velocity_transform = sample_interval_s * angular_velocity_spectrum
     frequency_spacing_per_s = 2.0 * np.pi / (
         sample_count * sample_interval_s
     )
 
-    gamma_imaginary_si = np.empty(sample_count)
+    finite_size_amplitude = np.empty(sample_count)
     finite_size_power_ratio = np.empty(sample_count)
     for index, frequency_per_s in enumerate(frequencies_per_s):
         x = frequency_per_s * radius_m / _C_M_S
-        gamma_imaginary_si[index] = _radiation_reaction_coefficient_si(
-            charge_coulomb=charge_c,
-            dimensionless_frequency=x,
-            response_model="exact",
-        ).imag
-        finite_size_power_ratio[index] = (
-            3.0 * _sin_minus_x_cos_over_x_cubed(abs(x))
-        ) ** 2
+        finite_size_amplitude[index] = 3.0 * _sin_minus_x_cos_over_x_cubed(
+            abs(x)
+        )
+        finite_size_power_ratio[index] = finite_size_amplitude[index] ** 2
 
-    spectral_measure = frequency_spacing_per_s / (2.0 * np.pi)
-    transform_norm = np.abs(angular_velocity_transform) ** 2
-    self_work_si = -spectral_measure * float(
-        np.sum(gamma_imaginary_si * transform_norm)
-    )
+    # NumPy synthesizes positive-frequency coefficients with exp(+i*omega*t),
+    # whereas the paper defines amplitudes with exp(-i*omega*t).  The exact
+    # torque transfer function must therefore be evaluated at -omega here.
+    torque_transform_si = np.empty(sample_count, dtype=complex)
+    for index, frequency_per_s in enumerate(frequencies_per_s):
+        gamma_for_synthesis_si = _radiation_reaction_coefficient_si(
+            charge_coulomb=charge_c,
+            dimensionless_frequency=-frequency_per_s * radius_m / _C_M_S,
+            response_model="exact",
+        )
+        torque_transform_si[index] = (
+            1.0j * gamma_for_synthesis_si * angular_velocity_spectrum[index]
+        )
+    complex_self_torque_si = np.fft.ifft(torque_transform_si)
+    self_torque_si = complex_self_torque_si.real
+    self_power_si = self_torque_si * angular_velocity_per_s
 
     moment_transform_si = charge_c * radius_m**2 * angular_velocity_transform / 3.0
+    effective_moment_second_derivative_si = np.fft.ifft(
+        -frequencies_per_s**2
+        * finite_size_amplitude
+        * (moment_transform_si / sample_interval_s)
+    ).real
+    outward_power_si = (
+        _MU_0_SI
+        * effective_moment_second_derivative_si**2
+        / (6.0 * np.pi * _C_M_S**3)
+    )
+
+    spectral_measure = frequency_spacing_per_s / (2.0 * np.pi)
     point_spectral_energy_si = (
         _MU_0_SI
         * frequencies_per_s**4
@@ -776,8 +800,17 @@ def evaluate_neutral_spinning_shell_pulse_energy_balance_native(
         * spectral_measure
     )
     radiated_spectrum_si = point_spectral_energy_si * finite_size_power_ratio
-    radiated_energy_si = float(np.sum(radiated_spectrum_si))
+    self_work_si = float(np.sum(self_power_si) * sample_interval_s)
+    radiated_energy_si = float(np.sum(outward_power_si) * sample_interval_s)
     point_energy_si = float(np.sum(point_spectral_energy_si))
+    spectral_radiated_energy_si = float(np.sum(radiated_spectrum_si))
+    if not np.isclose(
+        radiated_energy_si,
+        spectral_radiated_energy_si,
+        rtol=2.0e-12,
+        atol=0.0,
+    ):
+        raise ArithmeticError("time- and frequency-domain radiation disagree")
 
     peak_angular_velocity = float(np.max(np.abs(angular_velocity_per_ns)))
     boundary_fraction = (
@@ -799,6 +832,25 @@ def evaluate_neutral_spinning_shell_pulse_energy_balance_native(
         else 0.0
     )
     energy_unit = NATIVE_ENERGY_UNIT_J
+    power_unit = _NATIVE_POWER_UNIT_W
+    energy_boundary_times_ns = times_ns[0] + np.arange(sample_count + 1) * (
+        sample_interval_ns
+    )
+    inferred_bound_energy_change_native = -np.concatenate(
+        (
+            np.zeros(1),
+            np.cumsum((self_power_si + outward_power_si) * sample_interval_s),
+        )
+    ) / energy_unit
+    readonly_arrays = (
+        self_torque_si / energy_unit,
+        self_power_si / power_unit,
+        outward_power_si / power_unit,
+        energy_boundary_times_ns,
+        inferred_bound_energy_change_native,
+    )
+    for array in readonly_arrays:
+        array.setflags(write=False)
     return NeutralSpinningShellPulseEnergyBalanceResult(
         sample_count=sample_count,
         sample_interval_ns=sample_interval_ns,
@@ -808,6 +860,14 @@ def evaluate_neutral_spinning_shell_pulse_energy_balance_native(
         ),
         maximum_boundary_angular_velocity_fraction=boundary_fraction,
         nyquist_radiated_energy_fraction=nyquist_fraction,
+        self_torque_native=readonly_arrays[0],
+        self_torque_work_rate_native=readonly_arrays[1],
+        outward_power_native=readonly_arrays[2],
+        energy_boundary_times_ns=readonly_arrays[3],
+        inferred_bound_energy_change_native=readonly_arrays[4],
+        maximum_self_torque_imaginary_residual_native=(
+            float(np.max(np.abs(complex_self_torque_si.imag))) / energy_unit
+        ),
         self_torque_work_native=self_work_si / energy_unit,
         radiated_energy_native=radiated_energy_si / energy_unit,
         point_dipole_radiated_energy_native=point_energy_si / energy_unit,

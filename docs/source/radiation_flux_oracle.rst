@@ -359,6 +359,21 @@ test consequently verifies
 
    W_{\rm self}+E_{\rm out}=0.
 
+The oracle also inverse-transforms the complete complex self-torque and the
+finite-shell radiation amplitude.  It reports the instantaneous self-work and
+outward power, then defines an **inferred** reversible field-energy change by
+
+.. math::
+
+   \Delta E_{\rm inferred}(t)
+   =-\int_{t_0}^{t}
+   \left[P_{\rm self}(t')+P_{\rm out}(t')\right]dt'.
+
+For the maintained slow pulse, the largest reversible excursion is more than
+200 times the final radiated energy, but it returns to zero when the shell
+returns to rest.  This illustrates why radiation power alone cannot be used
+as an instantaneous damping force.
+
 The result reports the angular velocity at the window boundaries relative to
 its peak and the fraction of radiated energy in the upper ten percent of the
 sampled frequency band.  These expose a poorly isolated pulse or inadequate
@@ -366,8 +381,10 @@ time resolution instead of silently treating its periodic Fourier extension
 as a physical transient.
 
 This is an integrated :math:`\mu^2` dissipation check for the explicit neutral
-two-shell source.  It does **not** provide the instantaneous bound energy,
-the time-local intrinsic-dipole self-torque, or a translational recoil law.
+two-shell source.  The time-dependent field-energy curve is inferred from the
+balance above; it is not yet an independent near-field integral.  The oracle
+therefore does **not** provide a certified time-local intrinsic-dipole
+self-torque or a translational recoil law.
 Earlier point- and accelerated-dipole calculations also find magnetic
 radiation-reaction effects [Itoh1991]_ [Unruh1999]_, but their source models
 and approximations do not by themselves perform this finite-source-to-

@@ -5,8 +5,10 @@
   work with an independently evaluated finite-size magnetic-radiation
   spectrum, and reports boundary and high-frequency resolution checks. This
   validates integrated pure-magnetic dissipation when the source begins and
-  ends at rest; it does not yet define instantaneous bound energy, a local
-  intrinsic-dipole torque, or an applied recoil force.
+  ends at rest. The complete time-dependent torque and outward power are also
+  returned with a conservation-inferred reversible field-energy history; an
+  independent near-field integral, local intrinsic-dipole torque, and applied
+  recoil force remain absent.
 
 - Expose the opt-in guarded local-source-jet scale ladder through direct JSON,
   testbed configuration, repeated `--dipole-local-jet-scale` CLI options, and
