@@ -56,12 +56,13 @@ class PotentialDerivativeRFSResponse:
 
 @dataclass(frozen=True)
 class PotentialDirectionalRFSReductionJet:
-    """Leading RFS motion and its first two proper-time derivatives.
+    """Leading RFS motion and the derivatives needed by self-reaction oracles.
 
     The charge and dipole pieces are kept separate so a caller can identify
     which sector requires the higher potential derivatives.  ``four_jerk``
     and ``four_snap`` are derivatives of four-velocity, not of four-momentum.
-    No radiation-reaction term is included.
+    The normalized spin is differentiated three times.  No radiation-reaction
+    term is included.
     """
 
     leading_response: PotentialDerivativeRFSResponse
@@ -71,6 +72,7 @@ class PotentialDirectionalRFSReductionJet:
     dipole_four_force_first_derivative: np.ndarray
     four_jerk: np.ndarray
     normalized_spin_second_derivative: np.ndarray
+    normalized_spin_third_derivative: np.ndarray
     charge_four_force_second_derivative: np.ndarray
     dipole_four_force_second_derivative: np.ndarray
     four_snap: np.ndarray
@@ -421,6 +423,75 @@ def potential_directional_rfs_reduction_jet_native(
         + moment_to_mass_c * g_on_spin_rate
     )
 
+    field_gradient_second = partial3_along_velocity_twice + partial2_along_acceleration
+    field_on_spin_second = (
+        _field_on_covector_from_potential_gradient(
+            field_gradient_second,
+            spin_covariant,
+        )
+        + 2.0
+        * _field_on_covector_from_potential_gradient(
+            partial2_along_velocity,
+            spin_first_covariant,
+        )
+        + _field_on_covector_from_potential_gradient(
+            gradient,
+            _SIGNS * spin_second,
+        )
+    )
+    u_dot_f_dot_s_second = float(
+        (_SIGNS * jerk) @ field_on_spin
+        + 2.0 * acceleration_covariant @ field_on_spin_rate
+        + velocity_covariant @ field_on_spin_second
+    )
+    hessian_second = fourth_along_velocity_twice + third_along_acceleration
+    g_on_spin_second = (
+        _g_on_covector_from_potential_hessian(
+            hessian_second,
+            spin,
+            spin,
+        )
+        + 2.0
+        * _g_on_covector_from_potential_hessian(
+            third_along_velocity,
+            spin_first,
+            spin,
+        )
+        + 2.0
+        * _g_on_covector_from_potential_hessian(
+            third_along_velocity,
+            spin,
+            spin_first,
+        )
+        + _g_on_covector_from_potential_hessian(
+            hessian,
+            spin_second,
+            spin,
+        )
+        + 2.0
+        * _g_on_covector_from_potential_hessian(
+            hessian,
+            spin_first,
+            spin_first,
+        )
+        + _g_on_covector_from_potential_hessian(
+            hessian,
+            spin,
+            spin_second,
+        )
+    )
+    spin_third = (
+        moment_to_spin * field_on_spin_second
+        - (moment_to_spin - charge_to_mass_c)
+        * (
+            jerk * u_dot_f_dot_s
+            + 2.0 * acceleration * u_dot_f_dot_s_rate
+            + velocity * u_dot_f_dot_s_second
+        )
+        / C_MMNS**2
+        + moment_to_mass_c * g_on_spin_second
+    )
+
     jerk_covariant = _SIGNS * jerk
     field_second_on_velocity = (
         _field_on_covector_from_potential_gradient(
@@ -496,6 +567,7 @@ def potential_directional_rfs_reduction_jet_native(
         dipole_force_first,
         jerk,
         spin_second,
+        spin_third,
         charge_force_second,
         dipole_force_second,
         snap,
@@ -511,6 +583,7 @@ def potential_directional_rfs_reduction_jet_native(
         dipole_four_force_first_derivative=cast(np.ndarray, dipole_force_first),
         four_jerk=cast(np.ndarray, jerk),
         normalized_spin_second_derivative=cast(np.ndarray, spin_second),
+        normalized_spin_third_derivative=cast(np.ndarray, spin_third),
         charge_four_force_second_derivative=cast(np.ndarray, charge_force_second),
         dipole_four_force_second_derivative=cast(np.ndarray, dipole_force_second),
         four_snap=cast(np.ndarray, snap),

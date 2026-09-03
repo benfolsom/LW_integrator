@@ -3,10 +3,16 @@ from __future__ import annotations
 import numpy as np
 
 from core.constants import C_MMNS
+from core.magnetic_dipole import boost_rest_polarization
+from core.potential_jet_rfs import potential_derivative_rfs_response_native
+from core.rfs import electromagnetic_field_tensor_native
 from core.spin_self_torque_reduction_oracle import (
     evaluate_causal_sampled_fermi_walker_magnetic_torque_reduction_native,
+    evaluate_potential_directional_magnetic_torque_reduction_native,
     evaluate_sampled_fermi_walker_magnetic_torque_reduction_native,
 )
+
+_SIGNS = np.asarray((1.0, -1.0, -1.0, -1.0))
 
 
 def _hyperbolic_samples(
@@ -49,6 +55,26 @@ def _boost_four_vectors(vectors: np.ndarray, beta: np.ndarray) -> np.ndarray:
         + gamma * temporal[:, None] * beta
     )
     return np.column_stack((boosted_temporal, boosted_spatial))
+
+
+def _rk4_state(
+    initial_state: np.ndarray,
+    proper_time_ns: float,
+    rhs,
+    *,
+    substeps: int = 80,
+) -> np.ndarray:
+    if proper_time_ns == 0.0:
+        return initial_state.copy()
+    step = proper_time_ns / substeps
+    state = initial_state.copy()
+    for _ in range(substeps):
+        first = rhs(state)
+        second = rhs(state + 0.5 * step * first)
+        third = rhs(state + 0.5 * step * second)
+        fourth = rhs(state + step * third)
+        state += step * (first + 2.0 * second + 2.0 * third + fourth) / 6.0
+    return state
 
 
 def test_centered_reconstruction_converges_for_accelerated_physical_curve() -> None:
@@ -171,3 +197,76 @@ def test_sampled_fermi_walker_reconstruction_is_covariant_under_boost() -> None:
             rtol=2.0e-7,
             atol=2.0e-18,
         )
+
+
+def test_analytical_potential_reduction_matches_sampled_leading_trajectory() -> None:
+    charge = -0.8
+    mass = 1.7
+    moment = 2.0e-4
+    invariant_spin = 0.8
+    beta = np.asarray((0.12, -0.04, 0.03))
+    gamma = 1.0 / np.sqrt(1.0 - beta @ beta)
+    velocity = C_MMNS * gamma * np.r_[1.0, beta]
+    spin = boost_rest_polarization((0.2, -0.3, np.sqrt(0.87)), beta)
+    field = electromagnetic_field_tensor_native(
+        (2.0e-2, -1.0e-2, 0.5e-2),
+        (0.3e-2, 0.7e-2, -0.2e-2),
+    )
+    partial_a = 0.5 * _SIGNS[:, None] * field
+    zeros = np.zeros((4, 4, 4))
+    analytical = evaluate_potential_directional_magnetic_torque_reduction_native(
+        four_velocity_mm_ns=velocity,
+        normalized_spin_four_vector=spin,
+        partial_a=partial_a,
+        partial2_a=zeros,
+        partial3_a_along_velocity=zeros,
+        partial3_a_along_acceleration=zeros,
+        partial4_a_along_velocity_twice=zeros,
+        charge_native=charge,
+        mass_amu=mass,
+        magnetic_moment_native=moment,
+        invariant_spin_native=invariant_spin,
+    )
+
+    def rhs(state: np.ndarray) -> np.ndarray:
+        response = potential_derivative_rfs_response_native(
+            four_velocity_mm_ns=state[:4],
+            spin_four_vector=state[4:],
+            partial_a=partial_a,
+            partial2_a=zeros,
+            charge_native=charge,
+            mass_amu=mass,
+            magnetic_moment_native=moment,
+            invariant_spin_native=invariant_spin,
+        )
+        return np.r_[response.total_four_force / mass, response.spin_rhs]
+
+    initial = np.r_[velocity, spin]
+    errors = []
+    for step in (0.4, 0.2, 0.1):
+        times = step * np.arange(-3.0, 4.0)
+        states = np.asarray([_rk4_state(initial, time, rhs) for time in times])
+        sampled = evaluate_sampled_fermi_walker_magnetic_torque_reduction_native(
+            proper_times_ns=times,
+            four_velocity_samples_mm_ns=states[:, :4],
+            magnetic_moment_four_samples_native=moment * states[:, 4:],
+        )
+        errors.append(
+            np.linalg.norm(
+                sampled.magnetic_moment_third_fermi_walker_derivative_native
+                - analytical.fermi_walker_derivatives.third_fermi_walker_derivative_native
+            )
+        )
+        np.testing.assert_allclose(
+            sampled.magnetic_moment_first_fermi_walker_derivative_native,
+            analytical.fermi_walker_derivatives.first_fermi_walker_derivative_native,
+            rtol=2.0e-8,
+            atol=2.0e-16,
+        )
+
+    # This cross-check reaches finite-difference cancellation before a clean
+    # refinement ratio; the separate hyperbolic test above establishes the
+    # sampled oracle's fourth-order convergence.
+    assert max(errors) < 2.0e-16
+    assert analytical.analytical_potential_derivatives_only
+    assert analytical.reduction_of_order_performed

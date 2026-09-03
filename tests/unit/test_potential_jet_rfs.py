@@ -182,6 +182,7 @@ def test_directional_reduction_jet_is_exact_in_a_uniform_field() -> None:
     expected_snap = linear_map @ expected_jerk
     expected_spin_first = linear_map @ spin
     expected_spin_second = linear_map @ expected_spin_first
+    expected_spin_third = linear_map @ expected_spin_second
     np.testing.assert_allclose(
         result.four_acceleration,
         expected_acceleration,
@@ -211,6 +212,12 @@ def test_directional_reduction_jet_is_exact_in_a_uniform_field() -> None:
         expected_spin_second,
         rtol=5.0e-15,
         atol=1.0e-21,
+    )
+    np.testing.assert_allclose(
+        result.normalized_spin_third_derivative,
+        expected_spin_third,
+        rtol=8.0e-15,
+        atol=1.0e-24,
     )
     np.testing.assert_array_equal(result.dipole_four_force_first_derivative, 0.0)
     np.testing.assert_array_equal(result.dipole_four_force_second_derivative, 0.0)
@@ -373,11 +380,19 @@ def test_directional_reduction_jet_matches_a_smooth_local_trajectory() -> None:
         numerical_spin_second = (
             spin_rates[-2] - 8.0 * spin_rates[-1] + 8.0 * spin_rates[1] - spin_rates[2]
         ) / (12.0 * step)
+        numerical_spin_third = (
+            -spin_rates[-2]
+            + 16.0 * spin_rates[-1]
+            - 30.0 * spin_rates[0]
+            + 16.0 * spin_rates[1]
+            - spin_rates[2]
+        ) / (12.0 * step**2)
         error = np.concatenate(
             (
                 numerical_jerk - analytical.four_jerk,
                 numerical_snap - analytical.four_snap,
                 numerical_spin_second - analytical.normalized_spin_second_derivative,
+                numerical_spin_third - analytical.normalized_spin_third_derivative,
             )
         )
         errors.append(float(np.linalg.norm(error)))

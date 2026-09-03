@@ -653,6 +653,23 @@ third derivative converges at fourth order under step halving.  This sampled
 route is the reference answer for a later sparse analytical implementation;
 it is not connected to the trajectory update.
 
+The corresponding analytical route is now available as
+``evaluate_potential_directional_magnetic_torque_reduction_native``.  The
+leading RFS spin equation is first order, so its third spin derivative needs
+only two derivatives of that equation's right-hand side.  Consequently, the
+existing directional potential data through fourth derivative order are
+sufficient; no fifth-potential derivative, enlarged retarded Taylor jet, or
+additional root solve is introduced.  The routine then applies three
+successive rest-space projections and passes the resulting first and third
+Fermi--Walker derivatives to the planar Unruh comparator.
+
+A maintained test integrates the same non-self RFS equations independently,
+samples that trajectory, and compares the sampled and analytical reductions.
+The two agree down to the finite-difference cancellation floor.  This closes
+the algebraic reduction-of-order sub-gate, but not the physical limitations
+of the underlying planar accelerated-dipole law.  The analytical result is
+still passive and is not used by the trajectory update.
+
 Required convergence checks
 ---------------------------
 
