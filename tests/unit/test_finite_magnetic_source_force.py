@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from core.constants import C_MMNS, ELEMENTARY_CHARGE
 from core.finite_magnetic_source_force import (
@@ -10,6 +11,7 @@ from core.finite_magnetic_source_force import (
 from core.retarded_fields import (
     ObserverEvent,
     evaluate_retarded_charge_field_native,
+    evaluate_retarded_mutual_charge_field_matrix_native,
     evaluate_retarded_mutual_charge_fields_native,
 )
 from core.translating_magnetic_shell_kinematics import (
@@ -169,6 +171,76 @@ def test_pairwise_radiative_reduction_matches_difference_after_summing() -> None
         np.linalg.norm(split.pairwise_reduction_difference_native) / (force_scale)
         < 2.0e-15
     )
+
+
+def test_compiled_mutual_field_matrix_matches_python_reference() -> None:
+    pytest.importorskip("numba")
+    history = _uniform_shell_history(0.3, angular_velocity_per_ns=0.4)
+    provider_history = history.as_charge_provider_history()
+    events = tuple(
+        ObserverEvent(
+            time_ns=float(history.event_time_ns[20, node]),
+            position_mm=tuple(history.position_mm[20, node]),
+        )
+        for node in range(history.charge_native.size)
+    )
+    reference = evaluate_retarded_mutual_charge_field_matrix_native(
+        provider_history,
+        events,
+        source_acceleration_semantics="instantaneous",
+    )
+    candidate = evaluate_retarded_mutual_charge_field_matrix_native(
+        provider_history,
+        events,
+        backend="numba_full_strict_serial",
+        source_acceleration_semantics="instantaneous",
+    )
+
+    np.testing.assert_array_equal(candidate.valid_sources, reference.valid_sources)
+    for name in (
+        "electric_field_native",
+        "magnetic_field_native",
+        "four_potential",
+        "retarded_time_ns",
+        "light_cone_residual_mm",
+        "separation_mm",
+    ):
+        candidate_value = getattr(candidate, name)
+        reference_value = getattr(reference, name)
+        finite = np.isfinite(reference_value)
+        scale = max(float(np.max(np.abs(reference_value[finite]))), 1.0e-300)
+        difference = float(
+            np.max(np.abs(candidate_value[finite] - reference_value[finite]))
+        )
+        if name == "light_cone_residual_mm":
+            assert difference < 1.0e-14
+        else:
+            assert difference / scale < 2.0e-14
+
+
+def test_compiled_force_split_matches_python_reference() -> None:
+    pytest.importorskip("numba")
+    history = _uniform_shell_history(0.3, angular_velocity_per_ns=0.4)
+    reference = evaluate_finite_magnetic_source_force_split_native(
+        history, slice_index=20
+    )
+    candidate = evaluate_finite_magnetic_source_force_split_native(
+        history, slice_index=20, backend="numba_full_strict_serial"
+    )
+
+    force_scale = float(
+        np.sum(np.linalg.norm(reference.retarded.node_four_force_native, axis=1))
+    )
+    for name in (
+        "time_symmetric_four_force_native",
+        "radiation_reaction_four_force_native",
+        "pairwise_radiation_reaction_four_force_native",
+        "diagonal_charge_ald_four_force_native",
+        "completed_pairwise_radiation_reaction_four_force_native",
+        "pairwise_reduction_difference_native",
+    ):
+        difference = np.linalg.norm(getattr(candidate, name) - getattr(reference, name))
+        assert difference / force_scale < 2.0e-14
 
 
 def test_diagonal_ald_completion_vanishes_for_uniform_translation() -> None:

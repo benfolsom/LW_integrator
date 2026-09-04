@@ -2146,6 +2146,7 @@ def evaluate_retarded_mutual_charge_field_matrix_native(
     require_complete_history: bool = True,
     root_tolerance_mm: float = _DEFAULT_ROOT_TOLERANCE_MM,
     max_root_iterations: int = _DEFAULT_MAX_ROOT_ITERATIONS,
+    backend: str = "python",
     source_acceleration_semantics: str = "preceding_interval",
 ) -> RetardedMutualChargeFieldMatrix:
     """Evaluate each non-diagonal source-to-observer field separately.
@@ -2156,11 +2157,17 @@ def evaluate_retarded_mutual_charge_field_matrix_native(
     retarded and advanced contributions to be combined before a potentially
     ill-conditioned global reduction.
 
-    This first transparent implementation uses the Python root and field
-    kernels. Compiled acceleration can be added without changing the public
-    contract after the reference behavior is established.
+    The Python backend is the transparent reference. The strict serial Numba
+    backend compiles each source's roots and fields for all observer events,
+    while retaining the same source/event layout and Python-side validation.
     """
 
+    selected_backend = require_exact_retarded_backend(backend)
+    if selected_backend not in {"python", "numba_full_strict_serial"}:
+        raise ValueError(
+            "mutual charge field matrices support only 'python' and "
+            "'numba_full_strict_serial' backends"
+        )
     tolerance, iterations = _validated_root_options(
         root_tolerance_mm, max_root_iterations
     )
@@ -2186,48 +2193,124 @@ def evaluate_retarded_mutual_charge_field_matrix_native(
     valid = np.zeros_like(retarded_time, dtype=bool)
     missing: list[list[int]] = [[] for _ in events]
 
-    for source_index, source in prepared.sources.items():
-        charge = float(arrays.charge_native[source_index])
-        for event_index, event in enumerate(events):
-            if event_index == source_index:
-                continue
-            observer_time = float(event.time_ns)
-            observer_position = np.asarray(event.position_mm, dtype=float)
-            sample = _solve_retarded_sample(
-                source,
-                observer_time_ns=observer_time,
-                observer_position_mm=observer_position,
-                root_tolerance_mm=tolerance,
-                max_root_iterations=iterations,
+    if selected_backend == "numba_full_strict_serial":
+        from .exact_retarded_numba import (
+            NUMBA_COMPILATION_ERRORS,
+            _STATUS_CHARGE_SINGULAR_KAPPA,
+            _STATUS_CHARGE_SUPERLUMINAL_SOURCE,
+            _STATUS_CHARGE_ZERO_SEPARATION,
+            _STATUS_MISSING_HISTORY,
+            _STATUS_TERMINATED_SOURCE,
+            _STATUS_VALID,
+            evaluate_charge_source_events_full_strict_serial,
+        )
+
+        event_time_ns, event_position_mm = _charge_batch_event_arrays(events)
+        for source_index, source in prepared.sources.items():
+            compiling_initial_signature = not bool(
+                getattr(
+                    evaluate_charge_source_events_full_strict_serial,
+                    "signatures",
+                    (),
+                )
             )
-            if sample is None:
-                if _source_terminated_before_light_cone(
+            try:
+                batch = evaluate_charge_source_events_full_strict_serial(
+                    source.time_ns,
+                    source.position_mm,
+                    source.segment_duration_ns,
+                    source.position_coefficients_mm,
+                    float(arrays.charge_native[source_index]),
+                    bool(source.ended_by_loss),
+                    event_time_ns,
+                    event_position_mm,
+                    float(tolerance),
+                    int(iterations),
+                )
+            except NUMBA_COMPILATION_ERRORS as exc:
+                if compiling_initial_signature:
+                    from .exact_retarded_backend import (
+                        ExactRetardedBackendUnavailableError,
+                    )
+
+                    raise ExactRetardedBackendUnavailableError(
+                        "mutual charge backend 'numba_full_strict_serial' failed "
+                        "during initial JIT compilation; select backend 'python' "
+                        "or inspect the chained Numba error"
+                    ) from exc
+                raise
+
+            for event_index in range(len(events)):
+                if event_index == source_index:
+                    continue
+                status = int(batch[0][event_index])
+                if status == _STATUS_TERMINATED_SOURCE:
+                    continue
+                if status == _STATUS_MISSING_HISTORY:
+                    missing[event_index].append(source_index)
+                    continue
+                if status == _STATUS_CHARGE_ZERO_SEPARATION:
+                    raise ValueError(
+                        "a non-diagonal observer coincides with a point-charge source"
+                    )
+                if status == _STATUS_CHARGE_SUPERLUMINAL_SOURCE:
+                    raise ValueError("source beta magnitude must be less than one")
+                if status == _STATUS_CHARGE_SINGULAR_KAPPA:
+                    raise ValueError(
+                        "retarded field is singular because 1 - n.beta is too small"
+                    )
+                if status != _STATUS_VALID:
+                    raise RuntimeError(f"unknown strict charge event status {status}")
+                electric[event_index, source_index] = batch[1][event_index]
+                magnetic[event_index, source_index] = batch[2][event_index]
+                potential[event_index, source_index] = batch[3][event_index]
+                retarded_time[event_index, source_index] = batch[4][event_index]
+                residual[event_index, source_index] = batch[5][event_index]
+                separation[event_index, source_index] = batch[6][event_index]
+                valid[event_index, source_index] = batch[7][event_index]
+    else:
+        for source_index, source in prepared.sources.items():
+            charge = float(arrays.charge_native[source_index])
+            for event_index, event in enumerate(events):
+                if event_index == source_index:
+                    continue
+                observer_time = float(event.time_ns)
+                observer_position = np.asarray(event.position_mm, dtype=float)
+                sample = _solve_retarded_sample(
                     source,
                     observer_time_ns=observer_time,
                     observer_position_mm=observer_position,
-                ):
+                    root_tolerance_mm=tolerance,
+                    max_root_iterations=iterations,
+                )
+                if sample is None:
+                    if _source_terminated_before_light_cone(
+                        source,
+                        observer_time_ns=observer_time,
+                        observer_position_mm=observer_position,
+                    ):
+                        continue
+                    missing[event_index].append(source_index)
                     continue
-                missing[event_index].append(source_index)
-                continue
-            source_to_observer = observer_position - sample.position_mm
-            source_electric, source_magnetic = lienard_wiechert_charge_field_native(
-                charge_native=charge,
-                separation_vector_mm=source_to_observer,
-                source_beta=sample.beta,
-                source_beta_prime_per_mm=sample.beta_prime_per_mm,
-            )
-            source_potential = lienard_wiechert_charge_potential_native(
-                charge_native=charge,
-                separation_vector_mm=source_to_observer,
-                source_beta=sample.beta,
-            )
-            electric[event_index, source_index] = source_electric
-            magnetic[event_index, source_index] = source_magnetic
-            potential[event_index, source_index] = source_potential
-            retarded_time[event_index, source_index] = sample.time_ns
-            residual[event_index, source_index] = sample.residual_mm
-            separation[event_index, source_index] = sample.separation_mm
-            valid[event_index, source_index] = True
+                source_to_observer = observer_position - sample.position_mm
+                source_electric, source_magnetic = lienard_wiechert_charge_field_native(
+                    charge_native=charge,
+                    separation_vector_mm=source_to_observer,
+                    source_beta=sample.beta,
+                    source_beta_prime_per_mm=sample.beta_prime_per_mm,
+                )
+                source_potential = lienard_wiechert_charge_potential_native(
+                    charge_native=charge,
+                    separation_vector_mm=source_to_observer,
+                    source_beta=sample.beta,
+                )
+                electric[event_index, source_index] = source_electric
+                magnetic[event_index, source_index] = source_magnetic
+                potential[event_index, source_index] = source_potential
+                retarded_time[event_index, source_index] = sample.time_ns
+                residual[event_index, source_index] = sample.residual_mm
+                separation[event_index, source_index] = sample.separation_mm
+                valid[event_index, source_index] = True
 
     if require_complete_history:
         failed = {index: values for index, values in enumerate(missing) if values}

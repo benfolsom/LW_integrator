@@ -181,10 +181,12 @@ def evaluate_finite_magnetic_source_force_slice_native(
     )
     pair_electric = None
     pair_magnetic = None
-    if str(backend).strip().lower() == "python":
+    selected_backend = str(backend).strip().lower()
+    if selected_backend in {"python", "numba_full_strict_serial"}:
         matrix = evaluate_retarded_mutual_charge_field_matrix_native(
             evaluation_history,
             events,
+            backend=selected_backend,
             source_acceleration_semantics="instantaneous",
         )
         pair_electric = matrix.electric_field_native
@@ -269,20 +271,27 @@ def evaluate_finite_magnetic_source_force_split_native(
     history: TranslatingMagneticShellHistory,
     *,
     slice_index: int,
+    backend: str = "python",
 ) -> FiniteMagneticSourceForceSplit:
     """Evaluate the force split and reduce its radiative part pair by pair."""
 
+    selected_backend = str(backend).strip().lower()
+    if selected_backend not in {"python", "numba_full_strict_serial"}:
+        raise ValueError(
+            "finite-source force splits support only 'python' and "
+            "'numba_full_strict_serial' backends"
+        )
     retarded = evaluate_finite_magnetic_source_force_slice_native(
         history,
         slice_index=slice_index,
         boundary_condition="retarded",
-        backend="python",
+        backend=selected_backend,
     )
     advanced = evaluate_finite_magnetic_source_force_slice_native(
         history,
         slice_index=slice_index,
         boundary_condition="advanced",
-        backend="python",
+        backend=selected_backend,
     )
     assert retarded.pair_electric_field_native is not None
     assert retarded.pair_magnetic_field_native is not None
@@ -299,27 +308,16 @@ def evaluate_finite_magnetic_source_force_split_native(
         index += history.center_proper_time_ns.size
     beta = history.beta[index]
     gamma = 1.0 / np.sqrt(1.0 - np.sum(beta**2, axis=1))
-    four_velocity = (
-        gamma[:, None] * C_MMNS * np.column_stack((np.ones(beta.shape[0]), beta))
+    pair_spatial_force = pair_electric + np.cross(beta[:, np.newaxis, :], pair_magnetic)
+    pair_time_force = np.einsum("osj,oj->os", pair_electric, beta)
+    pair_four_force = np.concatenate(
+        (pair_time_force[..., np.newaxis], pair_spatial_force), axis=2
     )
-    pairwise_node_force = np.zeros((beta.shape[0], 4))
-    zero_spin = np.zeros(4)
-    zero_gradient = np.zeros((4, 4, 4))
-    for observer in range(beta.shape[0]):
-        for source in range(beta.shape[0]):
-            if observer == source:
-                continue
-            pairwise_node_force[observer] += rfs_four_force_native(
-                four_velocity_mm_ns=four_velocity[observer],
-                spin_four_vector=zero_spin,
-                field_tensor=electromagnetic_field_tensor_native(
-                    pair_electric[observer, source],
-                    pair_magnetic[observer, source],
-                ),
-                partial_f=zero_gradient,
-                charge_native=float(history.charge_native[observer]),
-                magnetic_moment_native=0.0,
-            )
+    pair_four_force *= (
+        history.charge_native[:, np.newaxis, np.newaxis]
+        * gamma[:, np.newaxis, np.newaxis]
+    )
+    pairwise_node_force = np.sum(pair_four_force, axis=1)
     pairwise_radiative = np.einsum(
         "n,nm->m", history.material_proper_time_lapse[index], pairwise_node_force
     )

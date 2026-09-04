@@ -230,25 +230,25 @@ def _differentiate_on_node_times(
 ) -> np.ndarray:
     """Differentiate each material history with a five-knot local polynomial."""
 
+    sample_count = event_time_ns.shape[0]
+    if sample_count < 5:
+        raise ValueError("material histories require at least five time samples")
+    knot = np.arange(sample_count)
+    starts = np.clip(knot - 2, 0, sample_count - 5)
+    stencil_indices = starts[:, np.newaxis] + np.arange(5)
+    powers = np.arange(5)[np.newaxis, :, np.newaxis]
     derivative = np.empty_like(values)
     for node in range(event_time_ns.shape[1]):
         coordinates = coordinate_scale * event_time_ns[:, node]
-        sample_count = coordinates.size
-        if sample_count < 5:
-            raise ValueError("material histories require at least five time samples")
-        for knot in range(sample_count):
-            start = min(max(knot - 2, 0), sample_count - 5)
-            selected = slice(start, start + 5)
-            offsets = coordinates[selected] - coordinates[knot]
-            scale = float(np.max(np.abs(offsets)))
-            normalized = offsets / scale
-            system = normalized[np.newaxis, :] ** np.arange(5)[:, np.newaxis]
-            right_hand_side = np.zeros(5)
-            right_hand_side[1] = 1.0 / scale
-            weights = np.linalg.solve(system, right_hand_side)
-            derivative[knot, node] = weights @ (
-                values[selected, node] - values[knot, node]
-            )
+        offsets = coordinates[stencil_indices] - coordinates[:, np.newaxis]
+        scale = np.max(np.abs(offsets), axis=1)
+        normalized = offsets / scale[:, np.newaxis]
+        system = normalized[:, np.newaxis, :] ** powers
+        right_hand_side = np.zeros((sample_count, 5))
+        right_hand_side[:, 1] = 1.0 / scale
+        weights = np.linalg.solve(system, right_hand_side)
+        centered_values = values[stencil_indices, node] - values[:, node, np.newaxis]
+        derivative[:, node] = np.einsum("ki,kic->kc", weights, centered_values)
     return derivative
 
 
