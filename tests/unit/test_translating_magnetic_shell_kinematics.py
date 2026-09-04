@@ -169,6 +169,19 @@ def test_accelerated_slice_velocity_matches_material_worldline_derivative() -> N
         rtol=3.0e-8,
         atol=2.0e-10,
     )
+    laboratory_time_rate = (after.event_time_ns - before.event_time_ns) / (
+        2.0 * step_ns
+    )
+    position_rate = (after.position_mm - before.position_mm) / (2.0 * step_ns)
+    finite_difference_proper_time_lapse = np.sqrt(
+        laboratory_time_rate**2 - np.sum(position_rate**2, axis=1) / C_MMNS**2
+    )
+    np.testing.assert_allclose(
+        finite_difference_proper_time_lapse,
+        center.material_proper_time_lapse,
+        rtol=3.0e-8,
+        atol=2.0e-12,
+    )
 
 
 def test_reversing_both_rotations_reverses_moment_only() -> None:

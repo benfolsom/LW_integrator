@@ -74,6 +74,7 @@ class TranslatingMagneticShellSurfaceState:
     solid_angle_weight: np.ndarray
     shell_index: np.ndarray
     born_lapse: np.ndarray
+    material_proper_time_lapse: np.ndarray
     net_charge_native: float
     rest_electric_dipole_native_mm: np.ndarray
     rest_magnetic_moment_native: np.ndarray
@@ -94,6 +95,7 @@ class TranslatingMagneticShellSurfaceState:
             "solid_angle_weight": (count,),
             "shell_index": (count,),
             "born_lapse": (count,),
+            "material_proper_time_lapse": (count,),
         }
         for name, shape in shapes.items():
             value = np.asarray(getattr(self, name))
@@ -115,6 +117,8 @@ class TranslatingMagneticShellSurfaceState:
             if value.shape != (3,):
                 raise ValueError(f"{name} must have shape (3,)")
             object.__setattr__(self, name, value)
+        if np.any(self.material_proper_time_lapse <= 0.0):
+            raise ValueError("material proper-time lapse must be positive")
 
 
 @dataclass(frozen=True)
@@ -132,6 +136,7 @@ class TranslatingMagneticShellHistory:
     position_mm: np.ndarray
     beta: np.ndarray
     beta_prime_per_mm: np.ndarray
+    material_proper_time_lapse: np.ndarray
     charge_native: np.ndarray
     shell_index: np.ndarray
     maximum_velocity_derivative_residual_mm_ns: float
@@ -150,6 +155,7 @@ class TranslatingMagneticShellHistory:
             "position_mm": (step_count, node_count, 3),
             "beta": (step_count, node_count, 3),
             "beta_prime_per_mm": (step_count, node_count, 3),
+            "material_proper_time_lapse": (step_count, node_count),
             "charge_native": (node_count,),
             "shell_index": (node_count,),
         }
@@ -161,6 +167,8 @@ class TranslatingMagneticShellHistory:
             raise ValueError("center proper times must increase strictly")
         if np.any(np.diff(event_time, axis=0) <= 0.0):
             raise ValueError("every material-node laboratory time must increase")
+        if np.any(np.asarray(self.material_proper_time_lapse) <= 0.0):
+            raise ValueError("material proper-time lapse must be positive")
         residuals = (
             self.maximum_velocity_derivative_residual_mm_ns,
             self.relative_velocity_derivative_residual,
@@ -171,7 +179,13 @@ class TranslatingMagneticShellHistory:
             )
         object.__setattr__(self, "center_proper_time_ns", _readonly(proper_time))
         object.__setattr__(self, "event_time_ns", _readonly(event_time))
-        for name in ("position_mm", "beta", "beta_prime_per_mm", "charge_native"):
+        for name in (
+            "position_mm",
+            "beta",
+            "beta_prime_per_mm",
+            "material_proper_time_lapse",
+            "charge_native",
+        ):
             object.__setattr__(self, name, _readonly(np.asarray(getattr(self, name))))
         indices = np.asarray(self.shell_index, dtype=int).copy()
         indices.flags.writeable = False
@@ -265,12 +279,15 @@ def build_counterrotating_shell_surface_state_native(
         raise ValueError("shell charges must be nonzero, opposite, and neutral")
     if charges[0] * charges[1] >= 0.0:
         raise ValueError("shell charges must have opposite signs")
-    if (
-        angular_velocities[0] == 0.0
-        or angular_velocities[1] == 0.0
-        or angular_velocities[0] * angular_velocities[1] >= 0.0
-    ):
-        raise ValueError("shell angular velocities must be nonzero and opposite")
+    both_stationary = bool(np.all(angular_velocities == 0.0))
+    counterrotating = bool(
+        np.all(angular_velocities != 0.0)
+        and angular_velocities[0] * angular_velocities[1] < 0.0
+    )
+    if not (both_stationary or counterrotating):
+        raise ValueError(
+            "shell angular velocities must both vanish or be nonzero and opposite"
+        )
     axis = _vector3(rotation_axis_rest, name="rotation_axis_rest")
     axis_norm = float(np.linalg.norm(axis))
     if axis_norm == 0.0:
@@ -320,6 +337,7 @@ def build_counterrotating_shell_surface_state_native(
     internal_beta_squared = np.sum(internal_beta**2, axis=1)
     if np.any(internal_beta_squared >= 1.0):
         raise ValueError("a shell surface element reaches or exceeds light speed")
+    material_proper_time_lapse = born_lapse * np.sqrt(1.0 - internal_beta_squared)
 
     denominator = 1.0 + beta_x * internal_beta[:, 0]
     lab_beta = np.empty_like(internal_beta)
@@ -375,6 +393,7 @@ def build_counterrotating_shell_surface_state_native(
         solid_angle_weight=solid_angle_weight,
         shell_index=shell_index_array,
         born_lapse=born_lapse,
+        material_proper_time_lapse=material_proper_time_lapse,
         net_charge_native=float(np.sum(charge)),
         rest_electric_dipole_native_mm=electric_dipole,
         rest_magnetic_moment_native=moment_native,
@@ -448,6 +467,9 @@ def build_constant_rotation_shell_history_native(
     event_time = np.stack([state.event_time_ns for state in states])
     position = np.stack([state.position_mm for state in states])
     beta = np.stack([state.beta for state in states])
+    material_proper_time_lapse = np.stack(
+        [state.material_proper_time_lapse for state in states]
+    )
     first = states[0]
     for state in states[1:]:
         if not np.array_equal(state.charge_native, first.charge_native):
@@ -471,6 +493,7 @@ def build_constant_rotation_shell_history_native(
         position_mm=position,
         beta=beta,
         beta_prime_per_mm=beta_prime,
+        material_proper_time_lapse=material_proper_time_lapse,
         charge_native=first.charge_native,
         shell_index=first.shell_index,
         maximum_velocity_derivative_residual_mm_ns=maximum_residual,

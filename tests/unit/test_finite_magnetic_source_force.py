@@ -1,0 +1,114 @@
+from __future__ import annotations
+
+import numpy as np
+
+from core.constants import C_MMNS, ELEMENTARY_CHARGE
+from core.finite_magnetic_source_force import (
+    evaluate_finite_magnetic_source_force_slice_native,
+)
+from core.translating_magnetic_shell_kinematics import (
+    build_constant_rotation_shell_history_native,
+)
+
+
+def _uniform_shell_history(beta_x: float, *, angular_velocity_per_ns: float = 0.0):
+    gamma = 1.0 / np.sqrt(1.0 - beta_x**2)
+    proper_times = np.linspace(-3.0e-4, 3.0e-4, 41)
+    center_times = gamma * proper_times
+    center_positions = np.zeros((proper_times.size, 3))
+    center_positions[:, 0] = beta_x * C_MMNS * center_times
+    return build_constant_rotation_shell_history_native(
+        center_proper_times_ns=proper_times,
+        center_times_ns=center_times,
+        center_positions_mm=center_positions,
+        center_beta_x=np.full(proper_times.size, beta_x),
+        center_proper_accelerations_mm_ns2=np.zeros(proper_times.size),
+        shell_radii_mm=(0.009, 0.011),
+        shell_charges_native=(2.0 * ELEMENTARY_CHARGE, -2.0 * ELEMENTARY_CHARGE),
+        shell_angular_velocities_per_ns=(
+            angular_velocity_per_ns,
+            -angular_velocity_per_ns,
+        ),
+        rotation_axis_rest=(0.0, 0.0, 1.0),
+        polar_order=3,
+        azimuthal_order=6,
+    )
+
+
+def _relative_integrated_force(result, history, slice_index: int) -> float:
+    weighted_node_force = (
+        history.material_proper_time_lapse[slice_index, :, np.newaxis]
+        * result.node_four_force_native
+    )
+    scale = float(np.sum(np.linalg.norm(weighted_node_force, axis=1)))
+    return float(np.linalg.norm(result.integrated_four_force_native)) / scale
+
+
+def test_static_neutral_shell_has_zero_net_force_and_retarded_advanced_parity() -> None:
+    history = _uniform_shell_history(0.0)
+    retarded = evaluate_finite_magnetic_source_force_slice_native(
+        history, slice_index=20, boundary_condition="retarded"
+    )
+    advanced = evaluate_finite_magnetic_source_force_slice_native(
+        history, slice_index=20, boundary_condition="advanced"
+    )
+
+    np.testing.assert_array_equal(
+        advanced.electric_field_native, retarded.electric_field_native
+    )
+    assert np.max(np.abs(retarded.magnetic_field_native)) < 1.0e-15
+    assert np.max(np.abs(advanced.magnetic_field_native)) < 1.0e-15
+    assert _relative_integrated_force(retarded, history, 20) < 1.0e-14
+    assert _relative_integrated_force(advanced, history, 20) < 1.0e-14
+
+
+def test_uniform_translation_has_no_net_force_or_radiative_half_difference() -> None:
+    history = _uniform_shell_history(0.3)
+    retarded = evaluate_finite_magnetic_source_force_slice_native(
+        history, slice_index=20, boundary_condition="retarded"
+    )
+    advanced = evaluate_finite_magnetic_source_force_slice_native(
+        history, slice_index=20, boundary_condition="advanced"
+    )
+
+    np.testing.assert_allclose(
+        advanced.electric_field_native,
+        retarded.electric_field_native,
+        rtol=2.0e-14,
+        atol=1.0e-15,
+    )
+    np.testing.assert_allclose(
+        advanced.magnetic_field_native,
+        retarded.magnetic_field_native,
+        rtol=2.0e-14,
+        atol=1.0e-15,
+    )
+    assert _relative_integrated_force(retarded, history, 20) < 1.0e-14
+    assert _relative_integrated_force(advanced, history, 20) < 1.0e-14
+    force_scale = float(np.sum(np.linalg.norm(retarded.node_four_force_native, axis=1)))
+    radiative_half_difference = 0.5 * (
+        retarded.integrated_four_force_native - advanced.integrated_four_force_native
+    )
+    assert np.linalg.norm(radiative_half_difference) / force_scale < 1.0e-14
+
+
+def test_steady_rotation_has_no_net_spatial_or_radiative_force() -> None:
+    history = _uniform_shell_history(0.0, angular_velocity_per_ns=0.4)
+    retarded = evaluate_finite_magnetic_source_force_slice_native(
+        history, slice_index=20, boundary_condition="retarded"
+    )
+    advanced = evaluate_finite_magnetic_source_force_slice_native(
+        history, slice_index=20, boundary_condition="advanced"
+    )
+
+    node_force_scale = float(
+        np.sum(np.linalg.norm(retarded.node_four_force_native, axis=1))
+    )
+    assert (
+        np.linalg.norm(retarded.integrated_four_force_native[1:]) / (node_force_scale)
+        < 1.0e-14
+    )
+    radiative_half_difference = 0.5 * (
+        retarded.integrated_four_force_native - advanced.integrated_four_force_native
+    )
+    assert np.linalg.norm(radiative_half_difference) / node_force_scale < 1.0e-14
