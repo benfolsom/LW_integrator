@@ -4,7 +4,9 @@ import numpy as np
 import pytest
 
 from core.constants import C_MMNS, ELEMENTARY_CHARGE
+from core.retarded_fields import ObserverEvent, evaluate_retarded_charge_field_native
 from core.translating_magnetic_shell_kinematics import (
+    build_constant_rotation_shell_history_native,
     build_counterrotating_shell_surface_state_native,
 )
 
@@ -228,3 +230,80 @@ def test_rejects_coincident_shell_radii_and_superluminal_rotation() -> None:
             shell_angular_velocities_per_ns=(1.0, 1.0),
             **common,
         )
+
+
+def _uniform_acceleration_history(sample_count: int):
+    proper_acceleration = 0.05 * C_MMNS**2 / 0.011
+    proper_scale = C_MMNS / proper_acceleration
+    proper_times = np.linspace(-0.5 * proper_scale, 0.5 * proper_scale, sample_count)
+    rapidity = proper_acceleration * proper_times / C_MMNS
+    center_times = proper_scale * np.sinh(rapidity)
+    center_positions = np.zeros((sample_count, 3))
+    center_positions[:, 0] = C_MMNS**2 / proper_acceleration * (np.cosh(rapidity) - 1.0)
+    return build_constant_rotation_shell_history_native(
+        center_proper_times_ns=proper_times,
+        center_times_ns=center_times,
+        center_positions_mm=center_positions,
+        center_beta_x=np.tanh(rapidity),
+        center_proper_accelerations_mm_ns2=np.full(sample_count, proper_acceleration),
+        shell_radii_mm=(0.009, 0.011),
+        shell_charges_native=(2.0 * ELEMENTARY_CHARGE, -2.0 * ELEMENTARY_CHARGE),
+        shell_angular_velocities_per_ns=(0.4, -0.4),
+        rotation_axis_rest=(1.0, 2.0, -1.0),
+        polar_order=4,
+        azimuthal_order=8,
+    )
+
+
+def test_material_history_velocity_residual_converges_at_second_order() -> None:
+    coarse = _uniform_acceleration_history(129)
+    fine = _uniform_acceleration_history(257)
+
+    assert np.all(np.diff(fine.event_time_ns, axis=0) > 0.0)
+    assert coarse.relative_velocity_derivative_residual > 0.0
+    assert (
+        coarse.relative_velocity_derivative_residual
+        / fine.relative_velocity_derivative_residual
+    ) == pytest.approx(4.0, rel=3.0e-2)
+    assert fine.relative_velocity_derivative_residual < 1.3e-5
+
+
+def test_material_history_exports_instantaneous_charge_provider_arrays() -> None:
+    history = _uniform_acceleration_history(17)
+    provider_history = history.as_charge_provider_history()
+
+    assert len(provider_history) == 17
+    np.testing.assert_array_equal(provider_history[0]["q"], history.charge_native)
+    np.testing.assert_array_equal(
+        provider_history[-1]["q_source"], history.charge_native
+    )
+    np.testing.assert_array_equal(
+        provider_history[8]["bdotx"], history.beta_prime_per_mm[8, :, 0]
+    )
+    assert not np.any(provider_history[0]["_dead_particles"])
+
+
+def test_material_history_is_accepted_by_exact_charge_provider() -> None:
+    history = _uniform_acceleration_history(65).as_charge_provider_history()
+    observer = ObserverEvent(time_ns=0.0, position_mm=(0.05, 0.02, -0.01))
+
+    python_field = evaluate_retarded_charge_field_native(
+        history,
+        observer,
+        source_acceleration_semantics="instantaneous",
+    )
+    compiled_field = evaluate_retarded_charge_field_native(
+        history,
+        observer,
+        backend="numba_full_strict_serial",
+        source_acceleration_semantics="instantaneous",
+    )
+
+    assert np.all(python_field.valid_sources)
+    for reference, candidate in (
+        (python_field.electric_field_native, compiled_field.electric_field_native),
+        (python_field.magnetic_field_native, compiled_field.magnetic_field_native),
+    ):
+        maximum_difference = float(np.max(np.abs(candidate - reference)))
+        reference_scale = float(np.max(np.abs(reference)))
+        assert maximum_difference / reference_scale <= 1.0e-11

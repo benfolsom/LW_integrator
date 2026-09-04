@@ -117,6 +117,104 @@ class TranslatingMagneticShellSurfaceState:
             object.__setattr__(self, name, value)
 
 
+@dataclass(frozen=True)
+class TranslatingMagneticShellHistory:
+    """Continuous material-node histories assembled from Fermi slices.
+
+    ``beta_prime_per_mm`` contains instantaneous knot derivatives. Consumers
+    must request ``source_acceleration_semantics="instantaneous"`` when using
+    those values. The default charge provider reconstructs derivatives from
+    positions and velocities and therefore remains an independent route.
+    """
+
+    center_proper_time_ns: np.ndarray
+    event_time_ns: np.ndarray
+    position_mm: np.ndarray
+    beta: np.ndarray
+    beta_prime_per_mm: np.ndarray
+    charge_native: np.ndarray
+    shell_index: np.ndarray
+    maximum_velocity_derivative_residual_mm_ns: float
+    relative_velocity_derivative_residual: float
+
+    def __post_init__(self) -> None:
+        proper_time = np.asarray(self.center_proper_time_ns, dtype=float)
+        event_time = np.asarray(self.event_time_ns, dtype=float)
+        if proper_time.ndim != 1 or proper_time.size < 3:
+            raise ValueError("center_proper_time_ns must contain at least three values")
+        step_count = proper_time.size
+        if event_time.ndim != 2 or event_time.shape[0] != step_count:
+            raise ValueError("event_time_ns must have shape (steps, nodes)")
+        node_count = event_time.shape[1]
+        shapes = {
+            "position_mm": (step_count, node_count, 3),
+            "beta": (step_count, node_count, 3),
+            "beta_prime_per_mm": (step_count, node_count, 3),
+            "charge_native": (node_count,),
+            "shell_index": (node_count,),
+        }
+        for name, shape in shapes.items():
+            value = np.asarray(getattr(self, name))
+            if value.shape != shape:
+                raise ValueError(f"{name} must have shape {shape}")
+        if np.any(np.diff(proper_time) <= 0.0):
+            raise ValueError("center proper times must increase strictly")
+        if np.any(np.diff(event_time, axis=0) <= 0.0):
+            raise ValueError("every material-node laboratory time must increase")
+        residuals = (
+            self.maximum_velocity_derivative_residual_mm_ns,
+            self.relative_velocity_derivative_residual,
+        )
+        if not np.all(np.isfinite(residuals)) or np.any(np.asarray(residuals) < 0.0):
+            raise ValueError(
+                "velocity derivative residuals must be finite and nonnegative"
+            )
+        object.__setattr__(self, "center_proper_time_ns", _readonly(proper_time))
+        object.__setattr__(self, "event_time_ns", _readonly(event_time))
+        for name in ("position_mm", "beta", "beta_prime_per_mm", "charge_native"):
+            object.__setattr__(self, name, _readonly(np.asarray(getattr(self, name))))
+        indices = np.asarray(self.shell_index, dtype=int).copy()
+        indices.flags.writeable = False
+        object.__setattr__(self, "shell_index", indices)
+
+    def as_charge_provider_history(self) -> list[dict[str, np.ndarray]]:
+        """Return the sampled worldlines in the charge-provider input format."""
+
+        result = []
+        for step in range(self.center_proper_time_ns.size):
+            result.append(
+                {
+                    "t": self.event_time_ns[step],
+                    "x": self.position_mm[step, :, 0],
+                    "y": self.position_mm[step, :, 1],
+                    "z": self.position_mm[step, :, 2],
+                    "bx": self.beta[step, :, 0],
+                    "by": self.beta[step, :, 1],
+                    "bz": self.beta[step, :, 2],
+                    "bdotx": self.beta_prime_per_mm[step, :, 0],
+                    "bdoty": self.beta_prime_per_mm[step, :, 1],
+                    "bdotz": self.beta_prime_per_mm[step, :, 2],
+                    "q": self.charge_native,
+                    "q_source": self.charge_native,
+                    "_dead_particles": np.zeros(self.charge_native.size, dtype=bool),
+                }
+            )
+        return result
+
+
+def _differentiate_on_node_times(
+    values: np.ndarray, event_time_ns: np.ndarray, *, coordinate_scale: float
+) -> np.ndarray:
+    derivative = np.empty_like(values)
+    for node in range(event_time_ns.shape[1]):
+        coordinates = coordinate_scale * event_time_ns[:, node]
+        for component in range(values.shape[2]):
+            derivative[:, node, component] = np.gradient(
+                values[:, node, component], coordinates, edge_order=2
+            )
+    return derivative
+
+
 def build_counterrotating_shell_surface_state_native(
     *,
     center_time_ns: float,
@@ -288,7 +386,101 @@ def build_counterrotating_shell_surface_state_native(
     )
 
 
+def build_constant_rotation_shell_history_native(
+    *,
+    center_proper_times_ns: Sequence[float],
+    center_times_ns: Sequence[float],
+    center_positions_mm: Sequence[Sequence[float]],
+    center_beta_x: Sequence[float],
+    center_proper_accelerations_mm_ns2: Sequence[float],
+    shell_radii_mm: Sequence[float],
+    shell_charges_native: Sequence[float],
+    shell_angular_velocities_per_ns: Sequence[float],
+    rotation_axis_rest: Sequence[float],
+    polar_order: int,
+    azimuthal_order: int,
+    initial_shell_rotation_phases_rad: Sequence[float] = (0.0, 0.0),
+) -> TranslatingMagneticShellHistory:
+    """Build per-node histories for constant rotation in central proper time."""
+
+    proper_times = np.asarray(center_proper_times_ns, dtype=float)
+    center_times = np.asarray(center_times_ns, dtype=float)
+    center_positions = np.asarray(center_positions_mm, dtype=float)
+    center_betas = np.asarray(center_beta_x, dtype=float)
+    accelerations = np.asarray(center_proper_accelerations_mm_ns2, dtype=float)
+    if proper_times.ndim != 1 or proper_times.size < 3:
+        raise ValueError("center_proper_times_ns must contain at least three values")
+    count = proper_times.size
+    for name, value, shape in (
+        ("center_times_ns", center_times, (count,)),
+        ("center_positions_mm", center_positions, (count, 3)),
+        ("center_beta_x", center_betas, (count,)),
+        ("center_proper_accelerations_mm_ns2", accelerations, (count,)),
+    ):
+        if value.shape != shape or not np.all(np.isfinite(value)):
+            raise ValueError(f"{name} must have finite shape {shape}")
+    if not np.all(np.isfinite(proper_times)) or np.any(np.diff(proper_times) <= 0.0):
+        raise ValueError("center proper times must be finite and increasing")
+    angular_velocities = np.asarray(shell_angular_velocities_per_ns, dtype=float)
+    initial_phases = np.asarray(initial_shell_rotation_phases_rad, dtype=float)
+    if angular_velocities.shape != (2,) or initial_phases.shape != (2,):
+        raise ValueError("shell angular velocities and phases must contain two values")
+
+    states = []
+    for index, proper_time in enumerate(proper_times):
+        phases = initial_phases + angular_velocities * (proper_time - proper_times[0])
+        states.append(
+            build_counterrotating_shell_surface_state_native(
+                center_time_ns=float(center_times[index]),
+                center_position_mm=center_positions[index],
+                center_beta_x=float(center_betas[index]),
+                center_proper_acceleration_mm_ns2=float(accelerations[index]),
+                shell_radii_mm=shell_radii_mm,
+                shell_charges_native=shell_charges_native,
+                shell_angular_velocities_per_ns=angular_velocities,
+                rotation_axis_rest=rotation_axis_rest,
+                polar_order=polar_order,
+                azimuthal_order=azimuthal_order,
+                shell_rotation_phases_rad=phases,
+            )
+        )
+
+    event_time = np.stack([state.event_time_ns for state in states])
+    position = np.stack([state.position_mm for state in states])
+    beta = np.stack([state.beta for state in states])
+    first = states[0]
+    for state in states[1:]:
+        if not np.array_equal(state.charge_native, first.charge_native):
+            raise ArithmeticError("surface-node charges changed between slices")
+        if not np.array_equal(state.shell_index, first.shell_index):
+            raise ArithmeticError("surface-node identities changed between slices")
+
+    beta_prime = _differentiate_on_node_times(beta, event_time, coordinate_scale=C_MMNS)
+    numerical_velocity = _differentiate_on_node_times(
+        position, event_time, coordinate_scale=1.0
+    )
+    velocity_residual = numerical_velocity - C_MMNS * beta
+    maximum_residual = float(np.max(np.linalg.norm(velocity_residual, axis=2)))
+    velocity_scale = max(
+        float(np.max(np.linalg.norm(C_MMNS * beta, axis=2))),
+        np.finfo(float).tiny,
+    )
+    return TranslatingMagneticShellHistory(
+        center_proper_time_ns=proper_times,
+        event_time_ns=event_time,
+        position_mm=position,
+        beta=beta,
+        beta_prime_per_mm=beta_prime,
+        charge_native=first.charge_native,
+        shell_index=first.shell_index,
+        maximum_velocity_derivative_residual_mm_ns=maximum_residual,
+        relative_velocity_derivative_residual=maximum_residual / velocity_scale,
+    )
+
+
 __all__ = [
+    "TranslatingMagneticShellHistory",
     "TranslatingMagneticShellSurfaceState",
+    "build_constant_rotation_shell_history_native",
     "build_counterrotating_shell_surface_state_native",
 ]
