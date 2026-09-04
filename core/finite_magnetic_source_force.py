@@ -71,8 +71,10 @@ class FiniteMagneticSourceForceSlice:
             if value is None:
                 continue
             array = np.asarray(value)
-            if array.shape != (count, count, 3):
-                raise ValueError(f"{name} must have shape {(count, count, 3)}")
+            if array.ndim != 3 or array.shape[0] != count or array.shape[2] != 3:
+                raise ValueError(
+                    f"{name} must have shape (observer_count, source_count, 3)"
+                )
             object.__setattr__(self, name, _readonly(array))
         scalars = (self.center_proper_time_ns, self.maximum_light_cone_residual_mm)
         if not np.all(np.isfinite(scalars)) or self.maximum_light_cone_residual_mm < 0:
@@ -99,6 +101,30 @@ class FiniteMagneticSourceForceSplit:
             "pairwise_radiation_reaction_four_force_native",
             "diagonal_charge_ald_four_force_native",
             "completed_pairwise_radiation_reaction_four_force_native",
+            "pairwise_reduction_difference_native",
+        ):
+            value = np.asarray(getattr(self, name))
+            if value.shape != (4,):
+                raise ValueError(f"{name} must have shape (4,)")
+            object.__setattr__(self, name, _readonly(value))
+
+
+@dataclass(frozen=True)
+class FiniteMagneticSourceCrossForceSplit:
+    """Retarded/advanced force split for distinct surface grids."""
+
+    retarded: FiniteMagneticSourceForceSlice
+    advanced: FiniteMagneticSourceForceSlice
+    time_symmetric_four_force_native: np.ndarray
+    radiation_reaction_four_force_native: np.ndarray
+    pairwise_radiation_reaction_four_force_native: np.ndarray
+    pairwise_reduction_difference_native: np.ndarray
+
+    def __post_init__(self) -> None:
+        for name in (
+            "time_symmetric_four_force_native",
+            "radiation_reaction_four_force_native",
+            "pairwise_radiation_reaction_four_force_native",
             "pairwise_reduction_difference_native",
         ):
             value = np.asarray(getattr(self, name))
@@ -136,33 +162,41 @@ def _time_reversed_charge_history(
     return result
 
 
-def evaluate_finite_magnetic_source_force_slice_native(
-    history: TranslatingMagneticShellHistory,
+def _evaluate_finite_magnetic_source_cross_force_slice_native(
+    source_history: TranslatingMagneticShellHistory,
+    observer_history: TranslatingMagneticShellHistory,
     *,
     slice_index: int,
     boundary_condition: str = "retarded",
     backend: str = "python",
+    exclude_matching_indices: bool,
 ) -> FiniteMagneticSourceForceSlice:
-    """Integrate resolved charge Lorentz forces on one Fermi slice.
+    """Integrate source-grid fields over one observer-grid Fermi slice.
 
     The advanced field is obtained by evaluating the retarded solver on the
     time-reversed source. Electric fields are even and magnetic fields are odd
-    under this transformation. The same-node exclusion removes the point
-    singularity; convergence under surface and shell-size refinement remains
-    a required physical acceptance test rather than an assumption here.
+    under this transformation. Matching indices may be excluded for a shared
+    grid or retained for distinct, interlaced grids.
     """
 
     boundary = str(boundary_condition).strip().lower()
     if boundary not in {"retarded", "advanced"}:
         raise ValueError("boundary_condition must be 'retarded' or 'advanced'")
     index = int(slice_index)
-    step_count, node_count = history.event_time_ns.shape
+    step_count, node_count = observer_history.event_time_ns.shape
+    if source_history.center_proper_time_ns.shape != (
+        step_count,
+    ) or not np.array_equal(
+        source_history.center_proper_time_ns,
+        observer_history.center_proper_time_ns,
+    ):
+        raise ValueError("source and observer histories must share center proper times")
     if index < 0:
         index += step_count
     if index < 0 or index >= step_count:
         raise IndexError("slice_index is outside the shell history")
 
-    provider_history = history.as_charge_provider_history()
+    provider_history = source_history.as_charge_provider_history()
     evaluation_history = (
         provider_history
         if boundary == "retarded"
@@ -174,8 +208,10 @@ def evaluate_finite_magnetic_source_force_slice_native(
     event_time_sign = 1.0 if boundary == "retarded" else -1.0
     events = tuple(
         ObserverEvent(
-            time_ns=event_time_sign * float(history.event_time_ns[index, node]),
-            position_mm=tuple(history.position_mm[index, node]),
+            time_ns=(
+                event_time_sign * float(observer_history.event_time_ns[index, node])
+            ),
+            position_mm=tuple(observer_history.position_mm[index, node]),
         )
         for node in range(node_count)
     )
@@ -187,6 +223,7 @@ def evaluate_finite_magnetic_source_force_slice_native(
             evaluation_history,
             events,
             backend=selected_backend,
+            exclude_matching_indices=exclude_matching_indices,
             source_acceleration_semantics="instantaneous",
         )
         pair_electric = matrix.electric_field_native
@@ -197,7 +234,7 @@ def evaluate_finite_magnetic_source_force_slice_native(
         )
         electric.fill(0.0)
         magnetic.fill(0.0)
-        for source in range(node_count):
+        for source in range(source_history.charge_native.size):
             electric += pair_electric[:, source]
             magnetic += pair_magnetic[:, source]
         valid_sources = matrix.valid_sources
@@ -223,8 +260,9 @@ def evaluate_finite_magnetic_source_force_slice_native(
                 else -field.magnetic_field_native
             )
     for node in range(node_count):
-        expected_valid = np.ones(node_count, dtype=bool)
-        expected_valid[node] = False
+        expected_valid = np.ones(source_history.charge_native.size, dtype=bool)
+        if exclude_matching_indices:
+            expected_valid[node] = False
         if not np.array_equal(valid_sources[node], expected_valid):
             raise ArithmeticError("a non-self source was omitted from a node field")
         maximum_residual = max(
@@ -232,7 +270,7 @@ def evaluate_finite_magnetic_source_force_slice_native(
             float(np.max(np.abs(residuals[node, valid_sources[node]]))),
         )
 
-    beta = history.beta[index]
+    beta = observer_history.beta[index]
     gamma = 1.0 / np.sqrt(1.0 - np.sum(beta**2, axis=1))
     four_velocity = (
         gamma[:, np.newaxis] * C_MMNS * np.column_stack((np.ones(node_count), beta))
@@ -248,15 +286,15 @@ def evaluate_finite_magnetic_source_force_slice_native(
                 electric[node], magnetic[node]
             ),
             partial_f=zero_gradient,
-            charge_native=float(history.charge_native[node]),
+            charge_native=float(observer_history.charge_native[node]),
             magnetic_moment_native=0.0,
         )
     integrated_force = np.einsum(
-        "n,nm->m", history.material_proper_time_lapse[index], node_force
+        "n,nm->m", observer_history.material_proper_time_lapse[index], node_force
     )
     return FiniteMagneticSourceForceSlice(
         boundary_condition=boundary,
-        center_proper_time_ns=float(history.center_proper_time_ns[index]),
+        center_proper_time_ns=float(observer_history.center_proper_time_ns[index]),
         electric_field_native=electric,
         magnetic_field_native=magnetic,
         node_four_force_native=node_force,
@@ -264,6 +302,81 @@ def evaluate_finite_magnetic_source_force_slice_native(
         maximum_light_cone_residual_mm=maximum_residual,
         pair_electric_field_native=pair_electric,
         pair_magnetic_field_native=pair_magnetic,
+    )
+
+
+def evaluate_finite_magnetic_source_force_slice_native(
+    history: TranslatingMagneticShellHistory,
+    *,
+    slice_index: int,
+    boundary_condition: str = "retarded",
+    backend: str = "python",
+) -> FiniteMagneticSourceForceSlice:
+    """Integrate the resolved force on one shared source/observer grid."""
+
+    return _evaluate_finite_magnetic_source_cross_force_slice_native(
+        history,
+        history,
+        slice_index=slice_index,
+        boundary_condition=boundary_condition,
+        backend=backend,
+        exclude_matching_indices=True,
+    )
+
+
+def evaluate_finite_magnetic_source_cross_force_slice_native(
+    source_history: TranslatingMagneticShellHistory,
+    observer_history: TranslatingMagneticShellHistory,
+    *,
+    slice_index: int,
+    boundary_condition: str = "retarded",
+    backend: str = "python",
+) -> FiniteMagneticSourceForceSlice:
+    """Integrate force between distinct source and observer surface grids."""
+
+    selected_backend = str(backend).strip().lower()
+    if selected_backend not in {"python", "numba_full_strict_serial"}:
+        raise ValueError(
+            "cross-grid force slices support only 'python' and "
+            "'numba_full_strict_serial' backends"
+        )
+    return _evaluate_finite_magnetic_source_cross_force_slice_native(
+        source_history,
+        observer_history,
+        slice_index=slice_index,
+        boundary_condition=boundary_condition,
+        backend=selected_backend,
+        exclude_matching_indices=False,
+    )
+
+
+def _integrate_pair_charge_four_force_native(
+    observer_history: TranslatingMagneticShellHistory,
+    *,
+    slice_index: int,
+    pair_electric_field_native: np.ndarray,
+    pair_magnetic_field_native: np.ndarray,
+) -> np.ndarray:
+    """Contract and integrate a pairwise charge field over observer nodes."""
+
+    beta = observer_history.beta[slice_index]
+    gamma = 1.0 / np.sqrt(1.0 - np.sum(beta**2, axis=1))
+    pair_spatial_force = pair_electric_field_native + np.cross(
+        beta[:, np.newaxis, :], pair_magnetic_field_native
+    )
+    pair_time_force = np.einsum("osj,oj->os", pair_electric_field_native, beta)
+    pair_four_force = np.concatenate(
+        (pair_time_force[..., np.newaxis], pair_spatial_force), axis=2
+    )
+    pair_four_force *= (
+        observer_history.charge_native[:, np.newaxis, np.newaxis]
+        * gamma[:, np.newaxis, np.newaxis]
+    )
+    pairwise_node_force = np.sum(pair_four_force, axis=1)
+    return np.einsum(
+        "n,nm->m",
+        observer_history.material_proper_time_lapse[slice_index],
+        pairwise_node_force,
     )
 
 
@@ -306,25 +419,16 @@ def evaluate_finite_magnetic_source_force_split_native(
     index = int(slice_index)
     if index < 0:
         index += history.center_proper_time_ns.size
-    beta = history.beta[index]
-    gamma = 1.0 / np.sqrt(1.0 - np.sum(beta**2, axis=1))
-    pair_spatial_force = pair_electric + np.cross(beta[:, np.newaxis, :], pair_magnetic)
-    pair_time_force = np.einsum("osj,oj->os", pair_electric, beta)
-    pair_four_force = np.concatenate(
-        (pair_time_force[..., np.newaxis], pair_spatial_force), axis=2
-    )
-    pair_four_force *= (
-        history.charge_native[:, np.newaxis, np.newaxis]
-        * gamma[:, np.newaxis, np.newaxis]
-    )
-    pairwise_node_force = np.sum(pair_four_force, axis=1)
-    pairwise_radiative = np.einsum(
-        "n,nm->m", history.material_proper_time_lapse[index], pairwise_node_force
+    pairwise_radiative = _integrate_pair_charge_four_force_native(
+        history,
+        slice_index=index,
+        pair_electric_field_native=pair_electric,
+        pair_magnetic_field_native=pair_magnetic,
     )
     kinematics = evaluate_shell_history_four_kinematics_native(history)
-    diagonal_node_force = np.empty_like(pairwise_node_force)
+    diagonal_node_force = np.empty((history.charge_native.size, 4))
     zeros = np.zeros(4)
-    for node in range(beta.shape[0]):
+    for node in range(history.charge_native.size):
         diagonal_node_force[node] = evaluate_jakobsen_linear_spin_self_force_native(
             charge_native=float(history.charge_native[node]),
             mass_amu=1.0,
@@ -361,9 +465,75 @@ def evaluate_finite_magnetic_source_force_split_native(
     )
 
 
+def evaluate_finite_magnetic_source_cross_force_split_native(
+    source_history: TranslatingMagneticShellHistory,
+    observer_history: TranslatingMagneticShellHistory,
+    *,
+    slice_index: int,
+    backend: str = "python",
+) -> FiniteMagneticSourceCrossForceSplit:
+    """Evaluate the force split between distinct source and observer grids.
+
+    No point-charge diagonal term is added: the interlaced grids contain no
+    coincident source--observer nodes and directly sample the continuum double
+    integral.
+    """
+
+    retarded = evaluate_finite_magnetic_source_cross_force_slice_native(
+        source_history,
+        observer_history,
+        slice_index=slice_index,
+        boundary_condition="retarded",
+        backend=backend,
+    )
+    advanced = evaluate_finite_magnetic_source_cross_force_slice_native(
+        source_history,
+        observer_history,
+        slice_index=slice_index,
+        boundary_condition="advanced",
+        backend=backend,
+    )
+    assert retarded.pair_electric_field_native is not None
+    assert retarded.pair_magnetic_field_native is not None
+    assert advanced.pair_electric_field_native is not None
+    assert advanced.pair_magnetic_field_native is not None
+    pair_electric = 0.5 * (
+        retarded.pair_electric_field_native - advanced.pair_electric_field_native
+    )
+    pair_magnetic = 0.5 * (
+        retarded.pair_magnetic_field_native - advanced.pair_magnetic_field_native
+    )
+    index = int(slice_index)
+    if index < 0:
+        index += observer_history.center_proper_time_ns.size
+    pairwise_radiative = _integrate_pair_charge_four_force_native(
+        observer_history,
+        slice_index=index,
+        pair_electric_field_native=pair_electric,
+        pair_magnetic_field_native=pair_magnetic,
+    )
+    symmetric = 0.5 * (
+        retarded.integrated_four_force_native + advanced.integrated_four_force_native
+    )
+    radiative = 0.5 * (
+        retarded.integrated_four_force_native - advanced.integrated_four_force_native
+    )
+    return FiniteMagneticSourceCrossForceSplit(
+        retarded=retarded,
+        advanced=advanced,
+        time_symmetric_four_force_native=symmetric,
+        radiation_reaction_four_force_native=radiative,
+        pairwise_radiation_reaction_four_force_native=pairwise_radiative,
+        pairwise_reduction_difference_native=pairwise_radiative - radiative,
+    )
+
+
 __all__ = [
+    "FiniteMagneticSourceCrossForceSplit",
     "FiniteMagneticSourceForceSplit",
     "FiniteMagneticSourceForceSlice",
+    "evaluate_finite_magnetic_source_cross_force_slice_native",
+    "evaluate_finite_magnetic_source_cross_force_split_native",
     "evaluate_finite_magnetic_source_force_split_native",
     "evaluate_finite_magnetic_source_force_slice_native",
 ]

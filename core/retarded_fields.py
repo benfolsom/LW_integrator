@@ -108,11 +108,11 @@ class RetardedChargeFieldResult:
 
 @dataclass(frozen=True)
 class RetardedMutualChargeFieldMatrix:
-    """Per-observer, per-source fields with the matching diagonal omitted.
+    """Per-observer, per-source fields with optional matching-index omission.
 
     The first index selects the observer event and the second selects the
-    source worldline. Diagonal validity entries are false because event ``i``
-    deliberately excludes source ``i``.
+    source worldline. Same-grid callers normally omit matching indices;
+    distinct-grid callers can retain every source--observer pair.
     """
 
     electric_field_native: np.ndarray
@@ -2147,15 +2147,16 @@ def evaluate_retarded_mutual_charge_field_matrix_native(
     root_tolerance_mm: float = _DEFAULT_ROOT_TOLERANCE_MM,
     max_root_iterations: int = _DEFAULT_MAX_ROOT_ITERATIONS,
     backend: str = "python",
+    exclude_matching_indices: bool = True,
     source_acceleration_semantics: str = "preceding_interval",
 ) -> RetardedMutualChargeFieldMatrix:
     """Evaluate each non-diagonal source-to-observer field separately.
 
-    Event ``i`` excludes source ``i``. This is the resolved finite-source
-    operation needed to evaluate mutual forces without repeatedly extracting
-    and preparing the same complete history. Keeping the pair matrix permits
-    retarded and advanced contributions to be combined before a potentially
-    ill-conditioned global reduction.
+    By default event ``i`` excludes source ``i``. Set
+    ``exclude_matching_indices=False`` for distinct source and observer
+    quadrature grids; every pair is then retained. Keeping the pair matrix
+    permits retarded and advanced contributions to be combined before a
+    potentially ill-conditioned global reduction.
 
     The Python backend is the transparent reference. The strict serial Numba
     backend compiles each source's roots and fields for all observer events,
@@ -2181,13 +2182,17 @@ def evaluate_retarded_mutual_charge_field_matrix_native(
     )
     events = tuple(observer_events)
     arrays = prepared.arrays
-    if len(events) != arrays.n_sources:
-        raise ValueError("observer_events must contain one event per source")
+    exclude_diagonal = bool(exclude_matching_indices)
+    if exclude_diagonal and len(events) != arrays.n_sources:
+        raise ValueError(
+            "matching-index exclusion requires one observer event per source"
+        )
 
-    electric = np.zeros((arrays.n_sources, arrays.n_sources, 3), dtype=float)
+    event_count = len(events)
+    electric = np.zeros((event_count, arrays.n_sources, 3), dtype=float)
     magnetic = np.zeros_like(electric)
-    potential = np.zeros((arrays.n_sources, arrays.n_sources, 4), dtype=float)
-    retarded_time = np.full((arrays.n_sources, arrays.n_sources), np.nan)
+    potential = np.zeros((event_count, arrays.n_sources, 4), dtype=float)
+    retarded_time = np.full((event_count, arrays.n_sources), np.nan)
     residual = np.full_like(retarded_time, np.nan)
     separation = np.full_like(retarded_time, np.nan)
     valid = np.zeros_like(retarded_time, dtype=bool)
@@ -2241,7 +2246,7 @@ def evaluate_retarded_mutual_charge_field_matrix_native(
                 raise
 
             for event_index in range(len(events)):
-                if event_index == source_index:
+                if exclude_diagonal and event_index == source_index:
                     continue
                 status = int(batch[0][event_index])
                 if status == _STATUS_TERMINATED_SOURCE:
@@ -2272,7 +2277,7 @@ def evaluate_retarded_mutual_charge_field_matrix_native(
         for source_index, source in prepared.sources.items():
             charge = float(arrays.charge_native[source_index])
             for event_index, event in enumerate(events):
-                if event_index == source_index:
+                if exclude_diagonal and event_index == source_index:
                     continue
                 observer_time = float(event.time_ns)
                 observer_position = np.asarray(event.position_mm, dtype=float)

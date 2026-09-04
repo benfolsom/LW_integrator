@@ -5,6 +5,7 @@ import pytest
 
 from core.constants import C_MMNS, ELEMENTARY_CHARGE
 from core.finite_magnetic_source_force import (
+    evaluate_finite_magnetic_source_cross_force_split_native,
     evaluate_finite_magnetic_source_force_split_native,
     evaluate_finite_magnetic_source_force_slice_native,
 )
@@ -19,7 +20,13 @@ from core.translating_magnetic_shell_kinematics import (
 )
 
 
-def _uniform_shell_history(beta_x: float, *, angular_velocity_per_ns: float = 0.0):
+def _uniform_shell_history(
+    beta_x: float,
+    *,
+    angular_velocity_per_ns: float = 0.0,
+    initial_rotation_phase_rad: float = 0.0,
+    polar_order: int = 3,
+):
     gamma = 1.0 / np.sqrt(1.0 - beta_x**2)
     proper_times = np.linspace(-3.0e-4, 3.0e-4, 41)
     center_times = gamma * proper_times
@@ -38,8 +45,12 @@ def _uniform_shell_history(beta_x: float, *, angular_velocity_per_ns: float = 0.
             -angular_velocity_per_ns,
         ),
         rotation_axis_rest=(0.0, 0.0, 1.0),
-        polar_order=3,
-        azimuthal_order=6,
+        polar_order=polar_order,
+        azimuthal_order=2 * polar_order,
+        initial_shell_rotation_phases_rad=(
+            initial_rotation_phase_rad,
+            initial_rotation_phase_rad,
+        ),
     )
 
 
@@ -218,6 +229,42 @@ def test_compiled_mutual_field_matrix_matches_python_reference() -> None:
             assert difference / scale < 2.0e-14
 
 
+def test_distinct_observer_grid_retains_every_pair() -> None:
+    history = _uniform_shell_history(0.3, angular_velocity_per_ns=0.4)
+    provider_history = history.as_charge_provider_history()
+    events = tuple(
+        ObserverEvent(
+            time_ns=float(history.event_time_ns[20, node]),
+            position_mm=tuple(
+                history.position_mm[20, node] + np.array((0.0, 2.0e-4, 1.0e-4))
+            ),
+        )
+        for node in range(history.charge_native.size)
+    )
+    matrix = evaluate_retarded_mutual_charge_field_matrix_native(
+        provider_history,
+        events,
+        exclude_matching_indices=False,
+        source_acceleration_semantics="instantaneous",
+    )
+
+    assert np.all(matrix.valid_sources)
+    for event_index, event in enumerate(events):
+        reference = evaluate_retarded_charge_field_native(
+            provider_history,
+            event,
+            source_acceleration_semantics="instantaneous",
+        )
+        np.testing.assert_array_equal(
+            np.sum(matrix.electric_field_native[event_index], axis=0),
+            reference.electric_field_native,
+        )
+        np.testing.assert_array_equal(
+            np.sum(matrix.magnetic_field_native[event_index], axis=0),
+            reference.magnetic_field_native,
+        )
+
+
 def test_compiled_force_split_matches_python_reference() -> None:
     pytest.importorskip("numba")
     history = _uniform_shell_history(0.3, angular_velocity_per_ns=0.4)
@@ -241,6 +288,55 @@ def test_compiled_force_split_matches_python_reference() -> None:
     ):
         difference = np.linalg.norm(getattr(candidate, name) - getattr(reference, name))
         assert difference / force_scale < 2.0e-14
+
+
+def test_interlaced_uniform_translation_has_no_radiative_force() -> None:
+    observer_history = _uniform_shell_history(0.3, angular_velocity_per_ns=0.4)
+    source_history = _uniform_shell_history(
+        0.3,
+        angular_velocity_per_ns=0.4,
+        initial_rotation_phase_rad=np.pi / 6.0,
+    )
+    split = evaluate_finite_magnetic_source_cross_force_split_native(
+        source_history,
+        observer_history,
+        slice_index=20,
+        backend="numba_full_strict_serial",
+    )
+
+    force_scale = float(
+        np.sum(np.linalg.norm(split.retarded.node_four_force_native, axis=1))
+    )
+    assert np.linalg.norm(split.radiation_reaction_four_force_native) / force_scale < (
+        2.0e-14
+    )
+    assert np.linalg.norm(split.pairwise_reduction_difference_native) / force_scale < (
+        2.0e-15
+    )
+
+
+def test_adjacent_order_cross_grid_supports_different_node_counts() -> None:
+    observer_history = _uniform_shell_history(
+        0.3, angular_velocity_per_ns=0.4, polar_order=3
+    )
+    source_history = _uniform_shell_history(
+        0.3, angular_velocity_per_ns=0.4, polar_order=4
+    )
+    split = evaluate_finite_magnetic_source_cross_force_split_native(
+        source_history,
+        observer_history,
+        slice_index=20,
+        backend="numba_full_strict_serial",
+    )
+
+    assert split.retarded.pair_electric_field_native is not None
+    assert split.retarded.pair_electric_field_native.shape == (36, 64, 3)
+    force_scale = float(
+        np.sum(np.linalg.norm(split.retarded.node_four_force_native, axis=1))
+    )
+    assert np.linalg.norm(split.radiation_reaction_four_force_native) / force_scale < (
+        2.0e-14
+    )
 
 
 def test_diagonal_ald_completion_vanishes_for_uniform_translation() -> None:
