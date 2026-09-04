@@ -17,7 +17,11 @@ from dataclasses import dataclass
 import numpy as np
 
 from .constants import C_MMNS
-from .retarded_fields import ObserverEvent, evaluate_retarded_charge_field_native
+from .retarded_fields import (
+    ObserverEvent,
+    evaluate_retarded_charge_field_native,
+    evaluate_retarded_mutual_charge_fields_native,
+)
 from .rfs import electromagnetic_field_tensor_native, rfs_four_force_native
 from .translating_magnetic_shell_kinematics import TranslatingMagneticShellHistory
 
@@ -125,20 +129,32 @@ def evaluate_finite_magnetic_source_force_slice_native(
     electric = np.empty((node_count, 3), dtype=float)
     magnetic = np.empty_like(electric)
     maximum_residual = 0.0
-    for node in range(node_count):
-        event_time = float(history.event_time_ns[index, node])
-        if boundary == "advanced":
-            event_time = -event_time
-        field = evaluate_retarded_charge_field_native(
+    event_time_sign = 1.0 if boundary == "retarded" else -1.0
+    events = tuple(
+        ObserverEvent(
+            time_ns=event_time_sign * float(history.event_time_ns[index, node]),
+            position_mm=tuple(history.position_mm[index, node]),
+        )
+        for node in range(node_count)
+    )
+    if str(backend).strip().lower() == "python":
+        fields = evaluate_retarded_mutual_charge_fields_native(
             evaluation_history,
-            ObserverEvent(
-                time_ns=event_time,
-                position_mm=tuple(history.position_mm[index, node]),
-            ),
-            excluded_source_indices=(node,),
-            backend=backend,
+            events,
             source_acceleration_semantics="instantaneous",
         )
+    else:
+        fields = tuple(
+            evaluate_retarded_charge_field_native(
+                evaluation_history,
+                events[node],
+                excluded_source_indices=(node,),
+                backend=backend,
+                source_acceleration_semantics="instantaneous",
+            )
+            for node in range(node_count)
+        )
+    for node, field in enumerate(fields):
         expected_valid = np.ones(node_count, dtype=bool)
         expected_valid[node] = False
         if not np.array_equal(field.valid_sources, expected_valid):

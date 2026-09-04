@@ -6,6 +6,11 @@ from core.constants import C_MMNS, ELEMENTARY_CHARGE
 from core.finite_magnetic_source_force import (
     evaluate_finite_magnetic_source_force_slice_native,
 )
+from core.retarded_fields import (
+    ObserverEvent,
+    evaluate_retarded_charge_field_native,
+    evaluate_retarded_mutual_charge_fields_native,
+)
 from core.translating_magnetic_shell_kinematics import (
     build_constant_rotation_shell_history_native,
 )
@@ -112,3 +117,41 @@ def test_steady_rotation_has_no_net_spatial_or_radiative_force() -> None:
         retarded.integrated_four_force_native - advanced.integrated_four_force_native
     )
     assert np.linalg.norm(radiative_half_difference) / node_force_scale < 1.0e-14
+
+
+def test_prepared_mutual_fields_are_bitwise_reference_equal() -> None:
+    history = _uniform_shell_history(0.3, angular_velocity_per_ns=0.4)
+    provider_history = history.as_charge_provider_history()
+    events = tuple(
+        ObserverEvent(
+            time_ns=float(history.event_time_ns[20, node]),
+            position_mm=tuple(history.position_mm[20, node]),
+        )
+        for node in range(history.charge_native.size)
+    )
+    prepared = evaluate_retarded_mutual_charge_fields_native(
+        provider_history,
+        events,
+        source_acceleration_semantics="instantaneous",
+    )
+
+    for node, candidate in enumerate(prepared):
+        reference = evaluate_retarded_charge_field_native(
+            provider_history,
+            events[node],
+            excluded_source_indices=(node,),
+            source_acceleration_semantics="instantaneous",
+        )
+        for name in (
+            "electric_field_native",
+            "magnetic_field_native",
+            "field_tensor",
+            "retarded_time_ns",
+            "light_cone_residual_mm",
+            "separation_mm",
+            "valid_sources",
+            "four_potential",
+        ):
+            np.testing.assert_array_equal(
+                getattr(candidate, name), getattr(reference, name)
+            )

@@ -2121,6 +2121,121 @@ def evaluate_retarded_charge_field_native(
     )[0]
 
 
+def evaluate_retarded_mutual_charge_fields_native(
+    history: TrajectoryHistory,
+    observer_events: Sequence[ObserverEvent],
+    *,
+    require_complete_history: bool = True,
+    root_tolerance_mm: float = _DEFAULT_ROOT_TOLERANCE_MM,
+    max_root_iterations: int = _DEFAULT_MAX_ROOT_ITERATIONS,
+    source_acceleration_semantics: str = "preceding_interval",
+) -> tuple[RetardedChargeFieldResult, ...]:
+    """Evaluate one field per source while omitting the matching source.
+
+    Event ``i`` excludes source ``i``. This is the resolved finite-source
+    operation needed to evaluate mutual forces without repeatedly extracting
+    and preparing the same complete history. The source reduction order is
+    identical to repeated calls to :func:`evaluate_retarded_charge_field_native`
+    with ``excluded_source_indices=(i,)``.
+
+    This first transparent implementation uses the Python root and field
+    kernels. Compiled acceleration can be added without changing the public
+    contract after the reference behavior is established.
+    """
+
+    tolerance, iterations = _validated_root_options(
+        root_tolerance_mm, max_root_iterations
+    )
+    acceleration_semantics = _validated_source_acceleration_semantics(
+        source_acceleration_semantics
+    )
+    prepared = _prepare_history(
+        history,
+        (),
+        source_acceleration_semantics=acceleration_semantics,
+    )
+    events = tuple(observer_events)
+    arrays = prepared.arrays
+    if len(events) != arrays.n_sources:
+        raise ValueError("observer_events must contain one event per source")
+
+    electric = np.zeros((arrays.n_sources, 3), dtype=float)
+    magnetic = np.zeros_like(electric)
+    potential = np.zeros((arrays.n_sources, 4), dtype=float)
+    retarded_time = np.full((arrays.n_sources, arrays.n_sources), np.nan)
+    residual = np.full_like(retarded_time, np.nan)
+    separation = np.full_like(retarded_time, np.nan)
+    valid = np.zeros_like(retarded_time, dtype=bool)
+    missing: list[list[int]] = [[] for _ in events]
+
+    for source_index, source in prepared.sources.items():
+        charge = float(arrays.charge_native[source_index])
+        for event_index, event in enumerate(events):
+            if event_index == source_index:
+                continue
+            observer_time = float(event.time_ns)
+            observer_position = np.asarray(event.position_mm, dtype=float)
+            sample = _solve_retarded_sample(
+                source,
+                observer_time_ns=observer_time,
+                observer_position_mm=observer_position,
+                root_tolerance_mm=tolerance,
+                max_root_iterations=iterations,
+            )
+            if sample is None:
+                if _source_terminated_before_light_cone(
+                    source,
+                    observer_time_ns=observer_time,
+                    observer_position_mm=observer_position,
+                ):
+                    continue
+                missing[event_index].append(source_index)
+                continue
+            source_to_observer = observer_position - sample.position_mm
+            source_electric, source_magnetic = lienard_wiechert_charge_field_native(
+                charge_native=charge,
+                separation_vector_mm=source_to_observer,
+                source_beta=sample.beta,
+                source_beta_prime_per_mm=sample.beta_prime_per_mm,
+            )
+            source_potential = lienard_wiechert_charge_potential_native(
+                charge_native=charge,
+                separation_vector_mm=source_to_observer,
+                source_beta=sample.beta,
+            )
+            electric[event_index] += source_electric
+            magnetic[event_index] += source_magnetic
+            potential[event_index] += source_potential
+            retarded_time[event_index, source_index] = sample.time_ns
+            residual[event_index, source_index] = sample.residual_mm
+            separation[event_index, source_index] = sample.separation_mm
+            valid[event_index, source_index] = True
+
+    if require_complete_history:
+        failed = {index: values for index, values in enumerate(missing) if values}
+        if failed:
+            raise RetardedHistoryError(
+                "source history does not bracket mutual observer light cones: "
+                f"{failed}"
+            )
+
+    return tuple(
+        RetardedChargeFieldResult(
+            electric_field_native=electric[index],
+            magnetic_field_native=magnetic[index],
+            field_tensor=electromagnetic_field_tensor_native(
+                electric[index], magnetic[index]
+            ),
+            retarded_time_ns=retarded_time[index],
+            light_cone_residual_mm=residual[index],
+            separation_mm=separation[index],
+            valid_sources=valid[index],
+            four_potential=potential[index],
+        )
+        for index in range(arrays.n_sources)
+    )
+
+
 def evaluate_retarded_charge_field_gradient_native(
     history: TrajectoryHistory,
     observer_event: ObserverEvent,
@@ -2281,6 +2396,7 @@ __all__ = [
     "RetardedHistoryError",
     "evaluate_retarded_charge_field_gradient_native",
     "evaluate_retarded_charge_field_native",
+    "evaluate_retarded_mutual_charge_fields_native",
     "evaluate_retarded_charge_response_gradient_native",
     "lienard_wiechert_charge_field_native",
     "lienard_wiechert_charge_potential_native",
