@@ -133,10 +133,11 @@ def build_counterrotating_shell_surface_state_native(
 ) -> TranslatingMagneticShellSurfaceState:
     """Return two rotating shells on one collinear Fermi rest-space slice.
 
-    Angular velocities are defined in the center's instantaneous inertial
-    frame. The construction is exact for uniform translation. Under
-    acceleration it is a declared small-source Born-rigid slice whose control
-    parameter is ``abs(a) R / c**2``.
+    Angular velocities are phase rates with respect to the center's proper
+    time. The local physical tangential velocity is divided by the Fermi lapse
+    ``1 + a xi / c**2``. The construction is exact for uniform translation.
+    Under acceleration it is a declared small-source Born-rigid slice whose
+    control parameter is ``abs(a) R / c**2``.
     """
 
     time = float(center_time_ns)
@@ -187,6 +188,7 @@ def build_counterrotating_shell_surface_state_native(
     node_charges = []
     weights = []
     shell_indices = []
+    born_lapses = []
     for shell_index in range(2):
         directions = _rotate_about_axis(
             quadrature.directions,
@@ -194,11 +196,16 @@ def build_counterrotating_shell_surface_state_native(
             angle_rad=float(phases[shell_index]),
         )
         positions = radii[shell_index] * directions
-        velocities = angular_velocities[shell_index] * np.cross(
+        lapse = 1.0 + acceleration * positions[:, 0] / C_MMNS**2
+        if np.any(lapse <= 0.0):
+            raise ValueError("shell crosses the collinear Fermi-coordinate horizon")
+        coordinate_velocities = angular_velocities[shell_index] * np.cross(
             axis[np.newaxis, :], positions
         )
+        velocities = coordinate_velocities / lapse[:, np.newaxis]
         rest_positions.append(positions)
         rest_velocities.append(velocities)
+        born_lapses.append(lapse)
         weights.append(quadrature.solid_angle_weights)
         node_charges.append(
             charges[shell_index] * quadrature.solid_angle_weights / _FOUR_PI
@@ -210,6 +217,7 @@ def build_counterrotating_shell_surface_state_native(
     charge = np.concatenate(node_charges)
     solid_angle_weight = np.concatenate(weights)
     shell_index_array = np.concatenate(shell_indices)
+    born_lapse = np.concatenate(born_lapses)
     internal_beta = rest_velocity / C_MMNS
     internal_beta_squared = np.sum(internal_beta**2, axis=1)
     if np.any(internal_beta_squared >= 1.0):
@@ -227,10 +235,6 @@ def build_counterrotating_shell_surface_state_native(
     event_time = time + gamma * beta_x * rest_position[:, 0] / C_MMNS
     position = center[np.newaxis, :] + rest_position
     position[:, 0] = center[0] + gamma * rest_position[:, 0]
-    born_lapse = 1.0 + acceleration * rest_position[:, 0] / C_MMNS**2
-    if np.any(born_lapse <= 0.0):
-        raise ValueError("shell crosses the collinear Fermi-coordinate horizon")
-
     electric_dipole = np.sum(charge[:, None] * rest_position, axis=0)
     charge_coulomb = charge * ELEMENTARY_CHARGE_COULOMB / ELEMENTARY_CHARGE
     moment_si = 0.5 * np.sum(

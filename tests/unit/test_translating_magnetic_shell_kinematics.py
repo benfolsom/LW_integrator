@@ -121,6 +121,54 @@ def test_acceleration_reports_born_rigidity_control_parameter() -> None:
     )
 
 
+def test_accelerated_slice_velocity_matches_material_worldline_derivative() -> None:
+    proper_acceleration = 0.15 * C_MMNS**2 / 0.011
+    proper_time_ns = 0.02 * C_MMNS / proper_acceleration
+    step_ns = 1.0e-4 * C_MMNS / proper_acceleration
+    angular_velocity = 0.4
+
+    def state_at(proper_time: float):
+        rapidity = proper_acceleration * proper_time / C_MMNS
+        center_time = C_MMNS / proper_acceleration * np.sinh(rapidity)
+        center_x = C_MMNS**2 / proper_acceleration * (np.cosh(rapidity) - 1.0)
+        return build_counterrotating_shell_surface_state_native(
+            center_time_ns=float(center_time),
+            center_position_mm=(float(center_x), 0.0, 0.0),
+            center_beta_x=float(np.tanh(rapidity)),
+            center_proper_acceleration_mm_ns2=proper_acceleration,
+            shell_radii_mm=(0.009, 0.011),
+            shell_charges_native=(
+                2.0 * ELEMENTARY_CHARGE,
+                -2.0 * ELEMENTARY_CHARGE,
+            ),
+            shell_angular_velocities_per_ns=(
+                angular_velocity,
+                -angular_velocity,
+            ),
+            rotation_axis_rest=(1.0, 2.0, -1.0),
+            polar_order=8,
+            azimuthal_order=16,
+            shell_rotation_phases_rad=(
+                angular_velocity * proper_time,
+                -angular_velocity * proper_time,
+            ),
+        )
+
+    before = state_at(proper_time_ns - step_ns)
+    center = state_at(proper_time_ns)
+    after = state_at(proper_time_ns + step_ns)
+    finite_difference_velocity = (after.position_mm - before.position_mm) / (
+        after.event_time_ns - before.event_time_ns
+    )[:, np.newaxis]
+
+    np.testing.assert_allclose(
+        finite_difference_velocity,
+        center.beta * C_MMNS,
+        rtol=3.0e-8,
+        atol=2.0e-10,
+    )
+
+
 def test_reversing_both_rotations_reverses_moment_only() -> None:
     forward = _state(rotation_sign=1.0)
     reverse = _state(rotation_sign=-1.0)
