@@ -51,6 +51,28 @@ def _rotate_about_axis(
     )
 
 
+def _orient_quadrature_polar_axis(
+    vectors: np.ndarray, *, polar_axis: np.ndarray
+) -> np.ndarray:
+    """Rotate the quadrature's native positive-z polar axis to ``polar_axis``."""
+
+    native_axis = np.array((0.0, 0.0, 1.0))
+    cosine = float(np.dot(native_axis, polar_axis))
+    cross = np.cross(native_axis, polar_axis)
+    sine = float(np.linalg.norm(cross))
+    if sine <= 8.0 * np.finfo(float).eps:
+        if cosine >= 0.0:
+            return vectors.copy()
+        return _rotate_about_axis(
+            vectors, axis=np.array((1.0, 0.0, 0.0)), angle_rad=np.pi
+        )
+    return _rotate_about_axis(
+        vectors,
+        axis=cross / sine,
+        angle_rad=float(np.arctan2(sine, cosine)),
+    )
+
+
 @dataclass(frozen=True)
 class TranslatingMagneticShellSurfaceState:
     """Discrete shell events on one central comoving hypersurface.
@@ -303,6 +325,7 @@ def build_counterrotating_shell_surface_state_native(
     polar_order: int,
     azimuthal_order: int,
     shell_rotation_phases_rad: Sequence[float] = (0.0, 0.0),
+    quadrature_polar_axis_rest: Sequence[float] = (0.0, 0.0, 1.0),
 ) -> TranslatingMagneticShellSurfaceState:
     """Return two rotating shells on one collinear Fermi rest-space slice.
 
@@ -354,9 +377,19 @@ def build_counterrotating_shell_surface_state_native(
     if axis_norm == 0.0:
         raise ValueError("rotation_axis_rest must be nonzero")
     axis = axis / axis_norm
+    quadrature_axis = _vector3(
+        quadrature_polar_axis_rest, name="quadrature_polar_axis_rest"
+    )
+    quadrature_axis_norm = float(np.linalg.norm(quadrature_axis))
+    if quadrature_axis_norm == 0.0:
+        raise ValueError("quadrature_polar_axis_rest must be nonzero")
+    quadrature_axis = quadrature_axis / quadrature_axis_norm
 
     quadrature = gauss_legendre_sphere_quadrature(
         polar_order=polar_order, azimuthal_order=azimuthal_order
+    )
+    quadrature_directions = _orient_quadrature_polar_axis(
+        quadrature.directions, polar_axis=quadrature_axis
     )
     gamma = 1.0 / np.sqrt(1.0 - beta_x**2)
     rest_positions = []
@@ -367,7 +400,7 @@ def build_counterrotating_shell_surface_state_native(
     born_lapses = []
     for shell_index in range(2):
         directions = _rotate_about_axis(
-            quadrature.directions,
+            quadrature_directions,
             axis=axis,
             angle_rad=float(phases[shell_index]),
         )
@@ -480,6 +513,7 @@ def build_constant_rotation_shell_history_native(
     polar_order: int,
     azimuthal_order: int,
     initial_shell_rotation_phases_rad: Sequence[float] = (0.0, 0.0),
+    quadrature_polar_axis_rest: Sequence[float] = (0.0, 0.0, 1.0),
 ) -> TranslatingMagneticShellHistory:
     """Build per-node histories for constant rotation in central proper time."""
 
@@ -522,6 +556,7 @@ def build_constant_rotation_shell_history_native(
                 polar_order=polar_order,
                 azimuthal_order=azimuthal_order,
                 shell_rotation_phases_rad=phases,
+                quadrature_polar_axis_rest=quadrature_polar_axis_rest,
             )
         )
 

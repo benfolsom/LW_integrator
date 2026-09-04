@@ -51,6 +51,8 @@ class FiniteMagneticSourceForceSlice:
     maximum_light_cone_residual_mm: float
     pair_electric_field_native: np.ndarray | None = None
     pair_magnetic_field_native: np.ndarray | None = None
+    pair_source_time_ns: np.ndarray | None = None
+    pair_separation_mm: np.ndarray | None = None
 
     def __post_init__(self) -> None:
         count = np.asarray(self.electric_field_native).shape[0]
@@ -74,6 +76,17 @@ class FiniteMagneticSourceForceSlice:
             if array.ndim != 3 or array.shape[0] != count or array.shape[2] != 3:
                 raise ValueError(
                     f"{name} must have shape (observer_count, source_count, 3)"
+                )
+            object.__setattr__(self, name, _readonly(array))
+        for name in ("pair_source_time_ns", "pair_separation_mm"):
+            value = getattr(self, name)
+            if value is None:
+                continue
+            array = np.asarray(value)
+            source_count = np.asarray(self.pair_electric_field_native).shape[1]
+            if array.shape != (count, source_count):
+                raise ValueError(
+                    f"{name} must have shape (observer_count, source_count)"
                 )
             object.__setattr__(self, name, _readonly(array))
         scalars = (self.center_proper_time_ns, self.maximum_light_cone_residual_mm)
@@ -217,6 +230,8 @@ def _evaluate_finite_magnetic_source_cross_force_slice_native(
     )
     pair_electric = None
     pair_magnetic = None
+    pair_source_time = None
+    pair_separation = None
     selected_backend = str(backend).strip().lower()
     if selected_backend in {"python", "numba_full_strict_serial"}:
         matrix = evaluate_retarded_mutual_charge_field_matrix_native(
@@ -232,6 +247,13 @@ def _evaluate_finite_magnetic_source_cross_force_slice_native(
             if boundary == "retarded"
             else -matrix.magnetic_field_native
         )
+        if not exclude_matching_indices:
+            pair_source_time = (
+                matrix.retarded_time_ns
+                if boundary == "retarded"
+                else -matrix.retarded_time_ns
+            )
+            pair_separation = matrix.separation_mm
         electric.fill(0.0)
         magnetic.fill(0.0)
         for source in range(source_history.charge_native.size):
@@ -302,6 +324,8 @@ def _evaluate_finite_magnetic_source_cross_force_slice_native(
         maximum_light_cone_residual_mm=maximum_residual,
         pair_electric_field_native=pair_electric,
         pair_magnetic_field_native=pair_magnetic,
+        pair_source_time_ns=pair_source_time,
+        pair_separation_mm=pair_separation,
     )
 
 
@@ -350,6 +374,51 @@ def evaluate_finite_magnetic_source_cross_force_slice_native(
     )
 
 
+def evaluate_pair_charge_four_force_matrix_native(
+    observer_history: TranslatingMagneticShellHistory,
+    *,
+    slice_index: int,
+    pair_electric_field_native: np.ndarray,
+    pair_magnetic_field_native: np.ndarray,
+) -> np.ndarray:
+    """Contract pair fields into one four-force for each observer/source pair.
+
+    The returned ``(observer, source, four-vector)`` matrix includes observer
+    charge and Lorentz factor, but not the observer-to-center proper-time
+    lapse. Keeping the pairs separate lets diagnostics partition the surface
+    integral without repeating field or light-cone calculations.
+    """
+
+    beta = observer_history.beta[slice_index]
+    electric = np.asarray(pair_electric_field_native, dtype=float)
+    magnetic = np.asarray(pair_magnetic_field_native, dtype=float)
+    if (
+        electric.ndim != 3
+        or electric.shape[0] != beta.shape[0]
+        or electric.shape[2] != 3
+    ):
+        raise ValueError(
+            "pair_electric_field_native must have shape "
+            "(observer_count, source_count, 3)"
+        )
+    expected_shape = electric.shape
+    if magnetic.shape != expected_shape:
+        raise ValueError(
+            "pair_magnetic_field_native must match the pair electric-field shape"
+        )
+    gamma = 1.0 / np.sqrt(1.0 - np.sum(beta**2, axis=1))
+    pair_spatial_force = electric + np.cross(beta[:, np.newaxis, :], magnetic)
+    pair_time_force = np.einsum("osj,oj->os", electric, beta)
+    pair_four_force = np.concatenate(
+        (pair_time_force[..., np.newaxis], pair_spatial_force), axis=2
+    )
+    pair_four_force *= (
+        observer_history.charge_native[:, np.newaxis, np.newaxis]
+        * gamma[:, np.newaxis, np.newaxis]
+    )
+    return _readonly(pair_four_force)
+
+
 def _integrate_pair_charge_four_force_native(
     observer_history: TranslatingMagneticShellHistory,
     *,
@@ -359,18 +428,11 @@ def _integrate_pair_charge_four_force_native(
 ) -> np.ndarray:
     """Contract and integrate a pairwise charge field over observer nodes."""
 
-    beta = observer_history.beta[slice_index]
-    gamma = 1.0 / np.sqrt(1.0 - np.sum(beta**2, axis=1))
-    pair_spatial_force = pair_electric_field_native + np.cross(
-        beta[:, np.newaxis, :], pair_magnetic_field_native
-    )
-    pair_time_force = np.einsum("osj,oj->os", pair_electric_field_native, beta)
-    pair_four_force = np.concatenate(
-        (pair_time_force[..., np.newaxis], pair_spatial_force), axis=2
-    )
-    pair_four_force *= (
-        observer_history.charge_native[:, np.newaxis, np.newaxis]
-        * gamma[:, np.newaxis, np.newaxis]
+    pair_four_force = evaluate_pair_charge_four_force_matrix_native(
+        observer_history,
+        slice_index=slice_index,
+        pair_electric_field_native=pair_electric_field_native,
+        pair_magnetic_field_native=pair_magnetic_field_native,
     )
     pairwise_node_force = np.sum(pair_four_force, axis=1)
     return np.einsum(
@@ -532,6 +594,7 @@ __all__ = [
     "FiniteMagneticSourceCrossForceSplit",
     "FiniteMagneticSourceForceSplit",
     "FiniteMagneticSourceForceSlice",
+    "evaluate_pair_charge_four_force_matrix_native",
     "evaluate_finite_magnetic_source_cross_force_slice_native",
     "evaluate_finite_magnetic_source_cross_force_split_native",
     "evaluate_finite_magnetic_source_force_split_native",

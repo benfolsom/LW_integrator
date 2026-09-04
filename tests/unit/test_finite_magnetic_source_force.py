@@ -8,6 +8,7 @@ from core.finite_magnetic_source_force import (
     evaluate_finite_magnetic_source_cross_force_split_native,
     evaluate_finite_magnetic_source_force_split_native,
     evaluate_finite_magnetic_source_force_slice_native,
+    evaluate_pair_charge_four_force_matrix_native,
 )
 from core.retarded_fields import (
     ObserverEvent,
@@ -184,6 +185,35 @@ def test_pairwise_radiative_reduction_matches_difference_after_summing() -> None
     )
 
 
+def test_pair_four_force_matrix_preserves_the_existing_reduction() -> None:
+    history = _uniform_shell_history(0.3, angular_velocity_per_ns=0.4)
+    split = evaluate_finite_magnetic_source_force_split_native(history, slice_index=20)
+    pair_electric = 0.5 * (
+        split.retarded.pair_electric_field_native
+        - split.advanced.pair_electric_field_native
+    )
+    pair_magnetic = 0.5 * (
+        split.retarded.pair_magnetic_field_native
+        - split.advanced.pair_magnetic_field_native
+    )
+
+    matrix = evaluate_pair_charge_four_force_matrix_native(
+        history,
+        slice_index=20,
+        pair_electric_field_native=pair_electric,
+        pair_magnetic_field_native=pair_magnetic,
+    )
+    reduced = np.einsum(
+        "o,om->m",
+        history.material_proper_time_lapse[20],
+        np.sum(matrix, axis=1),
+    )
+
+    np.testing.assert_array_equal(
+        reduced, split.pairwise_radiation_reaction_four_force_native
+    )
+
+
 def test_compiled_mutual_field_matrix_matches_python_reference() -> None:
     pytest.importorskip("numba")
     history = _uniform_shell_history(0.3, angular_velocity_per_ns=0.4)
@@ -331,6 +361,12 @@ def test_adjacent_order_cross_grid_supports_different_node_counts() -> None:
 
     assert split.retarded.pair_electric_field_native is not None
     assert split.retarded.pair_electric_field_native.shape == (36, 64, 3)
+    assert split.retarded.pair_source_time_ns is not None
+    assert split.retarded.pair_source_time_ns.shape == (36, 64)
+    assert split.advanced.pair_source_time_ns is not None
+    assert split.advanced.pair_source_time_ns.shape == (36, 64)
+    assert split.retarded.pair_separation_mm is not None
+    assert split.retarded.pair_separation_mm.shape == (36, 64)
     force_scale = float(
         np.sum(np.linalg.norm(split.retarded.node_four_force_native, axis=1))
     )

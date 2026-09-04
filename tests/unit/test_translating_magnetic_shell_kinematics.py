@@ -13,7 +13,11 @@ from core.translating_magnetic_shell_kinematics import (
 
 
 def _state(
-    *, beta_x: float = 0.0, acceleration: float = 0.0, rotation_sign: float = 1.0
+    *,
+    beta_x: float = 0.0,
+    acceleration: float = 0.0,
+    rotation_sign: float = 1.0,
+    quadrature_polar_axis_rest=(0.0, 0.0, 1.0),
 ):
     return build_counterrotating_shell_surface_state_native(
         center_time_ns=0.7,
@@ -30,6 +34,7 @@ def _state(
         polar_order=8,
         azimuthal_order=16,
         shell_rotation_phases_rad=(0.3, -0.2),
+        quadrature_polar_axis_rest=quadrature_polar_axis_rest,
     )
 
 
@@ -56,6 +61,29 @@ def test_counterrotating_shells_close_charge_dipole_and_moment() -> None:
     )
     assert state.maximum_internal_beta < 2.0e-5
     assert not state.position_mm.flags.writeable
+
+
+def test_quadrature_polar_axis_changes_only_the_surface_sampling() -> None:
+    default = _state()
+    aligned = _state(quadrature_polar_axis_rest=(1.0, 0.0, 0.0))
+
+    np.testing.assert_array_equal(aligned.charge_native, default.charge_native)
+    assert not np.array_equal(aligned.rest_position_mm, default.rest_position_mm)
+    dipole_scale = float(
+        np.sum(
+            np.abs(aligned.charge_native)
+            * np.linalg.norm(aligned.rest_position_mm, axis=1)
+        )
+    )
+    assert np.linalg.norm(aligned.rest_electric_dipole_native_mm) < (
+        5.0e-15 * dipole_scale
+    )
+    np.testing.assert_allclose(
+        aligned.rest_magnetic_moment_native,
+        aligned.expected_rest_magnetic_moment_native,
+        rtol=3.0e-15,
+        atol=0.0,
+    )
 
 
 def test_boosted_surface_events_share_one_fermi_rest_slice() -> None:
