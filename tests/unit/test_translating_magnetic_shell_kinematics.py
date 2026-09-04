@@ -268,17 +268,17 @@ def _uniform_acceleration_history(sample_count: int):
     )
 
 
-def test_material_history_velocity_residual_converges_at_second_order() -> None:
-    coarse = _uniform_acceleration_history(129)
-    fine = _uniform_acceleration_history(257)
+def test_material_history_velocity_residual_converges_at_fourth_order() -> None:
+    coarse = _uniform_acceleration_history(65)
+    fine = _uniform_acceleration_history(129)
 
     assert np.all(np.diff(fine.event_time_ns, axis=0) > 0.0)
     assert coarse.relative_velocity_derivative_residual > 0.0
     assert (
         coarse.relative_velocity_derivative_residual
         / fine.relative_velocity_derivative_residual
-    ) == pytest.approx(4.0, rel=3.0e-2)
-    assert fine.relative_velocity_derivative_residual < 1.3e-5
+    ) == pytest.approx(16.0, rel=7.0e-2)
+    assert fine.relative_velocity_derivative_residual < 2.0e-8
 
 
 def test_material_history_exports_instantaneous_charge_provider_arrays() -> None:

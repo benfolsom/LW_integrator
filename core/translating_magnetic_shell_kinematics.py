@@ -219,13 +219,25 @@ class TranslatingMagneticShellHistory:
 def _differentiate_on_node_times(
     values: np.ndarray, event_time_ns: np.ndarray, *, coordinate_scale: float
 ) -> np.ndarray:
+    """Differentiate each material history with a five-knot local polynomial."""
+
     derivative = np.empty_like(values)
     for node in range(event_time_ns.shape[1]):
         coordinates = coordinate_scale * event_time_ns[:, node]
-        for component in range(values.shape[2]):
-            derivative[:, node, component] = np.gradient(
-                values[:, node, component], coordinates, edge_order=2
-            )
+        sample_count = coordinates.size
+        if sample_count < 5:
+            raise ValueError("material histories require at least five time samples")
+        for knot in range(sample_count):
+            start = min(max(knot - 2, 0), sample_count - 5)
+            selected = slice(start, start + 5)
+            offsets = coordinates[selected] - coordinates[knot]
+            scale = float(np.max(np.abs(offsets)))
+            normalized = offsets / scale
+            system = normalized[np.newaxis, :] ** np.arange(5)[:, np.newaxis]
+            right_hand_side = np.zeros(5)
+            right_hand_side[1] = 1.0 / scale
+            weights = np.linalg.solve(system, right_hand_side)
+            derivative[knot, node] = weights @ values[selected, node]
     return derivative
 
 
@@ -427,8 +439,8 @@ def build_constant_rotation_shell_history_native(
     center_positions = np.asarray(center_positions_mm, dtype=float)
     center_betas = np.asarray(center_beta_x, dtype=float)
     accelerations = np.asarray(center_proper_accelerations_mm_ns2, dtype=float)
-    if proper_times.ndim != 1 or proper_times.size < 3:
-        raise ValueError("center_proper_times_ns must contain at least three values")
+    if proper_times.ndim != 1 or proper_times.size < 5:
+        raise ValueError("center_proper_times_ns must contain at least five values")
     count = proper_times.size
     for name, value, shape in (
         ("center_times_ns", center_times, (count,)),
