@@ -4,6 +4,7 @@ import numpy as np
 
 from core.constants import C_MMNS, ELEMENTARY_CHARGE
 from core.finite_magnetic_source_force import (
+    evaluate_finite_magnetic_source_force_split_native,
     evaluate_finite_magnetic_source_force_slice_native,
 )
 from core.retarded_fields import (
@@ -155,3 +156,16 @@ def test_prepared_mutual_fields_are_bitwise_reference_equal() -> None:
             np.testing.assert_array_equal(
                 getattr(candidate, name), getattr(reference, name)
             )
+
+
+def test_pairwise_radiative_reduction_matches_difference_after_summing() -> None:
+    history = _uniform_shell_history(0.3, angular_velocity_per_ns=0.4)
+    split = evaluate_finite_magnetic_source_force_split_native(history, slice_index=20)
+
+    force_scale = float(
+        np.sum(np.linalg.norm(split.retarded.node_four_force_native, axis=1))
+    )
+    assert (
+        np.linalg.norm(split.pairwise_reduction_difference_native) / (force_scale)
+        < 2.0e-15
+    )

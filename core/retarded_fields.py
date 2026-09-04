@@ -107,6 +107,24 @@ class RetardedChargeFieldResult:
 
 
 @dataclass(frozen=True)
+class RetardedMutualChargeFieldMatrix:
+    """Per-observer, per-source fields with the matching diagonal omitted.
+
+    The first index selects the observer event and the second selects the
+    source worldline. Diagonal validity entries are false because event ``i``
+    deliberately excludes source ``i``.
+    """
+
+    electric_field_native: np.ndarray
+    magnetic_field_native: np.ndarray
+    four_potential: np.ndarray
+    retarded_time_ns: np.ndarray
+    light_cone_residual_mm: np.ndarray
+    separation_mm: np.ndarray
+    valid_sources: np.ndarray
+
+
+@dataclass(frozen=True)
 class RetardedChargeFieldGradientResult:
     """A native charge field and its complete potential/field derivatives.
 
@@ -2121,7 +2139,7 @@ def evaluate_retarded_charge_field_native(
     )[0]
 
 
-def evaluate_retarded_mutual_charge_fields_native(
+def evaluate_retarded_mutual_charge_field_matrix_native(
     history: TrajectoryHistory,
     observer_events: Sequence[ObserverEvent],
     *,
@@ -2129,14 +2147,14 @@ def evaluate_retarded_mutual_charge_fields_native(
     root_tolerance_mm: float = _DEFAULT_ROOT_TOLERANCE_MM,
     max_root_iterations: int = _DEFAULT_MAX_ROOT_ITERATIONS,
     source_acceleration_semantics: str = "preceding_interval",
-) -> tuple[RetardedChargeFieldResult, ...]:
-    """Evaluate one field per source while omitting the matching source.
+) -> RetardedMutualChargeFieldMatrix:
+    """Evaluate each non-diagonal source-to-observer field separately.
 
     Event ``i`` excludes source ``i``. This is the resolved finite-source
     operation needed to evaluate mutual forces without repeatedly extracting
-    and preparing the same complete history. The source reduction order is
-    identical to repeated calls to :func:`evaluate_retarded_charge_field_native`
-    with ``excluded_source_indices=(i,)``.
+    and preparing the same complete history. Keeping the pair matrix permits
+    retarded and advanced contributions to be combined before a potentially
+    ill-conditioned global reduction.
 
     This first transparent implementation uses the Python root and field
     kernels. Compiled acceleration can be added without changing the public
@@ -2159,9 +2177,9 @@ def evaluate_retarded_mutual_charge_fields_native(
     if len(events) != arrays.n_sources:
         raise ValueError("observer_events must contain one event per source")
 
-    electric = np.zeros((arrays.n_sources, 3), dtype=float)
+    electric = np.zeros((arrays.n_sources, arrays.n_sources, 3), dtype=float)
     magnetic = np.zeros_like(electric)
-    potential = np.zeros((arrays.n_sources, 4), dtype=float)
+    potential = np.zeros((arrays.n_sources, arrays.n_sources, 4), dtype=float)
     retarded_time = np.full((arrays.n_sources, arrays.n_sources), np.nan)
     residual = np.full_like(retarded_time, np.nan)
     separation = np.full_like(retarded_time, np.nan)
@@ -2203,9 +2221,9 @@ def evaluate_retarded_mutual_charge_fields_native(
                 separation_vector_mm=source_to_observer,
                 source_beta=sample.beta,
             )
-            electric[event_index] += source_electric
-            magnetic[event_index] += source_magnetic
-            potential[event_index] += source_potential
+            electric[event_index, source_index] = source_electric
+            magnetic[event_index, source_index] = source_magnetic
+            potential[event_index, source_index] = source_potential
             retarded_time[event_index, source_index] = sample.time_ns
             residual[event_index, source_index] = sample.residual_mm
             separation[event_index, source_index] = sample.separation_mm
@@ -2219,6 +2237,44 @@ def evaluate_retarded_mutual_charge_fields_native(
                 f"{failed}"
             )
 
+    return RetardedMutualChargeFieldMatrix(
+        electric_field_native=electric,
+        magnetic_field_native=magnetic,
+        four_potential=potential,
+        retarded_time_ns=retarded_time,
+        light_cone_residual_mm=residual,
+        separation_mm=separation,
+        valid_sources=valid,
+    )
+
+
+def evaluate_retarded_mutual_charge_fields_native(
+    history: TrajectoryHistory,
+    observer_events: Sequence[ObserverEvent],
+    *,
+    require_complete_history: bool = True,
+    root_tolerance_mm: float = _DEFAULT_ROOT_TOLERANCE_MM,
+    max_root_iterations: int = _DEFAULT_MAX_ROOT_ITERATIONS,
+    source_acceleration_semantics: str = "preceding_interval",
+) -> tuple[RetardedChargeFieldResult, ...]:
+    """Sum mutual source fields while preserving reference reduction order."""
+
+    matrix = evaluate_retarded_mutual_charge_field_matrix_native(
+        history,
+        observer_events,
+        require_complete_history=require_complete_history,
+        root_tolerance_mm=root_tolerance_mm,
+        max_root_iterations=max_root_iterations,
+        source_acceleration_semantics=source_acceleration_semantics,
+    )
+    source_count = matrix.valid_sources.shape[1]
+    electric = np.zeros((source_count, 3))
+    magnetic = np.zeros_like(electric)
+    potential = np.zeros((source_count, 4))
+    for source_index in range(source_count):
+        electric += matrix.electric_field_native[:, source_index]
+        magnetic += matrix.magnetic_field_native[:, source_index]
+        potential += matrix.four_potential[:, source_index]
     return tuple(
         RetardedChargeFieldResult(
             electric_field_native=electric[index],
@@ -2226,13 +2282,13 @@ def evaluate_retarded_mutual_charge_fields_native(
             field_tensor=electromagnetic_field_tensor_native(
                 electric[index], magnetic[index]
             ),
-            retarded_time_ns=retarded_time[index],
-            light_cone_residual_mm=residual[index],
-            separation_mm=separation[index],
-            valid_sources=valid[index],
+            retarded_time_ns=matrix.retarded_time_ns[index],
+            light_cone_residual_mm=matrix.light_cone_residual_mm[index],
+            separation_mm=matrix.separation_mm[index],
+            valid_sources=matrix.valid_sources[index],
             four_potential=potential[index],
         )
-        for index in range(arrays.n_sources)
+        for index in range(source_count)
     )
 
 
@@ -2394,8 +2450,10 @@ __all__ = [
     "RetardedChargeFieldResult",
     "RetardedChargeResponseGradientResult",
     "RetardedHistoryError",
+    "RetardedMutualChargeFieldMatrix",
     "evaluate_retarded_charge_field_gradient_native",
     "evaluate_retarded_charge_field_native",
+    "evaluate_retarded_mutual_charge_field_matrix_native",
     "evaluate_retarded_mutual_charge_fields_native",
     "evaluate_retarded_charge_response_gradient_native",
     "lienard_wiechert_charge_field_native",
