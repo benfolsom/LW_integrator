@@ -23,7 +23,11 @@ from .retarded_fields import (
     evaluate_retarded_mutual_charge_field_matrix_native,
 )
 from .rfs import electromagnetic_field_tensor_native, rfs_four_force_native
-from .translating_magnetic_shell_kinematics import TranslatingMagneticShellHistory
+from .spin_self_force_oracle import evaluate_jakobsen_linear_spin_self_force_native
+from .translating_magnetic_shell_kinematics import (
+    TranslatingMagneticShellHistory,
+    evaluate_shell_history_four_kinematics_native,
+)
 
 
 def _readonly(value: np.ndarray) -> np.ndarray:
@@ -84,6 +88,8 @@ class FiniteMagneticSourceForceSplit:
     time_symmetric_four_force_native: np.ndarray
     radiation_reaction_four_force_native: np.ndarray
     pairwise_radiation_reaction_four_force_native: np.ndarray
+    diagonal_charge_ald_four_force_native: np.ndarray
+    completed_pairwise_radiation_reaction_four_force_native: np.ndarray
     pairwise_reduction_difference_native: np.ndarray
 
     def __post_init__(self) -> None:
@@ -91,6 +97,8 @@ class FiniteMagneticSourceForceSplit:
             "time_symmetric_four_force_native",
             "radiation_reaction_four_force_native",
             "pairwise_radiation_reaction_four_force_native",
+            "diagonal_charge_ald_four_force_native",
+            "completed_pairwise_radiation_reaction_four_force_native",
             "pairwise_reduction_difference_native",
         ):
             value = np.asarray(getattr(self, name))
@@ -315,6 +323,26 @@ def evaluate_finite_magnetic_source_force_split_native(
     pairwise_radiative = np.einsum(
         "n,nm->m", history.material_proper_time_lapse[index], pairwise_node_force
     )
+    kinematics = evaluate_shell_history_four_kinematics_native(history)
+    diagonal_node_force = np.empty_like(pairwise_node_force)
+    zeros = np.zeros(4)
+    for node in range(beta.shape[0]):
+        diagonal_node_force[node] = evaluate_jakobsen_linear_spin_self_force_native(
+            charge_native=float(history.charge_native[node]),
+            mass_amu=1.0,
+            four_velocity_mm_ns=kinematics.four_velocity_mm_ns[index, node],
+            four_acceleration_mm_ns2=kinematics.four_acceleration_mm_ns2[index, node],
+            four_jerk_mm_ns3=kinematics.four_jerk_mm_ns3[index, node],
+            four_snap_mm_ns4=zeros,
+            spin_four_vector_native=zeros,
+            spin_four_derivative_native=zeros,
+            magnetic_moment_four_vector_native=zeros,
+            magnetic_moment_four_derivative_native=zeros,
+        ).charge_ald_self_force_native
+    diagonal_ald = np.einsum(
+        "n,nm->m", history.material_proper_time_lapse[index], diagonal_node_force
+    )
+    completed_pairwise_radiative = pairwise_radiative + diagonal_ald
     symmetric = 0.5 * (
         retarded.integrated_four_force_native + advanced.integrated_four_force_native
     )
@@ -327,6 +355,10 @@ def evaluate_finite_magnetic_source_force_split_native(
         time_symmetric_four_force_native=symmetric,
         radiation_reaction_four_force_native=radiative,
         pairwise_radiation_reaction_four_force_native=pairwise_radiative,
+        diagonal_charge_ald_four_force_native=diagonal_ald,
+        completed_pairwise_radiation_reaction_four_force_native=(
+            completed_pairwise_radiative
+        ),
         pairwise_reduction_difference_native=pairwise_radiative - radiative,
     )
 

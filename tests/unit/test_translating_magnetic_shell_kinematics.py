@@ -8,6 +8,7 @@ from core.retarded_fields import ObserverEvent, evaluate_retarded_charge_field_n
 from core.translating_magnetic_shell_kinematics import (
     build_constant_rotation_shell_history_native,
     build_counterrotating_shell_surface_state_native,
+    evaluate_shell_history_four_kinematics_native,
 )
 
 
@@ -320,3 +321,20 @@ def test_material_history_is_accepted_by_exact_charge_provider() -> None:
         maximum_difference = float(np.max(np.abs(candidate - reference)))
         reference_scale = float(np.max(np.abs(reference)))
         assert maximum_difference / reference_scale <= 1.0e-11
+
+
+def test_material_four_kinematics_preserve_velocity_norm_and_orthogonality() -> None:
+    history = _uniform_acceleration_history(129)
+    kinematics = evaluate_shell_history_four_kinematics_native(history)
+    velocity = kinematics.four_velocity_mm_ns[64]
+    acceleration = kinematics.four_acceleration_mm_ns2[64]
+    velocity_norm = velocity[:, 0] ** 2 - np.sum(velocity[:, 1:] ** 2, axis=1)
+    velocity_dot_acceleration = velocity[:, 0] * acceleration[:, 0] - np.sum(
+        velocity[:, 1:] * acceleration[:, 1:], axis=1
+    )
+
+    np.testing.assert_allclose(velocity_norm, C_MMNS**2, rtol=3.0e-15)
+    orthogonality_scale = np.linalg.norm(velocity, axis=1) * np.linalg.norm(
+        acceleration, axis=1
+    )
+    assert np.max(np.abs(velocity_dot_acceleration) / orthogonality_scale) < 2.0e-8

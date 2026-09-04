@@ -216,6 +216,15 @@ class TranslatingMagneticShellHistory:
         return result
 
 
+@dataclass(frozen=True)
+class TranslatingMagneticShellFourKinematics:
+    """Material four-velocity and its first two node-proper-time derivatives."""
+
+    four_velocity_mm_ns: np.ndarray
+    four_acceleration_mm_ns2: np.ndarray
+    four_jerk_mm_ns3: np.ndarray
+
+
 def _differentiate_on_node_times(
     values: np.ndarray, event_time_ns: np.ndarray, *, coordinate_scale: float
 ) -> np.ndarray:
@@ -237,8 +246,48 @@ def _differentiate_on_node_times(
             right_hand_side = np.zeros(5)
             right_hand_side[1] = 1.0 / scale
             weights = np.linalg.solve(system, right_hand_side)
-            derivative[knot, node] = weights @ values[selected, node]
+            derivative[knot, node] = weights @ (
+                values[selected, node] - values[knot, node]
+            )
     return derivative
+
+
+def evaluate_shell_history_four_kinematics_native(
+    history: TranslatingMagneticShellHistory,
+) -> TranslatingMagneticShellFourKinematics:
+    """Differentiate material four-velocity with respect to node proper time."""
+
+    beta = history.beta
+    gamma = 1.0 / np.sqrt(1.0 - np.sum(beta**2, axis=2))
+    four_velocity = (
+        gamma[..., np.newaxis]
+        * C_MMNS
+        * np.concatenate((np.ones((*beta.shape[:2], 1)), beta), axis=2)
+    )
+    central_times = np.broadcast_to(
+        history.center_proper_time_ns[:, np.newaxis], history.event_time_ns.shape
+    )
+    velocity_derivative_per_center_time = _differentiate_on_node_times(
+        four_velocity,
+        central_times,
+        coordinate_scale=1.0,
+    )
+    four_acceleration = velocity_derivative_per_center_time / (
+        history.material_proper_time_lapse[..., np.newaxis]
+    )
+    acceleration_derivative_per_center_time = _differentiate_on_node_times(
+        four_acceleration,
+        central_times,
+        coordinate_scale=1.0,
+    )
+    four_jerk = acceleration_derivative_per_center_time / (
+        history.material_proper_time_lapse[..., np.newaxis]
+    )
+    return TranslatingMagneticShellFourKinematics(
+        four_velocity_mm_ns=_readonly(four_velocity),
+        four_acceleration_mm_ns2=_readonly(four_acceleration),
+        four_jerk_mm_ns3=_readonly(four_jerk),
+    )
 
 
 def build_counterrotating_shell_surface_state_native(
@@ -514,8 +563,10 @@ def build_constant_rotation_shell_history_native(
 
 
 __all__ = [
+    "TranslatingMagneticShellFourKinematics",
     "TranslatingMagneticShellHistory",
     "TranslatingMagneticShellSurfaceState",
     "build_constant_rotation_shell_history_native",
     "build_counterrotating_shell_surface_state_native",
+    "evaluate_shell_history_four_kinematics_native",
 ]
