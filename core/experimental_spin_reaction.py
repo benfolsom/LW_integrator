@@ -16,7 +16,6 @@ from typing import Any, Mapping, Sequence, TYPE_CHECKING
 import numpy as np
 
 from .constants import C_MMNS
-from .magnetic_dipole import boost_rest_polarization, rest_polarization_from_four_vector
 
 if TYPE_CHECKING:
     from .spin_self_force_reduction_history import AcceptedIntrinsicSpinReductionHistory
@@ -56,6 +55,51 @@ def transport_spin_between_velocities(
     if denominator <= 0:
         raise ValueError("invalid relative velocity in spin transport")
     return spin - np.dot(spin * _METRIC, after) / denominator * (before + after)
+
+
+def transport_rest_spin_for_impulse_native(
+    spin: VectorLike, momentum: VectorLike, impulse: VectorLike, mass_amu: float
+) -> np.ndarray:
+    """Apply the same Lorentz transport as a stable rest-spin rotation.
+
+    The rotation quaternion is proportional to
+    (1+gamma_before+gamma_after+u_before.dot(u_after)/c^2,
+    -w_before cross delta_w), with w=p/(mc). Its scalar part uses the stable
+    identity u_before.dot(u_after)/c^2=1+(delta_w^2-delta_gamma^2)/2.
+    Avoid boosting spin to the lab and back: recovering gamma from beta and
+    subtracting large lab-spin components loses precision at high gamma.
+    This is the existing rotation-free four-dimensional transport, expressed
+    in the particle's before/after rest axes, not an added physical self-torque.
+    """
+    spin, momentum, impulse = (
+        np.asarray(value, dtype=float) for value in (spin, momentum, impulse)
+    )
+    if any(
+        value.shape != (3,) or not np.all(np.isfinite(value))
+        for value in (spin, momentum, impulse)
+    ):
+        raise ValueError("finite three-vectors required for rest-spin transport")
+    mass = float(mass_amu)
+    if not np.isfinite(mass) or mass <= 0:
+        raise ValueError("positive finite mass required for rest-spin transport")
+    if not np.any(impulse):
+        return spin.copy()
+    w, delta_w = momentum / (mass * C_MMNS), impulse / (mass * C_MMNS)
+    gamma_before = np.hypot(1.0, np.hypot.reduce(w))
+    gamma_after = np.hypot(1.0, np.hypot.reduce(w + delta_w))
+    delta_gamma = np.dot(delta_w, 2 * w + delta_w) / (gamma_before + gamma_after)
+    scalar = (
+        2
+        + gamma_before
+        + gamma_after
+        + 0.5 * (np.dot(delta_w, delta_w) - delta_gamma**2)
+    )
+    vector = -np.cross(w, delta_w)
+    norm = np.hypot(scalar, np.hypot.reduce(vector))
+    if not np.isfinite(norm) or norm <= 0 or scalar <= 0:
+        raise ValueError("nonfinite or invalid rest-spin rotation")
+    scalar, vector = scalar / norm, vector / norm
+    return spin + 2 * np.cross(vector, scalar * spin + np.cross(vector, spin))
 
 
 @dataclass(frozen=True)
@@ -168,12 +212,7 @@ def apply_linear_spin_impulse(
     if np.dot(new_beta, new_beta) >= 1 or not np.all(np.isfinite(new_beta)):
         raise ValueError("invalid velocity after spin recoil")
     spin = np.array([result[f"spin_{a}"][0] for a in "xyz"])
-    before = np.r_[gamma_before * C_MMNS, p / mass]
-    after = np.r_[new_gamma * C_MMNS, new_p / mass]
-    moved_spin = transport_spin_between_velocities(
-        boost_rest_polarization(spin, beta_before), before, after
-    )
-    rest_spin = rest_polarization_from_four_vector(moved_spin, new_beta)
+    rest_spin = transport_rest_spin_for_impulse_native(spin, p, impulse, mass)
     # Work is computed stably even when new_gamma-gamma_before rounds to zero.
     delta_gamma = work / (mass * C_MMNS**2)
     out["t"][0] += 0.5 * h * delta_gamma

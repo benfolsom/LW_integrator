@@ -166,3 +166,9 @@ keep the existing earlier-sample route. Tests compare the uniform case with
 exact Lorentz-motion derivatives through beta 0.9999, compare a mixed
 source/external trajectory with independently sampled derivatives, and check
 that actual pair feedback uses the analytical route without startup omissions.
+
+The [independent uniform-orbit and spin-transport check](uniform_orbit_spin_reference.md)
+gives the elementary-rotation reference used to test the derivatives. Recoil
+spin transport is evaluated directly in rest-frame components, avoiding the
+precision loss of a boost to the lab and back at high speed. This is the same
+rotation-free four-dimensional transport, not a newly added self-torque.

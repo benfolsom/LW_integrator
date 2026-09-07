@@ -1,5 +1,11 @@
 # Changelog
 
+- Evaluate the experimental recoil's existing spin transport directly as a
+  rest-frame rotation. This avoids subtracting large boosted spin components
+  at high speed without adding a physical torque. Independent circular-orbit
+  and Thomas--BMT spin derivatives now test the uniform-field reduction through
+  beta 0.9999; repeated inverse kicks test spin transport at much higher gamma.
+
 - Supply exact potential derivatives for unbounded uniform prescribed fields
   in the experimental spin-reaction calculation. Include the total source
   plus external acceleration when differentiating, so mixed terms are retained.
