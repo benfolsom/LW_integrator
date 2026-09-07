@@ -135,7 +135,7 @@ def test_trial_charge_evaluation_does_not_change_accepted_provider_result() -> N
     assert stats.reuses >= 2
 
 
-def test_trial_preparation_shares_the_cached_prefix_buffers() -> None:
+def test_trial_preparation_shares_rows_but_isolates_rewritable_source_buffers() -> None:
     _CHARGE_PREPARED_HISTORY_CACHE.clear()
     _DIPOLE_PREPARED_HISTORY_CACHE.clear()
     accepted = _dipole_history(3).build_current()
@@ -145,6 +145,9 @@ def test_trial_preparation_shares_the_cached_prefix_buffers() -> None:
     )
 
     accepted_charge = _prepare_history(accepted, ())
+    accepted_charge_coefficients = accepted_charge.sources[
+        0
+    ].position_coefficients_mm.copy()
     trial_charge = _prepare_history(trial, ())
     accepted_dipole = _prepare_dipole_history(
         accepted,
@@ -153,6 +156,10 @@ def test_trial_preparation_shares_the_cached_prefix_buffers() -> None:
         excluded_source_identities=(),
         spin_interpolation_model="causal_frozen_c1",
     )
+    accepted_dipole_coefficients = accepted_dipole.sources[
+        0
+    ].worldline.position_coefficients_mm.copy()
+    accepted_spin_slopes = accepted_dipole.sources[0].rest_spin_derivative_per_ns.copy()
     trial_dipole = _prepare_dipole_history(
         trial,
         source_identities=None,
@@ -162,18 +169,32 @@ def test_trial_preparation_shares_the_cached_prefix_buffers() -> None:
     )
 
     assert trial_charge.arrays._time_buffer is accepted_charge.arrays._time_buffer
-    assert (
-        trial_charge.sources[0]._coefficient_buffer
-        is accepted_charge.sources[0]._coefficient_buffer
+    # Appending provisional knots can revise earlier endpoint acceleration.
+    # b794c52 deliberately detached these writable buffers; requiring shared
+    # coefficients here would restore the accepted-history corruption bug.
+    assert not np.shares_memory(
+        trial_charge.sources[0]._coefficient_buffer,
+        accepted_charge.sources[0]._coefficient_buffer,
     )
     assert trial_dipole.arrays._time_buffer is accepted_dipole.arrays._time_buffer
-    assert (
-        trial_dipole.sources[0].worldline._coefficient_buffer
-        is accepted_dipole.sources[0].worldline._coefficient_buffer
+    assert not np.shares_memory(
+        trial_dipole.sources[0].worldline._coefficient_buffer,
+        accepted_dipole.sources[0].worldline._coefficient_buffer,
     )
-    assert (
-        trial_dipole.sources[0]._slope_buffer
-        is accepted_dipole.sources[0]._slope_buffer
+    assert not np.shares_memory(
+        trial_dipole.sources[0]._slope_buffer,
+        accepted_dipole.sources[0]._slope_buffer,
+    )
+    np.testing.assert_array_equal(
+        accepted_charge.sources[0].position_coefficients_mm,
+        accepted_charge_coefficients,
+    )
+    np.testing.assert_array_equal(
+        accepted_dipole.sources[0].worldline.position_coefficients_mm,
+        accepted_dipole_coefficients,
+    )
+    np.testing.assert_array_equal(
+        accepted_dipole.sources[0].rest_spin_derivative_per_ns, accepted_spin_slopes
     )
     assert accepted_charge.arrays.time_ns.shape[0] == 3
     assert trial_charge.arrays.time_ns.shape[0] == 5

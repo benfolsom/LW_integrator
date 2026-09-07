@@ -1,5 +1,10 @@
 # Changelog
 
+- Correct an outdated trial-history test that still required writable source
+  interpolation buffers to be shared with accepted history. The September 2
+  isolation fix intentionally prevents that sharing; the test now checks both
+  private trial buffers and unchanged accepted coefficients. No runtime change.
+
 - Evaluate the experimental recoil's existing spin transport directly as a
   rest-frame rotation. This avoids subtracting large boosted spin components
   at high speed without adding a physical torque. Independent circular-orbit
