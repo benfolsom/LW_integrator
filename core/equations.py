@@ -1773,6 +1773,8 @@ def retarded_equations_of_motion(
     exact_source_history: Optional[Any] = None,
     exact_dipole_source_collection: Optional[Any] = None,
     exact_source_spin_interpolation_model: str = "centered_c1",
+    moment_impulse_diagnostic: Optional[Any] = None,
+    moment_radiation_force_native: Optional[Any] = None,
 ) -> ParticleState:
     """Core equations of motion preserving the validated reference behavior.
 
@@ -1837,6 +1839,21 @@ def retarded_equations_of_motion(
         _initialize_medina_step_state(result)
 
     num_particles = len(current_state["x"])
+    if moment_impulse_diagnostic is not None and radiation_mode == "medina_lad":
+        moment_rr_force = np.asarray(moment_radiation_force_native, dtype=float)
+        if moment_rr_force.shape != (num_particles, 3) or not np.all(
+            np.isfinite(moment_rr_force)
+        ):
+            raise ValueError(
+                "Medina moment correction requires a finite force estimate"
+            )
+        result["_moment_applied_medina_force_native"] = np.zeros((num_particles, 3))
+    else:
+        if moment_radiation_force_native is not None:
+            raise ValueError(
+                "radiation force estimate requires Medina moment diagnostic"
+            )
+        moment_rr_force = np.zeros((num_particles, 3))
     exact_endpoint_recomposition_selected = bool(
         magnetic_dipole is not None
         and magnetic_dipole.enabled
@@ -1850,6 +1867,10 @@ def retarded_equations_of_motion(
         and magnetic_dipole.exact_retarded_update
         == "second_order_start_taylor_endpoint"
     )
+    if moment_impulse_diagnostic is not None and not second_order_exact_source_selected:
+        raise ValueError(
+            "moment impulse diagnostic requires exact second-order pair stepping"
+        )
     intrinsic_spin_diagnostic_selected = bool(
         second_order_exact_source_selected
         and magnetic_dipole is not None
@@ -3827,6 +3848,59 @@ def retarded_equations_of_motion(
                 second_order_correction = (
                     0.5 * float(h) * float(h) * ordinary_force_derivative
                 )
+                if moment_impulse_diagnostic is not None:
+                    if (
+                        radiation_mode not in ("off", "medina_lad")
+                        or not callable(moment_impulse_diagnostic)
+                        or exact_source_history is None
+                        or exact_dipole_source_collection is None
+                        or magnetic_dipole is None
+                        or magnetic_dipole.source.history_model != "causal_local_jet"
+                        or not rfs_force_selected
+                        or not sg_active
+                        or not precession_active
+                        or (
+                            external_field is not None
+                            and getattr(external_field, "enabled", False)
+                        )
+                    ):
+                        raise ValueError(
+                            "moment impulse diagnostic requires a local-history magnetic pair, active spin/force, no external field and off or Medina radiation"
+                        )
+                    # Add only the difference from the already applied h*K.
+                    # Do not change the physical start force, source acceleration
+                    # or force memory to impersonate a higher-order impulse.
+                    correction = np.asarray(
+                        moment_impulse_diagnostic(
+                            proper_step_ns=float(h),
+                            observer_time_ns=float(current_state["t"][particle_idx]),
+                            observer_position_mm=np.array(
+                                [current_state[axis][particle_idx] for axis in "xyz"]
+                            ),
+                            four_velocity_mm_ns=start_four_velocity.copy(),
+                            four_acceleration_mm_ns2=start_four_acceleration.copy(),
+                            applied_radiation_reaction_force_native=moment_rr_force[
+                                particle_idx
+                            ].copy(),
+                            rest_spin=start_rest_spin.copy(),
+                            charge_native=float(force_particle_charge),
+                            mass_amu=float(particle_mass),
+                            magnetic_moment_native=float(
+                                current_state["magnetic_moment_native"][particle_idx]
+                            ),
+                            invariant_spin_native=float(invariant_spin_native),
+                            start_moment_force=rfs_dipole_force_native.copy(),
+                            charge_history=exact_source_history,
+                            dipole_source_collection=exact_dipole_source_collection,
+                            source_options=magnetic_dipole.source,
+                        ),
+                        dtype=float,
+                    )
+                    if correction.shape != (4,) or not np.all(np.isfinite(correction)):
+                        raise ValueError(
+                            "moment impulse correction must be a finite four-vector"
+                        )
+                    second_order_correction += correction
                 accumulated_momentum_t += float(second_order_correction[0])
                 accumulated_momentum_x += float(second_order_correction[1])
                 accumulated_momentum_y += float(second_order_correction[2])
@@ -4650,6 +4724,10 @@ def retarded_equations_of_motion(
                         applied_medina_force_native[:] = impulse_vec / float(
                             predictor_coordinate_dt
                         )
+                    if moment_impulse_diagnostic is not None:
+                        result["_moment_applied_medina_force_native"][
+                            particle_idx
+                        ] = applied_medina_force_native
                     if derivative_ready and float(np.linalg.norm(impulse_vec)) > 0.0:
                         mechanical_px = float(mechanical_px + impulse_vec[0])
                         mechanical_py = float(mechanical_py + impulse_vec[1])

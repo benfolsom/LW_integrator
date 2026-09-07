@@ -77,6 +77,11 @@ inputs, not high-gamma trajectory validation or a performance benchmark.
 
 ## Next implementation steps and acceptance checks
 
+Latest implementation: the [diagnostic checkpoint correction](moment_boundary_checkpoint_diagnostic.md)
+now exercises the impulse through actual pair stepping with radiation off.
+Historical/no-op controls pass and the electron projection improves. This
+does not close the global accuracy gate or enable default stepping.
+
 1. Extend the **current causal local source provider** to calculate the
    directional rate of its field gradient. Reuse its selected source-history
    polynomial, retarded root, spin fit, and availability guards. Check that

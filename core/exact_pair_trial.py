@@ -77,8 +77,16 @@ class ExactPairEOMOptions:
     step_idx: int | None = None
     cancel_callback: Any = None
     spin_interpolation_model: str = "causal_frozen_c1"
+    moment_impulse_diagnostic: Any = None
 
     def __post_init__(self) -> None:
+        if self.moment_impulse_diagnostic is not None:
+            if not callable(self.moment_impulse_diagnostic):
+                raise ValueError("moment impulse diagnostic must be callable")
+            if self.radiation_reaction_mode not in ("off", "medina_lad"):
+                raise ValueError(
+                    "moment impulse diagnostic supports only off or medina_lad"
+                )
         if not np.isfinite(self.aperture_radius_mm) or self.aperture_radius_mm <= 0.0:
             raise ValueError("aperture_radius_mm must be finite and positive")
         if not self.magnetic_dipole.enabled:
@@ -118,6 +126,15 @@ def make_exact_role_eom_advance(options: ExactPairEOMOptions) -> AdvanceRoleTria
     from .equations import retarded_equations_of_motion
     from .self_consistency import self_consistent_step
 
+    eom = retarded_equations_of_motion
+    if options.moment_impulse_diagnostic is not None:
+        from functools import partial
+
+        eom = partial(
+            retarded_equations_of_motion,
+            moment_impulse_diagnostic=options.moment_impulse_diagnostic,
+        )
+
     def advance(
         proper_step_ns: float,
         observer_start: ParticleState,
@@ -129,31 +146,46 @@ def make_exact_role_eom_advance(options: ExactPairEOMOptions) -> AdvanceRoleTria
         if isinstance(exact_source_history, ExactRoleSourceHistory):
             charge_history = exact_source_history.charge_history
             dipole_source_collection = exact_source_history.dipole_source_collection
-        return cast(
-            ParticleState,
-            self_consistent_step(
-                retarded_equations_of_motion,
-                proper_step_ns,
-                [observer_start],
-                [source_start],
-                0,
-                options.aperture_radius_mm,
-                SimulationType.BUNCH_TO_BUNCH,
-                options.self_consistency,
-                options.chrono_mode,
-                StartupMode.INERTIAL_PREHISTORY,
-                step_idx=options.step_idx,
-                cancel_callback=options.cancel_callback,
-                radiation_reaction_mode=options.radiation_reaction_mode,
-                external_field=options.external_field,
-                magnetic_dipole=options.magnetic_dipole,
-                exact_source_history=charge_history,
-                exact_dipole_source_collection=dipole_source_collection,
-                exact_source_spin_interpolation_model=(
-                    options.spin_interpolation_model
+
+        def run(bound_eom):
+            return cast(
+                ParticleState,
+                self_consistent_step(
+                    bound_eom,
+                    proper_step_ns,
+                    [observer_start],
+                    [source_start],
+                    0,
+                    options.aperture_radius_mm,
+                    SimulationType.BUNCH_TO_BUNCH,
+                    options.self_consistency,
+                    options.chrono_mode,
+                    StartupMode.INERTIAL_PREHISTORY,
+                    step_idx=options.step_idx,
+                    cancel_callback=options.cancel_callback,
+                    radiation_reaction_mode=options.radiation_reaction_mode,
+                    external_field=options.external_field,
+                    magnetic_dipole=options.magnetic_dipole,
+                    exact_source_history=charge_history,
+                    exact_dipole_source_collection=dipole_source_collection,
+                    exact_source_spin_interpolation_model=(
+                        options.spin_interpolation_model
+                    ),
                 ),
-            ),
-        )
+            )
+
+        if (
+            options.moment_impulse_diagnostic is not None
+            and options.radiation_reaction_mode == "medina_lad"
+        ):
+            from functools import partial
+            from .moment_medina_diagnostic import match_medina_force
+
+            return match_medina_force(
+                lambda force: run(partial(eom, moment_radiation_force_native=force)),
+                particle_count=len(observer_start["x"]),
+            )
+        return run(eom)
 
     return advance
 

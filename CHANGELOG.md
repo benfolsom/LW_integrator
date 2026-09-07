@@ -1,5 +1,17 @@
 # Changelog
 
+- Extend the opt-in magnetic-force timestep correction to Medina-on trials,
+  matching the applied radiation force to the acceleration and spin predictor
+  with a bounded iteration. Keep production defaults unchanged and reject
+  unprimed, capped or nonconvergent diagnostic steps.
+
+- Add an explicit, diagnostic-only moment-impulse callback for exact pair
+  trials. It adjusts the impulse before momentum/velocity reconstruction,
+  without replacing the physical start force or force memory. The default
+  route is unchanged; this first experiment rejects radiation reaction and
+  unsupported source/field setups. Matched checkpoint checks are documented
+  in `docs/moment_boundary_checkpoint_diagnostic.md`.
+
 - Add an opt-in charge-source directional gradient for the magnetic-force
   time derivative. It reuses the existing analytical provider's roots,
   segments and acceleration convention, leaving ordinary outputs unchanged.

@@ -1,8 +1,9 @@
 # LW Integrator
 
 Active numerical work: [second-order magnetic-moment force update](docs/moment_force_second_order_plan.md).
-The force derivative and optional dipole-source derivative are tested; one
-saved-history sensitivity check and the live stepper connection remain open.
+The correction now enters actual pair stepping through an opt-in diagnostic,
+including a bounded Medina-on extension. See [current scope and limits](docs/moment_boundary_checkpoint_diagnostic.md).
+No production default or complete magnetic self-reaction model is promoted.
 
 ## Recent Updates (August 2026)
 
