@@ -989,6 +989,9 @@ def _causal_c5_inertial_time_offsets_ns(
     fifteen-knot spin fit ill-conditioned.  These offsets retain coarse knots
     in the remote past and reduce adjacent intervals geometrically toward
     ``initial_step_ns / 2``, the first step-doubling midpoint cadence.
+    The same transition also protects the charge-worldline reconstruction:
+    a short first curved step must not assign a large inferred acceleration
+    to the end of a very long preceding coasting interval.
     """
 
     duration = float(duration_ns)
@@ -3358,6 +3361,9 @@ def retarded_integrator(
         dipole_source_active
         and magnetic_dipole.source.history_model == "causal_local_jet"
     )
+    taper_exact_pair_prehistory = bool(
+        causal_c5_enabled or (adaptive_pair_return.enabled and not causal_local_enabled)
+    )
     inertial_prehistory_knot_count = _INERTIAL_PREHISTORY_KNOT_COUNT
     inertial_prehistory_time_offsets_ns: np.ndarray | None = None
     initial_causal_c5_source_history = None
@@ -3368,7 +3374,7 @@ def retarded_integrator(
             cast(ParticleState, init_driver),
             magnetic_dipole,
         )
-        if causal_c5_enabled:
+        if taper_exact_pair_prehistory:
             inertial_prehistory_time_offsets_ns = _causal_c5_inertial_time_offsets_ns(
                 inertial_prehistory_duration_ns,
                 h_step,
@@ -3577,7 +3583,7 @@ def retarded_integrator(
                     )
                 else:
                     inertial_prehistory_duration_ns *= 2.0
-                if causal_c5_enabled:
+                if taper_exact_pair_prehistory:
                     inertial_prehistory_time_offsets_ns = (
                         _causal_c5_inertial_time_offsets_ns(
                             inertial_prehistory_duration_ns,

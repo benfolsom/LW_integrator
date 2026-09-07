@@ -324,9 +324,11 @@ def _run_simple_inertial(
     )
 
 
-def test_causal_c5_adaptive_start_uses_tapered_preflight_knots(
+@pytest.mark.parametrize("source_model", ["off", "covariant_retarded_point"])
+def test_adaptive_start_uses_tapered_preflight_knots(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
+    source_model,
 ) -> None:
     captured: dict[str, object] = {}
 
@@ -350,7 +352,7 @@ def test_causal_c5_adaptive_start_uses_tapered_preflight_knots(
         enabled=True,
         exact_retarded_update="second_order_start_taylor_endpoint",
         source=DipoleSourceConfig(
-            model="covariant_retarded_point",
+            model=source_model,
             history_model="causal_c5",
         ),
         rider=MagneticDipoleParticleConfig(species="electron"),
@@ -386,6 +388,9 @@ def test_causal_c5_adaptive_start_uses_tapered_preflight_knots(
     assert _step_controller_config(causal_c5_enabled=True).maximum_growth_factor == 1.05
     assert _step_controller_config(causal_c5_enabled=False).maximum_growth_factor == 2.0
     accepted_c5 = captured["initial_causal_c5_source_history"]
+    if source_model == "off":
+        assert accepted_c5 is None
+        return
     assert accepted_c5.rider.sources[0].history.sample_count == len(rider_seed)
     assert accepted_c5.driver.sources[0].history.sample_count == len(driver_seed)
     assert len(accepted_c5.rider.sources[0].history.frozen_segments) > 1

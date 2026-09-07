@@ -1,5 +1,12 @@
 # Changelog
 
+- Taper the initial coasting-history spacing for all checkpointed exact-pair
+  runs that do not use a separately configured local-fit history. This avoids
+  interpolated charge velocities becoming superluminal when a very short
+  first curved step follows a long sparse seed interval. The equations and
+  actual initial trajectory are unchanged; existing C5 startup already used
+  this spacing rule.
+
 - Add an opt-in, experimental first-order-in-spin recoil to checkpointed
   adaptive exact-pair runs, with consistent spin transport and separate
   accumulated impulse/work records. CLI and GUI expose the selection;

@@ -120,3 +120,24 @@ See [the Medina-compatible timestep correction](moment_boundary_checkpoint_diagn
 for the separate flyby experiment. It tests a numerical force-integration
 correction while general magnetic self-reaction is off, and should not be
 confused with the new force described here.
+
+## Initial charge history in high-speed tests
+
+A short curved first step can expose a separate charge-only problem. If the
+preceding coasting history has a very long last interval, reconstructing its
+endpoint acceleration from the new step can make the interpolated velocity
+exceed light speed inside that old interval, although all stored velocities
+are valid. This was reproduced with recoil both off and on at beta 0.99.
+
+The public checkpointed-pair runner now uses the existing geometrically tapered
+coasting times even when the dipole source is off. Intervals become gradually
+shorter toward the first live half step. The causal local-fit source keeps
+its separate physical-window startup grid. The fix changes initial sampling,
+not the force equation, and does not establish causal interpolation for every
+possible future step-size change. Tests retain the failing sparse-history
+example and check the generated-history route at beta 0.99 and 0.9999.
+
+In strong-field Medina benchmarks, the charge-force derivative also needs a
+previous force sample. The study supplies that sample from the known preceding
+uniform-field orbit as explicit benchmark data. The default inertial prefix
+does not invent a force history or silently prime Medina.
