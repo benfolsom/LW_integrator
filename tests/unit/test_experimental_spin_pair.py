@@ -284,3 +284,53 @@ def test_causal_dipole_source_cannot_use_legacy_analytical_reduction(monkeypatch
         in result["_intrinsic_spin_start_analytical_unavailable_reason"][0]
     )
     assert result["_linear_spin_feedback_record"].route == "warmup_no_force"
+
+
+@pytest.mark.parametrize("bounded", [False, True])
+def test_uniform_external_field_has_analytical_feedback_without_warmup(bounded):
+    from core.exact_pair_trial import solve_exact_pair_slab_trial
+    from core.types import ExternalFieldConfig
+
+    rb, db, config = _charged_accepted_pair(
+        exact_retarded_update="second_order_start_taylor_endpoint",
+        intrinsic_spin_self_reaction_mode="experimental_linear_spin",
+    )
+    field = ExternalFieldConfig(
+        electric_field_native=(1e-8, 2e-8, 0),
+        magnetic_field_native=(0, 0, 1e-5),
+        x_max=1e6 if bounded else None,
+    )
+    advance = make_exact_role_eom_advance(
+        ExactPairEOMOptions(
+            aperture_radius_mm=1.0,
+            magnetic_dipole=config,
+            radiation_reaction_mode="medina_lad",
+            self_consistency=SelfConsistencyConfig.standard(),
+            external_field=field,
+        )
+    )
+    trial = solve_exact_pair_slab_trial(
+        accepted_rider_history=rb.build_current(),
+        accepted_driver_history=db.build_current(),
+        advance_rider=advance,
+        advance_driver=advance,
+        delta_time_ns=1e-8,
+        rider_initial_proper_step_ns=1e-8,
+        driver_initial_proper_step_ns=1e-8,
+        magnetic_dipole=config,
+        include_dipole_source=False,
+        intrinsic_spin_reduction_history=AcceptedPairIntrinsicSpinReductionHistory.empty(),
+    )
+    for role in ("rider", "driver"):
+        state = getattr(trial.pair, role).state
+        record = state["_linear_spin_feedback_record"]
+        if bounded:
+            assert record.route == "warmup_no_force"
+            assert (
+                "bounded or nonuniform"
+                in state["_intrinsic_spin_start_analytical_unavailable_reason"][0]
+            )
+        else:
+            assert record.route == "analytical_smooth_segment"
+            assert state["_intrinsic_spin_start_analytical_reduction"][0] is not None
+            assert record.applied

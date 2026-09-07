@@ -27,8 +27,10 @@ the consistency of the combined dynamics.
 The implementation uses an analytical potential-derivative calculation when
 available. At a source-history boundary, it can instead estimate derivatives
 from earlier accepted samples. No future accepted sample is accessed.
-Prescribed external fields and the independent causal C5/local dipole source
-histories currently use that earlier-sample route. The legacy analytical
+Unbounded uniform prescribed fields now provide exact analytical derivatives,
+including their mixed effects with retarded source fields. Bounded or
+nonuniform prescribed fields and the independent causal C5/local dipole source
+histories still use the earlier-sample route. The legacy analytical
 dipole provider must not be substituted for the source history actually
 driving the particle.
 
@@ -141,3 +143,26 @@ In strong-field Medina benchmarks, the charge-force derivative also needs a
 previous force sample. The study supplies that sample from the known preceding
 uniform-field orbit as explicit benchmark data. The default inertial prefix
 does not invent a force history or silently prime Medina.
+
+## Exact uniform-field derivatives
+
+For an unbounded uniform prescribed field, use the linear potential
+$\phi=-\mathbf E\cdot\mathbf x$ and
+$\mathbf A=(\mathbf B\times\mathbf x)/2$. The potential's second and higher
+coordinate derivatives vanish exactly. This provides the non-self motion's
+derivatives from the first step, without sampled-history startup omissions.
+It does not mean that the trajectory's acceleration derivatives vanish: the
+changing velocity and spin still enter them.
+
+When a retarded source also contributes, both fields enter the leading
+acceleration used to differentiate the potential along the trajectory. This
+retains mixed source/external terms. Adding two separately reduced self-forces
+would generally be wrong. The prescribed potential is used for derivatives;
+it does not silently change the canonical momentum convention of the stepper.
+
+The provider rejects all enabled hard-window and magnetic-gradient configs,
+even if the particle happens to be far from a window boundary. Those cases
+keep the existing earlier-sample route. Tests compare the uniform case with
+exact Lorentz-motion derivatives through beta 0.9999, compare a mixed
+source/external trajectory with independently sampled derivatives, and check
+that actual pair feedback uses the analytical route without startup omissions.

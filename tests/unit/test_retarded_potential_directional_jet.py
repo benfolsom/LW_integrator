@@ -488,9 +488,24 @@ def test_retarded_reduction_can_exclude_the_ordinary_dipole_source_sector() -> N
     )
 
 
-def test_retarded_reduction_matches_centered_and_causal_sampled_oracles() -> None:
+@pytest.mark.parametrize("include_external", [False, True])
+def test_retarded_reduction_matches_centered_and_causal_sampled_oracles(
+    include_external,
+) -> None:
     """One weak smooth leading trajectory checks both independent references."""
 
+    from core.types import ExternalFieldConfig
+    from core.external_potential_derivatives import (
+        uniform_external_potential_derivatives_native,
+    )
+
+    external = (
+        ExternalFieldConfig(
+            electric_field_native=(0.3, -0.2, 0.1), magnetic_field_native=(1, -3, 2)
+        )
+        if include_external
+        else None
+    )
     source_history = _static_history(
         np.linspace(-1.0, 0.2, 49),
         charge_native=1000.0,
@@ -528,6 +543,13 @@ def test_retarded_reduction_matches_centered_and_causal_sampled_oracles() -> Non
         )
         assert provider.available and provider.derivatives is not None
         derivatives = provider.derivatives
+        if external is not None:
+            derivatives = sum_potential_directional_derivatives_native(
+                derivatives,
+                uniform_external_potential_derivatives_native(
+                    external, position_mm=coordinates[1:4]
+                ),
+            )
         leading = potential_derivative_rfs_response_native(
             four_velocity_mm_ns=velocity,
             spin_four_vector=spin,
@@ -541,7 +563,9 @@ def test_retarded_reduction_matches_centered_and_causal_sampled_oracles() -> Non
         acceleration = leading.total_four_force / observer_mass
         return np.concatenate((velocity, acceleration, leading.spin_rhs)), acceleration
 
-    proper_step = 2.0e-4
+    # The mixed-field second derivatives suffer more subtraction noise at
+    # extremely short spacing; use a wider independent reference stencil.
+    proper_step = 4.0e-4 if include_external else 2.0e-4
     states = [state.copy()]
     accelerations = [leading_rhs(state)[1]]
     for _ in range(10):
@@ -571,6 +595,7 @@ def test_retarded_reduction_matches_centered_and_causal_sampled_oracles() -> Non
             invariant_spin_native=invariant_spin,
             g_factor=g_factor,
             dipole_source_identities=("source",),
+            external_field=external,
         )
         assert result.available and result.reduction is not None
         return (
@@ -607,5 +632,14 @@ def test_retarded_reduction_matches_centered_and_causal_sampled_oracles() -> Non
     assert np.linalg.norm(causal_force - causal_analytical) <= (
         7.0e-7 * np.linalg.norm(causal_analytical)
     )
-    assert np.max(np.abs(centered.velocity_derivative_residual_mm_ns2)) < 3.0e-11
-    assert np.max(np.abs(causal.velocity_derivative_residual_mm_ns2)) < 6.0e-11
+    # Differentiating u^0 near c subtracts large nearly equal samples. Include
+    # its floating-point error scale, independently of the force comparison.
+    velocity_roundoff = (
+        8 * np.finfo(float).eps * np.max(abs(state_samples[:, 4:8])) / proper_step
+    )
+    assert np.max(np.abs(centered.velocity_derivative_residual_mm_ns2)) < max(
+        3.0e-11, velocity_roundoff
+    )
+    assert np.max(np.abs(causal.velocity_derivative_residual_mm_ns2)) < max(
+        6.0e-11, velocity_roundoff
+    )

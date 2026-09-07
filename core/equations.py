@@ -3726,11 +3726,17 @@ def retarded_equations_of_motion(
                         )
                         unavailable_reason = None
                         analytical_reduction = None
-                        if external_field is not None and getattr(
-                            external_field, "enabled", False
+                        from .external_potential_derivatives import (
+                            supports_uniform_external_potential,
+                        )
+
+                        if (
+                            external_field is not None
+                            and not supports_uniform_external_potential(external_field)
                         ):
                             unavailable_reason = (
-                                "prescribed external-field potential jet is unavailable"
+                                "bounded or nonuniform external-field analytical "
+                                "potential derivatives are unavailable"
                             )
                         elif exact_dipole_source_collection is not None:
                             # This analytical reduction reads the legacy spin
@@ -3793,6 +3799,7 @@ def retarded_equations_of_motion(
                                 spin_interpolation_model=(
                                     exact_source_spin_interpolation_model
                                 ),
+                                external_field=external_field,
                             )
                             analytical_reduction = analytical_result.reduction
                             unavailable_reason = analytical_result.unavailable_reason

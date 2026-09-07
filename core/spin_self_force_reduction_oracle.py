@@ -41,6 +41,7 @@ from .retarded_potential_directional_jet import (
 
 if TYPE_CHECKING:
     from .retarded_fields import ObserverEvent, TrajectoryHistory
+    from .types import ExternalFieldConfig
 
 
 ArrayLike = Union[Sequence[float], Sequence[Sequence[float]], np.ndarray]
@@ -432,6 +433,7 @@ def evaluate_retarded_potential_intrinsic_spin_reduction_native(
     root_tolerance_mm: float = 1.0e-21,
     max_root_iterations: int = 96,
     spin_interpolation_model: str = "centered_c1",
+    external_field: "ExternalFieldConfig | None" = None,
 ) -> RetardedPotentialIntrinsicSpinReductionResult:
     """Evaluate the analytical reduction directly from retarded source history.
 
@@ -446,6 +448,10 @@ def evaluate_retarded_potential_intrinsic_spin_reduction_native(
     A production sparse kernel can fuse these passes after the numerical
     comparison is accepted.  Keeping them separate here makes the dependency
     and the boundary handoff auditable.
+
+    An optional unbounded uniform external field is included in both passes.
+    Its potential derivatives are exact; the total leading acceleration must
+    drive the second pass, including mixed source/external-field terms.
     """
 
     velocity = np.asarray(four_velocity_mm_ns, dtype=float)
@@ -526,6 +532,17 @@ def evaluate_retarded_potential_intrinsic_spin_reduction_native(
             )
         return charge_result, dipole_result
 
+    external_derivatives: tuple[PotentialDirectionalDerivatives, ...] = ()
+    if external_field is not None and external_field.enabled:
+        from .external_potential_derivatives import (
+            uniform_external_potential_derivatives_native,
+        )
+
+        external_derivatives = (
+            uniform_external_potential_derivatives_native(
+                external_field, position_mm=observer_event.position_mm
+            ),
+        )
     zero_acceleration = np.zeros(4, dtype=float)
     charge_first, dipole_first = providers_for_acceleration(zero_acceleration)
     for provider in (charge_first, dipole_first):
@@ -543,6 +560,7 @@ def evaluate_retarded_potential_intrinsic_spin_reduction_native(
     first_derivatives = sum_potential_directional_derivatives_native(
         charge_first.derivatives,
         dipole_first.derivatives,
+        *external_derivatives,
     )
     intrinsic_moment = g_value * charge * invariant_spin / (2.0 * mass * C_MMNS)
     leading_response = potential_derivative_rfs_response_native(
@@ -572,6 +590,7 @@ def evaluate_retarded_potential_intrinsic_spin_reduction_native(
     derivatives = sum_potential_directional_derivatives_native(
         charge_final.derivatives,
         dipole_final.derivatives,
+        *external_derivatives,
     )
     reduction = evaluate_potential_directional_intrinsic_spin_reduction_native(
         four_velocity_mm_ns=velocity,

@@ -1,5 +1,12 @@
 # Changelog
 
+- Supply exact potential derivatives for unbounded uniform prescribed fields
+  in the experimental spin-reaction calculation. Include the total source
+  plus external acceleration when differentiating, so mixed terms are retained.
+  These fields no longer need sampled-history warmup; hard windows, magnetic
+  gradients and independently represented causal dipole sources retain their
+  existing explicit fallback. Ordinary force stepping and defaults are unchanged.
+
 - Taper the initial coasting-history spacing for all checkpointed exact-pair
   runs that do not use a separately configured local-fit history. This avoids
   interpolated charge velocities becoming superluminal when a very short
