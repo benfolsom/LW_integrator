@@ -457,7 +457,7 @@ def sum_potential_directional_derivatives_native(
     )
 
 
-def quintic_charge_potential_directional_jet_native(
+def _quintic_charge_potential_taylor_native(
     *,
     observer_time_ns: float,
     observer_position_mm: Sequence[float],
@@ -466,11 +466,10 @@ def quintic_charge_potential_directional_jet_native(
     segment_duration_ns: float,
     position_coefficients_mm: np.ndarray,
     retarded_time_ns: float,
-    four_velocity_mm_ns: Sequence[float],
-    four_acceleration_mm_ns2: Sequence[float],
-    jet_newton_iterations: int = 5,
-) -> PotentialDirectionalDerivativeJet:
-    """Return the required charge-potential contractions from one root."""
+    jet_order: int,
+    jet_newton_iterations: int,
+) -> tuple[list[_TaylorJet], _TaylorJet, _TaylorJet, float]:
+    """Shared potential algebra; the caller selects only the needed order."""
 
     (
         observer_time,
@@ -488,18 +487,13 @@ def quintic_charge_potential_directional_jet_native(
         retarded_time_ns=retarded_time_ns,
     )
     charge = float(charge_native)
-    velocity = _four_vector(four_velocity_mm_ns, name="four_velocity_mm_ns")
-    acceleration = _four_vector(
-        four_acceleration_mm_ns2,
-        name="four_acceleration_mm_ns2",
-    )
     iterations = int(jet_newton_iterations)
     if not np.isfinite(charge):
         raise ValueError("charge_native must be finite")
-    if iterations < 4:
-        raise ValueError("jet_newton_iterations must be at least four")
+    if iterations < jet_order:
+        raise ValueError(f"jet_newton_iterations must be at least {jet_order}")
 
-    space = _jet_space(4)
+    space = _jet_space(jet_order)
     observer = _observer_coordinates(space, observer_time, observer_position)
     root_coordinate = _TaylorJet.constant(space, C_MMNS * root_time)
     start_coordinate = C_MMNS * start_time
@@ -553,14 +547,106 @@ def quintic_charge_potential_directional_jet_native(
         scalar_potential * component for component in source_beta
     ]
     light_cone = observer[0] - root_coordinate - separation
+    return potential, root_coordinate, light_cone, (root_time - start_time) / duration
+
+
+def quintic_charge_potential_directional_jet_native(
+    *,
+    observer_time_ns: float,
+    observer_position_mm: Sequence[float],
+    charge_native: float,
+    segment_start_time_ns: float,
+    segment_duration_ns: float,
+    position_coefficients_mm: np.ndarray,
+    retarded_time_ns: float,
+    four_velocity_mm_ns: Sequence[float],
+    four_acceleration_mm_ns2: Sequence[float],
+    jet_newton_iterations: int = 5,
+) -> PotentialDirectionalDerivativeJet:
+    """Return the required charge-potential contractions from one root."""
+    velocity = _four_vector(four_velocity_mm_ns, name="four_velocity_mm_ns")
+    acceleration = _four_vector(
+        four_acceleration_mm_ns2, name="four_acceleration_mm_ns2"
+    )
+    potential, root_coordinate, light_cone, fraction = (
+        _quintic_charge_potential_taylor_native(
+            observer_time_ns=observer_time_ns,
+            observer_position_mm=observer_position_mm,
+            charge_native=charge_native,
+            segment_start_time_ns=segment_start_time_ns,
+            segment_duration_ns=segment_duration_ns,
+            position_coefficients_mm=position_coefficients_mm,
+            retarded_time_ns=retarded_time_ns,
+            jet_order=4,
+            jet_newton_iterations=jet_newton_iterations,
+        )
+    )
     return _directional_potential_result(
         potential=potential,
         velocity=velocity,
         acceleration=acceleration,
         retarded_coordinate=root_coordinate,
         light_cone=light_cone,
-        segment_fraction=(root_time - start_time) / duration,
+        segment_fraction=fraction,
     )
+
+
+@dataclass(frozen=True)
+class ChargeDirectionalGradientJet:
+    """Only the directional gradient needed by the moment-force derivative."""
+
+    partial_antisymmetric_response_along_velocity: np.ndarray
+    light_cone_jet_residual: float
+
+
+def quintic_charge_response_directional_gradient_native(
+    *,
+    observer_time_ns: float,
+    observer_position_mm: Sequence[float],
+    charge_native: float,
+    segment_start_time_ns: float,
+    segment_duration_ns: float,
+    position_coefficients_mm: np.ndarray,
+    retarded_time_ns: float,
+    four_velocity_mm_ns: Sequence[float],
+) -> ChargeDirectionalGradientJet:
+    """Return ``u^k partial_k partial_l F_p`` from a supplied smooth root.
+
+    This third-order potential calculation reuses the broader reference's
+    algebra but returns only 24 packed values, in pair order 01,02,03,12,13,23.
+    It constructs neither E/B three-fields nor a complete second field
+    derivative. Coordinates are (ct,x,y,z); the direction is in mm/ns.
+    Segment selection and boundary availability belong to the caller.
+    """
+    velocity = _four_vector(four_velocity_mm_ns, name="four_velocity_mm_ns")
+    potential, _, light_cone, _ = _quintic_charge_potential_taylor_native(
+        observer_time_ns=observer_time_ns,
+        observer_position_mm=observer_position_mm,
+        charge_native=charge_native,
+        segment_start_time_ns=segment_start_time_ns,
+        segment_duration_ns=segment_duration_ns,
+        position_coefficients_mm=position_coefficients_mm,
+        retarded_time_ns=retarded_time_ns,
+        jet_order=3,
+        jet_newton_iterations=4,
+    )
+    pairs = ((0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3))
+    rate = np.empty((4, 6), dtype=float)
+    for derivative in range(4):
+        for pair, (mu, nu) in enumerate(pairs):
+            rate[derivative, pair] = sum(
+                velocity[k]
+                * (
+                    _METRIC_SIGNS[mu] * potential[nu].derivative(k, derivative, mu)
+                    - _METRIC_SIGNS[nu] * potential[mu].derivative(k, derivative, nu)
+                )
+                for k in range(4)
+            )
+    residual = float(np.max(np.abs(light_cone.coefficients)))
+    if not np.all(np.isfinite(rate)) or not np.isfinite(residual):
+        raise ValueError("directional charge response must be finite")
+    rate.setflags(write=False)
+    return ChargeDirectionalGradientJet(rate, residual)
 
 
 def _spin_coefficients(
@@ -1124,12 +1210,14 @@ def evaluate_retarded_dipole_potential_directional_jet_native(
 
 
 __all__ = [
+    "ChargeDirectionalGradientJet",
     "PotentialDirectionalDerivativeJet",
     "PotentialDirectionalDerivatives",
     "RetardedPotentialDirectionalJetProviderResult",
     "evaluate_retarded_charge_potential_directional_jet_native",
     "evaluate_retarded_dipole_potential_directional_jet_native",
     "quintic_charge_potential_directional_jet_native",
+    "quintic_charge_response_directional_gradient_native",
     "quintic_dipole_potential_directional_jet_native",
     "sum_potential_directional_derivatives_native",
 ]

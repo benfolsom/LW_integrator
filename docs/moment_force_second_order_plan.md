@@ -82,9 +82,10 @@ inputs, not high-gamma trajectory validation or a performance benchmark.
    polynomial, retarded root, spin fit, and availability guards. Check that
    its existing potential, field response, and gradient remain unchanged.
    Implemented as an optional Python path. All ordinary outputs remain
-   bitwise unchanged in the five accepted saved-state checks. The sixth is
-   rejected by the derivative's fit-window check; investigate it without
-   weakening the existing tolerance.
+   bitwise unchanged with versus without the option. The original degree-five
+   fit accepts five saved-state checks and rejects the sixth. An explicit
+   degree-six acceleration candidate accepts all six without weakening limits;
+   this is not yet a default change.
 2. Compare the new directional derivative against an independent check inside
    smooth regions and test boundaries and unavailable-history cases explicitly.
    Do not silently replace the current source model with the older quintic
@@ -96,9 +97,18 @@ inputs, not high-gamma trajectory validation or a performance benchmark.
    yet cover every history or scale transition. Also supply and validate the
    **charge-source contribution** to the same directional gradient: the
    moment responds to both charge-generated and dipole-generated fields.
+   This charge contribution is now implemented and locally checked; see the
+   [charge derivative report](charge_directional_gradient_validation.md).
+   All six saved cases agree with same-segment numerical differentiation.
+   Larger displacements crossing charge-history segments are not evidence for
+   the local derivative and expose a boundary-handling concern for live steps.
 3. After resolving the source checks, connect the derivative to the second-order moment impulse, including the
    selected acceleration and spin right-hand side. First run short, matched
    checkpoint comparisons with radiation reaction disabled, then enabled.
+   Begin with a diagnostic combined charge-plus-dipole force correction using
+   the explicit degree-six dipole candidate. Account for selected source
+   segments and fit changes across the step; do not treat an unavailable
+   derivative as zero or silently advance with only first-order moment force.
 4. Require the isolated quadratic projection contribution to disappear under
    timestep refinement, preserve ordinary charge-only behaviour, and check
    general three-dimensional and relativistic cases. Only then reassess a

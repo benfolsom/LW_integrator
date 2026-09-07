@@ -23,7 +23,7 @@ of scope for this layer.
 from __future__ import annotations
 
 from copy import copy
-from dataclasses import dataclass, field as dataclass_field
+from dataclasses import dataclass, field as dataclass_field, replace
 from math import comb
 from typing import Sequence, cast
 
@@ -168,6 +168,9 @@ class RetardedChargeResponseGradientResult:
     fallback_used: bool
     fallback_reason: str | None
     fallback_stencil_step_mm: float | None
+    partial_antisymmetric_response_along_velocity: np.ndarray | None = None
+    directional_unavailable_reason: str | None = None
+    directional_jet_residual: np.ndarray | None = None
 
 
 @dataclass
@@ -1903,6 +1906,7 @@ def evaluate_retarded_charge_response_gradient_native(
     max_root_iterations: int = _DEFAULT_MAX_ROOT_ITERATIONS,
     fallback_backend: str = "numba_full_strict_serial",
     source_acceleration_semantics: str = "preceding_interval",
+    observer_four_velocity_mm_ns: Sequence[float] | None = None,
 ) -> RetardedChargeResponseGradientResult:
     """Evaluate one-root analytical charge response coefficients.
 
@@ -1910,9 +1914,19 @@ def evaluate_retarded_charge_response_gradient_native(
     falls back to the centered-stencil provider only when a rigorous segment
     speed/margin bound cannot prove that the analytical derivative stays on
     the same smooth quintic segment.
+    An optional observer four-velocity requests the directional rate of the
+    gradient from these same roots and prepared coefficients. If the ordinary
+    response falls back, that rate is explicitly unavailable, never zero-filled.
     """
 
     require_exact_retarded_backend("numba_analytic_charge_response_serial")
+    observer_velocity = None
+    if observer_four_velocity_mm_ns is not None:
+        observer_velocity = np.asarray(observer_four_velocity_mm_ns, dtype=float)
+        if observer_velocity.shape != (4,) or not np.all(
+            np.isfinite(observer_velocity)
+        ):
+            raise ValueError("observer_four_velocity_mm_ns needs four finite values")
     from .charge_response_jet_numba import (
         _STATUS_CHARGE_SINGULAR_KAPPA,
         _STATUS_CHARGE_SUPERLUMINAL_SOURCE,
@@ -2068,7 +2082,7 @@ def evaluate_retarded_charge_response_gradient_native(
         fallback_reason=fallback_reason,
     )
     if fallback_reason is not None:
-        return _response_gradient_from_maintained_stencil(
+        fallback = _response_gradient_from_maintained_stencil(
             history,
             observer_event,
             excluded_source_indices=excluded_source_indices,
@@ -2084,6 +2098,42 @@ def evaluate_retarded_charge_response_gradient_native(
             minimum_segment_margin_ratio=minimum_margin_ratio,
             source_acceleration_semantics=acceleration_semantics,
         )
+        if observer_velocity is not None:
+            fallback = replace(
+                fallback,
+                directional_unavailable_reason="ordinary charge response used fallback: "
+                + fallback_reason,
+            )
+        return fallback
+    directional_rate = None
+    directional_residual = None
+    if observer_velocity is not None:
+        from .retarded_potential_directional_jet import (
+            quintic_charge_response_directional_gradient_native,
+        )
+
+        directional_rate = np.zeros((4, 6), dtype=float)
+        directional_residual = np.full(arrays.n_sources, np.nan, dtype=float)
+        for source_index, source in prepared.sources.items():
+            if not valid_sources[source_index]:
+                continue
+            segment = int(segment_index[source_index])
+            result = quintic_charge_response_directional_gradient_native(
+                observer_time_ns=float(observer_event.time_ns),
+                observer_position_mm=observer_event.position_mm,
+                charge_native=float(arrays.charge_native[source_index]),
+                segment_start_time_ns=float(source.time_ns[segment]),
+                segment_duration_ns=float(source.segment_duration_ns[segment]),
+                position_coefficients_mm=source.position_coefficients_mm[segment],
+                retarded_time_ns=float(retarded_time_ns[source_index]),
+                four_velocity_mm_ns=observer_velocity,
+            )
+            directional_rate += result.partial_antisymmetric_response_along_velocity
+            directional_residual[source_index] = result.light_cone_jet_residual
+        if not np.all(np.isfinite(directional_rate)):
+            raise ValueError("summed directional charge response must be finite")
+        directional_rate.setflags(write=False)
+        directional_residual.setflags(write=False)
     return RetardedChargeResponseGradientResult(
         four_potential=potential_total,
         partial_a=partial_a_total,
@@ -2099,6 +2149,8 @@ def evaluate_retarded_charge_response_gradient_native(
         fallback_used=False,
         fallback_reason=None,
         fallback_stencil_step_mm=None,
+        partial_antisymmetric_response_along_velocity=directional_rate,
+        directional_jet_residual=directional_residual,
     )
 
 

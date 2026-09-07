@@ -6,6 +6,10 @@ Latest follow-up: acceleration/spin separation and a degree-six candidate are
 recorded below. The original degree-five rejection remains a valid historical
 result, not a changed tolerance.
 
+The matching [charge-source contribution](charge_directional_gradient_validation.md)
+is now implemented and checked at the same saved states. Combining both
+sources in a live force correction remains pending.
+
 ## What is implemented
 
 The existing local dipole source solver can optionally return the rate at

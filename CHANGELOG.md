@@ -1,5 +1,12 @@
 # Changelog
 
+- Add an opt-in charge-source directional gradient for the magnetic-force
+  time derivative. It reuses the existing analytical provider's roots,
+  segments and acceleration convention, leaving ordinary outputs unchanged.
+  Boundary fallback explicitly withholds the extra derivative. Local algebra,
+  source-contract and saved-flyby-state checks pass; the live force update
+  and production defaults remain unchanged.
+
 - Validate a degree-six acceleration-fit candidate for the optional local
   dipole directional derivative against smooth source histories. The saved
   outbound sensitivity is isolated to acceleration, not spin; all six saved
