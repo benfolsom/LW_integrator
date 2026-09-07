@@ -1,5 +1,11 @@
 # Changelog
 
+- Keep the analytical charge response across neighbouring source intervals
+  only when their stored polynomials are exactly identical and stationary and
+  cover the complete comparison stencil. This avoids an artificial force jump
+  that contaminates high self-reaction derivatives. Moving or curved neighbours,
+  insufficient history and numerically exact knots keep their existing guards.
+
 - Correct an outdated trial-history test that still required writable source
   interpolation buffers to be shared with accepted history. The September 2
   isolation fix intentionally prevents that sharing; the test now checks both

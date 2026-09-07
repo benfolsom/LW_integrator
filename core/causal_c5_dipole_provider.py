@@ -2,8 +2,8 @@
 
 The objects in this module remain an opt-in validation surface.  The exact-pair
 adaptive integrator may now use them for the ordinary field sourced by
-intrinsic magnetic moments; this remains separate from the not-yet-enabled
-intrinsic-spin self-reaction force.  Their production contracts are:
+intrinsic magnetic moments; this remains separate from the opt-in experimental
+intrinsic-spin self-reaction force. Their history contracts are:
 
 * source identity and summation order are stable;
 * an adaptive trial produces a detached candidate and publishes it only after

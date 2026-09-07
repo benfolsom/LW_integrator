@@ -1834,8 +1834,79 @@ def _analytical_segment_margin_ratio(
         return 0.0, "retarded_root_is_on_segment_boundary"
     ratio = coordinate_margin / maximum_root_shift
     if not np.isfinite(ratio) or ratio <= 1.0:
+        # A knot separating exactly identical stationary polynomials is not a
+        # physical derivative boundary. Switching to finite differences there
+        # introduces a small force jump that higher recoil derivatives amplify.
+        # Keep roots numerically indistinguishable from an actual knot on the
+        # old route: the optional directional kernel requires a strict interior.
+        clock_roundoff = (
+            32.0
+            * np.finfo(float).eps
+            * C_MMNS
+            * max(
+                abs(root),
+                abs(segment_start),
+                abs(segment_end),
+                segment_end - segment_start,
+            )
+        )
+        if coordinate_margin > clock_roundoff:
+            stationary_ratio = _stationary_span_margin_ratio(
+                source, segment_index, root, float(observer_stencil_step_mm)
+            )
+            if stationary_ratio is not None and stationary_ratio > 1.0:
+                return stationary_ratio, None
         return float(ratio), "retarded_root_near_segment_boundary"
     return float(ratio), None
+
+
+def _stationary_span_margin_ratio(
+    source: _PreparedSourceHistory,
+    segment_index: int,
+    root_time_ns: float,
+    observer_stencil_step_mm: float,
+) -> float | None:
+    """Certify a stencil inside exactly identical, stationary polynomials.
+
+    This is an exact coefficient test, not a small-acceleration tolerance.
+    Extend only as far as the requested stencil needs. At rest the retarded
+    time changes by at most the observer displacement divided by c. A moving,
+    curved, discontinuous or unavailable neighbouring segment ends the proof.
+    """
+    coefficients = source.position_coefficients_mm
+    index = int(segment_index)
+    position = coefficients[index, 0]
+
+    def identical_stationary(candidate: int) -> bool:
+        values = coefficients[candidate]
+        return bool(
+            np.all(np.isfinite(values))
+            and not np.any(values[1:] != 0.0)
+            and np.array_equal(values[0], position)
+        )
+
+    if not identical_stationary(index):
+        return None
+    left, right = index, index + 1
+    step = float(observer_stencil_step_mm)
+    while C_MMNS * (root_time_ns - float(source.time_ns[left])) <= step and left > 0:
+        if not identical_stationary(left - 1):
+            break
+        left -= 1
+    while C_MMNS * (
+        float(source.time_ns[right]) - root_time_ns
+    ) <= step and right < len(coefficients):
+        if not identical_stationary(right):
+            break
+        right += 1
+    return float(
+        C_MMNS
+        * min(
+            root_time_ns - float(source.time_ns[left]),
+            float(source.time_ns[right]) - root_time_ns,
+        )
+        / step
+    )
 
 
 def _response_gradient_from_maintained_stencil(

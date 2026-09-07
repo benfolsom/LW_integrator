@@ -172,3 +172,26 @@ gives the elementary-rotation reference used to test the derivatives. Recoil
 spin transport is evaluated directly in rest-frame components, avoiding the
 precision loss of a boost to the lab and back at high speed. This is the same
 rotation-free four-dimensional transport, not a newly added self-torque.
+
+## A stationary-source boundary switch found by the coupled test
+
+The coupled-source check exposed a small ordinary-force error that matters
+more when differentiated. Near a source-history knot, the analytical charge
+provider deliberately falls back to numerical differences if its comparison
+stencil could cross the knot. For a stationary source represented by identical
+constant polynomials on both sides, that switch is unnecessary. In the saved
+80%-of-light-speed check it changes one acceleration by about 5.08e-8 relative;
+the subsequent sampled self-force differs by about 1.1% at that resolution.
+
+The provider now extends its smooth-region certificate through adjacent
+segments only if every nonconstant coefficient is exactly zero and the
+constant positions are exactly equal. For a stationary source, shifting an
+observer coordinate by a distance $h$ moves the retarded time by at most $h/c$.
+The whole resulting time interval must remain inside that certified stationary
+span. This is not a tolerance that treats small motion as zero. An arbitrarily
+small nonzero coefficient stops the extension. Exact-knot, missing-history,
+moving-source and curved-source protections remain in place.
+
+This narrow correction does not solve general calculation-method switches for
+moving sources, or validate the complete sampled self-force. The five startup
+half-step omissions and missing magnetic-moment-squared terms remain explicit.

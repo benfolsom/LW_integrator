@@ -5,11 +5,11 @@ worldline or C1 spin-interpolation knots.  The separately validated backward
 six-sample reduction supplies a causal diagnostic at those events, but only if
 its samples are accepted leading-order states.
 
-This module provides that state boundary without connecting a force to the
-integrator.  Appending a sample returns a new immutable object.  A rejected
+This module provides the accepted state boundary used by diagnostics and the
+opt-in experimental force. Appending a sample returns a new immutable object. A rejected
 adaptive or nonlinear trial can therefore discard its candidate without
 mutating accepted history.  The compact state has a strict JSON-compatible
-checkpoint payload so restart parity can be tested before production wiring.
+checkpoint payload so restart preserves both derivative history and force totals.
 """
 
 from __future__ import annotations
