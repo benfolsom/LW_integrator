@@ -1,5 +1,11 @@
 # Changelog
 
+- Add a packed analytical derivative of the existing magnetic-moment force,
+  retaining observer acceleration, spin evolution, and directional change
+  of the source response. This preparatory kernel uses two 4-by-6 response
+  arrays instead of a full higher-derivative field tensor. It is not yet wired
+  into the live stepper and does not change radiation reaction or defaults.
+
 - Add a vector angular-momentum ledger for two distinct concentric shells with
   opposite charges. Direct surface Lorentz torques, electromagnetic angular
   momentum inside a finite sphere, and outward angular-momentum flux close

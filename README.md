@@ -1,5 +1,8 @@
 # LW Integrator
 
+Active numerical work: [second-order magnetic-moment force update](docs/moment_force_second_order_plan.md).
+The derivative kernel is tested; the live provider and stepper connection are still pending.
+
 ## Recent Updates (August 2026)
 
 - **Explicit GUI/testbed CLI route** — `lw-simulate --testbed-config ...` loads and executes saved GUI/testbed configurations through `run_testbed()` without translating their schema, keeping configured 3D particles, beamline geometry, source smearing, self-consistency, and output settings authoritative.
