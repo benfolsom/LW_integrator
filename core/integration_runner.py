@@ -2973,6 +2973,14 @@ def retarded_integrator(
     magnetic_dipole = magnetic_dipole or MagneticDipoleConfig()
     checkpoint = checkpoint or CheckpointConfig()
     adaptive_pair_return = adaptive_pair_return or AdaptivePairReturnConfig()
+    if (
+        magnetic_dipole.intrinsic_spin_self_reaction_mode == "experimental_linear_spin"
+        and not adaptive_pair_return.enabled
+    ):
+        raise ValueError(
+            "experimental_linear_spin requires checkpointed exact-pair adaptive "
+            "return mode; fixed-step and many-particle feedback are not implemented"
+        )
     if magnetic_dipole.exact_retarded_backend == "metal_certified_full_strict":
         from .metal_certified_roots import reset_metal_certified_root_diagnostics
 

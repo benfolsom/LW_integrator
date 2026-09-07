@@ -447,10 +447,11 @@ class IntegratorGUIConfigMixin:
             not in _INTRINSIC_SPIN_SELF_REACTION_LABEL_BY_MODE
         ):
             raise ValueError(
-                "Select Off or Diagnostic only for intrinsic-spin self-reaction."
+                "Select Off, Diagnostic only, or Experimental: first-order spin recoil."
             )
         if (
-            intrinsic_spin_self_reaction_mode == "diagnostic"
+            intrinsic_spin_self_reaction_mode
+            in {"diagnostic", "experimental_linear_spin"}
             and exact_retarded_update != "second_order_start_taylor_endpoint"
         ):
             raise ValueError(

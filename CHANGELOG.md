@@ -1,5 +1,13 @@
 # Changelog
 
+- Add an opt-in, experimental first-order-in-spin recoil to checkpointed
+  adaptive exact-pair runs, with consistent spin transport and separate
+  accumulated impulse/work records. CLI and GUI expose the selection;
+  fixed-step and many-particle use are rejected. Medina charge reaction and
+  defaults remain unchanged. Pure magnetic-moment-squared reaction and full
+  conservation validation remain open; see
+  `docs/experimental_linear_spin_reaction.md`.
+
 - Extend the opt-in magnetic-force timestep correction to Medina-on trials,
   matching the applied radiation force to the acceleration and spin predictor
   with a bounded iteration. Keep production defaults unchanged and reject

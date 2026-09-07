@@ -14,7 +14,7 @@ checkpoint payload so restart parity can be tested before production wiring.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Mapping, Sequence, cast
 
 import numpy as np
@@ -24,9 +24,10 @@ from .spin_self_force_reduction_oracle import (
     SampledIntrinsicSpinReductionResult,
     evaluate_causal_sampled_intrinsic_spin_reduction_native,
 )
+from .experimental_spin_reaction import LinearSpinFeedbackRecord
 
 if TYPE_CHECKING:
-    from .exact_pair_trial import ExactPairStepDoublingTrial
+    from .exact_pair_trial import ExactPairSlabTrial, ExactPairStepDoublingTrial
 
 _CHECKPOINT_SCHEMA_VERSION = 2
 _MINIMUM_CAUSAL_SAMPLES = 6
@@ -259,7 +260,7 @@ def _finite_four_tuple(
 
 @dataclass(frozen=True)
 class IntrinsicSpinReductionDiagnosticRecord:
-    """One accepted diagnostic evaluation; never an applied force."""
+    """One accepted reduction evaluation, optionally with a separate applied ledger."""
 
     proper_time_ns: float
     route: str
@@ -269,8 +270,13 @@ class IntrinsicSpinReductionDiagnosticRecord:
     charge_ald_four_force_native: tuple[float, float, float, float] | None
     total_four_force_native: tuple[float, float, float, float] | None
     balance_residual_norm_native: float | None
+    applied_feedback: LinearSpinFeedbackRecord | None = None
 
     def __post_init__(self) -> None:
+        if self.applied_feedback is not None and not isinstance(
+            self.applied_feedback, LinearSpinFeedbackRecord
+        ):
+            raise ValueError("applied_feedback must be a validated feedback record")
         time = float(self.proper_time_ns)
         if not np.isfinite(time):
             raise ValueError("diagnostic proper_time_ns must be finite")
@@ -326,7 +332,7 @@ class IntrinsicSpinReductionDiagnosticRecord:
             raise ValueError("unavailable diagnostic route cannot contain a residual")
 
     def to_checkpoint_payload(self) -> dict[str, object]:
-        return {
+        payload = {
             "proper_time_ns": self.proper_time_ns,
             "route": self.route,
             "analytical_unavailable_reason": self.analytical_unavailable_reason,
@@ -336,6 +342,9 @@ class IntrinsicSpinReductionDiagnosticRecord:
             "total_four_force_native": self.total_four_force_native,
             "balance_residual_norm_native": self.balance_residual_norm_native,
         }
+        if self.applied_feedback is not None:
+            payload["applied_feedback"] = self.applied_feedback.to_checkpoint_payload()
+        return payload
 
     @classmethod
     def from_checkpoint_payload(
@@ -352,7 +361,7 @@ class IntrinsicSpinReductionDiagnosticRecord:
             "total_four_force_native",
             "balance_residual_norm_native",
         }
-        if set(payload) != required:
+        if set(payload) not in (required, required | {"applied_feedback"}):
             raise ValueError("intrinsic-spin diagnostic record keys do not match")
 
         def optional_vector(name: str) -> tuple[float, float, float, float] | None:
@@ -366,6 +375,13 @@ class IntrinsicSpinReductionDiagnosticRecord:
             raise ValueError("analytical_unavailable_reason must be a string or null")
         return cls(
             proper_time_ns=float(cast(float, payload["proper_time_ns"])),
+            applied_feedback=(
+                None
+                if "applied_feedback" not in payload
+                else LinearSpinFeedbackRecord.from_checkpoint_payload(
+                    payload["applied_feedback"]
+                )
+            ),
             route=str(payload["route"]),
             analytical_unavailable_reason=reason,
             causal_condition_number=(
@@ -398,8 +414,48 @@ class IntrinsicSpinReductionDiagnosticTrace:
     causal_records: int = 0
     unavailable_records: int = 0
     maximum_records: int = _MAXIMUM_DIAGNOSTIC_RECORDS
+    feedback_evaluated_records: int = 0
+    feedback_applied_records: int = 0
+    feedback_work_native: float = 0.0
+    feedback_absolute_work_native: float = 0.0
+    feedback_four_impulse_native: tuple[float, float, float, float] = (0.0,) * 4
+    feedback_energy_adjustment_native: float = 0.0
+    feedback_absolute_energy_adjustment_native: float = 0.0
 
     def __post_init__(self) -> None:
+        impulse = np.asarray(self.feedback_four_impulse_native, dtype=float)
+        if impulse.shape != (4,) or not np.all(np.isfinite(impulse)):
+            raise ValueError("feedback lifetime impulse must be a finite four-vector")
+        object.__setattr__(self, "feedback_four_impulse_native", tuple(impulse))
+        if any(
+            isinstance(value, bool) or not isinstance(value, (int, np.integer))
+            for value in (
+                self.feedback_evaluated_records,
+                self.feedback_applied_records,
+            )
+        ):
+            raise ValueError("feedback lifetime counters must be integers")
+        if (
+            not 0
+            <= self.feedback_applied_records
+            <= self.feedback_evaluated_records
+            <= self.total_records
+        ):
+            raise ValueError("invalid feedback lifetime counters")
+        if (
+            not np.isfinite(self.feedback_work_native)
+            or not np.isfinite(self.feedback_absolute_work_native)
+            or self.feedback_absolute_work_native
+            < abs(self.feedback_work_native) * (1 - 1e-12)
+        ):
+            raise ValueError("invalid feedback lifetime work")
+        if (
+            not np.isfinite(self.feedback_energy_adjustment_native)
+            or not np.isfinite(self.feedback_absolute_energy_adjustment_native)
+            or self.feedback_absolute_energy_adjustment_native
+            < abs(self.feedback_energy_adjustment_native) * (1 - 1e-12)
+        ):
+            raise ValueError("invalid feedback lifetime energy adjustment")
         maximum = int(self.maximum_records)
         counters = (
             int(self.total_records),
@@ -433,7 +489,31 @@ class IntrinsicSpinReductionDiagnosticTrace:
         if self.records and record.proper_time_ns <= self.records[-1].proper_time_ns:
             raise ValueError("diagnostic record proper times must increase strictly")
         records = (self.records + (record,))[-self.maximum_records :]
+        feedback = record.applied_feedback
+        energy_adjustment = (
+            0.0
+            if feedback is None
+            else feedback.work_native - feedback.temporal_impulse_energy_native
+        )
+        impulse = np.asarray(self.feedback_four_impulse_native)
+        if feedback is not None:
+            impulse = impulse + feedback.proper_step_ns * np.asarray(
+                feedback.four_force_native
+            )
         return IntrinsicSpinReductionDiagnosticTrace(
+            feedback_four_impulse_native=tuple(impulse),
+            feedback_energy_adjustment_native=self.feedback_energy_adjustment_native
+            + energy_adjustment,
+            feedback_absolute_energy_adjustment_native=self.feedback_absolute_energy_adjustment_native
+            + abs(energy_adjustment),
+            feedback_evaluated_records=self.feedback_evaluated_records
+            + int(feedback is not None),
+            feedback_applied_records=self.feedback_applied_records
+            + int(feedback is not None and feedback.applied),
+            feedback_work_native=self.feedback_work_native
+            + (0.0 if feedback is None else feedback.work_native),
+            feedback_absolute_work_native=self.feedback_absolute_work_native
+            + (0.0 if feedback is None else abs(feedback.work_native)),
             records=records,
             total_records=self.total_records + 1,
             analytical_records=self.analytical_records
@@ -446,7 +526,7 @@ class IntrinsicSpinReductionDiagnosticTrace:
         )
 
     def to_checkpoint_payload(self) -> dict[str, object]:
-        return {
+        payload = {
             "maximum_records": self.maximum_records,
             "total_records": self.total_records,
             "analytical_records": self.analytical_records,
@@ -454,6 +534,20 @@ class IntrinsicSpinReductionDiagnosticTrace:
             "unavailable_records": self.unavailable_records,
             "records": [record.to_checkpoint_payload() for record in self.records],
         }
+        if self.feedback_evaluated_records:
+            payload["feedback_totals"] = {
+                key: getattr(self, key)
+                for key in (
+                    "feedback_evaluated_records",
+                    "feedback_applied_records",
+                    "feedback_work_native",
+                    "feedback_absolute_work_native",
+                    "feedback_four_impulse_native",
+                    "feedback_energy_adjustment_native",
+                    "feedback_absolute_energy_adjustment_native",
+                )
+            }
+        return payload
 
     @classmethod
     def from_checkpoint_payload(
@@ -468,12 +562,31 @@ class IntrinsicSpinReductionDiagnosticTrace:
             "unavailable_records",
             "records",
         }
-        if set(payload) != required or not isinstance(payload["records"], list):
+        if set(payload) not in (
+            required,
+            required | {"feedback_totals"},
+        ) or not isinstance(payload["records"], list):
             raise ValueError("intrinsic-spin diagnostic trace keys are invalid")
         raw_records = payload["records"]
         if any(not isinstance(record, Mapping) for record in raw_records):
             raise ValueError("intrinsic-spin diagnostic records must be JSON objects")
+        totals = payload.get("feedback_totals", {})
+        if not isinstance(totals, Mapping) or (
+            "feedback_totals" in payload
+            and set(totals)
+            != {
+                "feedback_evaluated_records",
+                "feedback_applied_records",
+                "feedback_work_native",
+                "feedback_absolute_work_native",
+                "feedback_four_impulse_native",
+                "feedback_energy_adjustment_native",
+                "feedback_absolute_energy_adjustment_native",
+            }
+        ):
+            raise ValueError("feedback lifetime keys differ")
         return cls(
+            **totals,
             records=tuple(
                 IntrinsicSpinReductionDiagnosticRecord.from_checkpoint_payload(record)
                 for record in raw_records
@@ -681,7 +794,7 @@ def _private_route_inputs(
     )
 
 
-def _diagnostic_record(
+def _diagnostic_record_unapplied(
     *,
     proper_time_ns: float,
     state: Mapping[str, object],
@@ -740,6 +853,37 @@ def _diagnostic_record(
             np.linalg.norm(balance.balance_residual_native)
         ),
     )
+
+
+def _diagnostic_record(
+    *,
+    proper_time_ns: float,
+    state: Mapping[str, object],
+    accepted_history: AcceptedIntrinsicSpinReductionHistory,
+) -> IntrinsicSpinReductionDiagnosticRecord:
+    record = _diagnostic_record_unapplied(
+        proper_time_ns=proper_time_ns, state=state, accepted_history=accepted_history
+    )
+    feedback = state.get("_linear_spin_feedback_record")
+    if feedback is not None and not isinstance(feedback, LinearSpinFeedbackRecord):
+        raise ValueError("invalid private recoil record")
+    return record if feedback is None else replace(record, applied_feedback=feedback)
+
+
+def build_midpoint_intrinsic_spin_reduction_candidate(
+    midpoint: "ExactPairSlabTrial",
+    accepted: AcceptedPairIntrinsicSpinReductionHistory,
+) -> AcceptedPairIntrinsicSpinReductionHistory:
+    """Private earlier-half history for the second half; never mutate accepted data."""
+    values = {}
+    for role in ("rider", "driver"):
+        part = getattr(midpoint.pair, role)
+        clock = getattr(accepted, role + "_endpoint_proper_time_ns")
+        values[role] = getattr(accepted, role).append_accepted(
+            proper_time_ns=clock, **_private_start_sample(part.state)
+        )
+        values[role + "_endpoint_proper_time_ns"] = clock + part.proper_step_ns
+    return replace(accepted, **values)
 
 
 def build_accepted_pair_intrinsic_spin_reduction_candidate(

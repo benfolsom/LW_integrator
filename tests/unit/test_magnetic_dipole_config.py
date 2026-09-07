@@ -244,7 +244,7 @@ def test_magnetic_dipole_rejects_unknown_exact_retarded_update() -> None:
 
 
 def test_intrinsic_spin_self_reaction_diagnostic_requires_second_order() -> None:
-    with pytest.raises(ValueError, match="self-reaction diagnostics require"):
+    with pytest.raises(ValueError, match="self-reaction evaluation requires"):
         MagneticDipoleConfig(intrinsic_spin_self_reaction_mode="diagnostic")
 
     config = MagneticDipoleConfig(

@@ -106,3 +106,9 @@ contains the archived reports, command and current shell status. The Mac
 worktree is `/Users/benjaminfolsom/compute/LW_integrator-moment-boundary-checkpoint`
 on `feature/moment-boundary-checkpoint`, based on `759997e`. The independent
 shell core at `dbe2a21` remains untouched.
+# Related experimental force work
+
+The [first-order-in-spin recoil implementation](experimental_linear_spin_reaction.md)
+is a separate, opt-in change to the force model. The Medina-compatible
+timestep comparisons below keep that new force off so the two changes are
+not confused.

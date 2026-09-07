@@ -91,6 +91,28 @@ class _ExternalMagneticHarness(IntegratorGUIConfigMixin):
         ]
 
 
+def test_experimental_spin_recoil_gui_round_trip():
+    source = SimulationOptions.from_dict(
+        {
+            "magnetic_dipole": {
+                "enabled": True,
+                "stern_gerlach_force_enabled": True,
+                "exact_retarded_update": "second_order_start_taylor_endpoint",
+                "intrinsic_spin_self_reaction_mode": "experimental_linear_spin",
+            }
+        }
+    )
+    harness = _MagneticHarness()
+    harness.apply(source)
+    assert harness.magnetic_dipole_intrinsic_spin_self_reaction_var.get() == (
+        "Experimental: first-order spin recoil"
+    )
+    rebuilt = SimulationOptions(**harness.build())
+    assert rebuilt.magnetic_dipole_intrinsic_spin_self_reaction_mode == (
+        "experimental_linear_spin"
+    )
+
+
 def test_current_magnetic_dipole_config_round_trips_through_gui_fields() -> None:
     source = SimulationOptions.from_dict(
         {

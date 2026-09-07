@@ -108,6 +108,7 @@ EXACT_RETARDED_UPDATE_OPTIONS: Tuple[Tuple[str, str], ...] = (
 INTRINSIC_SPIN_SELF_REACTION_OPTIONS: Tuple[Tuple[str, str], ...] = (
     ("Off", "off"),
     ("Diagnostic only", "diagnostic"),
+    ("Experimental: first-order spin recoil", "experimental_linear_spin"),
 )
 
 PARAM_LABELS: Dict[str, str] = {

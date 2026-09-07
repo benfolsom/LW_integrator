@@ -463,6 +463,7 @@ def attempt_exact_pair_adaptive_step(
         ).candidate
 
     trial = solve_exact_pair_step_doubling_trial(
+        intrinsic_spin_reduction_history=intrinsic_spin_reduction_history,
         accepted_rider_history=accepted_rider,
         accepted_driver_history=accepted_driver,
         advance_rider=advance_rider,

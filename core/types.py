@@ -915,18 +915,33 @@ class MagneticDipoleConfig:
                 "magnetic-dipole exact_retarded_update must be one of: "
                 "first_order_endpoint, second_order_start_taylor_endpoint"
             )
-        if self.intrinsic_spin_self_reaction_mode not in {"off", "diagnostic"}:
+        if self.intrinsic_spin_self_reaction_mode not in {
+            "off",
+            "diagnostic",
+            "experimental_linear_spin",
+        }:
             raise ValueError(
                 "magnetic-dipole intrinsic_spin_self_reaction_mode must be one "
-                "of: off, diagnostic"
+                "of: off, diagnostic, experimental_linear_spin"
             )
         if (
-            self.intrinsic_spin_self_reaction_mode == "diagnostic"
+            self.intrinsic_spin_self_reaction_mode
+            in {"diagnostic", "experimental_linear_spin"}
             and self.exact_retarded_update != "second_order_start_taylor_endpoint"
         ):
             raise ValueError(
-                "intrinsic-spin self-reaction diagnostics require "
+                "intrinsic-spin self-reaction evaluation requires "
                 "second_order_start_taylor_endpoint"
+            )
+        if self.intrinsic_spin_self_reaction_mode == "experimental_linear_spin" and (
+            not self.enabled
+            or self.spin_model != "rfs_minimal_2021"
+            or not self.spin_precession_enabled
+            or not self.stern_gerlach_force_enabled
+        ):
+            raise ValueError(
+                "experimental_linear_spin requires enabled RFS spin precession "
+                "and Stern-Gerlach force"
             )
         if isinstance(self.source, dict):
             self.source = DipoleSourceConfig(**self.source)

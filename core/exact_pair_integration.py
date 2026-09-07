@@ -76,6 +76,44 @@ def _scaled_tolerances(scale: float) -> StepDoublingTolerances:
     )
 
 
+def _spin_reaction_summary(
+    history: AcceptedPairIntrinsicSpinReductionHistory | None, mode: str
+) -> dict[str, Any] | None:
+    """Keep diagnostic-only output stable; add work only for applied recoil."""
+    if history is None or mode not in {"diagnostic", "experimental_linear_spin"}:
+        return None
+    experimental = mode == "experimental_linear_spin"
+    summary: dict[str, Any] = {
+        "mode": mode if experimental else "diagnostic_only",
+        "applied_as_force": experimental,
+    }
+    if experimental:
+        summary["omitted_reaction_terms"] = [
+            "magnetic_dipole_squared",
+            "finite_size_matching",
+        ]
+    for role in ("rider", "driver"):
+        trace = getattr(history, f"{role}_diagnostics")
+        counts: dict[str, Any] = {
+            "total": trace.total_records,
+            "analytical": trace.analytical_records,
+            "causal": trace.causal_records,
+            "unavailable": trace.unavailable_records,
+        }
+        if experimental:
+            counts.update(
+                feedback_applied_records=trace.feedback_applied_records,
+                feedback_evaluated_records=trace.feedback_evaluated_records,
+                feedback_work_native=trace.feedback_work_native,
+                feedback_absolute_work_native=trace.feedback_absolute_work_native,
+                feedback_four_impulse_native=trace.feedback_four_impulse_native,
+                feedback_energy_adjustment_native=trace.feedback_energy_adjustment_native,
+                feedback_absolute_energy_adjustment_native=trace.feedback_absolute_energy_adjustment_native,
+            )
+        summary[role] = counts
+    return summary
+
+
 def _new_builder_from_seed(
     seed: Sequence[ParticleState],
     *,
@@ -250,7 +288,8 @@ def run_exact_pair_adaptive_integrator(
     if reduction_diagnostic_enabled:
         reduction_candidate_builder = (
             build_accepted_pair_intrinsic_spin_reduction_diagnostic_candidate
-            if magnetic_dipole.intrinsic_spin_self_reaction_mode == "diagnostic"
+            if magnetic_dipole.intrinsic_spin_self_reaction_mode
+            in {"diagnostic", "experimental_linear_spin"}
             else build_accepted_pair_intrinsic_spin_reduction_candidate
         )
 
@@ -371,26 +410,9 @@ def run_exact_pair_adaptive_integrator(
             if causal_c5_enabled
             else "causal_local_jet" if causal_local_enabled else "causal_frozen_c1"
         ),
-        "intrinsic_spin_self_reaction_diagnostics": (
-            None
-            if result.intrinsic_spin_reduction_history is None
-            or magnetic_dipole.intrinsic_spin_self_reaction_mode != "diagnostic"
-            else {
-                "mode": "diagnostic_only",
-                "applied_as_force": False,
-                "rider": {
-                    "total": result.intrinsic_spin_reduction_history.rider_diagnostics.total_records,
-                    "analytical": result.intrinsic_spin_reduction_history.rider_diagnostics.analytical_records,
-                    "causal": result.intrinsic_spin_reduction_history.rider_diagnostics.causal_records,
-                    "unavailable": result.intrinsic_spin_reduction_history.rider_diagnostics.unavailable_records,
-                },
-                "driver": {
-                    "total": result.intrinsic_spin_reduction_history.driver_diagnostics.total_records,
-                    "analytical": result.intrinsic_spin_reduction_history.driver_diagnostics.analytical_records,
-                    "causal": result.intrinsic_spin_reduction_history.driver_diagnostics.causal_records,
-                    "unavailable": result.intrinsic_spin_reduction_history.driver_diagnostics.unavailable_records,
-                },
-            }
+        "intrinsic_spin_self_reaction_diagnostics": _spin_reaction_summary(
+            result.intrinsic_spin_reduction_history,
+            magnetic_dipole.intrinsic_spin_self_reaction_mode,
         ),
     }
     cast(dict[str, Any], rider_legacy[-1])["_adaptive_pair_return"] = dict(summary)

@@ -1775,6 +1775,7 @@ def retarded_equations_of_motion(
     exact_source_spin_interpolation_model: str = "centered_c1",
     moment_impulse_diagnostic: Optional[Any] = None,
     moment_radiation_force_native: Optional[Any] = None,
+    _experimental_linear_spin_adapter: bool = False,
 ) -> ParticleState:
     """Core equations of motion preserving the validated reference behavior.
 
@@ -1871,10 +1872,23 @@ def retarded_equations_of_motion(
         raise ValueError(
             "moment impulse diagnostic requires exact second-order pair stepping"
         )
+    if (
+        magnetic_dipole is not None
+        and magnetic_dipole.intrinsic_spin_self_reaction_mode
+        == "experimental_linear_spin"
+        and (
+            not second_order_exact_source_selected
+            or not _experimental_linear_spin_adapter
+        )
+    ):
+        raise ValueError(
+            "experimental linear-spin recoil requires the maintained exact-pair adapter"
+        )
     intrinsic_spin_diagnostic_selected = bool(
         second_order_exact_source_selected
         and magnetic_dipole is not None
-        and magnetic_dipole.intrinsic_spin_self_reaction_mode == "diagnostic"
+        and magnetic_dipole.intrinsic_spin_self_reaction_mode
+        in {"diagnostic", "experimental_linear_spin"}
     )
     if exact_endpoint_recomposition_selected:
         # Private, step-local handoff to the pair-level accepted-endpoint
@@ -3717,6 +3731,15 @@ def retarded_equations_of_motion(
                         ):
                             unavailable_reason = (
                                 "prescribed external-field potential jet is unavailable"
+                            )
+                        elif exact_dipole_source_collection is not None:
+                            # This analytical reduction reads the legacy spin
+                            # chronology, not the independent causal C5/local
+                            # dipole provider used by the actual step. Mixing
+                            # them would differentiate a different force model.
+                            unavailable_reason = (
+                                "selected causal dipole provider has no matching "
+                                "analytical spin-reduction derivatives"
                             )
                         elif exact_source_history is None:
                             unavailable_reason = (

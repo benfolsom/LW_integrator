@@ -53,6 +53,8 @@ class ExactRoleSourceHistory:
 
     charge_history: Any
     dipole_source_collection: Any = None
+    observer_spin_reduction_history: Any = None
+    observer_proper_time_ns: float | None = None
 
 
 @dataclass(frozen=True)
@@ -80,6 +82,12 @@ class ExactPairEOMOptions:
     moment_impulse_diagnostic: Any = None
 
     def __post_init__(self) -> None:
+        if (
+            self.magnetic_dipole.intrinsic_spin_self_reaction_mode
+            == "experimental_linear_spin"
+            and self.radiation_reaction_mode not in {"off", "medina_lad"}
+        ):
+            raise ValueError("experimental spin recoil supports only off or medina_lad")
         if self.moment_impulse_diagnostic is not None:
             if not callable(self.moment_impulse_diagnostic):
                 raise ValueError("moment impulse diagnostic must be callable")
@@ -127,11 +135,19 @@ def make_exact_role_eom_advance(options: ExactPairEOMOptions) -> AdvanceRoleTria
     from .self_consistency import self_consistent_step
 
     eom = retarded_equations_of_motion
+    experimental = (
+        options.magnetic_dipole.intrinsic_spin_self_reaction_mode
+        == "experimental_linear_spin"
+    )
+    if experimental:
+        from functools import partial
+
+        eom = partial(eom, _experimental_linear_spin_adapter=True)
     if options.moment_impulse_diagnostic is not None:
         from functools import partial
 
         eom = partial(
-            retarded_equations_of_motion,
+            eom,
             moment_impulse_diagnostic=options.moment_impulse_diagnostic,
         )
 
@@ -146,6 +162,14 @@ def make_exact_role_eom_advance(options: ExactPairEOMOptions) -> AdvanceRoleTria
         if isinstance(exact_source_history, ExactRoleSourceHistory):
             charge_history = exact_source_history.charge_history
             dipole_source_collection = exact_source_history.dipole_source_collection
+        if experimental and (
+            not isinstance(exact_source_history, ExactRoleSourceHistory)
+            or exact_source_history.observer_spin_reduction_history is None
+            or exact_source_history.observer_proper_time_ns is None
+        ):
+            raise ValueError(
+                "experimental spin recoil requires accepted observer reduction history"
+            )
 
         def run(bound_eom):
             return cast(
@@ -181,11 +205,25 @@ def make_exact_role_eom_advance(options: ExactPairEOMOptions) -> AdvanceRoleTria
             from functools import partial
             from .moment_medina_diagnostic import match_medina_force
 
-            return match_medina_force(
+            result = match_medina_force(
                 lambda force: run(partial(eom, moment_radiation_force_native=force)),
                 particle_count=len(observer_start["x"]),
             )
-        return run(eom)
+        else:
+            result = run(eom)
+        if experimental:
+            from .experimental_spin_reaction import (
+                apply_experimental_linear_spin_feedback,
+            )
+
+            result = apply_experimental_linear_spin_feedback(
+                result=result,
+                start=observer_start,
+                accepted_history=exact_source_history.observer_spin_reduction_history,
+                proper_time_ns=exact_source_history.observer_proper_time_ns,
+                proper_step_ns=proper_step_ns,
+            )
+        return result
 
     return advance
 
@@ -264,6 +302,7 @@ def solve_exact_pair_slab_trial(
     max_iterations: int = DEFAULT_PROPER_TIME_ROOT_MAX_ITERATIONS,
     max_bracket_expansions: int = 20,
     maximum_proper_step_ns: float = np.inf,
+    intrinsic_spin_reduction_history: Any = None,
 ) -> ExactPairSlabTrial:
     """Return one endpoint-canonical pair slab without publishing history.
 
@@ -329,6 +368,29 @@ def solve_exact_pair_slab_trial(
         driver_source_history = ExactRoleSourceHistory(
             charge_history=driver_charge_history,
             dipole_source_collection=dipole_history.rider,
+        )
+    if magnetic_dipole.intrinsic_spin_self_reaction_mode == "experimental_linear_spin":
+        if intrinsic_spin_reduction_history is None:
+            raise ValueError("experimental spin recoil requires pair reduction history")
+        rider_source_history = ExactRoleSourceHistory(
+            charge_history=rider_charge_history,
+            dipole_source_collection=(
+                None
+                if dipole_history is None or not include_dipole_source
+                else dipole_history.driver
+            ),
+            observer_spin_reduction_history=intrinsic_spin_reduction_history.rider,
+            observer_proper_time_ns=intrinsic_spin_reduction_history.rider_endpoint_proper_time_ns,
+        )
+        driver_source_history = ExactRoleSourceHistory(
+            charge_history=driver_charge_history,
+            dipole_source_collection=(
+                None
+                if dipole_history is None or not include_dipole_source
+                else dipole_history.rider
+            ),
+            observer_spin_reduction_history=intrinsic_spin_reduction_history.driver,
+            observer_proper_time_ns=intrinsic_spin_reduction_history.driver_endpoint_proper_time_ns,
         )
     provisional = solve_shared_lab_time_pair(
         advance_rider=lambda h: advance_rider(
@@ -472,6 +534,7 @@ def solve_exact_pair_step_doubling_trial(
     max_iterations: int = DEFAULT_PROPER_TIME_ROOT_MAX_ITERATIONS,
     max_bracket_expansions: int = 20,
     maximum_proper_step_ns: float = np.inf,
+    intrinsic_spin_reduction_history: Any = None,
 ) -> ExactPairStepDoublingTrial:
     """Evaluate full and two-half paths without mutating accepted state."""
 
@@ -489,6 +552,7 @@ def solve_exact_pair_step_doubling_trial(
         slab_causal_local_source_history: (
             AcceptedPairCausalLocalSourceHistory | None
         ) = None,
+        slab_reduction_history: Any = None,
     ) -> ExactPairSlabTrial:
         return solve_exact_pair_slab_trial(
             accepted_rider_history=accepted_rider_history,
@@ -513,9 +577,11 @@ def solve_exact_pair_step_doubling_trial(
             max_iterations=max_iterations,
             max_bracket_expansions=max_bracket_expansions,
             maximum_proper_step_ns=maximum_proper_step_ns,
+            intrinsic_spin_reduction_history=slab_reduction_history,
         )
 
     full = solve_slab(
+        slab_reduction_history=intrinsic_spin_reduction_history,
         slab_time_ns=delta_time_ns,
         rider_proper_step_ns=rider_initial_proper_step_ns,
         driver_proper_step_ns=driver_initial_proper_step_ns,
@@ -524,6 +590,7 @@ def solve_exact_pair_step_doubling_trial(
     )
     half_time_ns = 0.5 * float(delta_time_ns)
     midpoint = solve_slab(
+        slab_reduction_history=intrinsic_spin_reduction_history,
         slab_time_ns=half_time_ns,
         rider_proper_step_ns=0.5 * float(rider_initial_proper_step_ns),
         driver_proper_step_ns=0.5 * float(driver_initial_proper_step_ns),
@@ -570,7 +637,17 @@ def solve_exact_pair_step_doubling_trial(
                 midpoint,
                 causal_local_source_history,
             )
+    refined_reduction_history = intrinsic_spin_reduction_history
+    if magnetic_dipole.intrinsic_spin_self_reaction_mode == "experimental_linear_spin":
+        from .spin_self_force_reduction_history import (
+            build_midpoint_intrinsic_spin_reduction_candidate,
+        )
+
+        refined_reduction_history = build_midpoint_intrinsic_spin_reduction_candidate(
+            midpoint, intrinsic_spin_reduction_history
+        )
     refined = solve_slab(
+        slab_reduction_history=refined_reduction_history,
         slab_time_ns=half_time_ns,
         rider_proper_step_ns=midpoint.pair.rider.proper_step_ns,
         driver_proper_step_ns=midpoint.pair.driver.proper_step_ns,

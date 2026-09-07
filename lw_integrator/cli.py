@@ -829,11 +829,13 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--intrinsic-spin-self-reaction-mode",
-        choices=("off", "diagnostic"),
+        choices=("off", "diagnostic", "experimental_linear_spin"),
         help=(
             "Intrinsic-spin self-reaction handling: off (default), or retain "
             "analytical/causal q-mu estimates as checkpointed diagnostics. "
-            "Diagnostic values are never applied as forces."
+            "Diagnostic values are never applied as forces. The experimental_linear_spin "
+            "mode applies only the reduced first-order spin recoil, requires checkpointed "
+            "adaptive exact-pair stepping, and omits magnetic-dipole-squared reaction."
         ),
     )
     parser.add_argument(
