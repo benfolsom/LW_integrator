@@ -1,5 +1,11 @@
 # Changelog
 
+- Validate a degree-six acceleration-fit candidate for the optional local
+  dipole directional derivative against smooth source histories. The saved
+  outbound sensitivity is isolated to acceleration, not spin; all six saved
+  cases accept the candidate under unchanged limits. No fit default or live
+  force update is changed.
+
 - Add an opt-in directional derivative to the current local dipole source
   provider, using its existing polynomial and retarded root. The extra packed
   response participates in fit-window and scale-overlap checks; unavailable

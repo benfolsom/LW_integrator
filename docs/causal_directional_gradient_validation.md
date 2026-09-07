@@ -2,6 +2,10 @@
 
 7 September 2026. Part of the [second-order moment-force plan](moment_force_second_order_plan.md).
 
+Latest follow-up: acceleration/spin separation and a degree-six candidate are
+recorded below. The original degree-five rejection remains a valid historical
+result, not a changed tolerance.
+
 ## What is implemented
 
 The existing local dipole source solver can optionally return the rate at
@@ -95,10 +99,50 @@ Raw fixed-fit inspection does not override the rejection.
 
 ## Next checks before enabling the force correction
 
+### Completed follow-up: separate acceleration and spin fits
+
+Mixing the three acceleration fits with the three spin fits while holding the
+root, source position and velocity fixed reproduces the original responses
+within 6e-14 relative error. All measured narrow-to-wide response change is
+in the acceleration fits. The spin chart and its derivatives are exactly zero
+in this case, so its fitted spin cannot explain the rejection. This does not
+establish that spin fitting is unimportant in general three-dimensional motion.
+
+Changing only the acceleration-fit degree from five to six reduces the
+neighboring-window spread from 0.00111946 to 0.000237494. Degree four still
+fails (0.00111768); changing spin degree has no effect. Degree six increases
+the condition number from about 9.5e3 to 5.6e4, still below the existing
+limit. Better agreement therefore comes with less conditioning margin.
+
+A separately labelled, process-local degree-six candidate passes all six
+saved particle/event source checks with unchanged windows and acceptance
+limits. It retains the shortest selected scale. Its ordinary arrays are
+bitwise equal with versus without the directional option **at degree six**;
+this is not a claim of equality between degree-five and degree-six sources.
+The worst adjacent-scale directional spread among the six cases is 1.85e-5.
+
+Five new tests compare degree-five and degree-six directional responses to a
+smooth rotating source with known derivatives, using both acceleration
+sampling options and finer source histories. They also verify that an overly
+strict condition-number limit still rejects degree six. Together with the
+previous modules, **181 tests pass** on the Mac (4.58 s with warm caches).
+
+The source-sensitivity investigation now supports using degree six explicitly
+in subsequent short diagnostics. It does not yet justify a default change,
+claim a general noise bound, or complete the live force correction. The next
+required work is the charge-source contribution and combined-impulse checks.
+The study evidence is under
+`planning/evidence/fit_separation_and_shell_completion_2026-09-07/`, including
+the candidate report's `.configuration.json` sidecar identifying its override.
+
+### Remaining sequence
+
 1. At the rejected event, separate acceleration-history and spin-history
    contributions to fit sensitivity. Use controlled smooth histories and
    window/degree comparisons; do not simply loosen the limit or discard the
    required adjacent comparison.
+   This local separation is completed above; preserve the original failure
+   and carry the explicit degree-six candidate into the next checks.
 2. Validate the charge-generated contribution to the same directional
    gradient, retaining the charge provider's actual history and root policy.
    The magnetic moment responds to both source components.

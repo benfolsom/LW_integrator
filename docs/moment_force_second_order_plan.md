@@ -5,6 +5,13 @@ derivative tested; **not enabled in the live stepper**. No radiation-reaction
 or default changes. See the [source-derivative validation and remaining
 fit-sensitivity failure](causal_directional_gradient_validation.md).
 
+Follow-up: the rejected case's sensitivity is entirely in the acceleration
+fit. A degree-six candidate now passes all six saved source checks with
+unchanged limits and passes smooth-source controls. It has not been made the
+default; the degree-five historical rejection remains recorded. Continue
+with explicit candidate settings when testing the charge-source derivative
+and combined force impulse.
+
 ## What this fixes
 
 The ordinary Lorentz force already includes its first time derivative in the

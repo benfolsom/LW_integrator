@@ -207,7 +207,9 @@ def _circular_history(*, sample_count: int = 241) -> CausalLocalSourceHistory:
     )
 
 
-def _exact_circular_response(event: ObserverEvent) -> DipoleHertzResponseJetResult:
+def _exact_circular_response(
+    event: ObserverEvent, *, observer_four_velocity_mm_ns=None
+) -> DipoleHertzResponseJetResult:
     observer_position = np.asarray(event.position_mm)
 
     def light_cone_residual(source_time_ns: float) -> float:
@@ -244,6 +246,7 @@ def _exact_circular_response(event: ObserverEvent) -> DipoleHertzResponseJetResu
         rest_spin_stereographic_frame=np.eye(3),
         preserved_rest_spin_magnitude=None,
         retarded_time_ns=root,
+        observer_four_velocity_mm_ns=observer_four_velocity_mm_ns,
     )
 
 
