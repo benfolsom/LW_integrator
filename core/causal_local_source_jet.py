@@ -230,6 +230,7 @@ class LocalSourceJetModelSpread:
     partial_a: float
     field_tensor: float
     partial_f: float
+    directional_partial_f: float | None = None
 
     def __post_init__(self) -> None:
         for name in ("four_potential", "partial_a", "field_tensor", "partial_f"):
@@ -237,6 +238,13 @@ class LocalSourceJetModelSpread:
             if not np.isfinite(value) or value < 0.0:
                 raise ValueError(f"{name} model spread must be finite and non-negative")
             object.__setattr__(self, name, value)
+        if self.directional_partial_f is not None:
+            value = float(self.directional_partial_f)
+            if not np.isfinite(value) or value < 0.0:
+                raise ValueError(
+                    "directional model spread must be finite and non-negative"
+                )
+            object.__setattr__(self, "directional_partial_f", value)
 
     @property
     def maximum(self) -> float:
@@ -245,6 +253,7 @@ class LocalSourceJetModelSpread:
             self.partial_a,
             self.field_tensor,
             self.partial_f,
+            self.directional_partial_f or 0.0,
         )
 
 
@@ -345,6 +354,7 @@ class CausalLocalSourceJetProviderResult:
     field_tensor: np.ndarray
     partial_f: np.ndarray
     source_results: tuple[CausalLocalSourceJetEvaluation, ...]
+    partial_antisymmetric_response_along_velocity: np.ndarray | None = None
 
     def __post_init__(self) -> None:
         shapes = {
@@ -355,6 +365,8 @@ class CausalLocalSourceJetProviderResult:
             "field_tensor": (4, 4),
             "partial_f": (4, 4, 4),
         }
+        if self.partial_antisymmetric_response_along_velocity is not None:
+            shapes["partial_antisymmetric_response_along_velocity"] = (4, 6)
         for name, shape in shapes.items():
             value = np.asarray(getattr(self, name), dtype=np.float64)
             if value.shape != shape or not np.all(np.isfinite(value)):
@@ -735,11 +747,22 @@ def _response_model_spread(
             for right in range(left + 1, len(responses))
         )
 
+    directional = [
+        response.partial_antisymmetric_response_along_velocity is not None
+        for response in responses
+    ]
+    if any(directional) and not all(directional):
+        raise ValueError("cannot compare mixed directional and ordinary responses")
     return LocalSourceJetModelSpread(
         four_potential=largest("four_potential"),
         partial_a=largest("partial_a"),
         field_tensor=largest("field_tensor"),
         partial_f=largest("partial_f"),
+        directional_partial_f=(
+            largest("partial_antisymmetric_response_along_velocity")
+            if all(directional)
+            else None
+        ),
     )
 
 
@@ -749,6 +772,7 @@ def evaluate_causal_local_source_jet_native(
     *,
     magnetic_moment_native: float,
     fit: LocalSourceJetFitConfig,
+    observer_four_velocity_mm_ns: Sequence[float] | None = None,
     model_spread: LocalSourceJetModelSpreadConfig | None = None,
     root_tolerance_mm: float = 1.0e-21,
     max_root_iterations: int = 96,
@@ -874,6 +898,7 @@ def evaluate_causal_local_source_jet_native(
         rest_spin_stereographic_frame=history.stereographic_frame,
         preserved_rest_spin_magnitude=None,
         retarded_time_ns=root_time,
+        observer_four_velocity_mm_ns=observer_four_velocity_mm_ns,
     )
     measured_spread = None
     if model_spread is not None:
@@ -908,6 +933,7 @@ def evaluate_causal_local_source_jet_native(
                 observer_event,
                 magnetic_moment_native=magnetic_moment_native,
                 fit=comparison_fit,
+                observer_four_velocity_mm_ns=observer_four_velocity_mm_ns,
                 root_tolerance_mm=root_tolerance_mm,
                 max_root_iterations=max_root_iterations,
                 minimum_separation_mm=minimum_separation_mm,
@@ -938,6 +964,7 @@ def evaluate_causal_local_source_jet_multiscale_native(
     *,
     magnetic_moment_native: float,
     scales: LocalSourceJetMultiScaleConfig,
+    observer_four_velocity_mm_ns: Sequence[float] | None = None,
     root_tolerance_mm: float = 1.0e-21,
     max_root_iterations: int = 96,
     minimum_separation_mm: float = 1.0e-15,
@@ -968,6 +995,7 @@ def evaluate_causal_local_source_jet_multiscale_native(
                 observer_event,
                 magnetic_moment_native=magnetic_moment_native,
                 fit=scale.primary_fit,
+                observer_four_velocity_mm_ns=observer_four_velocity_mm_ns,
                 model_spread=scale.model_spread,
                 root_tolerance_mm=root_tolerance_mm,
                 max_root_iterations=max_root_iterations,
@@ -997,6 +1025,7 @@ def evaluate_causal_local_source_jet_multiscale_native(
                 observer_event,
                 magnetic_moment_native=magnetic_moment_native,
                 fit=comparison_scale.primary_fit,
+                observer_four_velocity_mm_ns=observer_four_velocity_mm_ns,
                 model_spread=comparison_scale.model_spread,
                 root_tolerance_mm=root_tolerance_mm,
                 max_root_iterations=max_root_iterations,
@@ -1032,11 +1061,24 @@ def evaluate_causal_local_source_jet_multiscale_native(
     )
 
 
+def _directional_gradient_accumulator(
+    observer_four_velocity_mm_ns: Sequence[float] | None,
+) -> np.ndarray | None:
+    """Validate even empty/excluded collections before constructing their zero sum."""
+    if observer_four_velocity_mm_ns is None:
+        return None
+    velocity = np.asarray(observer_four_velocity_mm_ns, dtype=float)
+    if velocity.shape != (4,) or not np.all(np.isfinite(velocity)):
+        raise ValueError("observer_four_velocity_mm_ns must contain four finite values")
+    return np.zeros((4, 6), dtype=np.float64)
+
+
 def evaluate_causal_local_source_jet_collection_native(
     collection: CausalLocalDipoleSourceCollection,
     observer_event: "ObserverEvent",
     *,
     fit: LocalSourceJetFitConfig,
+    observer_four_velocity_mm_ns: Sequence[float] | None = None,
     model_spread: LocalSourceJetModelSpreadConfig | None = None,
     excluded_source_identities: Sequence[str] = (),
     root_tolerance_mm: float = 1.0e-21,
@@ -1051,6 +1093,9 @@ def evaluate_causal_local_source_jet_collection_native(
     partial_a = np.zeros((4, 4), dtype=np.float64)
     field = np.zeros((4, 4), dtype=np.float64)
     partial_f = np.zeros((4, 4, 4), dtype=np.float64)
+    directional_gradient = _directional_gradient_accumulator(
+        observer_four_velocity_mm_ns
+    )
     for source in collection.sources:
         if source.identity in excluded:
             continue
@@ -1060,6 +1105,7 @@ def evaluate_causal_local_source_jet_collection_native(
                 observer_event,
                 magnetic_moment_native=source.magnetic_moment_native,
                 fit=fit,
+                observer_four_velocity_mm_ns=observer_four_velocity_mm_ns,
                 model_spread=model_spread,
                 root_tolerance_mm=root_tolerance_mm,
                 max_root_iterations=max_root_iterations,
@@ -1075,6 +1121,10 @@ def evaluate_causal_local_source_jet_collection_native(
         partial_a += response.partial_a
         field += response.field_tensor
         partial_f += response.partial_f
+        if directional_gradient is not None:
+            directional_gradient += (
+                response.partial_antisymmetric_response_along_velocity
+            )
         source_results.append(
             CausalLocalSourceJetEvaluation(
                 identity=source.identity,
@@ -1091,6 +1141,7 @@ def evaluate_causal_local_source_jet_collection_native(
         field_tensor=field,
         partial_f=partial_f,
         source_results=tuple(source_results),
+        partial_antisymmetric_response_along_velocity=directional_gradient,
     )
 
 
@@ -1099,6 +1150,7 @@ def evaluate_causal_local_source_jet_collection_multiscale_native(
     observer_event: "ObserverEvent",
     *,
     scales: LocalSourceJetMultiScaleConfig,
+    observer_four_velocity_mm_ns: Sequence[float] | None = None,
     excluded_source_identities: Sequence[str] = (),
     root_tolerance_mm: float = 1.0e-21,
     max_root_iterations: int = 96,
@@ -1112,6 +1164,9 @@ def evaluate_causal_local_source_jet_collection_multiscale_native(
     partial_a = np.zeros((4, 4), dtype=np.float64)
     field = np.zeros((4, 4), dtype=np.float64)
     partial_f = np.zeros((4, 4, 4), dtype=np.float64)
+    directional_gradient = _directional_gradient_accumulator(
+        observer_four_velocity_mm_ns
+    )
     for source in collection.sources:
         if source.identity in excluded:
             continue
@@ -1121,6 +1176,7 @@ def evaluate_causal_local_source_jet_collection_multiscale_native(
                 observer_event,
                 magnetic_moment_native=source.magnetic_moment_native,
                 scales=scales,
+                observer_four_velocity_mm_ns=observer_four_velocity_mm_ns,
                 root_tolerance_mm=root_tolerance_mm,
                 max_root_iterations=max_root_iterations,
                 minimum_separation_mm=minimum_separation_mm,
@@ -1135,6 +1191,10 @@ def evaluate_causal_local_source_jet_collection_multiscale_native(
         partial_a += response.partial_a
         field += response.field_tensor
         partial_f += response.partial_f
+        if directional_gradient is not None:
+            directional_gradient += (
+                response.partial_antisymmetric_response_along_velocity
+            )
         source_results.append(
             CausalLocalSourceJetEvaluation(
                 identity=source.identity,
@@ -1151,6 +1211,7 @@ def evaluate_causal_local_source_jet_collection_multiscale_native(
         field_tensor=field,
         partial_f=partial_f,
         source_results=tuple(source_results),
+        partial_antisymmetric_response_along_velocity=directional_gradient,
     )
 
 
@@ -1159,6 +1220,7 @@ def evaluate_configured_causal_local_source_jet_collection_native(
     observer_event: "ObserverEvent",
     *,
     source_options: "DipoleSourceConfig",
+    observer_four_velocity_mm_ns: Sequence[float] | None = None,
     excluded_source_identities: Sequence[str] = (),
 ) -> CausalLocalSourceJetProviderResult:
     """Evaluate the explicitly configured single fit or named scale ladder."""
@@ -1171,6 +1233,7 @@ def evaluate_configured_causal_local_source_jet_collection_native(
                 source_options
             ),
             excluded_source_identities=excluded_source_identities,
+            observer_four_velocity_mm_ns=observer_four_velocity_mm_ns,
             root_tolerance_mm=source_options.root_tolerance_mm,
             max_root_iterations=source_options.max_root_iterations,
             minimum_separation_mm=source_options.minimum_separation_mm,
@@ -1182,6 +1245,7 @@ def evaluate_configured_causal_local_source_jet_collection_native(
         fit=fit,
         model_spread=spread,
         excluded_source_identities=excluded_source_identities,
+        observer_four_velocity_mm_ns=observer_four_velocity_mm_ns,
         root_tolerance_mm=source_options.root_tolerance_mm,
         max_root_iterations=source_options.max_root_iterations,
         minimum_separation_mm=source_options.minimum_separation_mm,

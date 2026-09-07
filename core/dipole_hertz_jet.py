@@ -101,6 +101,8 @@ class DipoleHertzResponseJetResult:
     retarded_coordinate_third_derivative: np.ndarray
     light_cone_jet_residual: float
     segment_fraction: float
+    partial_antisymmetric_response_along_velocity: np.ndarray | None = None
+    directional_light_cone_jet_residual: float | None = None
 
 
 @dataclass(frozen=True)
@@ -130,6 +132,9 @@ class DipoleHertzJetProviderResult:
 @dataclass(frozen=True)
 class _Jet3:
     coefficients: np.ndarray
+    # Forward derivative along one independent observer displacement. Keeping
+    # this separate leaves every ordinary third-order operation unchanged.
+    tangent: np.ndarray | None = None
 
     @classmethod
     def constant(cls, value: float) -> "_Jet3":
@@ -153,7 +158,14 @@ class _Jet3:
     def with_value(self, value: float) -> "_Jet3":
         coefficients = self.coefficients.copy()
         coefficients[0] = float(value)
-        return _Jet3(coefficients)
+        # Fix only the base root residual. Its directional derivative is part
+        # of the implicit light-cone solve and must NOT be cleared.
+        return _Jet3(coefficients, self.tangent)
+
+    def directional_derivative(self, *indices: int) -> float:
+        if self.tangent is None:
+            return 0.0
+        return _Jet3(self.tangent).derivative(*indices)
 
     def derivative(self, *indices: int) -> float:
         if len(indices) > _ORDER:
@@ -169,13 +181,19 @@ class _Jet3:
         return float(scale * coefficient)
 
     def __add__(self, other: object) -> "_Jet3":
-        return _Jet3(self.coefficients + _as_jet(other).coefficients)
+        right = _as_jet(other)
+        tangent = self.tangent
+        if right.tangent is not None:
+            tangent = right.tangent if tangent is None else tangent + right.tangent
+        return _Jet3(self.coefficients + right.coefficients, tangent)
 
     def __radd__(self, other: object) -> "_Jet3":
         return self + other
 
     def __neg__(self) -> "_Jet3":
-        return _Jet3(-self.coefficients)
+        return _Jet3(
+            -self.coefficients, None if self.tangent is None else -self.tangent
+        )
 
     def __sub__(self, other: object) -> "_Jet3":
         return self + (-_as_jet(other))
@@ -191,7 +209,13 @@ class _Jet3:
             for left_index, right_index in splits:
                 total += self.coefficients[left_index] * right.coefficients[right_index]
             coefficients[result_index] = total
-        return _Jet3(coefficients)
+        tangent = None
+        if self.tangent is not None:
+            tangent = (_Jet3(self.tangent) * _Jet3(right.coefficients)).coefficients
+        if right.tangent is not None:
+            term = (_Jet3(self.coefficients) * _Jet3(right.tangent)).coefficients
+            tangent = term if tangent is None else tangent + term
+        return _Jet3(coefficients, tangent)
 
     def __rmul__(self, other: object) -> "_Jet3":
         return self * other
@@ -210,7 +234,11 @@ class _Jet3:
                     continue
                 total += self.coefficients[left_index] * coefficients[right_index]
             coefficients[result_index] = -total / self.value
-        return _Jet3(coefficients)
+        tangent = None
+        if self.tangent is not None:
+            inverse = _Jet3(coefficients)
+            tangent = (-(inverse * inverse) * _Jet3(self.tangent)).coefficients
+        return _Jet3(coefficients, tangent)
 
     def __truediv__(self, other: object) -> "_Jet3":
         return self * _as_jet(other).reciprocal()
@@ -302,13 +330,18 @@ def polynomial_dipole_hertz_response_jet_native(
     preserved_rest_spin_magnitude: float | None,
     retarded_time_ns: float,
     jet_newton_iterations: int = 4,
+    observer_four_velocity_mm_ns: Sequence[float] | None = None,
 ) -> DipoleHertzResponseJetResult:
     """Differentiate one smooth polynomial worldline/spin source segment.
 
     This pure-Python routine is a validation oracle.  It accepts arbitrary
     polynomial degrees so studies can compare the production interpolation
     against smoother causal-history candidates without changing production
-    dispatch.
+    dispatch. An optional observer four-velocity seeds a forward derivative
+    of the same polynomial response. The returned 4-by-6 array is
+    ``u^k partial_k partial_l F_p`` in pair order 01,02,03,12,13,23.
+    This differentiates the selected polynomial, not the process of fitting
+    a different polynomial at a displaced event. No extra root is solved.
     """
 
     observer_time = float(observer_time_ns)
@@ -334,6 +367,15 @@ def polynomial_dipole_hertz_response_jet_native(
     )
     root_time = float(retarded_time_ns)
     iterations = int(jet_newton_iterations)
+    observer_velocity = (
+        None
+        if observer_four_velocity_mm_ns is None
+        else np.asarray(observer_four_velocity_mm_ns, dtype=float)
+    )
+    if observer_velocity is not None and (
+        observer_velocity.shape != (4,) or not np.all(np.isfinite(observer_velocity))
+    ):
+        raise ValueError("observer_four_velocity_mm_ns must contain four finite values")
     if not np.isfinite(observer_time):
         raise ValueError("observer_time_ns must be finite")
     if observer_position.shape != (3,) or not np.all(np.isfinite(observer_position)):
@@ -422,6 +464,11 @@ def polynomial_dipole_hertz_response_jet_native(
             for index in range(3)
         ),
     )
+    if observer_velocity is not None:
+        observer_coordinates = tuple(
+            _Jet3(coordinate.coefficients, _Jet3.constant(speed).coefficients)
+            for coordinate, speed in zip(observer_coordinates, observer_velocity)
+        )
     root_coordinate = _Jet3.constant(C_MMNS * root_time)
     start_coordinate = C_MMNS * start_time
     duration_coordinate = C_MMNS * duration
@@ -581,6 +628,30 @@ def polynomial_dipole_hertz_response_jet_native(
     electric, magnetic = fields_from_tensor_native(field_tensor)
     light_cone = observer_coordinates[0] - root_coordinate - separation
     residual = max(abs(value) for value in light_cone.coefficients)
+    directional_gradient = None
+    directional_residual = None
+    if observer_velocity is not None:
+        pairs = ((0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3))
+        directional_gradient = np.empty((4, 6), dtype=float)
+        for derivative_index in range(4):
+            for pair_index, (mu, nu) in enumerate(pairs):
+                first = sum(
+                    hertz[nu, rho].directional_derivative(derivative_index, mu, rho)
+                    for rho in range(4)
+                )
+                second = sum(
+                    hertz[mu, rho].directional_derivative(derivative_index, nu, rho)
+                    for rho in range(4)
+                )
+                directional_gradient[derivative_index, pair_index] = (
+                    _METRIC_SIGNS[mu] * first - _METRIC_SIGNS[nu] * second
+                )
+        assert light_cone.tangent is not None
+        directional_residual = float(np.max(np.abs(light_cone.tangent)))
+        if not np.all(np.isfinite(directional_gradient)) or not np.isfinite(
+            directional_residual
+        ):
+            raise ValueError("directional dipole response must be finite")
     return DipoleHertzResponseJetResult(
         hertz_tensor=hertz_value,
         four_potential=four_potential,
@@ -613,6 +684,8 @@ def polynomial_dipole_hertz_response_jet_native(
         ),
         light_cone_jet_residual=float(residual),
         segment_fraction=float(fraction),
+        partial_antisymmetric_response_along_velocity=directional_gradient,
+        directional_light_cone_jet_residual=directional_residual,
     )
 
 

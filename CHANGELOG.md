@@ -1,5 +1,12 @@
 # Changelog
 
+- Add an opt-in directional derivative to the current local dipole source
+  provider, using its existing polynomial and retarded root. The extra packed
+  response participates in fit-window and scale-overlap checks; unavailable
+  derivatives fail closed. Ordinary source outputs and default stepping are
+  unchanged. Saved flyby checks pass for five of six cases; an outbound-proton
+  fit-sensitivity failure remains open before live force integration.
+
 - Add a packed analytical derivative of the existing magnetic-moment force,
   retaining observer acceleration, spin evolution, and directional change
   of the source response. This preparatory kernel uses two 4-by-6 response

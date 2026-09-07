@@ -1,7 +1,8 @@
 # LW Integrator
 
 Active numerical work: [second-order magnetic-moment force update](docs/moment_force_second_order_plan.md).
-The derivative kernel is tested; the live provider and stepper connection are still pending.
+The force derivative and optional dipole-source derivative are tested; one
+saved-history sensitivity check and the live stepper connection remain open.
 
 ## Recent Updates (August 2026)
 

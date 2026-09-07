@@ -358,8 +358,10 @@ def test_past_only_source_jet_tracks_exact_circular_source() -> None:
 
 
 @pytest.mark.parametrize("acceleration_samples", ("exact_start", "interval_mean"))
+@pytest.mark.parametrize("direction", (None, (500.0, 100.0, -70.0, 50.0)))
 def test_past_only_source_jet_is_independent_of_later_accepted_samples(
     acceleration_samples: str,
+    direction,
 ) -> None:
     history = _circular_history()
     event = ObserverEvent(0.03, (0.8, 0.2, 0.3))
@@ -373,6 +375,7 @@ def test_past_only_source_jet_is_independent_of_later_accepted_samples(
         event,
         magnetic_moment_native=-1.7,
         fit=fit,
+        observer_four_velocity_mm_ns=direction,
     )
     stop = int(np.searchsorted(history.time_ns, complete.retarded_time_ns) + 1)
     truncated = CausalLocalSourceHistory.from_accepted_samples(
@@ -396,11 +399,17 @@ def test_past_only_source_jet_is_independent_of_later_accepted_samples(
         event,
         magnetic_moment_native=-1.7,
         fit=fit,
+        observer_four_velocity_mm_ns=direction,
     )
 
     assert complete.retarded_time_ns == causal.retarded_time_ns
     for name in ("four_potential", "partial_a", "field_tensor", "partial_f"):
         np.testing.assert_array_equal(getattr(complete, name), getattr(causal, name))
+    if direction is not None:
+        np.testing.assert_array_equal(
+            complete.partial_antisymmetric_response_along_velocity,
+            causal.partial_antisymmetric_response_along_velocity,
+        )
 
 
 def test_interval_mean_acceleration_converges_to_exact_circular_response() -> None:
@@ -431,7 +440,10 @@ def test_interval_mean_acceleration_converges_to_exact_circular_response() -> No
     assert fine_error < 0.2 * coarse_error
 
 
-def test_local_source_jet_is_continuous_across_cubic_root_segment_boundary() -> None:
+@pytest.mark.parametrize("direction", (None, (500.0, 100.0, -70.0, 50.0)))
+def test_local_source_jet_is_continuous_across_cubic_root_segment_boundary(
+    direction,
+) -> None:
     history = _circular_history(sample_count=161)
     boundary_time = float(history.time_ns[80])
 
@@ -441,6 +453,7 @@ def test_local_source_jet_is_continuous_across_cubic_root_segment_boundary() -> 
             _event_with_prescribed_cubic_root(history, boundary_time + offset_ns),
             magnetic_moment_native=-1.7,
             fit=LocalSourceJetFitConfig(half_width_ns=0.01),
+            observer_four_velocity_mm_ns=direction,
         )
         return response
 
@@ -448,21 +461,27 @@ def test_local_source_jet_is_continuous_across_cubic_root_segment_boundary() -> 
     large_right = response_at(1.0e-5)
     small_left = response_at(-1.0e-8)
     small_right = response_at(1.0e-8)
+    component = (
+        "partial_f"
+        if direction is None
+        else "partial_antisymmetric_response_along_velocity"
+    )
     large_change = _relative_response_component(
         large_left,
         large_right,
-        "partial_f",
+        component,
     )
     small_change = _relative_response_component(
         small_left,
         small_right,
-        "partial_f",
+        component,
     )
 
     assert small_change < 0.002 * large_change
 
 
-def test_tricube_fit_is_continuous_when_a_sample_leaves_the_window() -> None:
+@pytest.mark.parametrize("direction", (None, (500.0, 100.0, -70.0, 50.0)))
+def test_tricube_fit_is_continuous_when_a_sample_leaves_the_window(direction) -> None:
     history = _circular_history(sample_count=161)
     departing_index = 75
     perturbed_interval_start = np.array(
@@ -500,6 +519,7 @@ def test_tricube_fit_is_continuous_when_a_sample_leaves_the_window() -> None:
             ),
             magnetic_moment_native=-1.7,
             fit=LocalSourceJetFitConfig(half_width_ns=half_width),
+            observer_four_velocity_mm_ns=direction,
         )
         return response, diagnostics.acceleration_sample_indices
 
@@ -511,15 +531,20 @@ def test_tricube_fit_is_continuous_when_a_sample_leaves_the_window() -> None:
     assert departing_index not in large_right_indices
     assert departing_index in small_left_indices
     assert departing_index not in small_right_indices
+    component = (
+        "partial_f"
+        if direction is None
+        else "partial_antisymmetric_response_along_velocity"
+    )
     large_change = _relative_response_component(
         large_left,
         large_right,
-        "partial_f",
+        component,
     )
     small_change = _relative_response_component(
         small_left,
         small_right,
-        "partial_f",
+        component,
     )
 
     assert small_change < 0.002 * large_change

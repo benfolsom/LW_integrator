@@ -1,7 +1,9 @@
 # Complete the magnetic-moment force's second-order time update
 
-Status: 7 September 2026. Preparatory analytical kernel tested; **not enabled
-in the live integrator**. No radiation-reaction or default changes.
+Status: 7 September 2026. Analytical force kernel and opt-in local dipole-source
+derivative tested; **not enabled in the live stepper**. No radiation-reaction
+or default changes. See the [source-derivative validation and remaining
+fit-sensitivity failure](causal_directional_gradient_validation.md).
 
 ## What this fixes
 
@@ -72,12 +74,22 @@ inputs, not high-gamma trajectory validation or a performance benchmark.
    directional rate of its field gradient. Reuse its selected source-history
    polynomial, retarded root, spin fit, and availability guards. Check that
    its existing potential, field response, and gradient remain unchanged.
+   Implemented as an optional Python path. All ordinary outputs remain
+   bitwise unchanged in the five accepted saved-state checks. The sixth is
+   rejected by the derivative's fit-window check; investigate it without
+   weakening the existing tolerance.
 2. Compare the new directional derivative against an independent check inside
    smooth regions and test boundaries and unavailable-history cases explicitly.
    Do not silently replace the current source model with the older quintic
    position/cubic spin provider just because that provider has higher
    derivatives. It represents different history data.
-3. Connect the derivative to the second-order moment impulse, including the
+   Local polynomial, boundary, prefix-causality and collection tests now pass.
+   The derivative differentiates the selected polynomial, not a refit at a
+   shifted observer. Saved-state comparisons test this distinction but do not
+   yet cover every history or scale transition. Also supply and validate the
+   **charge-source contribution** to the same directional gradient: the
+   moment responds to both charge-generated and dipole-generated fields.
+3. After resolving the source checks, connect the derivative to the second-order moment impulse, including the
    selected acceleration and spin right-hand side. First run short, matched
    checkpoint comparisons with radiation reaction disabled, then enabled.
 4. Require the isolated quadratic projection contribution to disappear under
