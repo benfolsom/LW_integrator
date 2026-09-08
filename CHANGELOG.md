@@ -1,5 +1,16 @@
 # Changelog
 
+- Add an explicitly experimental Jakobsen linear-spin core API with matching
+  ordinary force, spin transport, canonical momentum and midpoint stepping.
+  A single-observer supplied-potential adapter reuses the maintained lab-time
+  and step-doubling controllers and provides model-tagged JSON checkpoints.
+  Opt-in reaction combines order-reduced Medina charge reaction with the
+  intrinsic linear-spin kernel; required field-gradient rates must be supplied
+  explicitly. Spin corrections are calculated separately from the much larger
+  charge response. These APIs do not change RFS defaults or expose a new
+  CLI/GUI/coupled-pair mode. Moment-squared radiation remains outside their
+  approximation. See `docs/source/jakobsen_experimental.md` for boundaries.
+
 - Correct saved-JSON trajectory energy plots: export explicit rest energy and
   stop inferring mass from canonical `Pt/gamma`, which missed the native speed
   of light and potential offset. Older JSON without mass metadata warns and
