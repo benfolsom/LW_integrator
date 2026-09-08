@@ -107,6 +107,13 @@ requires both RFS spin precession and Stern--Gerlach force to be enabled,
 checkpointed exact-pair adaptive controller and its existing startup rules.
 It is not implemented for the ordinary fixed-step or many-particle paths.
 
+Native CLI JSON retains the `checkpoint` and `adaptive_pair_return` objects;
+explicit command-line restart/controller flags override only their selected
+fields. CLI JSON reports include the controller's accepted-interval count and
+recoil ledger under `adaptive_pair_return`. The historical `steps_completed`
+summary counts returned trajectory rows and should not be confused with the
+number of accepted shared-time intervals.
+
 - Charge reaction may be `medina_lad` or explicitly `off` for comparison.
 - Zero charge or zero physical spin gives zero added force. For a neutral
   magnetic particle this does **not** imply zero physical self-radiation:

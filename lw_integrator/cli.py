@@ -1692,6 +1692,14 @@ def _merge_simulation_payload(
     for key in DEFAULT_SIMULATION:
         if key in file_payload:
             result[key] = file_payload[key]
+    # These newer nested settings are not members of DEFAULT_SIMULATION.
+    # Preserve file values before applying the explicit CLI overrides below.
+    for key in ("checkpoint", "adaptive_pair_return"):
+        if key in file_payload:
+            value = file_payload[key]
+            if value is not None and not isinstance(value, Mapping):
+                raise SimulationConfigError(f"'{key}' must be an object or null")
+            result[key] = None if value is None else dict(value)
     file_particle_loss = file_payload.get("particle_loss")
     if isinstance(file_particle_loss, Mapping):
         result["particle_loss"].update(file_particle_loss)
@@ -3461,6 +3469,12 @@ def build_report(
 ) -> Dict[str, Any]:
     """Build the CLI report payload for rider and optional driver trajectories."""
     report = dict(summarise_trajectory(trajectory))
+    if trajectory:
+        adaptive_summary = trajectory[-1].get("_adaptive_pair_return")
+        if isinstance(adaptive_summary, Mapping):
+            # Keep actual accepted-interval counts, restart status and lifetime
+            # recoil work visible; public output-row counts are not step counts.
+            report["adaptive_pair_return"] = dict(adaptive_summary)
     if driver is not None:
         report["driver_summary"] = summarise_trajectory(driver)
     if magnetic_dipole is not None:

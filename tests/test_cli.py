@@ -108,6 +108,88 @@ def test_cli_direct_adaptive_pair_flags_build_core_config(tmp_path: Path) -> Non
     assert request.config.checkpoint.directory == str(checkpoint_path)
 
 
+@pytest.mark.parametrize("override", [False, True])
+def test_native_json_preserves_checkpoint_and_adaptive_pair_settings(
+    tmp_path, override
+):
+    payload = {
+        "steps": 4,
+        "time_step": 1e-3,
+        "wall_position": 0,
+        "aperture_radius": 1,
+        "simulation_type": "bunch-to-bunch",
+        "rider": {},
+        "driver": {},
+        "checkpoint": {
+            "enabled": True,
+            "directory": str(tmp_path / "saved"),
+            "interval_steps": 3,
+        },
+        "adaptive_pair_return": {
+            "enabled": True,
+            "target_lab_time_ns": 0.01,
+            "tolerance_scale": 0.5,
+            "maximum_attempts": 37,
+        },
+    }
+    config = tmp_path / "native.json"
+    config.write_text(json.dumps(payload))
+    arguments = ["--config", str(config)]
+    if override:
+        arguments += [
+            "--resume-from",
+            str(tmp_path / "resumed"),
+            "--adaptive-pair-target-time-ns",
+            "0.02",
+        ]
+    request = cli.build_request(cli.parse_args(arguments))
+    assert request.config.checkpoint.enabled
+    assert request.config.checkpoint.interval_steps == 3
+    assert request.config.adaptive_pair_return.enabled
+    assert request.config.adaptive_pair_return.maximum_attempts == 37
+    assert request.config.adaptive_pair_return.tolerance_scale == 0.5
+    assert request.config.adaptive_pair_return.target_lab_time_ns == (
+        0.02 if override else 0.01
+    )
+    if override:
+        assert request.config.checkpoint.directory is None
+        assert request.config.checkpoint.resume_from == str(tmp_path / "resumed")
+    else:
+        assert request.config.checkpoint.directory == str(tmp_path / "saved")
+
+
+@pytest.mark.parametrize("key", ["checkpoint", "adaptive_pair_return"])
+@pytest.mark.parametrize("value", [[], "invalid"])
+def test_native_json_rejects_invalid_checkpoint_or_adaptive_object(key, value):
+    with pytest.raises(cli.SimulationConfigError, match="object"):
+        cli._merge_simulation_payload({key: value}, cli.parse_args([]))
+
+
+def test_direct_report_preserves_adaptive_counts_restart_and_recoil_ledger():
+    summary = {
+        "completed": True,
+        "accepted_slabs": 16,
+        "checkpoint_resumed": True,
+        "intrinsic_spin_self_reaction_diagnostics": {
+            "mode": "experimental_linear_spin",
+            "applied_as_force": True,
+            "rider": {"feedback_applied_records": 27, "feedback_work_native": 0.1},
+        },
+    }
+    trajectory = [
+        {
+            "t": np.array([0.0]),
+            "z": np.array([1.0]),
+            "gamma": np.array([1.0]),
+            "bz": np.array([0.0]),
+            "_adaptive_pair_return": summary,
+        }
+    ]
+    report = cli.build_report(trajectory)
+    assert report["adaptive_pair_return"] == summary
+    assert report["adaptive_pair_return"] is not summary
+
+
 def test_cli_testbed_resume_flag_overrides_loaded_checkpoint(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

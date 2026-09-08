@@ -1,5 +1,10 @@
 # Changelog
 
+- Preserve native CLI JSON checkpoint and shared-time controller settings
+  before applying command-line overrides. Previously these nested settings
+  were dropped unless supplied as flags. Include accepted-interval counts,
+  restart status and cumulative experimental recoil records in CLI reports.
+
 - Keep the analytical charge response across neighbouring source intervals
   only when their stored polynomials are exactly identical and stationary and
   cover the complete comparison stencil. This avoids an artificial force jump
