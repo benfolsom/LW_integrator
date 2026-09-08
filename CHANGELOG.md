@@ -1,5 +1,11 @@
 # Changelog
 
+- Add diagnostic radiation measurements on accepted reciprocal histories:
+  distant-field extrapolation, an independent charge-radiation reference,
+  and per-source emission-time matching. Add a matched local intrinsic-spin
+  endpoint-balance adapter. These diagnostics do not change the force,
+  production defaults, or the approximation's omitted moment-squared terms.
+
 - Add an experimental reciprocal reaction switch using analytical derivatives
   of the same frozen source intervals as the ordinary force. Source endpoint
   accelerations and applied-force accounting now reuse the stepper's total

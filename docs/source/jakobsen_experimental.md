@@ -55,6 +55,22 @@ checkpoint format. There is no implicit conversion or cross-model resume.
 
 ## Radiation accounting
 
+`core.reciprocal_radiation` supplies diagnostic distant-field measurements
+for frozen pair histories, with independent charge-radiation comparisons.
+Common observation-time cuts retain interference between particles. Its
+separate emission-time method instead measures each source's own radiation
+between specified particle endpoints; those per-source fields must not be
+summed as if observed simultaneously. Only energy and linear momentum are
+supported by this leading radiation-field extraction, not angular momentum.
+
+`core.jakobsen_balance.intrinsic_balance_native` evaluates the published local
+spin radiation and endpoint identity on the same leading dynamics used by
+the experimental response. It is diagnostic only. Its algebraic agreement
+does not establish the missing mutual magnetic-field endpoint balance.
+The study report `planning/radiation_measurement_and_balance_2026-09-08.md`
+records independent radiation, spin-sign, charge finite-volume and frame
+checks, including approximation-level residuals and open requirements.
+
 The local coupling uses [Medina's reduced-order charge reaction](https://doi.org/10.1088/0305-4470/39/14/021)
 and the existing independently tested intrinsic-spin self-force kernel.
 The ordinary force derivative includes the effect of spin acceleration on
