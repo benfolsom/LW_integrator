@@ -24,6 +24,19 @@ paper. The combination here is therefore explicitly an **experimental
 RFS-based reduction**. Reusing a published self-force formula does not prove
 the consistency of the combined dynamics.
 
+There is a further ordering distinction. The published force expression is
+first order in spin, but substituting the full spin-dependent RFS acceleration
+and spin evolution can generate **partial higher-order terms**. This code does
+not re-expand that substitution and discard every term beyond first order.
+Those implicit contributions are not the complete missing magnetic-moment-
+squared self-force. An offline fixed-event spin-scaling check of the coupled
+10 pm, beta 0.8 example finds an even-under-spin-reversal force about 0.83% of
+the odd part for the electron. It decreases in proportion to spin magnitude
+relative to the odd part, consistent with a quadratic contribution. This is
+a model-ordering diagnostic, not a measured physical error or a validation of
+those higher-order terms. A strictly first-order reduction remains a separate
+comparison before promotion beyond experimental use.
+
 The implementation uses an analytical potential-derivative calculation when
 available. At a source-history boundary, it can instead estimate derivatives
 from earlier accepted samples. No future accepted sample is accessed.

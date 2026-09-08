@@ -123,7 +123,11 @@ def test_actual_pair_feedback_is_transactional_and_checkpointable():
     assert before_rejection == history.to_checkpoint_payload()
 
 
-def test_actual_feedback_survives_interruption_and_disk_restart(tmp_path):
+@pytest.mark.parametrize("stop_after_intervals", [1, 3, 5])
+@pytest.mark.parametrize("causal_source", [False, True])
+def test_actual_feedback_survives_interruption_and_disk_restart(
+    tmp_path, stop_after_intervals, causal_source
+):
     """Compare resumed motion and lifetime work against one uninterrupted run."""
     from core.exact_pair_integration import run_exact_pair_adaptive_integrator
     from core.integration_runner import IntegrationCancelled
@@ -134,12 +138,40 @@ def test_actual_feedback_survives_interruption_and_disk_restart(tmp_path):
     )
 
     rb, db, config = _charged_accepted_pair(
+        include_dipole_source=causal_source,
         exact_retarded_update="second_order_start_taylor_endpoint",
         intrinsic_spin_self_reaction_mode="experimental_linear_spin",
     )
+    rider_seed, driver_seed = rb.build_current(), db.build_current()
+    if causal_source:
+        from core.integration_runner import (
+            _build_inertial_coasting_history,
+            _causal_c5_inertial_time_offsets_ns,
+        )
+        from core.exact_pair_integration import _new_builder_from_seed
+
+        config = replace(
+            config, source=replace(config.source, history_model="causal_c5")
+        )
+        rider_seed, driver_seed = [
+            _new_builder_from_seed(
+                _build_inertial_coasting_history(
+                    value.state_at(-1),
+                    float(value.t[-1, 0] - value.t[0, 0]),
+                    # Use the same tapered history as the public C5 startup.
+                    # A sparse uniform prefix is ill-conditioned when followed
+                    # by these much shorter live intervals.
+                    time_offsets_ns=_causal_c5_inertial_time_offsets_ns(
+                        float(value.t[-1, 0] - value.t[0, 0]), 1e-8
+                    ),
+                ),
+                magnetic_dipole=True,
+            ).build_current()
+            for value in (rider_seed, driver_seed)
+        ]
     arguments = dict(
-        rider_seed=rb.build_current().to_legacy(),
-        driver_seed=db.build_current().to_legacy(),
+        rider_seed=rider_seed.to_legacy(),
+        driver_seed=driver_seed.to_legacy(),
         initial_step_ns=1e-8,
         requested_public_samples=9,
         aperture_radius_mm=1.0,
@@ -176,10 +208,18 @@ def test_actual_feedback_survives_interruption_and_disk_restart(tmp_path):
             **arguments,
             checkpoint=checkpoint("resumed"),
             progress_callback=lambda *values: accepted_progress.append(values),
-            cancel_callback=lambda: len(accepted_progress) >= 3,
+            cancel_callback=lambda: len(accepted_progress) >= stop_after_intervals,
         )
     interrupted = json.loads((tmp_path / "resumed/manifest.json").read_text())
     assert interrupted["status"] != "complete"
+    if causal_source and stop_after_intervals == 1:
+        # The restart must preserve the explicit startup omission, not seed
+        # an invented force or skip the remaining history collection.
+        state = AcceptedPairIntrinsicSpinReductionHistory.from_checkpoint_payload(
+            interrupted["intrinsic_spin_reduction_state"]
+        )
+        assert state.rider_diagnostics.feedback_applied_records == 0
+        assert 0 < state.rider.sample_count < 6
     resumed = run_exact_pair_adaptive_integrator(
         **arguments, checkpoint=checkpoint("resumed", resume=True)
     )
