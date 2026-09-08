@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import warnings
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -27,15 +28,27 @@ def _array(values: Any) -> np.ndarray:
 def infer_rest_energy_mev(
     particle_payload: Dict[str, Any], default_mass_amu: float = ELECTRON_MASS_AMU
 ) -> float:
-    """Infer rest energy from saved pt/gamma history or fall back to default mass."""
-    gamma = _array(particle_payload.get("gamma_hist", []))
-    pt_hist = _array(particle_payload.get("pt_hist", []))
-    valid = np.isfinite(gamma) & np.isfinite(pt_hist) & (gamma > 0)
-    if np.any(valid):
-        inferred_mass_amu = float(np.median(pt_hist[valid] / gamma[valid]))
-        if inferred_mass_amu > 0 and np.isfinite(inferred_mass_amu):
-            return inferred_mass_amu * AMU_TO_MEV
-    return default_mass_amu * AMU_TO_MEV
+    """Read explicit rest energy; never infer mass from canonical momentum.
+
+    Native Pt contains gamma*m*c plus the represented potential contribution.
+    Older archives lacking mass metadata use the supplied fallback, visibly.
+    """
+    if "rest_energy_mev" in particle_payload:
+        energy = float(particle_payload["rest_energy_mev"])
+    elif "mass_amu" in particle_payload:
+        energy = float(particle_payload["mass_amu"]) * AMU_TO_MEV
+    else:
+        energy = float(default_mass_amu) * AMU_TO_MEV
+        warnings.warn(
+            "Saved particle has no rest-energy/mass metadata; using fallback "
+            f"mass {default_mass_amu} amu. For older non-electron files, supply "
+            "the correct --mass-amu. Canonical Pt cannot determine rest mass.",
+            UserWarning,
+            stacklevel=2,
+        )
+    if not np.isfinite(energy) or energy <= 0:
+        raise ValueError("Particle rest energy/mass must be finite and positive")
+    return energy
 
 
 def _extract_particle_series(
@@ -211,7 +224,9 @@ def _plot_saved_npz_trajectory(
     _plot_series(ax_pz, z, pz, title="Longitudinal Momentum", ylabel="Pz")
     _plot_series(ax_pr, z, pr, title="Transverse Momentum", ylabel="Pr")
     _plot_series(ax_gamma, z, gamma, title="Lorentz Factor", ylabel="gamma")
-    _plot_series(ax_energy, z, delta_e_mev, title="Energy Change", ylabel="Delta E (MeV)")
+    _plot_series(
+        ax_energy, z, delta_e_mev, title="Energy Change", ylabel="Delta E (MeV)"
+    )
 
     fig.suptitle(input_path.name, fontsize=13, fontweight="bold")
     plt.tight_layout()
@@ -245,7 +260,9 @@ def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Plot saved single-run trajectory JSON or NPZ files"
     )
-    parser.add_argument("input_path", type=Path, help="Saved trajectory JSON or NPZ file")
+    parser.add_argument(
+        "input_path", type=Path, help="Saved trajectory JSON or NPZ file"
+    )
     parser.add_argument(
         "--output",
         "-o",
@@ -257,7 +274,7 @@ def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         "--mass-amu",
         type=float,
         default=ELECTRON_MASS_AMU,
-        help="Fallback particle mass for NPZ plots or JSON files without pt/gamma inference",
+        help="Particle mass for NPZ plots; fallback for JSON without explicit mass/energy metadata",
     )
     return parser.parse_args(argv)
 

@@ -11,15 +11,38 @@ import pytest
 from lw_integrator import trajectory_plotter
 
 
-def test_infer_rest_energy_mev_uses_pt_over_gamma():
-    rest_energy = trajectory_plotter.infer_rest_energy_mev(
-        {
-            "gamma_hist": [2.0, 3.0, 4.0],
-            "pt_hist": [1.0, 1.5, 2.0],  # implies mass=0.5 amu
-        }
+@pytest.mark.parametrize("offset", [0.0, 10.0, -1000.0])
+def test_rest_energy_does_not_depend_on_native_canonical_pt(offset):
+    from core.constants import C_MMNS
+
+    payload = {
+        "rest_energy_mev": 0.5 * trajectory_plotter.AMU_TO_MEV,
+        "gamma_hist": [2.0, 3.0],
+        "pt_hist": [C_MMNS + offset, 1.5 * C_MMNS + offset],
+    }
+    series = trajectory_plotter._extract_particle_series(payload)
+    assert series["rest_energy_mev"] == pytest.approx(payload["rest_energy_mev"])
+    np.testing.assert_allclose(series["delta_e_mev"], [0, payload["rest_energy_mev"]])
+
+
+def test_legacy_mass_fallback_warns_and_ignores_pt():
+    with pytest.warns(UserWarning, match="fallback mass"):
+        energy = trajectory_plotter.infer_rest_energy_mev(
+            {"gamma_hist": [2.0], "pt_hist": [999.0]}, default_mass_amu=2.0
+        )
+    assert energy == pytest.approx(2.0 * trajectory_plotter.AMU_TO_MEV)
+
+
+def test_explicit_mass_metadata():
+    assert trajectory_plotter.infer_rest_energy_mev({"mass_amu": 3.0}) == pytest.approx(
+        3.0 * trajectory_plotter.AMU_TO_MEV
     )
 
-    assert rest_energy == pytest.approx(0.5 * trajectory_plotter.AMU_TO_MEV)
+
+@pytest.mark.parametrize("value", [0.0, -1.0, np.nan, np.inf])
+def test_invalid_rest_energy_rejected(value):
+    with pytest.raises(ValueError, match="finite and positive"):
+        trajectory_plotter.infer_rest_energy_mev({"rest_energy_mev": value})
 
 
 def test_plot_saved_json_trajectory_writes_png(tmp_path: Path):
@@ -33,15 +56,31 @@ def test_plot_saved_json_trajectory_writes_png(tmp_path: Path):
                     "rider": {
                         "gamma_hist": [2.0, 2.2],
                         "pt_hist": [1.0, 1.1],
-                        "positions_mm": {"x": [0.0, 1.0], "y": [0.0, 0.0], "z": [0.0, 2.0]},
-                        "conjugate_momenta": {"Px": [0.0, 0.1], "Py": [0.0, 0.0], "Pz": [1.0, 1.1]},
+                        "positions_mm": {
+                            "x": [0.0, 1.0],
+                            "y": [0.0, 0.0],
+                            "z": [0.0, 2.0],
+                        },
+                        "conjugate_momenta": {
+                            "Px": [0.0, 0.1],
+                            "Py": [0.0, 0.0],
+                            "Pz": [1.0, 1.1],
+                        },
                         "time_ns": [0.0, 0.1],
                     },
                     "driver": {
                         "gamma_hist": [3.0, 3.1],
                         "pt_hist": [1.5, 1.55],
-                        "positions_mm": {"x": [0.0, 0.5], "y": [0.0, 0.0], "z": [0.0, 2.0]},
-                        "conjugate_momenta": {"Px": [0.0, 0.05], "Py": [0.0, 0.0], "Pz": [1.5, 1.6]},
+                        "positions_mm": {
+                            "x": [0.0, 0.5],
+                            "y": [0.0, 0.0],
+                            "z": [0.0, 2.0],
+                        },
+                        "conjugate_momenta": {
+                            "Px": [0.0, 0.05],
+                            "Py": [0.0, 0.0],
+                            "Pz": [1.5, 1.6],
+                        },
                         "time_ns": [0.0, 0.1],
                     },
                 },

@@ -1,5 +1,11 @@
 # Changelog
 
+- Correct saved-JSON trajectory energy plots: export explicit rest energy and
+  stop inferring mass from canonical `Pt/gamma`, which missed the native speed
+  of light and potential offset. Older JSON without mass metadata warns and
+  uses the supplied fallback (`--mass-amu`, electron by default). Runtime
+  forces and trajectory stepping are unchanged.
+
 - Preserve native CLI JSON checkpoint and shared-time controller settings
   before applying command-line overrides. Previously these nested settings
   were dropped unless supplied as flags. Include accepted-interval counts,

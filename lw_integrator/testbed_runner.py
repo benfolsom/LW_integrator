@@ -5323,6 +5323,9 @@ def run_testbed(
             rider_payload["particle_tracks"] = _build_all_particle_tracks(
                 rider_states, interval=interval
             )
+            # Match live energy plots; raw canonical Pt cannot determine mass.
+            if rest_energies.get("rider") is not None:
+                rider_payload["rest_energy_mev"] = float(rest_energies["rider"])
             core_payload: Dict[str, object] = {"rider": rider_payload}
             if (
                 driver_allowed
@@ -5345,6 +5348,8 @@ def run_testbed(
                 driver_payload["particle_tracks"] = _build_all_particle_tracks(
                     driver_states, interval=interval
                 )
+                if rest_energies.get("driver") is not None:
+                    driver_payload["rest_energy_mev"] = float(rest_energies["driver"])
                 core_payload["driver"] = driver_payload
 
             traj_data: Dict[str, object] = {
