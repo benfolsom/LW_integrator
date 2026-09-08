@@ -102,7 +102,7 @@ _HERTZ_PAIRS = ((0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3))
 _HERTZ_PAIR_ARRAY = np.asarray(_HERTZ_PAIRS, dtype=np.int64)
 
 
-def _build_sparse_response_tables() -> tuple[
+def _build_sparse_response_tables(include_partial_a: bool = False) -> tuple[
     np.ndarray,
     np.ndarray,
     np.ndarray,
@@ -111,7 +111,7 @@ def _build_sparse_response_tables() -> tuple[
     np.ndarray,
     np.ndarray,
 ]:
-    """Build the exact linear map from six Hertz jets to 34 responses."""
+    """Build the 34-response map, optionally including 16 potential derivatives."""
 
     pair_index = np.full((4, 4), -1, dtype=np.int64)
     pair_sign = np.zeros((4, 4), dtype=np.float64)
@@ -121,7 +121,8 @@ def _build_sparse_response_tables() -> tuple[
         pair_sign[first, second] = 1.0
         pair_sign[second, first] = -1.0
 
-    output_terms: list[dict[int, float]] = [dict() for _ in range(34)]
+    output_count = 50 if include_partial_a else 34
+    output_terms: list[dict[int, float]] = [dict() for _ in range(output_count)]
 
     def add_term(output: int, mu: int, nu: int, slot: int, scale: float) -> None:
         if mu == nu or scale == 0.0:
@@ -174,6 +175,18 @@ def _build_sparse_response_tables() -> tuple[
                     -_METRIC_SIGNS[nu] * _THIRD_SCALE[derivative, nu, rho],
                 )
 
+    if include_partial_a:
+        for derivative in range(4):
+            for mu in range(4):
+                for rho in range(4):
+                    add_term(
+                        34 + 4 * derivative + mu,
+                        mu,
+                        rho,
+                        int(_SECOND_INDEX[derivative, rho]),
+                        _SECOND_SCALE[derivative, rho],
+                    )
+
     # Exact cancellations implement the four Bianchi redundancies.  Remove
     # their zero coefficients before declaring a Hertz coefficient influential.
     normalized_terms = [
@@ -203,9 +216,9 @@ def _build_sparse_response_tables() -> tuple[
     used_offset[6] = compact_position
 
     maximum_terms = max(len(terms) for terms in normalized_terms)
-    term_count = np.zeros(34, dtype=np.int64)
-    term_index = np.full((34, maximum_terms), -1, dtype=np.int64)
-    term_scale = np.zeros((34, maximum_terms), dtype=np.float64)
+    term_count = np.zeros(output_count, dtype=np.int64)
+    term_index = np.full((output_count, maximum_terms), -1, dtype=np.int64)
+    term_scale = np.zeros((output_count, maximum_terms), dtype=np.float64)
     for output, terms in enumerate(normalized_terms):
         term_count[output] = len(terms)
         for term, (coefficient_index, scale) in enumerate(terms):
@@ -232,6 +245,15 @@ def _build_sparse_response_tables() -> tuple[
     _HERTZ_RESPONSE_USED_OFFSET,
 ) = _build_sparse_response_tables()
 _SPARSE_HERTZ_SIZE = int(_HERTZ_RESPONSE_USED_OFFSET[-1])
+(
+    _POTENTIAL_RATE_TERM_COUNT,
+    _POTENTIAL_RATE_TERM_INDEX,
+    _POTENTIAL_RATE_TERM_SCALE,
+    _POTENTIAL_RATE_USED,
+    _POTENTIAL_RATE_USED_COUNT,
+    _POTENTIAL_RATE_USED_SLOT,
+    _POTENTIAL_RATE_USED_OFFSET,
+) = _build_sparse_response_tables(True)
 
 
 def _levi_civita_upper() -> np.ndarray:
@@ -632,7 +654,7 @@ def quintic_dipole_hertz_response_coefficients_strict_serial(
 
 
 @njit(cache=True, fastmath=False)
-def quintic_dipole_hertz_sparse_response_strict_serial(
+def _quintic_dipole_hertz_sparse_response_with_rate(
     observer_time_ns: float,
     observer_position_mm: np.ndarray,
     magnetic_moment_native: float,
@@ -643,13 +665,16 @@ def quintic_dipole_hertz_sparse_response_strict_serial(
     preserve_magnitude: bool,
     preserved_magnitude: float,
     retarded_time_ns: float,
-) -> tuple[int, np.ndarray, np.ndarray, np.ndarray, float]:
+    observer_four_velocity_mm_ns: np.ndarray,
+    include_potential_rate: bool,
+) -> tuple[int, np.ndarray, np.ndarray, np.ndarray, float, np.ndarray, np.ndarray]:
     """Return only ``A`` and packed ``F``/``partial F`` from one smooth segment.
 
     The dense validation kernel above materializes 210 independent Hertz-jet
     coefficients plus diagnostic tensors.  This production candidate computes
-    only the 144 coefficients that the exact linear response map can observe,
-    then emits the 34 physical response values directly.
+    only the 144 coefficients that the original response map can observe,
+    or 150 when the potential derivative is requested. The original 34
+    response values retain their arithmetic order.
     """
 
     empty_potential = np.zeros(4, dtype=np.float64)
@@ -712,7 +737,15 @@ def quintic_dipole_hertz_sparse_response_strict_serial(
     if beta_squared[0] >= 1.0:
         status = 3
     if status != 0:
-        return status, empty_potential, empty_field, empty_partial, np.nan
+        return (
+            status,
+            empty_potential,
+            empty_field,
+            empty_partial,
+            np.nan,
+            np.zeros(4),
+            np.zeros((4, 4)),
+        )
 
     gamma = _reciprocal(_sqrt(_constant(1.0) - beta_squared))
     projection = _dot(source_beta, source_spin)
@@ -732,7 +765,14 @@ def quintic_dipole_hertz_sparse_response_strict_serial(
         four_velocity[component + 1] = C_MMNS * _multiply(gamma, source_beta[component])
     invariant_distance = _multiply(_multiply(gamma, separation), kappa)
     inverse_distance = _reciprocal(invariant_distance)
-    hertz_compact = np.empty(_SPARSE_HERTZ_SIZE, dtype=np.float64)
+    used_count = _HERTZ_RESPONSE_USED_COUNT
+    used_slot = _HERTZ_RESPONSE_USED_SLOT
+    used_offset = _HERTZ_RESPONSE_USED_OFFSET
+    if include_potential_rate:
+        used_count = _POTENTIAL_RATE_USED_COUNT
+        used_slot = _POTENTIAL_RATE_USED_SLOT
+        used_offset = _POTENTIAL_RATE_USED_OFFSET
+    hertz_compact = np.empty(used_offset[-1], dtype=np.float64)
     for pair_index in range(6):
         mu = _HERTZ_PAIR_ARRAY[pair_index, 0]
         nu = _HERTZ_PAIR_ARRAY[pair_index, 1]
@@ -751,9 +791,9 @@ def quintic_dipole_hertz_sparse_response_strict_serial(
                         - _multiply(moment_four[alpha], four_velocity[beta])
                     ) / C_MMNS
                     dual += coefficient * wedge_component
-        compact_offset = _HERTZ_RESPONSE_USED_OFFSET[pair_index]
-        for ordinal in range(_HERTZ_RESPONSE_USED_COUNT[pair_index]):
-            result_index = _HERTZ_RESPONSE_USED_SLOT[pair_index, ordinal]
+        compact_offset = used_offset[pair_index]
+        for ordinal in range(used_count[pair_index]):
+            result_index = used_slot[pair_index, ordinal]
             total = 0.0
             for split_index in range(_SPLIT_COUNT[result_index]):
                 total += (
@@ -762,7 +802,29 @@ def quintic_dipole_hertz_sparse_response_strict_serial(
                 )
             hertz_compact[compact_offset + ordinal] = total
 
-    response = _materialize_sparse_response(hertz_compact)
+    potential_rate = np.zeros(4, dtype=np.float64)
+    partial_a = np.zeros((4, 4), dtype=np.float64)
+    if include_potential_rate:
+        # Six additional Hertz coefficients suffice. Contract each potential
+        # derivative. The small partial_A map also permits velocity inversion
+        # after summing source potentials, without repeating the source solve.
+        response = np.zeros(34, dtype=np.float64)
+        for output in range(50):
+            total = 0.0
+            for term in range(_POTENTIAL_RATE_TERM_COUNT[output]):
+                total += (
+                    _POTENTIAL_RATE_TERM_SCALE[output, term]
+                    * hertz_compact[_POTENTIAL_RATE_TERM_INDEX[output, term]]
+                )
+            if output < 34:
+                response[output] = total
+            else:
+                partial_a[(output - 34) // 4, (output - 34) % 4] = total
+                potential_rate[(output - 34) % 4] += (
+                    observer_four_velocity_mm_ns[(output - 34) // 4] * total
+                )
+    else:
+        response = _materialize_sparse_response(hertz_compact)
     final_light_cone = observer[0] - source_coordinate - separation
     residual = 0.0
     for coefficient in final_light_cone:
@@ -773,10 +835,79 @@ def quintic_dipole_hertz_sparse_response_strict_serial(
         response[4:10].copy(),
         response[10:].reshape(4, 6).copy(),
         residual,
+        potential_rate,
+        partial_a,
+    )
+
+
+@njit(cache=True, fastmath=False)
+def quintic_dipole_hertz_sparse_response_strict_serial(
+    observer_time_ns,
+    observer_position_mm,
+    magnetic_moment_native,
+    segment_start_time_ns,
+    segment_duration_ns,
+    position_coefficients_mm,
+    spin_coefficients,
+    preserve_magnitude,
+    preserved_magnitude,
+    retarded_time_ns,
+):
+    """Original 34-output interface, unchanged for existing callers."""
+    result = _quintic_dipole_hertz_sparse_response_with_rate(
+        observer_time_ns,
+        observer_position_mm,
+        magnetic_moment_native,
+        segment_start_time_ns,
+        segment_duration_ns,
+        position_coefficients_mm,
+        spin_coefficients,
+        preserve_magnitude,
+        preserved_magnitude,
+        retarded_time_ns,
+        np.zeros(4),
+        False,
+    )
+    return result[0], result[1], result[2], result[3], result[4]
+
+
+@njit(cache=True, fastmath=False)
+def quintic_dipole_hertz_sparse_potential_rate_strict_serial(
+    observer_time_ns,
+    observer_position_mm,
+    magnetic_moment_native,
+    segment_start_time_ns,
+    segment_duration_ns,
+    position_coefficients_mm,
+    spin_coefficients,
+    preserve_magnitude,
+    preserved_magnitude,
+    retarded_time_ns,
+    observer_four_velocity_mm_ns,
+):
+    """Status, A, packed F, packed partial_F, residual, u.partial_A, partial_A.
+
+    The contraction is in native potential per ns. The small derivative map
+    permits canonical velocity inversion after the source potentials are summed.
+    """
+    return _quintic_dipole_hertz_sparse_response_with_rate(
+        observer_time_ns,
+        observer_position_mm,
+        magnetic_moment_native,
+        segment_start_time_ns,
+        segment_duration_ns,
+        position_coefficients_mm,
+        spin_coefficients,
+        preserve_magnitude,
+        preserved_magnitude,
+        retarded_time_ns,
+        observer_four_velocity_mm_ns,
+        True,
     )
 
 
 __all__ = [
     "quintic_dipole_hertz_response_coefficients_strict_serial",
     "quintic_dipole_hertz_sparse_response_strict_serial",
+    "quintic_dipole_hertz_sparse_potential_rate_strict_serial",
 ]

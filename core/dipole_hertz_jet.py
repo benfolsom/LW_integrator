@@ -107,7 +107,7 @@ class DipoleHertzResponseJetResult:
 
 @dataclass(frozen=True)
 class DipoleHertzSparseResponseJetResult:
-    """The 34 production response values from one smooth source segment."""
+    """34 response values with optional potential derivatives from one segment."""
 
     four_potential: np.ndarray
     antisymmetric_response: np.ndarray
@@ -115,6 +115,8 @@ class DipoleHertzSparseResponseJetResult:
     retarded_time_ns: float
     light_cone_jet_residual: float
     segment_fraction: float
+    four_potential_proper_rate: np.ndarray | None = None
+    partial_a: np.ndarray | None = None
 
 
 @dataclass(frozen=True)
@@ -901,11 +903,14 @@ def quintic_dipole_hertz_sparse_response_numba_native(
     rest_spin_end_derivative_per_ns: Sequence[float],
     preserved_rest_spin_magnitude: float | None,
     retarded_time_ns: float,
+    observer_four_velocity_mm_ns: Sequence[float] | None = None,
+    include_partial_a: bool = False,
 ) -> DipoleHertzSparseResponseJetResult:
     """Return only the compact potential/response surface through strict Numba."""
 
     from .dipole_hertz_jet_numba import (
         quintic_dipole_hertz_sparse_response_strict_serial,
+        quintic_dipole_hertz_sparse_potential_rate_strict_serial,
     )
 
     observer_position = np.asarray(observer_position_mm, dtype=float)
@@ -948,20 +953,47 @@ def quintic_dipole_hertz_sparse_response_numba_native(
         spin_end_slope,
         duration,
     )
-    status, potential, packed_field, packed_partial_f, residual = (
-        quintic_dipole_hertz_sparse_response_strict_serial(
-            float(observer_time_ns),
-            observer_position,
-            float(magnetic_moment_native),
-            start_time,
-            duration,
-            position_coefficients,
-            spin_coefficients,
-            preserve_magnitude,
-            preserved_magnitude,
-            root_time,
-        )
+    arguments = (
+        float(observer_time_ns),
+        observer_position,
+        float(magnetic_moment_native),
+        start_time,
+        duration,
+        position_coefficients,
+        spin_coefficients,
+        preserve_magnitude,
+        preserved_magnitude,
+        root_time,
     )
+    potential_rate = None
+    partial_a = None
+    if observer_four_velocity_mm_ns is None and not include_partial_a:
+        status, potential, packed_field, packed_partial_f, residual = (
+            quintic_dipole_hertz_sparse_response_strict_serial(*arguments)
+        )
+    else:
+        velocity = (
+            np.zeros(4)
+            if observer_four_velocity_mm_ns is None
+            else np.asarray(observer_four_velocity_mm_ns, dtype=float)
+        )
+        if velocity.shape != (4,) or not np.isfinite(velocity).all():
+            raise ValueError("observer_four_velocity_mm_ns needs four finite values")
+        (
+            status,
+            potential,
+            packed_field,
+            packed_partial_f,
+            residual,
+            potential_rate,
+            partial_a,
+        ) = quintic_dipole_hertz_sparse_potential_rate_strict_serial(
+            *arguments, velocity
+        )
+        if observer_four_velocity_mm_ns is None:
+            potential_rate = None
+        if not include_partial_a:
+            partial_a = None
     if status == 1:
         raise ValueError("constant-magnitude source-spin interpolation crossed zero")
     if status == 2:
@@ -979,6 +1011,8 @@ def quintic_dipole_hertz_sparse_response_numba_native(
         retarded_time_ns=root_time,
         light_cone_jet_residual=float(residual),
         segment_fraction=float(fraction),
+        four_potential_proper_rate=potential_rate,
+        partial_a=partial_a,
     )
 
 
@@ -1001,6 +1035,8 @@ def evaluate_retarded_dipole_field_gradient_hertz_jet_native(
     response_kernel: str = "python",
     fallback_backend: str = "numba_full_strict_serial",
     spin_interpolation_model: str = "centered_c1",
+    observer_four_velocity_mm_ns: Sequence[float] | None = None,
+    include_partial_a: bool = False,
 ) -> DipoleHertzJetProviderResult:
     """Evaluate the analytical response, falling back at nonsmooth knots.
 
@@ -1011,6 +1047,11 @@ def evaluate_retarded_dipole_field_gradient_hertz_jet_native(
     back: appending the next source knot changes its former endpoint slope.
     Frozen interior events use one scalar retarded root per source and the exact
     local polynomial jet above.
+
+    The sparse kernel supports optional ``include_partial_a`` and
+    ``observer_four_velocity_mm_ns`` for canonical consumers. The latter
+    returns u.partial_A, not the derivative of the field gradient. Their
+    boundary fallback is contracted from the existing full reference response.
     """
 
     # Local imports keep this validation oracle independent from the production
@@ -1023,6 +1064,17 @@ def evaluate_retarded_dipole_field_gradient_hertz_jet_native(
         evaluate_retarded_dipole_field_gradient_native,
     )
 
+    velocity = None
+    if observer_four_velocity_mm_ns is not None:
+        velocity = np.asarray(observer_four_velocity_mm_ns, dtype=float)
+        if velocity.shape != (4,) or not np.isfinite(velocity).all():
+            raise ValueError("observer_four_velocity_mm_ns needs four finite values")
+        if response_kernel != "numba_sparse_strict_serial":
+            raise ValueError(
+                "Potential-rate option requires the sparse response kernel"
+            )
+    if include_partial_a and response_kernel != "numba_sparse_strict_serial":
+        raise ValueError("Opt-in partial_A requires the sparse response kernel")
     boundary_guard = float(boundary_guard_fraction)
     if not np.isfinite(boundary_guard) or boundary_guard < 0.0 or boundary_guard >= 0.5:
         raise ValueError("boundary_guard_fraction must be finite in [0, 0.5)")
@@ -1100,6 +1152,10 @@ def evaluate_retarded_dipole_field_gradient_hertz_jet_native(
 
             response = RetardedDipoleResponseGradientResult(
                 four_potential=full_response.four_potential,
+                four_potential_proper_rate=(
+                    None if velocity is None else velocity @ full_response.partial_a
+                ),
+                partial_a=(full_response.partial_a if include_partial_a else None),
                 antisymmetric_response=pack_antisymmetric_response_native(
                     full_response.field_tensor
                 ),
@@ -1203,6 +1259,10 @@ def evaluate_retarded_dipole_field_gradient_hertz_jet_native(
             evaluator = quintic_dipole_hertz_response_jet_numba_native
         else:
             evaluator = quintic_dipole_hertz_sparse_response_numba_native
+        extra_arguments = {}
+        if response_kernel == "numba_sparse_strict_serial":
+            extra_arguments["observer_four_velocity_mm_ns"] = velocity
+            extra_arguments["include_partial_a"] = include_partial_a
         result = evaluator(
             observer_time_ns=float(observer_event.time_ns),
             observer_position_mm=observer_event.position_mm,
@@ -1222,6 +1282,7 @@ def evaluate_retarded_dipole_field_gradient_hertz_jet_native(
             ],
             preserved_rest_spin_magnitude=source.preserved_rest_spin_magnitude,
             retarded_time_ns=root_time,
+            **extra_arguments,
         )
         jet_residual[source_array_index] = result.light_cone_jet_residual
         source_results.append(result)
@@ -1232,13 +1293,23 @@ def evaluate_retarded_dipole_field_gradient_hertz_jet_native(
 
         packed_field = np.zeros(6, dtype=float)
         packed_partial_f = np.zeros((4, 6), dtype=float)
+        potential_rate = None if velocity is None else np.zeros(4, dtype=float)
+        partial_a = np.zeros((4, 4), dtype=float) if include_partial_a else None
         for result in source_results:
             assert isinstance(result, DipoleHertzSparseResponseJetResult)
             four_potential += result.four_potential
             packed_field += result.antisymmetric_response
             packed_partial_f += result.partial_antisymmetric_response
+            if potential_rate is not None:
+                assert result.four_potential_proper_rate is not None
+                potential_rate += result.four_potential_proper_rate
+            if partial_a is not None:
+                assert result.partial_a is not None
+                partial_a += result.partial_a
         response = RetardedDipoleResponseGradientResult(
             four_potential=four_potential,
+            four_potential_proper_rate=potential_rate,
+            partial_a=partial_a,
             antisymmetric_response=packed_field,
             partial_antisymmetric_response=packed_partial_f,
             root=center,

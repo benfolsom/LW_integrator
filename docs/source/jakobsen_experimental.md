@@ -71,14 +71,39 @@ canonical particle energy. It must remain separate in conservation accounting.
 
 ## Optimization compatibility and validation limits
 
-The dense compiled analytical dipole provider supplies the required data and
-has been exercised with this stepper on an accelerating, rotating prescribed
-source. The existing 34-output sparse provider omits `partial_A`; it is not a
-drop-in provider for this canonical differential equation. Its existing RFS
-and endpoint-recomposition uses remain valid. A future optimization can supply
-only the necessary directional potential derivative, or validate an equivalent
-mechanical step with endpoint canonical reconstruction. Neither is silently
-substituted here.
+The dense and sparse compiled analytical dipole providers now both supply the
+required data. Request `include_partial_a=True` from the sparse history-facing
+provider to obtain the first potential derivative. Request
+`observer_four_velocity_mm_ns=u` for its proper-time contraction. Both are
+optional; the default 34-output numerical response is unchanged. Only six
+additional Hertz coefficients are required (150 instead of 144). The
+canonical stepper needs the small full derivative map because it reconstructs
+velocity after summing source potentials; returning only a velocity-dependent
+contraction would require repeating that source evaluation.
+
+### Experimental reciprocal adapter
+
+`core.jakobsen_pair.initialize_pair` and `advance_pair` provide a separately
+checkpointed, fixed-shared-lab-time two-particle experiment. Both roles respond
+to the same accepted retarded histories. No future source extrapolation is
+permitted. Accepted position intervals are quintic with instantaneous endpoint
+derivatives; spin intervals are cubic with endpoint spin rates. Appending a
+new state does not change any accepted polynomial. The complete source
+interval is checked for a timelike speed bound.
+
+This adapter integrates the existing proper-time canonical equation using
+fourth-order lab-time Runge–Kutta. It does not replace the midpoint API or
+production pair controller. The cold-start coasting interval keeps its own
+left-hand derivatives, separate from the initial interacting right-hand
+derivatives. Measurement windows after a mutually evolved warm-up avoid
+confusing the startup wave with encounter accuracy.
+
+Pair reaction is deliberately rejected: the required higher source-derivative
+contract has not yet been validated for this interval representation. The
+potential-derivative addition alone does not enable pair radiation reaction.
+The pair checkpoint stores accepted states and frozen histories and is not
+interchangeable with CLI/GUI checkpoints. Force-integrated particle momentum
+is a bookkeeping diagnostic, not total particle-plus-field conservation.
 
 Local force tests, independent ordinary-action comparisons, source-current
 variation checks, pulse/loop/passing-charge refinement, and JSON restart tests

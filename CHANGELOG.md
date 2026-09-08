@@ -1,5 +1,14 @@
 # Changelog
 
+- Extend the sparse dipole provider with opt-in potential derivatives and the
+  potential's proper-time rate. Six additional Hertz coefficients suffice;
+  the default 34-output response remains unchanged. Add an experimental
+  radiation-off reciprocal Jakobsen pair adapter with immutable accepted
+  source intervals, simultaneous role updates, timelike-source bounds,
+  explicit unavailable-history rejection, and JSON restart data. This adapter
+  is not a new CLI/GUI mode. Reciprocal cold-start/warm-up, frame, and
+  force-impulse checks are recorded in the study campaign documentation.
+
 - Add an explicitly experimental Jakobsen linear-spin core API with matching
   ordinary force, spin transport, canonical momentum and midpoint stepping.
   A single-observer supplied-potential adapter reuses the maintained lab-time

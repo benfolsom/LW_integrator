@@ -207,8 +207,10 @@ class RetardedDipoleResponseGradientResult:
 
     This is the potential-first production surface for exact endpoint
     recomposition, ordinary mechanical ``q F`` response, and RFS response.  It
-    deliberately omits the gauge-dependent ``partial A`` tensor and never
-    materializes the antisymmetric tensor middlemen.
+    omits the gauge-dependent ``partial A`` tensor by default and never
+    materializes the antisymmetric tensor middlemen. The analytical sparse
+    provider can optionally return ``partial_a`` or its proper-time contraction
+    for canonical-equation consumers; unrequested derivatives remain None.
     """
 
     four_potential: np.ndarray
@@ -220,6 +222,8 @@ class RetardedDipoleResponseGradientResult:
     source_segment_index: np.ndarray
     source_segment_fraction: np.ndarray
     source_jet_residual: np.ndarray
+    four_potential_proper_rate: np.ndarray | None = None
+    partial_a: np.ndarray | None = None
 
 
 @dataclass
