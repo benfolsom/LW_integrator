@@ -1,5 +1,12 @@
 # Changelog
 
+- Add an experimental reciprocal reaction switch using analytical derivatives
+  of the same frozen source intervals as the ordinary force. Source endpoint
+  accelerations and applied-force accounting now reuse the stepper's total
+  response. Derivatives at nonsmooth history joins remain explicit errors;
+  the higher derivative currently uses the Python reference implementation.
+  This does not change CLI/GUI defaults or add moment-squared radiation.
+
 - Extend the sparse dipole provider with opt-in potential derivatives and the
   potential's proper-time rate. Six additional Hertz coefficients suffice;
   the default 34-output response remains unchanged. Add an experimental

@@ -81,6 +81,15 @@ def state_velocity(state, particle, provider):
 
 def canonical_rhs(state, *, particle, provider):
     """Proper-time RHS; canonical P, not cached beta, determines the velocity."""
+    return canonical_dynamics(state, particle=particle, provider=provider)[0]
+
+
+def canonical_dynamics(state, *, particle, provider):
+    """Return the RHS, applied response and velocity from one consistent evaluation.
+
+    Source-history endpoints and force accounting must use this same response,
+    including reaction when enabled, rather than recomputing an ordinary force.
+    """
     u, (a, da, f, df) = state_velocity(state, particle, provider)
     rest = np.asarray(state[8:11])
     w = u / c
@@ -122,7 +131,7 @@ def canonical_rhs(state, *, particle, provider):
         - w[1:] * sd[0] / (1 + w[0])
         + w[1:] * s0 * a0[0] / c / (1 + w[0]) ** 2
     )
-    return np.r_[w[0], u[1:], p_rate, sr]
+    return np.r_[w[0], u[1:], p_rate, sr], result, u
 
 
 def midpoint_step(state, proper_step_ns, *, particle, provider):

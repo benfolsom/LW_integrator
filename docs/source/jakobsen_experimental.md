@@ -98,9 +98,18 @@ left-hand derivatives, separate from the initial interacting right-hand
 derivatives. Measurement windows after a mutually evolved warm-up avoid
 confusing the startup wave with encounter accuracy.
 
-Pair reaction is deliberately rejected: the required higher source-derivative
-contract has not yet been validated for this interval representation. The
-potential-derivative addition alone does not enable pair radiation reaction.
+Pair reaction is opt-in through each particle's
+`reaction_mode="experimental_linear_spin"`. The additional gradient rate is
+obtained analytically from the same selected source interval, using the
+Python potential-derivative reference. Ordinary responses still use the
+compiled sparse provider. Endpoint accelerations and applied-force accounting
+reuse the total response used by the canonical stepper, including reaction.
+This higher-derivative path is not yet compiled. Exact interval joins are
+rejected because their higher derivatives are not uniquely defined. Agreement
+with independently displaced compiled responses inside intervals does not
+prove convergence when a trajectory crosses many joins; timestep and source
+history refinement remain required. The model still omits radiation terms
+quadratic in magnetic moment.
 The pair checkpoint stores accepted states and frozen histories and is not
 interchangeable with CLI/GUI checkpoints. Force-integrated particle momentum
 is a bookkeeping diagnostic, not total particle-plus-field conservation.

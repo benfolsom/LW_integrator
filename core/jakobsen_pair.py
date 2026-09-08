@@ -1,4 +1,4 @@
-"""Experimental reciprocal, radiation-off Jakobsen pair with frozen intervals.
+"""Experimental reciprocal Jakobsen pair with frozen source intervals.
 
 Both roles see the same accepted history. Steps requiring a future source
 state are rejected, not extrapolated. This is not the CLI/GUI pair runner.
@@ -11,19 +11,23 @@ from types import SimpleNamespace
 import numpy as np
 
 from .constants import C_MMNS as c
-from .jakobsen import ordinary_response_native
 from .jakobsen_step import (
     JakobsenParticle,
     initial_canonical_state,
-    canonical_rhs,
-    state_velocity,
+    canonical_dynamics,
     canonical_constraint_residual,
 )
 from .retarded_fields import (
     _quintic_position_coefficients_mm,
     _segment_beta_bernstein_bound,
 )
-from .dipole_hertz_jet import _spin_coefficients
+from .dipole_hertz_jet import (
+    _spin_coefficients,
+    polynomial_dipole_hertz_response_jet_native,
+)
+from .retarded_potential_directional_jet import (
+    quintic_charge_response_directional_gradient_native,
+)
 from .dipole_hertz_jet_numba import (
     quintic_dipole_hertz_sparse_potential_rate_strict_serial,
     quintic_dipole_hertz_response_coefficients_strict_serial,
@@ -119,7 +123,8 @@ class RetardedSourceProvider:
         self.calls = 0
         self.minimum_history_margin_ns = float("inf")
 
-    def __call__(self, t, x):
+    def _segment(self, t, x):
+        """Select one accepted smooth interval; never bridge a derivative jump."""
         source = self.source
         x = np.asarray(x, dtype=float)
         batch = evaluate_source_roots_exact_serial(
@@ -152,6 +157,49 @@ class RetardedSourceProvider:
         fraction = (root - source.times[index]) / source.durations[index]
         if not 1e-8 < fraction < 1 - 1e-8:
             raise ValueError("Retarded root at nonsmooth frozen interval boundary")
+        return index, root
+
+    def gradient_proper_rate(self, t, x, u):
+        """Analytical derivative of the selected interval, along observer motion.
+
+        This experimental reference path differentiates potentials directly.
+        It does not sample displaced fields, refit history, or smooth a join.
+        It is deliberately not a claim that adjacent high derivatives agree.
+        """
+        index, root = self._segment(t, x)
+        source = self.source
+        args = dict(
+            observer_time_ns=t,
+            observer_position_mm=x,
+            segment_start_time_ns=source.times[index],
+            segment_duration_ns=source.durations[index],
+            position_coefficients_mm=source.coefficients[index],
+            retarded_time_ns=root,
+        )
+        rate = quintic_charge_response_directional_gradient_native(
+            **args,
+            charge_native=source.particle.charge_native,
+            four_velocity_mm_ns=u,
+        ).partial_antisymmetric_response_along_velocity.copy()
+        if np.any(source.spin_segments[index]):
+            magnetic = polynomial_dipole_hertz_response_jet_native(
+                **args,
+                magnetic_moment_native=(
+                    source.particle.g
+                    * source.particle.charge_native
+                    / (2 * source.particle.mass_amu * c)
+                ),
+                rest_spin_coefficients=source.spin_segments[index],
+                preserved_rest_spin_magnitude=None,
+                observer_four_velocity_mm_ns=u,
+            )
+            rate += magnetic.partial_antisymmetric_response_along_velocity
+        return materialize_partial_antisymmetric_response_native(rate)
+
+    def __call__(self, t, x):
+        index, root = self._segment(t, x)
+        source = self.source
+        x = np.asarray(x, dtype=float)
         base = (
             t,
             x,
@@ -215,22 +263,13 @@ class RetardedSourceProvider:
 
 
 def source_row(state, particle, provider):
-    u, (_, _, field, gradient) = state_velocity(state, particle, provider)
+    rhs, response, u = canonical_dynamics(state, particle=particle, provider=provider)
     gamma = u[0] / c
     beta = u[1:] / u[0]
     rest = state[8:11]
-    s0 = u[1:] @ rest / c
-    spin = np.r_[s0, rest + u[1:] / c * s0 / (1 + gamma)]
-    response = ordinary_response_native(
-        four_velocity_mm_ns=u,
-        spin_angular_momentum=spin,
-        field_tensor=field,
-        partial_f=gradient,
-        **particle.coefficients(),
-    )
     acceleration = response.four_force / particle.mass_amu
     beta_prime = (acceleration[1:] - beta * acceleration[0]) / (gamma**2 * c**2)
-    rest_rate = canonical_rhs(state, particle=particle, provider=provider)[8:] / gamma
+    rest_rate = rhs[8:] / gamma
     return np.r_[state[0], state[1:4], beta, beta_prime, rest, rest_rate]
 
 
@@ -243,20 +282,11 @@ def _lab_rk4(state, width, particle, provider):
 
     def rhs(y):
         state = y[:11]
-        result = canonical_rhs(state, particle=particle, provider=provider)
-        u, (_, _, field, gradient) = state_velocity(state, particle, provider)
+        result, response, u = canonical_dynamics(
+            state, particle=particle, provider=provider
+        )
         gamma = u[0] / c
-        rest = state[8:]
-        s0 = u[1:] @ rest / c
-        spin = np.r_[s0, rest + u[1:] / c * s0 / (1 + gamma)]
-        force = ordinary_response_native(
-            four_velocity_mm_ns=u,
-            spin_angular_momentum=spin,
-            field_tensor=field,
-            partial_f=gradient,
-            **particle.coefficients(),
-        ).four_force
-        return np.r_[result / result[0], force / gamma]
+        return np.r_[result / result[0], response.four_force / gamma]
 
     state = np.r_[state, np.zeros(4)]
     k1 = rhs(state)
@@ -281,8 +311,8 @@ def _mechanical_momentum(sources):
 def initialize_pair(
     *, particles, positions_mm, betas, rest_spins_native, prehistory_ns, sparse=True
 ):
-    if len(particles) != 2 or any(p.reaction_mode != "off" for p in particles):
-        raise ValueError("Exactly two radiation-off particles required")
+    if len(particles) != 2:
+        raise ValueError("Exactly two particles required")
     if not np.isfinite(prehistory_ns) or prehistory_ns <= 0:
         raise ValueError("Positive finite coasting prehistory required")
     sources = []
@@ -354,8 +384,8 @@ def advance_pair(payload, width_ns, steps=1):
     ):
         raise ValueError("Valid pair checkpoint and positive advance required")
     particles = [JakobsenParticle(**p) for p in payload["particles"]]
-    if len(particles) != 2 or any(p.reaction_mode != "off" for p in particles):
-        raise ValueError("Matched pair reaction derivatives have not been enabled")
+    if len(particles) != 2:
+        raise ValueError("Exactly two particles required")
     sources = [
         FrozenSource(p, **data) for p, data in zip(particles, payload["sources"])
     ]
