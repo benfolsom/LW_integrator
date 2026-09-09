@@ -259,6 +259,11 @@ def evaluate(
         velocity_spin_contraction=tensor @ (METRIC * u),
         spin_invariant=contract(tensor, tensor) / 2,
         kinetic_mass=np.sqrt(dot(momentum, momentum)),
+        momentum_rest_frame_beta_squared=1.0
+        - dot(momentum, momentum) / dot(momentum, u) ** 2,
+        action_interaction_relative=coefficient
+        * contract(field, tensor)
+        / particle.bare_mass**2,
         velocity_matrix_condition=condition,
         proper_dipole=coupling * tensor,
         proper_dipole_coupling=coupling,

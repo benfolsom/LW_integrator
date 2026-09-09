@@ -1,5 +1,16 @@
 # Changelog
 
+- Expose the experimental nonlinear pair through a checkpoint-based command
+  (`python -m lw_integrator.nonlinear_pair`). Save accepted checkpoints by
+  atomic replacement, preserve the input, and report the last saved state on
+  failure. Expose radiation capabilities explicitly: this nonlinear model
+  currently supports only off, while established reaction modes remain on
+  their existing runners. No unsupported recoil or production-default change
+  is implied by the new command.
+  Add a momentum-rest-frame relative-speed diagnostic to distinguish normal
+  fast coasting from spin-induced momentum/velocity separation; it changes no
+  force or admissibility threshold.
+
 - Reject nonfinite nonlinear momentum/field inputs instead of returning NaN
   velocities. Report unusable timelike branches with a dedicated ValueError
   subtype carrying the attempted lab-speed ratio when available. Preserve

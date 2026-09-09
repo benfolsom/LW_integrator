@@ -1,5 +1,42 @@
 # Experimental nonlinear reciprocal pair
 
+## Running from a checkpoint
+
+```bash
+python -m lw_integrator.nonlinear_pair --capabilities
+python -m lw_integrator.nonlinear_pair \
+  --checkpoint accepted.json --output continued.json \
+  --step-ns 0.00005211938987471126 --steps 128 \
+  --checkpoint-every 16 --radiation-reaction off
+```
+
+The example step size belongs to the documented 1 mm comparison fixture,
+not a general-purpose default. Supply a step appropriate to your simulation.
+This command resumes the whole-pair JSON format described below; it does not
+convert old Jakobsen states or invent a past history. It refuses to overwrite
+the input checkpoint. Existing output requires `--overwrite-output`.
+
+The default saves every accepted step. With `--checkpoint-every N`, each N-step
+batch is transactional: if it fails, the last successfully saved batch remains
+available. JSON is encoded and flushed before atomic replacement. A rejected
+velocity/history leaves that saved checkpoint intact and returns exit status 2
+with an error description and last-saved location. SIGKILL cannot save work
+since the last completed batch, but cannot expose a partially written JSON file.
+
+Radiation reaction is an explicit capability, not an inferred side effect:
+
+- This nonlinear model accepts `--radiation-reaction off` only at present.
+- The established main CLI still exposes `--radiation-reaction-mode medina_lad`
+  and `--intrinsic-spin-self-reaction-mode experimental_linear_spin` under their
+  existing model/controller restrictions.
+- The new command rejects those unsupported modes rather than substituting
+  the old recoil into the full-spin equations. Matching nonlinear recoil and
+  torque is still required before additional modes can be enabled here.
+
+This is a maintained command-line entry point for experimental use, not a
+claim of completed strong-spin physics, full GUI integration or production
+default status.
+
 `core.momentum_center_pair` connects the nonlinear ordinary interaction model
 to the shared-derivative source histories. Both particles produce charge and
 full dipole potentials, respond to the other's accepted past, and advance in
@@ -54,6 +91,18 @@ is the attempted lab speed squared divided by c squared; its
 `direction_norm_squared` is the internal unnormalized direction's Minkowski
 norm. Nonfinite inputs are rejected, not allowed to return NaN velocities.
 Spatial proper velocity above c is valid and is not used as a rejection test.
+
+The `length_time` diagnostics now also expose `momentum_rest_frame_beta_squared`:
+the velocity's speed squared divided by c squared **in the momentum rest frame**.
+It is `1 - (p.p)/(p.u)**2`, with normalized dimensionless four-velocity u.
+This stays zero for fast coasting with parallel momentum and velocity, unlike
+the lab-frame speed. It approaches one when velocity becomes null relative to
+a timelike momentum. Tiny negative values near zero may reflect roundoff; this
+diagnostic is not clipped and does not modify the trajectory. The command
+prints its maximum over the two particles at each saved endpoint.
+`action_interaction_relative` separately reports the interaction contribution
+to the mass-squared law divided by bare mass squared. Neither diagnostic is
+an independently validated cutoff for the model's physical applicability.
 
 ## API and accepted past
 

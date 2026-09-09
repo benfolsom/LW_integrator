@@ -71,3 +71,23 @@ def test_nonfinite_supplied_potential_derivative_is_rejected():
                 np.zeros((4, 4, 4)),
             ),
         )
+
+
+@pytest.mark.parametrize("beta", [0.9, 0.99])
+def test_momentum_frame_monitor_does_not_confuse_fast_coasting_with_blowup(beta):
+    gamma = 1 / np.sqrt(1 - beta**2)
+
+    def provider(event):
+        return (np.zeros(4), np.zeros((4, 4)), np.zeros((4, 4)), np.zeros((4, 4, 4)))
+
+    particle = model.Particle()
+    state = model.initial_state(
+        np.zeros(4),
+        gamma * np.array([1.0, 0, beta, 0]),
+        [0.1, 0.2, 0.3],
+        particle,
+        provider,
+    )
+    _, diagnostic = model.evaluate(state, particle, provider)
+    assert abs(diagnostic["momentum_rest_frame_beta_squared"]) < 2e-13
+    assert diagnostic["action_interaction_relative"] == 0
