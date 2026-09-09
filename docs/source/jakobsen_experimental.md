@@ -24,6 +24,21 @@ order. The temporal stored momentum is a separate consistency diagnostic;
 the code does not project away its error. Terms quadratic in spin are not
 controlled, including errors of that order in the inverse momentum mapping.
 
+`canonical_momentum_residual` in `core.jakobsen_step` reports stored minus
+reconstructed momentum in all four components, in amu mm/ns. Reciprocal pair
+records include it for each particle and retain `canonical_residual` as the
+original temporal-only field. Small values do not bound omitted physics.
+They are momentum-coordinate consistency checks, not total conservation.
+
+A study-only check has ruled out a simple finite-spin completion obtained by
+putting actual acceleration into every ordinary spin derivative: even with
+consistent spin transversality it leaves a quadratic-spin current-balance
+term. No such completion or compensating force is enabled here. The study
+report `planning/finite_spin_resolution_and_readiness_2026-09-09.md` records
+the counterexample and the distinction between first-order validation and
+full finite-spin conservation. The existing first-order approximation and
+momentum inverse remain unchanged.
+
 ## Entry points and state
 
 - `JakobsenParticle(charge_native, mass_amu, g, reaction_mode="off")`.

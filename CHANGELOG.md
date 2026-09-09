@@ -1,5 +1,11 @@
 # Changelog
 
+- Report all four stored-minus-reconstructed momentum components in the
+  experimental Jakobsen pair diagnostics. Spatial components expose the
+  first-order momentum inverse's finite-spin remainder; temporal diagnostics
+  retain their existing meaning. Forces, trajectories and checkpoint formats
+  are unchanged. This is not a new finite-spin conservation claim.
+
 - Add diagnostic radiation measurements on accepted reciprocal histories:
   distant-field extrapolation, an independent charge-radiation reference,
   and per-source emission-time matching. Add a matched local intrinsic-spin

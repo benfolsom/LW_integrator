@@ -151,6 +151,19 @@ def midpoint_step(state, proper_step_ns, *, particle, provider):
 
 def canonical_constraint_residual(state, *, particle, provider):
     """Stored minus reconstructed P0; report it, do not erase it by projection."""
+    return float(
+        canonical_momentum_residual(state, particle=particle, provider=provider)[0]
+    )
+
+
+def canonical_momentum_residual(state, *, particle, provider):
+    """Stored minus reconstructed (energy/c, px, py, pz), in amu mm/ns.
+
+    Spatial components expose the first-order inverse's finite-spin remainder;
+    the temporal component also accumulates dynamics and stepping errors.
+    This is a coordinate/momentum consistency diagnostic, not a bound on
+    omitted spin-squared physics or a particle-plus-field conservation test.
+    """
     u, (a, _, f, _) = state_velocity(state, particle, provider)
     expected = canonical_momentum_native(
         four_velocity_mm_ns=u,
@@ -159,4 +172,4 @@ def canonical_constraint_residual(state, *, particle, provider):
         field_tensor=f,
         **particle.coefficients(),
     )
-    return float(state[4] - expected[0])
+    return np.asarray(state[4:8]) - expected

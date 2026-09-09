@@ -15,7 +15,7 @@ from .jakobsen_step import (
     JakobsenParticle,
     initial_canonical_state,
     canonical_dynamics,
-    canonical_constraint_residual,
+    canonical_momentum_residual,
 )
 from .retarded_fields import (
     _quintic_position_coefficients_mm,
@@ -422,7 +422,7 @@ def advance_pair(payload, width_ns, steps=1):
         mechanical_impulse += trials[0][1] + trials[1][1]
         rows = [source_row(candidates[i], particles[i], providers[i]) for i in range(2)]
         constraints = [
-            canonical_constraint_residual(
+            canonical_momentum_residual(
                 candidates[i], particle=particles[i], provider=providers[i]
             )
             for i in range(2)
@@ -436,7 +436,8 @@ def advance_pair(payload, width_ns, steps=1):
             dict(
                 time_ns=float(states[0][0]),
                 distance_mm=float(np.linalg.norm(states[0][1:4] - states[1][1:4])),
-                canonical_residual=constraints,
+                canonical_residual=[float(value[0]) for value in constraints],
+                canonical_momentum_residual=[value.tolist() for value in constraints],
                 mechanical_change=(
                     _mechanical_momentum(sources) - mechanical_initial
                 ).tolist(),
