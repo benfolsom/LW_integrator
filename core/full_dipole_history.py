@@ -16,6 +16,10 @@ from typing import cast
 import numpy as np
 
 
+class SourcePositionError(ValueError):
+    """The reconstructed source position exceeds its caller's accuracy budget."""
+
+
 def _readonly(value: np.ndarray) -> np.ndarray:
     result = np.array(value, dtype=float, copy=True)
     if not np.isfinite(result).all():
@@ -222,7 +226,7 @@ class FullDipoleHistory:
                 )
             )
             if error > self.position_tolerance + roundoff:
-                raise ValueError(
+                raise SourcePositionError(
                     f"Integrated source position error {error:.6e} exceeds caller tolerance {self.position_tolerance + roundoff:.6e}"
                 )
             d = _endpoint_polynomial(dp, dq, width)

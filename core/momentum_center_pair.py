@@ -1,4 +1,4 @@
-"""Experimental nonlinear, radiation-off reciprocal pair in native units.
+"""Experimental nonlinear reciprocal pair with an optional zero-spin charge recoil.
 
 Inputs are accepted states and histories, not an invented interacting past.
 Both particles advance against the same frozen history; publication is atomic.
@@ -6,14 +6,16 @@ The 14-component state is [t_ns, x_mm(3), P_native(4), S_native(6)].
 """
 
 from dataclasses import asdict, dataclass
+import copy
 from typing import Any, Callable
 
 import numpy as np
 
 from .constants import C_MMNS as c
-from .full_dipole_history import FullDipoleHistory
+from .full_dipole_history import FullDipoleHistory, SourcePositionError
 from .full_dipole_response import response
 from . import momentum_center as model
+from .momentum_center_reaction import charge_reaction
 
 MODEL = "experimental_momentum_center_pair_v1"
 UNITS = "mm_ns_amu_scaled_gaussian"
@@ -72,8 +74,10 @@ class MomentumCenterParticle:
 
     def __post_init__(self) -> None:
         self.length_time_particle()
-        if self.reaction_mode != "off":
-            raise ValueError("Nonlinear pair radiation reaction is not implemented")
+        if self.reaction_mode not in ("off", "charge_ll"):
+            raise ValueError(
+                "Requested reaction is not implemented; supported modes are off and zero-spin charge_ll"
+            )
 
     def length_time_particle(self) -> model.Particle:
         return model.Particle(self.charge_native / c, self.mass_amu, self.g)
@@ -122,6 +126,10 @@ def initial_state_native(
     provider: NativeProvider,
 ) -> np.ndarray:
     """Rest spin is in the momentum rest frame; direction is dimensionless."""
+    if particle.reaction_mode == "charge_ll" and np.any(rest_spin_native):
+        raise ValueError(
+            "charge_ll requires exactly zero spin; finite-spin reaction is not implemented"
+        )
     event = np.asarray(event, dtype=float).copy()
     if event.shape != (4,):
         raise ValueError("Native event must be [t_ns, x_mm, y_mm, z_mm]")
@@ -141,11 +149,29 @@ def dynamics_native(
     state: np.ndarray, particle: MomentumCenterParticle, provider: NativeProvider
 ) -> tuple[np.ndarray, dict[str, Any]]:
     """Lab-time derivative plus explicitly separated native/length-time diagnostics."""
+    scaled_state = _to_length_time(state)
+    if particle.reaction_mode == "charge_ll" and np.any(scaled_state[8:]):
+        raise ValueError("charge_ll requires exactly zero spin; no spin was discarded")
+    values = _provider_length_time(provider)(scaled_state[:4])
     rhs, diagnostic = model.evaluate(
-        _to_length_time(state),
-        particle.length_time_particle(),
-        _provider_length_time(provider),
+        scaled_state, particle.length_time_particle(), lambda event: values
     )
+    if particle.reaction_mode == "charge_ll":
+        reaction = charge_reaction(
+            diagnostic["proper_velocity"],
+            values[2],
+            values[3],
+            charge=particle.charge_native / c,
+            mass=particle.mass_amu,
+        )
+        force = np.asarray(reaction["force"])
+        rhs[4:8] += force
+        diagnostic["momentum_rate"] += force
+        diagnostic["current_residual"] += force
+        diagnostic["mass_constraint_rate"] += 2 * model.dot(
+            diagnostic["kinetic_momentum"], force
+        )
+        diagnostic["reaction"] = reaction
     rate = rhs * (c / rhs[0])
     rate[0] /= c
     rate[4:] *= c
@@ -316,6 +342,31 @@ def advance_pair(
     ):
         raise ValueError("Positive finite step width and integer step count required")
     particles, states, histories = _restore(payload)
+    ledger_keys = (
+        "applied_impulse_native",
+        "outward_radiation_native",
+        "bound_rate_integral_native",
+    )
+    ledger = copy.deepcopy(
+        payload.get(
+            "reaction_ledger",
+            [{key: [0.0] * 4 for key in ledger_keys} for _ in range(2)],
+        )
+    )
+    if (
+        not isinstance(ledger, list)
+        or len(ledger) != 2
+        or any(
+            not isinstance(row, dict)
+            or set(row) != set(ledger_keys)
+            or any(
+                np.shape(row[key]) != (4,) or not np.isfinite(row[key]).all()
+                for key in ledger_keys
+            )
+            for row in ledger
+        )
+    ):
+        raise ValueError("Invalid reaction ledger in checkpoint")
     records = []
     for _ in range(steps):
         providers = [
@@ -328,12 +379,15 @@ def advance_pair(
         ]
         trials, diagnostics, candidate_histories = [], [], []
         endpoint = states[0, 0] + width_ns
-        for state, particle, provider, history in zip(
-            states, particles, providers, histories
+        for i, (state, particle, provider, history) in enumerate(
+            zip(states, particles, providers, histories)
         ):
+            stage_diagnostics = []
 
             def rhs(value: np.ndarray) -> np.ndarray:
-                return dynamics_native(value, particle, provider)[0]
+                rate, data = dynamics_native(value, particle, provider)
+                stage_diagnostics.append(data["length_time"])
+                return rate
 
             k1 = rhs(state)
             k2 = rhs(state + width_ns * k1 / 2)
@@ -352,6 +406,23 @@ def advance_pair(
             )
             trials.append(trial)
             diagnostics.append(diagnostic)
+            if particle.reaction_mode != "off":
+                for key, source in zip(
+                    ledger_keys,
+                    ("force", "outward_radiation_rate", "bound_momentum_rate"),
+                ):
+                    increment = (
+                        width_ns
+                        * c**2
+                        / 6
+                        * sum(
+                            weight
+                            * np.asarray(d["reaction"][source])
+                            / d["proper_velocity"][0]
+                            for weight, d in zip((1, 2, 2, 1), stage_diagnostics)
+                        )
+                    )
+                    ledger[i][key] = (np.asarray(ledger[i][key]) + increment).tolist()
         states, histories = np.asarray(trials), candidate_histories
         records.append(
             dict(
@@ -378,4 +449,27 @@ def advance_pair(
         accepted_steps=payload["accepted_steps"] + steps,
         startup_duration_ns=payload.get("startup_duration_ns", 0.0),
     )
+    if "reaction_ledger" in payload or any(p.reaction_mode != "off" for p in particles):
+        result["reaction_ledger"] = ledger
     return result, records
+
+
+def advance_pair_refined(
+    payload: dict[str, Any], width_ns: float, max_halvings: int
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Try one interval, subdividing only source-position budget failures.
+
+    A velocity-domain error, causal-history gap or other failure is not retried.
+    A failed interval (including either subdivided half) leaves input untouched.
+    This is bounded accuracy-budget recovery, not a local-truncation estimator.
+    """
+    if type(max_halvings) is not int or not 0 <= max_halvings <= 10:
+        raise ValueError("Source-position recovery requires 0 to 10 step halvings")
+    try:
+        return advance_pair(payload, width_ns, 1)
+    except SourcePositionError:
+        if max_halvings == 0:
+            raise
+        middle, first = advance_pair_refined(payload, width_ns / 2, max_halvings - 1)
+        final, second = advance_pair_refined(middle, width_ns / 2, max_halvings - 1)
+        return final, first + second

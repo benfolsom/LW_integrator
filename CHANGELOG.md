@@ -1,5 +1,22 @@
 # Changelog
 
+- Add optional `charge_ll` reaction to the experimental nonlinear pair runner
+  for exactly zero-spin states. Evaluate reduced-order charge recoil from the
+  potential provider's analytical field derivatives; preserve mode and separate
+  recoil/radiation/bound-momentum integrals in checkpoints. Finite-spin reaction
+  is not implied, and nonzero spin is rejected rather than discarded.
+- Add an experimental prescribed force/torque coupling contract for full spin,
+  with spin-constraint solving and mass-law compatibility checks. Add the
+  fixed-time dipole endpoint needed for particle/current momentum accounting;
+  neither helper is a completed self-force or total conservation test.
+- Extract emission-matched charge, charge–dipole and full dipole-squared
+  outward radiation from accepted full-tensor histories. Check static-location
+  electric/magnetic radiation and charge radiation independently of recoil.
+  Leading far fields do not supply angular momentum or the local bound terms.
+- Allow opt-in bounded step subdivision for source-position accuracy failures
+  in the nonlinear checkpoint runner. Do not retry velocity-domain or missing
+  causal-history failures, and do not relax source accuracy budgets.
+
 - Expose the experimental nonlinear pair through a checkpoint-based command
   (`python -m lw_integrator.nonlinear_pair`). Save accepted checkpoints by
   atomic replacement, preserve the input, and report the last saved state on

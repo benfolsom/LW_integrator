@@ -9,7 +9,7 @@ from lw_integrator import nonlinear_pair as cli
 def test_capabilities_are_explicit(capsys):
     assert cli.main(["--capabilities"]) == 0
     data = json.loads(capsys.readouterr().out)
-    assert data["supported_radiation_reaction"] == ["off"]
+    assert data["supported_radiation_reaction"] == ["off", "charge_ll"]
     assert data["production_default"] is False
 
 
@@ -70,3 +70,26 @@ def test_failed_json_encoding_does_not_replace_checkpoint(tmp_path):
     with pytest.raises(ValueError):
         cli.write_checkpoint(path, {"invalid": float("nan")})
     assert json.loads(path.read_text()) == {"accepted": 1}
+
+
+@pytest.mark.parametrize("selection", [None, "off", "charge_ll"])
+def test_reaction_selection_preserves_input_and_is_explicit(
+    tmp_path, monkeypatch, selection
+):
+    source, output = tmp_path / "in.json", tmp_path / "out.json"
+    original = {"particles": [{"reaction_mode": "charge_ll"}] * 2}
+    source.write_text(json.dumps(original))
+
+    def advance(payload, width, count):
+        return payload, [{"time_ns": 0.1}]
+
+    monkeypatch.setattr(cli, "advance_pair", advance)
+    args = ["--checkpoint", str(source), "--output", str(output), "--step-ns", ".1"]
+    if selection is not None:
+        args.extend(["--radiation-reaction", selection])
+    assert cli.main(args) == 0
+    assert json.loads(source.read_text()) == original
+    assert all(
+        p["reaction_mode"] == (selection or "charge_ll")
+        for p in json.loads(output.read_text())["particles"]
+    )

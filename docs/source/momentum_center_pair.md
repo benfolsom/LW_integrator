@@ -25,13 +25,62 @@ since the last completed batch, but cannot expose a partially written JSON file.
 
 Radiation reaction is an explicit capability, not an inferred side effect:
 
-- This nonlinear model accepts `--radiation-reaction off` only at present.
+- `--radiation-reaction off` retains ordinary full-spin interactions.
+- `--radiation-reaction charge_ll` enables reduced-order charge reaction for
+  exactly zero-spin states only. It uses the full analytical derivative along
+  ordinary Lorentz motion, is not a small-speed expansion, and matches the
+  existing reduced-order Medina result in the checked charge-only limit.
+  It is not Medina's finite-size causal convolution or a dipole reaction model.
+- Omitting the selector preserves each particle's checkpoint mode. An explicit
+  selection applies to both particles in the new output; the input is preserved.
 - The established main CLI still exposes `--radiation-reaction-mode medina_lad`
   and `--intrinsic-spin-self-reaction-mode experimental_linear_spin` under their
   existing model/controller restrictions.
-- The new command rejects those unsupported modes rather than substituting
+- The new command rejects those unsupported finite-spin combinations rather than substituting
   the old recoil into the full-spin equations. Matching nonlinear recoil and
   torque is still required before additional modes can be enabled here.
+
+Reaction-on checkpoints contain `reaction_ledger`, with one entry per particle:
+applied four-impulse, outward radiated four-momentum, and the integrated
+reduced-order bound-momentum derivative, all in native momentum units
+(amu mm/ns). Integrals use the same RK4 stages as the state update. Their sum
+checks the local reduced-order identity; it is not an independent measurement
+of the Maxwell field and does not include external startup work. A positive
+mechanical reaction work can accompany decreasing bound-field energy, so it
+must not be forced negative. Switching reaction off preserves the earlier ledger.
+
+`--max-step-halvings N` optionally retries source-position accuracy failures by
+subdividing an attempted interval, up to N levels (0 by default, maximum 10).
+No position tolerance changes. Velocity-domain and causal-history failures are
+not retried. `completed_steps` counts requested intervals;
+`accepted_substeps_in_batch` reports actual accepted substeps in the saved batch.
+This is not a general error-controlled adaptive integrator. If a subdivided
+interval fails, no partial interval is published. Some failures require an
+earlier checkpoint and a smaller step from there; local retry is not guaranteed.
+
+## Full-spin reaction building blocks
+
+`core.momentum_center_forcing.evaluate_forced` couples a supplied proper force
+and antisymmetric torque through the full spin constraint. It rejects mass-law
+incompatibility and does not derive the supplied force. A velocity/history-
+dependent self-force needs a further matched self-consistency calculation.
+No new CLI finite-spin reaction mode is enabled by this helper.
+
+`core.full_dipole_momentum.fixed_time_current_balance` supplies the dipole
+endpoint contribution for particle/current momentum accounting. It retains
+all six moment components and distinguishes the fixed-time current force from
+the point-force expression. Its local identity does not close the global
+particle-plus-field momentum gate or regularize a particle's self-field.
+
+`core.full_dipole_radiation.FullDipoleRadiationSampler` independently extracts
+outward energy and momentum from the accepted full-tensor potentials. It uses
+three radii, retains two extrapolation estimates, and separates q-squared,
+charge–dipole interference and dipole-squared radiation. The historical flux
+member names `q_mu_interference` and `mu_squared` mean the full moment tensor
+here, including its electric components. These are per-source self fluxes at
+matched emission times, not coherent pair radiation on a common observation
+slice. The leading far-field coefficient does not determine angular momentum
+or reversible bound momentum and must not be substituted directly as recoil.
 
 This is a maintained command-line entry point for experimental use, not a
 claim of completed strong-spin physics, full GUI integration or production
