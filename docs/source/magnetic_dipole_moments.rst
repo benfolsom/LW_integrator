@@ -1,6 +1,10 @@
 Magnetic dipole moments and spin
 ================================
 
+The separate :doc:`full_dipole_history` component supports experimental
+nonlinear full-tensor source studies. It does not change the default models
+described below.
+
 Intrinsic magnetic-moment dynamics are experimental and disabled by default.
 The selected physical model is the signed, minimal
 Rafelski--Formanek--Steinmetz (RFS) model:

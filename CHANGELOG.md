@@ -1,5 +1,15 @@
 # Changelog
 
+- Add an experimental full-dipole history component with shared fourth-order
+  position and third-order dipole endpoint derivatives. Derivatives use only
+  accepted sample windows; published intervals never change, and the newest
+  five intervals remain unavailable. Include explicit speed/unit checks and
+  versioned history restart data. Position can be reconstructed by integrating
+  the velocity interpolant, with explicit rejection if its disagreement with
+  accepted positions exceeds the caller's error budget. This is an immutable reference component,
+  not a new CLI/GUI force model or a completed nonlinear radiation-reaction
+  implementation. Existing simulation defaults are unchanged.
+
 - Report all four stored-minus-reconstructed momentum components in the
   experimental Jakobsen pair diagnostics. Spatial components expose the
   first-order momentum inverse's finite-spin remainder; temporal diagnostics
