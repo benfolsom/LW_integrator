@@ -842,17 +842,17 @@ def _quintic_dipole_hertz_sparse_response_with_rate(
 
 @njit(cache=True, fastmath=False)
 def quintic_dipole_hertz_sparse_response_strict_serial(
-    observer_time_ns,
-    observer_position_mm,
-    magnetic_moment_native,
-    segment_start_time_ns,
-    segment_duration_ns,
-    position_coefficients_mm,
-    spin_coefficients,
-    preserve_magnitude,
-    preserved_magnitude,
-    retarded_time_ns,
-):
+    observer_time_ns: float,
+    observer_position_mm: np.ndarray,
+    magnetic_moment_native: float,
+    segment_start_time_ns: float,
+    segment_duration_ns: float,
+    position_coefficients_mm: np.ndarray,
+    spin_coefficients: np.ndarray,
+    preserve_magnitude: bool,
+    preserved_magnitude: float,
+    retarded_time_ns: float,
+) -> tuple[int, np.ndarray, np.ndarray, np.ndarray, float]:
     """Original 34-output interface, unchanged for existing callers."""
     result = _quintic_dipole_hertz_sparse_response_with_rate(
         observer_time_ns,
@@ -873,24 +873,24 @@ def quintic_dipole_hertz_sparse_response_strict_serial(
 
 @njit(cache=True, fastmath=False)
 def quintic_dipole_hertz_sparse_potential_rate_strict_serial(
-    observer_time_ns,
-    observer_position_mm,
-    magnetic_moment_native,
-    segment_start_time_ns,
-    segment_duration_ns,
-    position_coefficients_mm,
-    spin_coefficients,
-    preserve_magnitude,
-    preserved_magnitude,
-    retarded_time_ns,
-    observer_four_velocity_mm_ns,
-):
+    observer_time_ns: float,
+    observer_position_mm: np.ndarray,
+    magnetic_moment_native: float,
+    segment_start_time_ns: float,
+    segment_duration_ns: float,
+    position_coefficients_mm: np.ndarray,
+    spin_coefficients: np.ndarray,
+    preserve_magnitude: bool,
+    preserved_magnitude: float,
+    retarded_time_ns: float,
+    observer_four_velocity_mm_ns: np.ndarray,
+) -> tuple[int, np.ndarray, np.ndarray, np.ndarray, float, np.ndarray, np.ndarray]:
     """Status, A, packed F, packed partial_F, residual, u.partial_A, partial_A.
 
     The contraction is in native potential per ns. The small derivative map
     permits canonical velocity inversion after the source potentials are summed.
     """
-    return _quintic_dipole_hertz_sparse_response_with_rate(
+    result = _quintic_dipole_hertz_sparse_response_with_rate(
         observer_time_ns,
         observer_position_mm,
         magnetic_moment_native,
@@ -904,6 +904,7 @@ def quintic_dipole_hertz_sparse_potential_rate_strict_serial(
         observer_four_velocity_mm_ns,
         True,
     )
+    return result[0], result[1], result[2], result[3], result[4], result[5], result[6]
 
 
 __all__ = [

@@ -241,3 +241,28 @@ def test_smooth_start_restart_preserves_potential_configuration():
     assert np.linalg.norm(np.asarray(whole["states"])[:, 5:8]) > 0
     with pytest.raises(ValueError, match="startup duration"):
         initialize_pair(particles, states, histories, startup_duration_ns=-1)
+
+
+def test_velocity_domain_failure_does_not_publish_a_trial(monkeypatch):
+    import core.momentum_center_pair as pair
+
+    payload = make_pair()
+    original = copy.deepcopy(payload)
+    evaluate = pair.dynamics_native
+    calls = 0
+
+    def fail_trial(*args):
+        nonlocal calls
+        calls += 1
+        # Two accepted-state validation calls, then fail during advancement.
+        if calls == 4:
+            raise model.VelocityDomainError(
+                "No continuous timelike velocity branch", beta_squared=1.01
+            )
+        return evaluate(*args)
+
+    monkeypatch.setattr(pair, "dynamics_native", fail_trial)
+    with pytest.raises(model.VelocityDomainError) as caught:
+        advance_pair(payload, 0.01 / c)
+    assert caught.value.beta_squared == 1.01
+    assert payload == original

@@ -48,6 +48,13 @@ The metric is $(+---)$ and $\widetilde{u}^{,2}=1$. The solver rejects a
 non-timelike momentum or velocity branch. It does not project the state,
 silently change models, or interpret a domain failure as spin flipping.
 
+`VelocityDomainError` is a `ValueError` subtype for unusable momentum/velocity
+inputs or a lost timelike branch. When calculable, its `beta_squared` attribute
+is the attempted lab speed squared divided by c squared; its
+`direction_norm_squared` is the internal unnormalized direction's Minkowski
+norm. Nonfinite inputs are rejected, not allowed to return NaN velocities.
+Spatial proper velocity above c is valid and is not used as a rejection test.
+
 ## API and accepted past
 
 - `MomentumCenterParticle(charge_native, mass_amu, g, reaction_mode="off")`

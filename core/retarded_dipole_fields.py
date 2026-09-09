@@ -54,7 +54,7 @@ from copy import copy
 from dataclasses import dataclass, field as dataclass_field
 from functools import lru_cache
 from itertools import product
-from typing import Hashable, Sequence, cast
+from typing import Any, Hashable, Sequence, cast
 
 import numpy as np
 
@@ -1305,7 +1305,7 @@ def _evaluate_prepared_hertz_batch_numba_full_strict_serial(
             getattr(event_evaluator, "signatures", ())
         )
         try:
-            arguments = (
+            arguments: tuple[Any, ...] = (
                 worldline.time_ns,
                 worldline.position_mm,
                 worldline.segment_duration_ns,

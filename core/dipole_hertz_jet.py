@@ -18,7 +18,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from itertools import permutations, product
 from math import factorial
-from typing import TYPE_CHECKING, Hashable, Iterable, Sequence, cast
+from typing import TYPE_CHECKING, Callable, Hashable, Iterable, Sequence, cast
 
 import numpy as np
 
@@ -30,6 +30,8 @@ if TYPE_CHECKING:
     from .retarded_dipole_fields import (
         RetardedDipoleFieldGradientResult,
         RetardedDipoleResponseGradientResult,
+        RetardedDipoleHertzResult,
+        RetardedDipoleRootResult,
     )
     from .retarded_fields import ObserverEvent, TrajectoryHistory
 
@@ -1094,6 +1096,7 @@ def evaluate_retarded_dipole_field_gradient_hertz_jet_native(
         excluded_source_identities=excluded_source_identities,
         spin_interpolation_model=spin_interpolation_model,
     )
+    center: RetardedDipoleRootResult | RetardedDipoleHertzResult
     if response_kernel == "numba_sparse_strict_serial":
         center = _evaluate_prepared_dipole_roots_numba_exact_serial(
             prepared,
@@ -1253,6 +1256,9 @@ def evaluate_retarded_dipole_field_gradient_hertz_jet_native(
                 "retarded root is inside the nonsmooth segment-boundary guard "
                 f"for source {source.identity!r}: fraction={fraction:.17g}"
             )
+        evaluator: Callable[
+            ..., DipoleHertzResponseJetResult | DipoleHertzSparseResponseJetResult
+        ]
         if response_kernel == "python":
             evaluator = quintic_dipole_hertz_response_jet_native
         elif response_kernel == "numba_strict_serial":
@@ -1263,6 +1269,7 @@ def evaluate_retarded_dipole_field_gradient_hertz_jet_native(
         if response_kernel == "numba_sparse_strict_serial":
             extra_arguments["observer_four_velocity_mm_ns"] = velocity
             extra_arguments["include_partial_a"] = include_partial_a
+        result: DipoleHertzResponseJetResult | DipoleHertzSparseResponseJetResult
         result = evaluator(
             observer_time_ns=float(observer_event.time_ns),
             observer_position_mm=observer_event.position_mm,
@@ -1306,13 +1313,16 @@ def evaluate_retarded_dipole_field_gradient_hertz_jet_native(
             if partial_a is not None:
                 assert result.partial_a is not None
                 partial_a += result.partial_a
+        response: (
+            RetardedDipoleFieldGradientResult | RetardedDipoleResponseGradientResult
+        )
         response = RetardedDipoleResponseGradientResult(
             four_potential=four_potential,
             four_potential_proper_rate=potential_rate,
             partial_a=partial_a,
             antisymmetric_response=packed_field,
             partial_antisymmetric_response=packed_partial_f,
-            root=center,
+            root=cast("RetardedDipoleRootResult", center),
             used_analytic_response=True,
             fallback_reason=None,
             source_segment_index=segment_index.copy(),
@@ -1337,7 +1347,7 @@ def evaluate_retarded_dipole_field_gradient_hertz_jet_native(
             magnetic_field_native=magnetic,
             field_tensor=field_tensor,
             partial_f=partial_f,
-            hertz=center,
+            hertz=cast("RetardedDipoleHertzResult", center),
             stencil_step_mm=0.0,
             stencil_offsets=np.zeros((1, 4), dtype=int),
             stencil_retarded_time_ns=center.retarded_time_ns[np.newaxis, :],

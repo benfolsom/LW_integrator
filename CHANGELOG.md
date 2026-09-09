@@ -1,5 +1,12 @@
 # Changelog
 
+- Reject nonfinite nonlinear momentum/field inputs instead of returning NaN
+  velocities. Report unusable timelike branches with a dedicated ValueError
+  subtype carrying the attempted lab-speed ratio when available. Preserve
+  atomic pair rejection and allow spatial proper velocities greater than c.
+  Correct analytical-provider type annotations and result narrowing so the
+  nonlinear API's imported-module type check passes without exclusions.
+
 - Add a checkpointed smooth-start potential to the experimental nonlinear
   reciprocal pair. Include its time-derivative contributions to the force and
   potential derivatives in native units. Record evolved-source sampling and

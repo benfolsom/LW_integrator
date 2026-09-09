@@ -47,7 +47,7 @@ _STATUS_SINGULAR_KAPPA = 5
 _STATUS_SPIN_INTERPOLATION_ZERO = 6
 
 
-def _permutation_sign(indices: Tuple[int, int, int, int]) -> float:
+def _permutation_sign(indices: Tuple[int, ...]) -> float:
     inversions = sum(
         indices[left] > indices[right]
         for left in range(4)
@@ -63,7 +63,7 @@ for _indices in permutations(range(4)):
 
 @jit(nopython=True, fastmath=False, nogil=True, cache=True, inline="always")
 def _norm3(x: float, y: float, z: float) -> float:
-    return np.sqrt(x * x + y * y + z * z)
+    return float(np.sqrt(x * x + y * y + z * z))
 
 
 @jit(nopython=True, fastmath=False, nogil=True, cache=True, inline="always")
@@ -80,7 +80,7 @@ def _knot_light_cone_residual_mm(
     dy = observer_y_mm - position_mm[knot_index, 1]
     dz = observer_z_mm - position_mm[knot_index, 2]
     separation_mm = _norm3(dx, dy, dz)
-    return C_MMNS * (observer_time_ns - time_ns[knot_index]) - separation_mm
+    return float(C_MMNS * (observer_time_ns - time_ns[knot_index]) - separation_mm)
 
 
 @jit(nopython=True, fastmath=False, nogil=True, cache=True, inline="always")

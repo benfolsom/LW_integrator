@@ -14,6 +14,22 @@ from typing import Any, Callable
 
 Provider = Callable[[np.ndarray], tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]]
 
+
+class VelocityDomainError(ValueError):
+    """The model has no usable future timelike velocity at this state."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        beta_squared: float | None = None,
+        direction_norm_squared: float | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.beta_squared = beta_squared
+        self.direction_norm_squared = direction_norm_squared
+
+
 METRIC = np.array([1.0, -1.0, -1.0, -1.0])
 PAIRS = tuple((i, j) for i in range(4) for j in range(i + 1, 4))
 EPS = np.zeros((4, 4, 4, 4))
@@ -73,9 +89,19 @@ def velocity_direction(
     particle: Particle,
 ) -> tuple[Any, ...]:
     """Unnormalized velocity for the exact constraint solve and boundary audit."""
+    for value, shape in (
+        (momentum, (4,)),
+        (tensor, (4, 4)),
+        (field, (4, 4)),
+        (gradient, (4, 4, 4)),
+    ):
+        if np.shape(value) != shape or not np.isfinite(value).all():
+            raise VelocityDomainError(
+                "Finite momentum, spin, field and gradient required"
+            )
     mass2 = dot(momentum, momentum)
-    if mass2 <= 0 or momentum[0] <= 0:
-        raise ValueError("Future timelike kinetic momentum required")
+    if not np.isfinite(mass2) or mass2 <= 0 or momentum[0] <= 0:
+        raise VelocityDomainError("Future timelike kinetic momentum required")
     # RK trial states need an off-constraint extension. Report the constraint
     # and its rate; never project the stored spin or momentum to hide drift.
     mixed = field * METRIC[None, :]
@@ -93,7 +119,12 @@ def velocity_direction(
     spin_right += (
         particle.charge / mass2 * (tensor * METRIC[None, :]) @ mixed @ momentum
     )
-    correction = np.linalg.solve(matrix, spin_right)
+    if not np.isfinite(matrix).all() or not np.isfinite(spin_right).all():
+        raise VelocityDomainError("Nonfinite momentum-to-velocity system")
+    try:
+        correction = np.linalg.solve(matrix, spin_right)
+    except np.linalg.LinAlgError as error:
+        raise VelocityDomainError("Singular momentum-to-velocity system") from error
     direction = momentum / mass2 + correction
     return (
         direction,
@@ -116,12 +147,26 @@ def velocity(
     direction, unit_force, unit_torque, coefficient, condition, correction = (
         velocity_direction(momentum, tensor, field, gradient, particle)
     )
-    if dot(direction, direction) <= 0:
-        raise ValueError("No continuous timelike velocity branch")
-    omega = 1 / np.sqrt(dot(direction, direction))
+    norm_squared = dot(direction, direction)
+    beta_squared = (
+        float(np.dot(direction[1:] / direction[0], direction[1:] / direction[0]))
+        if np.isfinite(direction).all() and direction[0] != 0
+        else None
+    )
+    if not np.isfinite(norm_squared) or norm_squared <= 0:
+        raise VelocityDomainError(
+            "No continuous timelike velocity branch",
+            beta_squared=beta_squared,
+            direction_norm_squared=norm_squared,
+        )
+    omega = 1 / np.sqrt(norm_squared)
     u = omega * direction
-    if u[0] <= 0:
-        raise ValueError("Nonfuture velocity branch")
+    if not np.isfinite(u).all() or u[0] <= 0:
+        raise VelocityDomainError(
+            "Nonfinite or nonfuture velocity branch",
+            beta_squared=beta_squared,
+            direction_norm_squared=norm_squared,
+        )
     coupling = coefficient * omega
     return (
         u,
@@ -173,6 +218,14 @@ def evaluate(
     if state.shape != (14,) or not np.isfinite(state).all():
         raise ValueError("Finite 14-component momentum-center state required")
     a, da, field, gradient = provider(state[:4])
+    for value, shape in (
+        (a, (4,)),
+        (da, (4, 4)),
+        (field, (4, 4)),
+        (gradient, (4, 4, 4)),
+    ):
+        if np.shape(value) != shape or not np.isfinite(value).all():
+            raise ValueError("Finite potential response with correct shapes required")
     momentum = state[4:8] - particle.charge * a
     tensor = unpack(state[8:14])
     u, dipole_force, torque, coupling, condition, velocity_correction = velocity(

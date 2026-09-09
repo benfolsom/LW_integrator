@@ -682,11 +682,11 @@ class DipoleSourceConfig:
         widths: list[float | None] = []
         for name in width_names:
             raw = getattr(self, name)
-            value = None if raw is None else float(raw)
-            if value is not None and (not np.isfinite(value) or value <= 0.0):
+            width = None if raw is None else float(raw)
+            if width is not None and (not np.isfinite(width) or width <= 0.0):
                 raise ValueError(f"dipole source {name} must be finite and positive")
-            setattr(self, name, value)
-            widths.append(value)
+            setattr(self, name, width)
+            widths.append(width)
         normalized_scale_list: list[DipoleLocalJetScaleConfig] = []
         for scale_value in self.local_jet_scales:
             if isinstance(scale_value, DipoleLocalJetScaleConfig):
