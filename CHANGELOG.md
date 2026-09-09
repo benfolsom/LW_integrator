@@ -1,5 +1,12 @@
 # Changelog
 
+- Add a checkpointed smooth-start potential to the experimental nonlinear
+  reciprocal pair. Include its time-derivative contributions to the force and
+  potential derivatives in native units. Record evolved-source sampling and
+  minimum signal delays. Validate longer reciprocal trajectories through
+  receipt of newly evolved source histories against the retained study model;
+  the startup is explicitly driven and radiation reaction remains off.
+
 - Connect the experimental nonlinear momentum-and-spin-tensor equations to
   native-unit reciprocal stepping and full-dipole causal histories. Add an
   explicitly versioned whole-pair JSON checkpoint, atomic source publication,

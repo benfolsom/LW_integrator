@@ -22,6 +22,47 @@ NativeProvider = Callable[
 ]
 
 
+def smooth_start_native(provider: NativeProvider, duration_ns: float) -> NativeProvider:
+    """Explicit driven startup: multiply A by a C5 ramp, including derivatives.
+
+    Ramp time starts at lab t=0. Derivatives are with respect to ct, not t.
+    This compensating external potential vanishes after the ramp; it is not
+    an isolated interacting prehistory or a Lorentz-invariant preparation.
+    """
+    if not np.isfinite(duration_ns) or duration_ns < 0:
+        raise ValueError("Finite nonnegative startup duration required")
+    coefficients = np.array([0.0, 0, 0, 0, 0, 0, 462, -1980, 3465, -3080, 1386, -252])
+
+    def wrapped(
+        time_ns: float, position: np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        if duration_ns == 0 or time_ns >= duration_ns:
+            return provider(time_ns, position)
+        if time_ns <= 0:
+            return np.zeros(4), np.zeros((4, 4)), np.zeros((4, 4)), np.zeros((4, 4, 4))
+        r, dr, ddr = [
+            np.polynomial.polynomial.polyval(
+                time_ns / duration_ns, np.polynomial.polynomial.polyder(coefficients, n)
+            )
+            / (c * duration_ns) ** n
+            for n in range(3)
+        ]
+        a, da, field, gradient = provider(time_ns, position)
+        wedge = np.zeros((4, 4))
+        wedge[0, :] += a
+        wedge[:, 0] -= a
+        new_da = r * da
+        new_da[0] += dr * a
+        new_gradient = r * gradient
+        new_gradient[0] += dr * field + ddr * wedge
+        for k in range(4):
+            new_gradient[k, 0, :] += dr * da[k]
+            new_gradient[k, :, 0] -= dr * da[k]
+        return r * a, new_da, r * field + dr * wedge, new_gradient
+
+    return wrapped
+
+
 @dataclass(frozen=True)
 class MomentumCenterParticle:
     charge_native: float
@@ -123,15 +164,27 @@ class FullDipoleProvider:
     This reference path reuses analytical jets, not the sparse compiled kernel.
     """
 
-    def __init__(self, history: FullDipoleHistory, charge_native: float) -> None:
+    def __init__(
+        self,
+        history: FullDipoleHistory,
+        charge_native: float,
+        startup_duration_ns: float = 0.0,
+    ) -> None:
         if history.speed_limit != c or not np.isfinite(charge_native):
             raise ValueError(
                 "Native history requires speed_limit=C_MMNS and finite charge"
             )
         self.history = history
         self.charge_native = float(charge_native)
+        self.samples: list[tuple[float, float, float]] = []
+        self.prepared = smooth_start_native(self._response, startup_duration_ns)
 
     def __call__(
+        self, time_ns: float, position_mm: np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        return self.prepared(time_ns, position_mm)
+
+    def _response(
         self, time_ns: float, position_mm: np.ndarray
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         event = np.r_[c * time_ns, position_mm]
@@ -155,6 +208,9 @@ class FullDipoleProvider:
                     charge=self.charge_native / c,
                     allow_boundary=True,
                 )
+                self.samples.append(
+                    (time_ns, result["retarded_time"] / c, segment.start)
+                )
                 values = tuple(
                     c * result[key]
                     for key in (
@@ -174,6 +230,8 @@ def initialize_pair(
     particles: list[MomentumCenterParticle],
     states: Any,
     histories: list[FullDipoleHistory],
+    *,
+    startup_duration_ns: float = 0.0,
 ) -> dict[str, Any]:
     """Checkpoint accepted native states and their already prepared source past."""
     if len(particles) != 2 or len(histories) != 2:
@@ -185,6 +243,7 @@ def initialize_pair(
         states=np.asarray(states, dtype=float).tolist(),
         histories=[h.to_checkpoint_payload() for h in histories],
         accepted_steps=0,
+        startup_duration_ns=startup_duration_ns,
     )
     _restore(payload)
     return payload
@@ -218,7 +277,11 @@ def _restore(
         ):
             raise ValueError("History endpoint must match the native accepted state")
     providers = [
-        FullDipoleProvider(histories[1 - i], particles[1 - i].charge_native)
+        FullDipoleProvider(
+            histories[1 - i],
+            particles[1 - i].charge_native,
+            payload.get("startup_duration_ns", 0.0),
+        )
         for i in range(2)
     ]
     for state, particle, provider, history in zip(
@@ -256,7 +319,11 @@ def advance_pair(
     records = []
     for _ in range(steps):
         providers = [
-            FullDipoleProvider(histories[1 - i], particles[1 - i].charge_native)
+            FullDipoleProvider(
+                histories[1 - i],
+                particles[1 - i].charge_native,
+                payload.get("startup_duration_ns", 0.0),
+            )
             for i in range(2)
         ]
         trials, diagnostics, candidate_histories = [], [], []
@@ -286,7 +353,22 @@ def advance_pair(
             trials.append(trial)
             diagnostics.append(diagnostic)
         states, histories = np.asarray(trials), candidate_histories
-        records.append(dict(time_ns=endpoint, particles=diagnostics))
+        records.append(
+            dict(
+                time_ns=endpoint,
+                particles=diagnostics,
+                source_sampling=[
+                    dict(
+                        count=len(p.samples),
+                        evolved_count=sum(s[2] >= 0 for s in p.samples),
+                        minimum_delay_ns=min(
+                            (s[0] - s[1] for s in p.samples), default=None
+                        ),
+                    )
+                    for p in providers
+                ],
+            )
+        )
     result = dict(
         model=MODEL,
         units=UNITS,
@@ -294,5 +376,6 @@ def advance_pair(
         states=states.tolist(),
         histories=[h.to_checkpoint_payload() for h in histories],
         accepted_steps=payload["accepted_steps"] + steps,
+        startup_duration_ns=payload.get("startup_duration_ns", 0.0),
     )
     return result, records

@@ -63,6 +63,7 @@ silently change models, or interpret a domain failure as spin flipping.
 - `initialize_pair(particles, states, histories)` validates and packages two
   accepted states with their prepared native-unit histories. The last accepted
   time, position, instantaneous velocity and proper dipole must agree.
+  Its optional `startup_duration_ns` enables the explicit preparation below.
 - `advance_pair(payload, width_ns, steps=1)` returns a new checkpoint and
   accepted-end diagnostics. The checkpoint can be serialized with JSON and
   supplied directly to the next call.
@@ -71,6 +72,22 @@ Initialization deliberately does **not** invent a self-consistent interacting
 past. A caller must prepare it or explicitly label a prescribed startup. The
 unit-test coasting past is prescribed; its initial mismatch is not a solved
 warm-up problem. The historical five-interval publication delay still applies.
+
+For a controlled smooth preparation, pass `startup_duration_ns` both to the
+initial `FullDipoleProvider` objects and to `initialize_pair`. This multiplies
+the mutual potential by a smooth lab-time ramp starting at zero; the matching
+extra contributions to potential derivatives, fields and field derivatives
+are included. This is an applied compensating potential, not an unexplained
+force switch or an isolated past solution. The ramp ends at the specified lab
+time measured from zero and is saved in the checkpoint. Zero duration preserves
+the unramped API. The ramp is defined in the preparation frame, not claimed
+to be a Lorentz-invariant startup procedure.
+
+Accepted-step records contain per-observer `source_sampling`: total response
+count, `evolved_count` for source intervals starting at or after lab time zero,
+and `minimum_delay_ns`. These count evaluations, not independent samples or
+energy-balance measurements. When no source response is needed during startup,
+the minimum delay is null, not a fictitious zero signal delay.
 
 Every RK4 stage uses the same frozen pair of source histories. Both candidate
 states and new histories must succeed before either is published. Any failure
@@ -97,11 +114,15 @@ remain active on their existing compatible paths. Benchmark and specialize the
 full-tensor response after a matched post-arrival trajectory check, not by
 substituting the old constrained source definition.
 
-Next: reproduce the study's smooth-start, evolved-source reciprocal trajectory
-through this native API; check step refinement and errors after newly evolved
-source data reach the other particle. Then assess particle-plus-field momentum
-and angular momentum. Neither those balances nor nonlinear charge–dipole and
-dipole-squared self-radiation are closed by these integration tests.
+The smooth-start study now runs through this native API for two initial
+light-travel times, with nonzero spin and reciprocal evolved-source sampling.
+The comparison runner and archived results live in the companion study at
+`diagnostics/run_native_causal_comparison.py` and
+`planning/evidence/native_causal_comparison_2026-09-09/`.
+This is a low-speed migration/refinement test, not a new ultra-relativistic
+or total-conservation gate. Next assess particle-plus-field momentum and angular
+momentum. Neither those balances nor nonlinear charge–dipole and dipole-squared
+self-radiation are closed by these integration tests.
 
 Derivation, references and prior evidence are retained in the companion study
 repository's `planning/finite_spin_primary_implementation_plan_2026-09-09.md`

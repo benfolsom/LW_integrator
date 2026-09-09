@@ -209,3 +209,35 @@ def test_nonfuture_initial_momentum_rejected():
             MomentumCenterParticle(1, 1),
             zero_provider,
         )
+
+
+def test_smooth_start_restart_preserves_potential_configuration():
+    particles = [MomentumCenterParticle(0.03 * c, 1) for _ in range(2)]
+    states = [
+        initial_state_native(
+            [0, -0.5 + i, 0, 0],
+            [1, 0, 0, 0],
+            [0, 0, 0.1 * c],
+            particles[i],
+            zero_provider,
+        )
+        for i in range(2)
+    ]
+    histories = [
+        history(
+            [-0.5 + i, 0, 0],
+            dynamics_native(states[i], particles[i], zero_provider)[1][
+                "proper_dipole_native"
+            ],
+        )
+        for i in range(2)
+    ]
+    payload = initialize_pair(particles, states, histories, startup_duration_ns=0.5 / c)
+    whole, _ = advance_pair(payload, 0.01 / c, 4)
+    first, _ = advance_pair(payload, 0.01 / c, 2)
+    restarted, _ = advance_pair(json.loads(json.dumps(first)), 0.01 / c, 2)
+    assert whole == restarted
+    assert whole["startup_duration_ns"] == 0.5 / c
+    assert np.linalg.norm(np.asarray(whole["states"])[:, 5:8]) > 0
+    with pytest.raises(ValueError, match="startup duration"):
+        initialize_pair(particles, states, histories, startup_duration_ns=-1)
