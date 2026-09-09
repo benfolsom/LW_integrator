@@ -1,5 +1,9 @@
 # Experimental full-dipole source history
 
+The [nonlinear reciprocal pair API](momentum_center_pair.md) now owns a
+whole-stepper checkpoint using this history component. Its experimental
+status and remaining physical validation are separate from interpolation tests.
+
 `core.full_dipole_history.FullDipoleHistory` is a maintained, experimental
 interpolation component. It does not select a force law or enable a new
 CLI/GUI simulation mode. Nonlinear magnetic self-reaction is not implemented

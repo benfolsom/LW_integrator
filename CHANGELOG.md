@@ -1,5 +1,13 @@
 # Changelog
 
+- Connect the experimental nonlinear momentum-and-spin-tensor equations to
+  native-unit reciprocal stepping and full-dipole causal histories. Add an
+  explicitly versioned whole-pair JSON checkpoint, atomic source publication,
+  and unavailable-history rejection. Check native conversions against the
+  existing magnetic provider and the retained study equations. This separate
+  radiation-off API does not change CLI/GUI defaults, enable nonlinear
+  self-reaction, or establish full particle-plus-field conservation.
+
 - Add an experimental full-dipole history component with shared fourth-order
   position and third-order dipole endpoint derivatives. Derivatives use only
   accepted sample windows; published intervals never change, and the newest
