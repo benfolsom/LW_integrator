@@ -1,7 +1,7 @@
 Magnetic dipole moments and spin
 ================================
 
-The separate :doc:`full_dipole_history` component supports experimental
+The separate :doc:`finite_spin_pair` component supports
 nonlinear full-tensor source studies. It does not change the default models
 described below.
 

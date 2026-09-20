@@ -86,8 +86,9 @@ def solve_proper_step_to_lab_time(
 
     The lower endpoint is the already accepted state at ``h=0`` and is never
     re-evaluated.  The upper endpoint expands geometrically until it brackets
-    the target.  Secant proposals are kept away from the outer five percent of
-    the bracket; bisection is used otherwise.  This preserves a monotone,
+    the target within tolerance. The first strictly interior secant proposal
+    may approach an edge; subsequent proposals keep the five-percent safeguard.
+    Out-of-bracket proposals always use bisection. This preserves a monotone,
     auditable failure mode without assuming a constant Lorentz factor.
     """
 
@@ -130,8 +131,14 @@ def solve_proper_step_to_lab_time(
 
     def evaluate(proper_step_ns: float) -> tuple[ParticleState, float, float]:
         nonlocal evaluations
+        # Lazy import avoids the integration runner's import of this module.
+        from .integration_runner import IntegrationCancelled
+
         try:
             state = advance_trial(float(proper_step_ns))
+        except IntegrationCancelled:
+            # Cancellation must reach the caller that saves accepted history.
+            raise
         except Exception as exc:
             raise SharedLabTimeError(
                 f"{role} trial failed at proper step {proper_step_ns:.17g} ns"
@@ -145,7 +152,7 @@ def solve_proper_step_to_lab_time(
     upper_state, upper_time, upper_residual = evaluate(upper_h)
     previous_upper_time = upper_time
     expansions = 0
-    while upper_residual < 0.0:
+    while upper_residual < -tolerance_ns:
         if expansions >= max_bracket_expansions or upper_h >= maximum_proper_step_ns:
             raise SharedLabTimeError(
                 f"{role} could not bracket target lab time {target_time_ns:.17g} ns"
@@ -177,7 +184,7 @@ def solve_proper_step_to_lab_time(
             evaluations=evaluations,
         )
 
-    for _ in range(max_iterations):
+    for iteration in range(max_iterations):
         denominator = upper_residual - lower_residual
         if denominator == 0.0 or not np.isfinite(denominator):
             candidate_h = 0.5 * (lower_h + upper_h)
@@ -186,7 +193,11 @@ def solve_proper_step_to_lab_time(
             width = upper_h - lower_h
             inner_lower = lower_h + 0.05 * width
             inner_upper = upper_h - 0.05 * width
-            if candidate_h <= inner_lower or candidate_h >= inner_upper:
+            outside_bracket = not lower_h < candidate_h < upper_h
+            guarded_edge = iteration > 0 and (
+                candidate_h <= inner_lower or candidate_h >= inner_upper
+            )
+            if outside_bracket or guarded_edge:
                 candidate_h = 0.5 * (lower_h + upper_h)
 
         candidate_state, candidate_time, candidate_residual = evaluate(candidate_h)

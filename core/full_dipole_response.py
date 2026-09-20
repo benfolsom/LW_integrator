@@ -1,8 +1,9 @@
-"""Experimental full antisymmetric dipole source, c=1 coordinates and Gaussian units.
+"""Full antisymmetric dipole source, c=1 coordinates and Gaussian units.
 
 Retarded Hertz tensor H^{mu nu}=D^{mu nu}/(R.u); A^mu=partial_nu H^{mu nu}.
 D is the proper-time dipole tensor, NOT its lab-time density. Smooth segment
-polynomials only; no extrapolation or claim of a compiled production backend.
+polynomials only; no extrapolation. Taylor arithmetic uses the retained strict
+compiled kernels when available, with the Python arithmetic as fallback.
 """
 
 import numpy as np
@@ -10,7 +11,7 @@ from math import comb
 from typing import Any
 from scipy.optimize import brentq
 
-from core.dipole_hertz_jet import _Jet3, _polynomial, _norm, _dot
+from core.dipole_hertz_jet import _CompiledJet3 as _Jet3, _polynomial, _norm, _dot
 
 METRIC = np.array([1.0, -1.0, -1.0, -1.0])
 
@@ -81,6 +82,27 @@ def response(
         raise ValueError("Observer coincides with the source")
     coordinates = [_Jet3.variable(event[i], i) for i in range(4)]
     source_time = _Jet3.constant(root)
+    hertz, charge_a, source_time, radius = _retarded_tensors(
+        coordinates, source_time, start, duration, position, dipole, charge
+    )
+    a, da, field, df = _extract_response(hertz, charge_a)
+    return dict(
+        four_potential=a,
+        partial_a=da,
+        field_tensor=field,
+        partial_f=df,
+        retarded_time=root,
+        segment_fraction=fraction,
+        light_cone_derivative_residual=float(
+            np.max(np.abs((coordinates[0] - source_time - radius).coefficients[1:]))
+        ),
+    )
+
+
+def _retarded_tensors(
+    coordinates, source_time, start, duration, position, dipole, charge
+):
+    """One potential algebra shared by point and moving-observer derivatives."""
 
     def geometry(time: _Jet3) -> tuple[Any, Any, Any, Any]:
         s = (time - start) / duration
@@ -115,8 +137,12 @@ def response(
     # Charge LW potential uses the SAME retarded worldline: q u^mu / (R.u).
     gamma = 1 / (1 - beta2).sqrt()
     charge_a = [charge * gamma / rho] + [charge * gamma * b / rho for b in beta]
+    return hertz, charge_a, source_time, radius
+
+
+def _extract_response(hertz, charge_a):
     a = np.array([sum(hertz[i][j].derivative(j) for j in range(4)) for i in range(4)])
-    a += np.array([v.value for v in charge_a])
+    a += np.array([v.derivative() for v in charge_a])
     da = np.array(
         [
             [sum(hertz[i][j].derivative(k, j) for j in range(4)) for i in range(4)]
@@ -124,8 +150,11 @@ def response(
         ]
     )
     da += np.array([[charge_a[i].derivative(k) for i in range(4)] for k in range(4)])
-    field = METRIC[:, None] * da - METRIC[None, :] * da.T
-    df = np.empty((4, 4, 4))
+    if da.ndim == 2:
+        field = METRIC[:, None] * da - METRIC[None, :] * da.T
+    else:
+        field = METRIC[:, None, None] * da - METRIC[None, :, None] * da.swapaxes(0, 1)
+    df = np.empty((4, 4, 4) + np.shape(a)[1:])
     for k in range(4):
         for i in range(4):
             for j in range(4):
@@ -137,14 +166,46 @@ def response(
                 df[k, i, j] += METRIC[i] * charge_a[j].derivative(k, i) - METRIC[
                     j
                 ] * charge_a[i].derivative(k, j)
-    return dict(
-        four_potential=a,
-        partial_a=da,
-        field_tensor=field,
-        partial_f=df,
-        retarded_time=root,
-        segment_fraction=fraction,
-        light_cone_derivative_residual=float(
-            np.max(np.abs((coordinates[0] - source_time - radius).coefficients[1:]))
-        ),
+    return a, da, field, df
+
+
+def response_taylor(
+    events,
+    start,
+    duration,
+    position_coefficients,
+    dipole_coefficients,
+    charge=0.0,
+    allow_boundary=False,
+):
+    """Taylor coefficients along observer motion within one smooth source segment.
+
+    Input shape (5,4), coefficient n = derivative/n!. Returned tuples have
+    leading coefficient axis (5,...). Source joins require caller validation;
+    no neighbouring trajectory fit or extra displaced observer is used.
+    """
+    from .response_taylor import ResponseTaylor
+
+    events = np.asarray(events, dtype=float)
+    if events.shape != (5, 4) or not np.isfinite(events).all():
+        raise ValueError("Finite order-four observer coefficients required")
+    point = response(
+        events[0],
+        start,
+        duration,
+        position_coefficients,
+        dipole_coefficients,
+        charge=charge,
+        allow_boundary=allow_boundary,
     )
+    coordinates = [ResponseTaylor.variable(events[:, i], i) for i in range(4)]
+    hertz, charge_a, _, _ = _retarded_tensors(
+        coordinates,
+        ResponseTaylor.constant(point["retarded_time"]),
+        start,
+        duration,
+        np.asarray(position_coefficients),
+        np.asarray(dipole_coefficients),
+        charge,
+    )
+    return tuple(np.moveaxis(v, -1, 0) for v in _extract_response(hertz, charge_a))

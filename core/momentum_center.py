@@ -102,27 +102,58 @@ def velocity_direction(
     mass2 = dot(momentum, momentum)
     if not np.isfinite(mass2) or mass2 <= 0 or momentum[0] <= 0:
         raise VelocityDomainError("Future timelike kinetic momentum required")
+    direction, unit_force, unit_torque, coefficient, matrix, correction = (
+        _velocity_system(momentum, tensor, field, gradient, particle, mass2)
+    )
+    return (
+        direction,
+        unit_force,
+        unit_torque,
+        coefficient,
+        np.linalg.cond(matrix),
+        correction,
+    )
+
+
+def _velocity_system(
+    momentum,
+    tensor,
+    field,
+    gradient,
+    particle,
+    mass2,
+    contraction=contract,
+    solve=np.linalg.solve,
+    metric=METRIC,
+    identity=None,
+    half=0.5,
+):
+    """Shared full-spin algebra for ordinary values and analytical Taylor values."""
     # RK trial states need an off-constraint extension. Report the constraint
     # and its rate; never project the stored spin or momentum to hide drift.
-    mixed = field * METRIC[None, :]
+    mixed = field * metric[None, :]
     unit_torque = mixed @ tensor + tensor @ mixed.T
     unit_force = (
-        0.5 * METRIC * np.array([contract(entry, tensor) for entry in gradient])
+        half * metric * np.array([contraction(entry, tensor) for entry in gradient])
     )
-    matrix = mass2 * np.eye(4) - particle.charge * (tensor * METRIC[None, :]) @ mixed
+    if identity is None:
+        identity = np.eye(4)
+    matrix = mass2 * identity - particle.charge * (tensor * metric[None, :]) @ mixed
     coefficient = particle.bare_mass * particle.coupling
     spin_right = (
         coefficient
         / mass2
-        * (unit_torque @ (METRIC * momentum) + tensor @ (METRIC * unit_force))
+        * (unit_torque @ (metric * momentum) + tensor @ (metric * unit_force))
     )
     spin_right += (
-        particle.charge / mass2 * (tensor * METRIC[None, :]) @ mixed @ momentum
+        particle.charge / mass2 * (tensor * metric[None, :]) @ mixed @ momentum
     )
-    if not np.isfinite(matrix).all() or not np.isfinite(spin_right).all():
+    if matrix.dtype != object and (
+        not np.isfinite(matrix).all() or not np.isfinite(spin_right).all()
+    ):
         raise VelocityDomainError("Nonfinite momentum-to-velocity system")
     try:
-        correction = np.linalg.solve(matrix, spin_right)
+        correction = solve(matrix, spin_right)
     except np.linalg.LinAlgError as error:
         raise VelocityDomainError("Singular momentum-to-velocity system") from error
     direction = momentum / mass2 + correction
@@ -131,7 +162,7 @@ def velocity_direction(
         unit_force,
         unit_torque,
         coefficient / mass2,
-        np.linalg.cond(matrix),
+        matrix,
         correction,
     )
 
@@ -214,6 +245,29 @@ def initial_state(
 def evaluate(
     state: np.ndarray, particle: Particle, provider: Provider
 ) -> tuple[np.ndarray, dict[str, Any]]:
+    return _evaluate(state, particle, provider, kinetic_coordinates=False)
+
+
+def evaluate_kinetic(
+    state: np.ndarray, particle: Particle, provider: Provider
+) -> tuple[np.ndarray, dict[str, Any]]:
+    """Same motion in (x,p,S), for local derivative predictors only.
+
+    The main integrator retains stored P=p+qA. A local predictor can integrate
+    small kinetic increments directly, avoiding loss of precision in
+    delta(P)-q*delta(A) when taking high derivatives. All forces, torque and
+    constraints use the same implementation below.
+    """
+    return _evaluate(state, particle, provider, kinetic_coordinates=True)
+
+
+def _evaluate(
+    state: np.ndarray,
+    particle: Particle,
+    provider: Provider,
+    *,
+    kinetic_coordinates: bool,
+) -> tuple[np.ndarray, dict[str, Any]]:
     state = np.asarray(state, dtype=float)
     if state.shape != (14,) or not np.isfinite(state).all():
         raise ValueError("Finite 14-component momentum-center state required")
@@ -226,20 +280,19 @@ def evaluate(
     ):
         if np.shape(value) != shape or not np.isfinite(value).all():
             raise ValueError("Finite potential response with correct shapes required")
-    momentum = state[4:8] - particle.charge * a
+    momentum = state[4:8] if kinetic_coordinates else state[4:8] - particle.charge * a
     tensor = unpack(state[8:14])
     u, dipole_force, torque, coupling, condition, velocity_correction = velocity(
         momentum, tensor, field, gradient, particle
     )
-    momentum_rate = particle.charge * field @ (METRIC * u) + dipole_force
-    # The omitted p wedge p term vanishes analytically. Do not manufacture
-    # spin from cancellation of large parallel momenta in a charge-only run.
-    spin_rate = (
-        np.outer(momentum, velocity_correction)
-        - np.outer(velocity_correction, momentum)
-        + torque
+    momentum_rate, spin_rate = _motion_rates(
+        momentum, u, field, dipole_force, torque, velocity_correction, particle
     )
-    stored_rate = momentum_rate + particle.charge * np.einsum("a,ab->b", u, da)
+    stored_rate = (
+        momentum_rate
+        if kinetic_coordinates
+        else momentum_rate + particle.charge * np.einsum("a,ab->b", u, da)
+    )
     current = particle.charge * field @ (METRIC * u) - coupling * np.einsum(
         "bn,nab->a", METRIC[:, None] * tensor, gradient
     )
@@ -273,6 +326,21 @@ def evaluate(
         mass_constraint_rate=2 * dot(momentum, momentum_rate)
         - coefficient * scalar_rate,
     )
+
+
+def _motion_rates(
+    momentum, u, field, dipole_force, torque, velocity_correction, particle
+):
+    """Shared force and spin-rate equations; no duplicate derivative model."""
+    momentum_rate = particle.charge * field @ (METRIC * u) + dipole_force
+    # The omitted p wedge p term vanishes analytically. Do not manufacture
+    # spin from cancellation of large parallel momenta in a charge-only run.
+    spin_rate = (
+        np.outer(momentum, velocity_correction)
+        - np.outer(velocity_correction, momentum)
+        + torque
+    )
+    return momentum_rate, spin_rate
 
 
 def rk4(

@@ -46,3 +46,8 @@ def test_failed_second_half_does_not_publish_partial_interval(monkeypatch):
     with pytest.raises(SourcePositionError):
         pair.advance_pair_refined(source, 1.0, 1)
     assert source == {"time": 0.0}
+
+
+def test_internal_controller_does_not_silently_change_source_cadence():
+    with pytest.raises(ValueError, match="source-recording cadence fixed"):
+        pair.advance_pair_refined({"internal_step_control": {}}, 1.0, 1)

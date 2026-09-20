@@ -1,5 +1,178 @@
 # Changelog
 
+## Unreleased — finite-spin pair milestone
+
+The separate pair runner now defaults to coordinated single-fit histories on
+compatible fresh fixed-recording inputs. Existing checkpoints preserve their
+settings. Missing dipole budgets use a provisional relative allowance of 1e-10
+against each initial tensor norm; explicit overrides remain available. CLI and
+GUI settings, checkpoint policy, benchmark results, and adaptive-recording
+limitations are documented in the [user guide](docs/source/finite_spin_pair.rst).
+The detailed entries below retain the implementation history; earlier statements
+about pending validation or unchanged defaults describe their original stage.
+
+- Add a scale-aware fresh-run dipole drift policy: derive each absolute budget
+  from 1e-10 of its initial tensor norm, record the policy in checkpoints, and
+  print the selected scales and budgets. Expose relative and absolute overrides
+  in the CLI and GUI, preserve resume settings, and require an explicit absolute
+  budget for a zero initial scale. Document the benchmark basis and frame limits.
+
+- Default the fixed-recording pair CLI and GUI to automatic single-fit history
+  selection for compatible fresh data. Save the selected physical spacing,
+  record a derived or explicit drift budget, and preserve prepared single-fit settings
+  and evolved checkpoints. Provide a preserve override for fresh legacy inputs.
+
+- Expose coordinated single-fit source histories in the pair CLI and GUI,
+  with explicit physical sample spacing and a dipole drift budget. Validate
+  recording-grid compatibility before stepping, preserve checkpoint choices,
+  and reject unsupported adaptive recording schedules. Internal DOP853
+  adaptation remains supported with fixed recording intervals.
+
+- Complete the live coarse–fine validation of coordinated single-fit motion
+  and moment histories after evolved signals arrive. Late dipole-squared
+  reaction disagreement falls from 5.819e-2 to 1.034e-5 relative to the fine
+  result, passing the predeclared 1e-2 target. Record the reviewed fine-run
+  guard continuation and remaining limits in the method documentation.
+
+- Account for accumulated timestamp roundoff when matching the single-fit
+  sampling clock. Test the full coarse and fine campaign grids and restart
+  sample choices; keep all physical accuracy guards unchanged.
+
+- Add a native single-fit source-motion candidate with matching physical sample
+  spacing for motion and magnetic moment. Preserve lower derivatives across
+  intervals, accepted-sample causality, position/dipole drift guards and exact
+  checkpoint restart through history v7. Defaults remain unchanged while the
+  fit-span and adaptive-recording interface is integrated. See
+  [selection and limitations](docs/single_fit_geometry.md).
+
+- Expose source-history selection and explicit dipole-drift budgets in the
+  nonlinear pair CLI and GUI. Preserve checkpoint settings by default; reject
+  silent changes on evolved trajectories and explain dipole-drift stops.
+  Connected histories pass the 896-step post-arrival/restart comparison;
+  recording-resolution accuracy remains under test before default promotion.
+
+- Cache immutable connected-history reconstruction weights across checkpoint
+  rebuilds; coefficients and acceptance limits remain unchanged. The cache is
+  bounded and keyed by exact source times, interval start and width.
+
+- Add opt-in connected direct dipole histories with an explicit absolute
+  endpoint-drift budget. Preserve lower-derivative connections without changing
+  fitted derivatives of order four and higher. History checkpoint v6 restores
+  the choice and budget; earlier formats and defaults remain unchanged.
+  This initial path requires preserved, one-sided startup and consecutive
+  sampling; full reciprocal radiation-accuracy validation remains open.
+  See [native API and checkpoint behavior](docs/connected_dipole_histories.md).
+
+- Report native checkpoint-runner interruption cleanly with exit status 130 and
+  the last saved checkpoint. Preserve input and completed saves. Update internal
+  error-control documentation with the completed same-grid tolerance comparison
+  and the separately unresolved source-grid radiation discrepancy.
+
+- Cache analytical response derivative-index bookkeeping without changing
+  coefficient arithmetic. An alternating full coupled endpoint benchmark shows
+  1.17x median speedup; all 85 order-zero-through-three index permutations and
+  the measured endpoint rate remain bitwise equal to the reference calculation.
+
+- Add internal preserved DOP853 error control for motion and separate reaction
+  integrals while keeping the requested source-recording cadence. Expose explicit
+  physical settings through the API, CLI and checkpoint GUI; preserve them on
+  restart and reject stacking internal and outer adaptive controllers. Limit
+  one-sided history-join derivatives to this controlled numerical integration;
+  general derivative queries remain strict. See [internal error control](docs/internal_error_control.md).
+- Add explicit time-balanced source derivative sampling with immutable published
+  history and checkpoint v5 metadata. Keep older sampling on ordinary restart.
+  This repairs the clustered-sample fit refusal, not all radiation-accuracy or
+  conservation checks.
+
+- Add preserved-increment DOP853 stepping to the native pair. Apply the same
+  twelve-stage weights to motion, charge/full-dipole reaction impulses, torques
+  and action-mass exchange. Checkpoints record the method; CLI selection cannot
+  change it on an evolved trajectory. Older checkpoints retain RK4. This is a
+  stepping change, not a different force law or completed radiation validation.
+- Connect shared-time step doubling through `core/nonlinear_pair_adaptive.py`
+  and `python -m lw_integrator.nonlinear_pair_adaptive`. Compare kinetic momentum,
+  momentum-rest-frame spin and separately scaled reaction-sector impulses,
+  torques and mass exchange. Save controller state with an atomic pair checkpoint.
+  The checkpoint GUI adds method selection and adaptive-checkpoint resume;
+  initial adaptive tolerance preparation remains in the API/CLI. Local acceptance
+  does not certify old source histories. See [higher-order and adaptive stepping](docs/higher_order_pair_and_adaptive.md).
+
+- Connect optional fresh-pair source-increment preservation through accepted
+  RK4 changes, full-spin dipole normalization, general history reconstruction
+  and v4 checkpoint storage. Preserve both spin and normalization changes using
+  shared force-model algebra. Field/root solves and RK rates remain float64;
+  this is not a high-precision trajectory solver. Completed 128/256-step runs
+  improve momentum agreement, but dipole radiation accuracy remains open.
+  See [preserved source history](docs/preserved_source_history.md).
+- Reconcile shared-time cancellation, tolerated-undershoot and initial-secant
+  fixes from the aneutronic worktree, retaining the current 64-iteration budget.
+  These fixes do not yet connect adaptive stepping to the nonlinear pair.
+
+- Add tested compensated source-history arithmetic helpers: preserve high/low
+  parts through addition, multiplication and caller-supplied reconstruction
+  maps. The optional live connection is recorded above; no force law or
+  automatic default changes. See
+  [preserved source history](docs/preserved_source_history.md).
+
+- Add explicit `FullDipoleHistory(startup_fit="one_sided")` for declared inertial
+  startup. First evolved derivative windows no longer mix samples across that
+  boundary; publication waits for eleven accepted on-or-after-start samples.
+  History v3 records this choice, while v1/v2 retain their reconstruction.
+  Preserve all position/speed/root thresholds. See the boundary-window section
+  in [analytical derivatives and controller status](docs/analytic_reaction_and_controllers.md).
+
+- Implement `reaction_derivative_method="analytic"` in the maintained full-spin
+  pair. Differentiate the retarded full-tensor potential and shared force/spin
+  algebra directly, including moving sources; reuse strict compiled Taylor
+  arithmetic. No fitting window is required. C7 driven startup and smooth
+  source segments are required; nonsmooth joins are rejected without a fitting
+  fallback. The earlier boundary-aware fit remains a separate diagnostic.
+- Expose analytical derivatives in the checkpoint CLI/GUI. Fresh explicit
+  coupled CLI preparations select them; evolved checkpoints preserve their
+  recorded method and reject incompatible changes. Document fixed shared-lab
+  timing, the still-unconnected adaptive controller, and unsupported magnetic
+  pseudogrids. Post-arrival source-history accuracy remains a separate gate;
+  no tolerance or physical-domain condition is relaxed. See
+  [analytical derivatives and controller status](docs/analytic_reaction_and_controllers.md).
+
+- Preserve explicitly declared inertial prehistory when constructing later
+  full-dipole intervals. Store the declaration in history format v2; preserve
+  v1 replay without inferring or rewriting its past. New pair initializations
+  can request `inertial_prehistory=True` after validating coasting inputs.
+- Add an opt-in `boundary_aware` reaction-derivative diagnostic, using the same
+  equations in kinetic-increment coordinates and compensated velocity changes.
+  It avoids declared startup boundaries but is **not the default**: the narrow
+  startup-ramp case still fails its accuracy and consistency checks. General
+  high-derivative history-join treatment remains open. Main trajectories retain
+  stored momentum `P=p+qA`; no force model or tolerance is changed.
+
+- Integrate `full_dipole_coupled` as the working full-spin reaction selection
+  in the native pair and CLI. Preserve the coupled mode and ledgers across
+  restart; recommend it on older-method velocity failures without switching
+  equations inside evolved checkpoints. Add a detached GUI checkpoint launcher
+  using the same CLI. Keep reduced-order `full_dipole_rr` as a legacy comparison.
+- Reuse existing strict-float64 compiled Taylor multiplication/reciprocal
+  arithmetic in the analytical provider, preserving the Python reference
+  fallback. Document remaining physics gates and why older charge-solver
+  self-consistency/chrono options are not removed or copied into the new runner.
+  See [integration and option audit](docs/coupled_integration_and_option_audit.md).
+
+- Improve experimental full-dipole reaction derivatives using centered ordinary
+  trajectories and compensated momentum/spin increments. Add stable C7 driven
+  preparation for new full-reaction pairs while retaining checkpointed C5 and
+  backward-fit replay. Add a separate matched source radiation/bound-momentum
+  diagnostic; it does not replace applied recoil or establish full conservation.
+
+- Implement opt-in experimental `full_dipole_rr` self-force and torque from
+  the time-antisymmetric full charge/dipole field, retaining charge–dipole and
+  dipole-squared terms. Use ordinary-motion derivatives (reduction in reaction
+  strength, not spin), an explicit proper-time derivative window, the nonlinear
+  velocity solve, and checkpointed sector impulses/torques and action-mass
+  exchange. This is a specified radiative finite-part model with a dynamic
+  mass relation, not validated full conservation, a finite-size model, or a
+  demonstrated cure for the velocity boundary. See
+  [model and limitations](docs/full_dipole_self_reaction.md).
+
 - Add optional `charge_ll` reaction to the experimental nonlinear pair runner
   for exactly zero-spin states. Evaluate reduced-order charge recoil from the
   potential provider's analytical field derivatives; preserve mode and separate

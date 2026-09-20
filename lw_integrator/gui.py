@@ -1115,6 +1115,15 @@ class IntegratorGUI(
         )
         self.sim_type_combo.grid(row=0, column=1, sticky="ew")
 
+        def open_nonlinear_pair():
+            from .nonlinear_pair_gui import open_pair_window
+
+            open_pair_window(self.root)
+
+        ttk.Button(header, text="Nonlinear pair…", command=open_nonlinear_pair).grid(
+            row=0, column=2, padx=(10, 0)
+        )
+
         # Create main horizontal split: left (tabs) and right (config/control panel)
         self._main_horizontal_paned = tk.PanedWindow(
             self.root,

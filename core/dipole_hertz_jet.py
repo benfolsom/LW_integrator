@@ -70,6 +70,38 @@ def _splits(
 _PRODUCT_SPLITS = tuple(_splits(alpha) for alpha in _MULTIINDICES)
 
 
+def _python_multiply(left: np.ndarray, right: np.ndarray) -> np.ndarray:
+    result = np.empty(len(_MULTIINDICES), dtype=float)
+    for index, splits in enumerate(_PRODUCT_SPLITS):
+        total = 0.0
+        for left_index, right_index in splits:
+            total += left[left_index] * right[right_index]
+        result[index] = total
+    return result
+
+
+def _python_reciprocal(value: np.ndarray) -> np.ndarray:
+    result = np.zeros(len(_MULTIINDICES), dtype=float)
+    result[0] = 1.0 / value[0]
+    for index in range(1, len(_MULTIINDICES)):
+        total = 0.0
+        for left_index, right_index in _PRODUCT_SPLITS[index]:
+            if left_index:
+                total += value[left_index] * result[right_index]
+        result[index] = -total / value[0]
+    return result
+
+
+# Reuse the existing strict-float64 arithmetic, with identical coefficient
+# ordering and summation order. No derivative or sparse-output map changes.
+try:
+    from .dipole_hertz_jet_numba import _multiply as _multiply_coefficients
+    from .dipole_hertz_jet_numba import _reciprocal as _reciprocal_coefficients
+except ImportError:  # Numba remains optional for the analytical reference API.
+    _multiply_coefficients = _python_multiply
+    _reciprocal_coefficients = _python_reciprocal
+
+
 def _levi_civita_upper() -> np.ndarray:
     tensor = np.zeros((4, 4, 4, 4), dtype=float)
     for permutation in permutations(range(4)):
@@ -140,6 +172,9 @@ class _Jet3:
     # this separate leaves every ordinary third-order operation unchanged.
     tangent: np.ndarray | None = None
 
+    _product = staticmethod(_python_multiply)
+    _inverse = staticmethod(_python_reciprocal)
+
     @classmethod
     def constant(cls, value: float) -> "_Jet3":
         coefficients = np.zeros(len(_MULTIINDICES), dtype=float)
@@ -164,12 +199,12 @@ class _Jet3:
         coefficients[0] = float(value)
         # Fix only the base root residual. Its directional derivative is part
         # of the implicit light-cone solve and must NOT be cleared.
-        return _Jet3(coefficients, self.tangent)
+        return type(self)(coefficients, self.tangent)
 
     def directional_derivative(self, *indices: int) -> float:
         if self.tangent is None:
             return 0.0
-        return _Jet3(self.tangent).derivative(*indices)
+        return type(self)(self.tangent).derivative(*indices)
 
     def derivative(self, *indices: int) -> float:
         if len(indices) > _ORDER:
@@ -189,13 +224,13 @@ class _Jet3:
         tangent = self.tangent
         if right.tangent is not None:
             tangent = right.tangent if tangent is None else tangent + right.tangent
-        return _Jet3(self.coefficients + right.coefficients, tangent)
+        return type(self)(self.coefficients + right.coefficients, tangent)
 
     def __radd__(self, other: object) -> "_Jet3":
         return self + other
 
     def __neg__(self) -> "_Jet3":
-        return _Jet3(
+        return type(self)(
             -self.coefficients, None if self.tangent is None else -self.tangent
         )
 
@@ -203,23 +238,23 @@ class _Jet3:
         return self + (-_as_jet(other))
 
     def __rsub__(self, other: object) -> "_Jet3":
-        return _as_jet(other) - self
+        left = _as_jet(other)
+        return type(self)(left.coefficients, left.tangent) - self
 
     def __mul__(self, other: object) -> "_Jet3":
         right = _as_jet(other)
-        coefficients = np.empty(len(_MULTIINDICES), dtype=float)
-        for result_index, splits in enumerate(_PRODUCT_SPLITS):
-            total = 0.0
-            for left_index, right_index in splits:
-                total += self.coefficients[left_index] * right.coefficients[right_index]
-            coefficients[result_index] = total
+        coefficients = self._product(self.coefficients, right.coefficients)
         tangent = None
         if self.tangent is not None:
-            tangent = (_Jet3(self.tangent) * _Jet3(right.coefficients)).coefficients
+            tangent = (
+                type(self)(self.tangent) * type(self)(right.coefficients)
+            ).coefficients
         if right.tangent is not None:
-            term = (_Jet3(self.coefficients) * _Jet3(right.tangent)).coefficients
+            term = (
+                type(self)(self.coefficients) * type(self)(right.tangent)
+            ).coefficients
             tangent = term if tangent is None else tangent + term
-        return _Jet3(coefficients, tangent)
+        return type(self)(coefficients, tangent)
 
     def __rmul__(self, other: object) -> "_Jet3":
         return self * other
@@ -227,38 +262,42 @@ class _Jet3:
     def reciprocal(self) -> "_Jet3":
         if self.value == 0.0:
             raise ZeroDivisionError("cannot invert a zero Taylor jet")
-        coefficients = np.zeros(len(_MULTIINDICES), dtype=float)
-        coefficients[0] = 1.0 / self.value
-        for result_index in range(1, len(_MULTIINDICES)):
-            total = 0.0
-            # Remove beta=0.  The remaining complement always has lower degree,
-            # so its reciprocal coefficient is already available.
-            for left_index, right_index in _PRODUCT_SPLITS[result_index]:
-                if left_index == 0:
-                    continue
-                total += self.coefficients[left_index] * coefficients[right_index]
-            coefficients[result_index] = -total / self.value
+        coefficients = self._inverse(self.coefficients)
         tangent = None
         if self.tangent is not None:
-            inverse = _Jet3(coefficients)
-            tangent = (-(inverse * inverse) * _Jet3(self.tangent)).coefficients
-        return _Jet3(coefficients, tangent)
+            inverse = type(self)(coefficients)
+            tangent = (-(inverse * inverse) * type(self)(self.tangent)).coefficients
+        return type(self)(coefficients, tangent)
 
     def __truediv__(self, other: object) -> "_Jet3":
-        return self * _as_jet(other).reciprocal()
+        right = _as_jet(other)
+        return self * type(self)(right.coefficients, right.tangent).reciprocal()
 
     def __rtruediv__(self, other: object) -> "_Jet3":
-        return _as_jet(other) / self
+        left = _as_jet(other)
+        return type(self)(left.coefficients, left.tangent) / self
 
     def sqrt(self) -> "_Jet3":
         if self.value <= 0.0:
             raise ValueError("Taylor-jet square root requires a positive value")
-        root = _Jet3.constant(float(np.sqrt(self.value)))
+        root = type(self).constant(float(np.sqrt(self.value)))
         # Newton doubles the correct Taylor order on every iteration.  Three
         # iterations are sufficient through degree three from a constant seed.
         for _ in range(3):
             root = 0.5 * (root + self / root)
         return root
+
+
+class _CompiledJet3(_Jet3):
+    """Same algebra, accelerated only where explicitly selected by a provider."""
+
+    @staticmethod
+    def _product(left: np.ndarray, right: np.ndarray) -> np.ndarray:
+        return _multiply_coefficients(left, right)
+
+    @staticmethod
+    def _inverse(value: np.ndarray) -> np.ndarray:
+        return _reciprocal_coefficients(value)
 
 
 def _as_jet(value: object) -> _Jet3:
@@ -268,14 +307,15 @@ def _as_jet(value: object) -> _Jet3:
 
 
 def _polynomial(coefficients: Iterable[float], argument: _Jet3) -> _Jet3:
-    result = _Jet3.constant(0.0)
+    result = type(argument).constant(0.0)
     for coefficient in reversed(tuple(float(value) for value in coefficients)):
         result = result * argument + coefficient
     return result
 
 
 def _dot(left: Sequence[_Jet3], right: Sequence[_Jet3]) -> _Jet3:
-    return sum((a * b for a, b in zip(left, right)), _Jet3.constant(0.0))
+    kind = type(left[0]) if len(left) else _Jet3
+    return sum((a * b for a, b in zip(left, right)), kind.constant(0.0))
 
 
 def _norm(vector: Sequence[_Jet3]) -> _Jet3:

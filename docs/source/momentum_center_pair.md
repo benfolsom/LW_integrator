@@ -1,4 +1,60 @@
-# Experimental nonlinear reciprocal pair
+# Nonlinear reciprocal pair
+
+For current defaults, CLI/GUI setup, fitting spacing, and drift budgets, see
+the [Sphinx user guide](finite_spin_pair.rst). The sections below retain
+implementation history; the current guide supersedes older default descriptions.
+
+For preserved-increment DOP853 stepping, adaptive error settings and checkpoint
+resume through the CLI or GUI, see [higher-order stepping and shared-time
+adaptive integration](../higher_order_pair_and_adaptive.md). These are numerical
+controls for the same force model, not a different momentum convention.
+For adaptive integration inside a fixed source-recording interval, use
+[internal error control](../internal_error_control.md); this includes the
+explicit one-sided history-join convention used only by that integration mode.
+
+## Analytical reaction derivatives
+
+Use `reaction_derivative_method="analytic"` with `full_dipole_coupled` for
+the maintained potential-based derivative calculation. It differentiates the
+moving retarded source response and the shared nonlinear force equations,
+without fitting an auxiliary trajectory. A derivative window is not required.
+The source provider must expose `taylor_response`; the native full-tensor
+history provider does. There is no silent fallback for unsupported providers.
+
+```bash
+python -m lw_integrator.nonlinear_pair \
+  --checkpoint fresh_c7_pair.json --output analytic_pair.json \
+  --step-ns STEP --steps COUNT \
+  --radiation-reaction full_dipole_coupled --reaction-derivatives analytic
+```
+
+`STEP` and `COUNT` are placeholders. Prepared source histories and a timestep
+appropriate to the problem remain necessary. Fresh explicit coupled CLI
+selection defaults to analytic derivatives; omitted selections preserve an
+existing checkpoint. Evolved checkpoints cannot change derivative methods.
+The checkpoint GUI exposes the same selector and preserves settings by default.
+
+Driven startup must be C7. The method differentiates within a smooth published
+source segment; it rejects nonsmooth source joins rather than claiming a
+unique high derivative. Declared coasting prehistory has uniquely known
+derivatives at its internal knots. This does not establish the accuracy of
+interpolated evolved histories, independent conservation, or unrestricted
+strong-field validity. See [implementation, verification and timing audit](../analytic_reaction_and_controllers.md).
+
+## Working full-spin reaction and interfaces
+
+Use `full_dipole_coupled` for the working full-spin reaction model. It solves
+local motion and self-field together; `full_dipole_rr` is retained for older
+reduced-order comparisons. Read the [integration and option audit](../coupled_integration_and_option_audit.md)
+for remaining validation limits, restart rules and the new **Nonlinear pair…**
+GUI checkpoint launcher. Older self-consistency, gamma and chrono controls
+do not apply to this separate pair runner.
+
+An opt-in `full_dipole_rr` mode now applies the full-current regular self-field
+to momentum and spin. Read the [prescription, mass-law change, and accuracy
+limitations](../full_dipole_self_reaction.md) before use. Earlier statements
+below that full-spin reaction is unavailable describe the preceding version.
+The default remains off and independent conservation validation remains open.
 
 ## Running from a checkpoint
 
@@ -32,13 +88,15 @@ Radiation reaction is an explicit capability, not an inferred side effect:
   existing reduced-order Medina result in the checked charge-only limit.
   It is not Medina's finite-size causal convolution or a dipole reaction model.
 - Omitting the selector preserves each particle's checkpoint mode. An explicit
-  selection applies to both particles in the new output; the input is preserved.
+  selection applies to both particles in fresh prepared data; the input is
+  preserved. Changing mode, window or derivatives on an evolved checkpoint
+  is rejected. Resume with matching settings or start a fresh coupled run.
 - The established main CLI still exposes `--radiation-reaction-mode medina_lad`
   and `--intrinsic-spin-self-reaction-mode experimental_linear_spin` under their
   existing model/controller restrictions.
-- The new command rejects those unsupported finite-spin combinations rather than substituting
-  the old recoil into the full-spin equations. Matching nonlinear recoil and
-  torque is still required before additional modes can be enabled here.
+- The new command rejects unsupported combinations rather than substituting
+  old recoil into the full-spin equations. `full_dipole_coupled` applies the
+  matched full-current radiative force and torque; total balance remains open.
 
 Reaction-on checkpoints contain `reaction_ledger`, with one entry per particle:
 applied four-impulse, outward radiated four-momentum, and the integrated
@@ -94,7 +152,8 @@ the same lab-time step. This is a separate Python API, not a CLI/GUI default.
 “Nonlinear” means the momentum–velocity relation is solved without discarding
 terms quadratic or higher in spin. It does not mean the model contains every
 spatial multipole of an extended particle, or its complete radiation reaction.
-Only `reaction_mode="off"` is accepted. The older first-order Jakobsen pair
+Reaction modes include `off`, zero-spin `charge_ll`, working
+`full_dipole_coupled`, and legacy `full_dipole_rr`. The older first-order Jakobsen pair
 remains available under its own model and checkpoint format.
 
 ## State and unit contract
@@ -188,6 +247,16 @@ time measured from zero and is saved in the checkpoint. Zero duration preserves
 the unramped API. The ramp is defined in the preparation frame, not claimed
 to be a Lorentz-invariant startup procedure.
 
+New `full_dipole_rr` preparations default to `startup_smoothness=7`; other
+preparations retain 5. These mean seven or five continuous potential derivatives
+at the joins, respectively, and are different applied ramps. Pass the same
+explicit smoothness to the initial providers and `initialize_pair` when
+preparing states. The checkpoint preserves it, with 5 for legacy missing fields.
+Full-reaction particles use `reaction_derivative_method="centered"` by default;
+old checkpoints missing that field restore `"backward"`. The CLI exposes
+`--reaction-derivatives` without silently changing saved settings. See the
+[full self-reaction model and limits](../full_dipole_self_reaction.md).
+
 Accepted-step records contain per-observer `source_sampling`: total response
 count, `evolved_count` for source intervals starting at or after lab time zero,
 and `minimum_delay_ns`. These count evaluations, not independent samples or
@@ -232,3 +301,22 @@ self-radiation are closed by these integration tests.
 Derivation, references and prior evidence are retained in the companion study
 repository's `planning/finite_spin_primary_implementation_plan_2026-09-09.md`
 and `planning/nonlinear_spin_prototypes_2026-09-09.md`.
+
+## Prescribed prehistory and derivative-boundary status (10 September 2026)
+
+When the source past is explicitly prescribed as coasting with constant dipole,
+pass `inertial_prehistory=True` to `initialize_pair`. Core validates that
+declaration and preserves it when later intervals are constructed. History-v2
+checkpoints record the startup knot; undeclared history-v1 checkpoints retain
+their old reconstruction and are not silently converted. This prevents later
+motion from creating artificial variation in the prescribed pre-start history.
+
+The core-only `reaction_derivative_method="boundary_aware"` option is currently
+a diagnostic candidate, not the default. It avoids explicit startup boundaries
+and uses compensated kinetic/velocity increments in the local derivative
+calculation. The main trajectory still stores `P=p+qA`. The candidate passes
+uniform-field component tests and the wider failed-step replay, but the narrow
+startup-ramp derivative check remains unresolved. General evolved-history joins
+are not yet covered. Keep existing CLI/GUI derivative choices unchanged pending
+that validation; do not confuse the working coupled force model with validation
+of this new derivative estimator.

@@ -1,4 +1,4 @@
-"""Experimental nonlinear reciprocal pair with an optional zero-spin charge recoil.
+"""Nonlinear reciprocal pair with optional charge/full-dipole recoil.
 
 Inputs are accepted states and histories, not an invented interacting past.
 Both particles advance against the same frozen history; publication is atomic.
@@ -10,22 +10,28 @@ import copy
 from typing import Any, Callable
 
 import numpy as np
+from scipy.special import betainc
 
 from .constants import C_MMNS as c
 from .full_dipole_history import FullDipoleHistory, SourcePositionError
 from .full_dipole_response import response
 from . import momentum_center as model
 from .momentum_center_reaction import charge_reaction
+from .full_dipole_reaction import evaluate_reaction
+from .coupled_dipole_reaction import evaluate_coupled_reaction
 
 MODEL = "experimental_momentum_center_pair_v1"
 UNITS = "mm_ns_amu_scaled_gaussian"
+FULL_DIPOLE_REACTION_MODES = ("full_dipole_rr", "full_dipole_coupled")
 NativeProvider = Callable[
     [float, np.ndarray], tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]
 ]
 
 
-def smooth_start_native(provider: NativeProvider, duration_ns: float) -> NativeProvider:
-    """Explicit driven startup: multiply A by a C5 ramp, including derivatives.
+def smooth_start_native(
+    provider: NativeProvider, duration_ns: float, smoothness: int = 5
+) -> NativeProvider:
+    """Explicit driven startup with selectable C5 or C7 potential smoothness.
 
     Ramp time starts at lab t=0. Derivatives are with respect to ct, not t.
     This compensating external potential vanishes after the ramp; it is not
@@ -33,7 +39,17 @@ def smooth_start_native(provider: NativeProvider, duration_ns: float) -> NativeP
     """
     if not np.isfinite(duration_ns) or duration_ns < 0:
         raise ValueError("Finite nonnegative startup duration required")
-    coefficients = np.array([0.0, 0, 0, 0, 0, 0, 462, -1980, 3465, -3080, 1386, -252])
+    if smoothness not in (5, 7):
+        raise ValueError("Startup smoothness must be 5 or 7")
+    from math import comb
+
+    coefficients = np.zeros(2 * smoothness + 2)
+    for k in range(smoothness + 1):
+        coefficients[smoothness + 1 + k] = (
+            (-1) ** k
+            * comb(smoothness + k, k)
+            * comb(2 * smoothness + 1, smoothness - k)
+        )
 
     def wrapped(
         time_ns: float, position: np.ndarray
@@ -42,13 +58,31 @@ def smooth_start_native(provider: NativeProvider, duration_ns: float) -> NativeP
             return provider(time_ns, position)
         if time_ns <= 0:
             return np.zeros(4), np.zeros((4, 4)), np.zeros((4, 4)), np.zeros((4, 4, 4))
-        r, dr, ddr = [
-            np.polynomial.polynomial.polyval(
-                time_ns / duration_ns, np.polynomial.polynomial.polyder(coefficients, n)
+        s = time_ns / duration_ns
+        if smoothness == 5:
+            # Preserve the old ramp for replay of pre-reaction checkpoints.
+            r, dr, ddr = [
+                np.polynomial.polynomial.polyval(
+                    s, np.polynomial.polynomial.polyder(coefficients, n)
+                )
+                / (c * duration_ns) ** n
+                for n in range(3)
+            ]
+        else:
+            # The expanded polynomial cancels badly near its upper endpoint.
+            # This is the identical smoothstep evaluated as a beta CDF; its
+            # first two derivatives are factored, with no large cancellations.
+            n = smoothness
+            normalization = (2 * n + 1) * comb(2 * n, n)
+            r = betainc(n + 1, n + 1, s)
+            dr = normalization * (s * (1 - s)) ** n / (c * duration_ns)
+            ddr = (
+                normalization
+                * n
+                * (1 - 2 * s)
+                * (s * (1 - s)) ** (n - 1)
+                / (c * duration_ns) ** 2
             )
-            / (c * duration_ns) ** n
-            for n in range(3)
-        ]
         a, da, field, gradient = provider(time_ns, position)
         wedge = np.zeros((4, 4))
         wedge[0, :] += a
@@ -62,6 +96,8 @@ def smooth_start_native(provider: NativeProvider, duration_ns: float) -> NativeP
             new_gradient[k, :, 0] -= dr * da[k]
         return r * a, new_da, r * field + dr * wedge, new_gradient
 
+    if duration_ns:
+        setattr(wrapped, "zero_before_ns", 0.0)
     return wrapped
 
 
@@ -71,12 +107,43 @@ class MomentumCenterParticle:
     mass_amu: float
     g: float = 2.0
     reaction_mode: str = "off"
+    reaction_window_ns: float | None = None
+    reaction_derivative_method: str = "centered"
 
     def __post_init__(self) -> None:
         self.length_time_particle()
-        if self.reaction_mode not in ("off", "charge_ll"):
+        if self.reaction_derivative_method not in (
+            "centered",
+            "backward",
+            "boundary_aware",
+            "analytic",
+        ):
             raise ValueError(
-                "Requested reaction is not implemented; supported modes are off and zero-spin charge_ll"
+                "Reaction derivative method must be analytic, centered, backward or boundary_aware"
+            )
+        if self.reaction_mode not in ("off", "charge_ll", *FULL_DIPOLE_REACTION_MODES):
+            raise ValueError(
+                "Requested reaction is not implemented; supported modes: off, zero-spin charge_ll, full_dipole_coupled, and legacy full_dipole_rr"
+            )
+        if self.reaction_window_ns is not None and (
+            not np.isfinite(self.reaction_window_ns) or self.reaction_window_ns <= 0
+        ):
+            raise ValueError("Positive proper-time reaction_window_ns required")
+        if (
+            self.reaction_mode in FULL_DIPOLE_REACTION_MODES
+            and self.reaction_derivative_method != "analytic"
+            and self.reaction_window_ns is None
+        ):
+            raise ValueError(
+                f"{self.reaction_mode} requires an explicit reaction_window_ns"
+            )
+        if (
+            self.reaction_mode == "full_dipole_coupled"
+            and self.reaction_derivative_method
+            not in ("analytic", "centered", "boundary_aware")
+        ):
+            raise ValueError(
+                "full_dipole_coupled requires analytic, centered or boundary_aware source derivatives"
             )
 
     def length_time_particle(self) -> model.Particle:
@@ -115,6 +182,27 @@ def _provider_length_time(provider: NativeProvider) -> model.Provider:
             raise ValueError("Invalid native potential response")
         return result[0], result[1], result[2], result[3]
 
+    zero_until = getattr(provider, "zero_before_ns", None)
+    taylor = getattr(provider, "taylor_response_length_time", None)
+    if taylor is not None:
+        supplied.taylor_response = taylor
+    if zero_until is not None:
+        setattr(supplied, "zero_before_length_time", c * zero_until)
+    boundaries = getattr(provider, "reaction_startup_boundaries_ns", ())
+    if boundaries:
+        boundaries = np.asarray(boundaries) * c
+
+        def domain(event, velocity):
+            region = int(np.searchsorted(boundaries, event[0], side="right"))
+            left = boundaries[region - 1] if region else -np.inf
+            right = boundaries[region] if region < len(boundaries) else np.inf
+            return (
+                region,
+                (event[0] - left) / velocity[0],
+                (right - event[0]) / velocity[0],
+            )
+
+        supplied.reaction_fit_domain = domain
     return supplied
 
 
@@ -128,7 +216,7 @@ def initial_state_native(
     """Rest spin is in the momentum rest frame; direction is dimensionless."""
     if particle.reaction_mode == "charge_ll" and np.any(rest_spin_native):
         raise ValueError(
-            "charge_ll requires exactly zero spin; finite-spin reaction is not implemented"
+            "charge_ll requires exactly zero spin; use full_dipole_coupled for finite-spin reaction"
         )
     event = np.asarray(event, dtype=float).copy()
     if event.shape != (4,):
@@ -152,10 +240,29 @@ def dynamics_native(
     scaled_state = _to_length_time(state)
     if particle.reaction_mode == "charge_ll" and np.any(scaled_state[8:]):
         raise ValueError("charge_ll requires exactly zero spin; no spin was discarded")
-    values = _provider_length_time(provider)(scaled_state[:4])
-    rhs, diagnostic = model.evaluate(
-        scaled_state, particle.length_time_particle(), lambda event: values
-    )
+    supplied = _provider_length_time(provider)
+    values = supplied(scaled_state[:4])
+    if particle.reaction_mode in FULL_DIPOLE_REACTION_MODES:
+        evaluator = (
+            evaluate_coupled_reaction
+            if particle.reaction_mode == "full_dipole_coupled"
+            else evaluate_reaction
+        )
+        rhs, diagnostic = evaluator(
+            scaled_state,
+            particle.length_time_particle(),
+            supplied,
+            window=(
+                None
+                if particle.reaction_window_ns is None
+                else c * particle.reaction_window_ns
+            ),
+            method=particle.reaction_derivative_method,
+        )
+    else:
+        rhs, diagnostic = model.evaluate(
+            scaled_state, particle.length_time_particle(), lambda event: values
+        )
     if particle.reaction_mode == "charge_ll":
         reaction = charge_reaction(
             diagnostic["proper_velocity"],
@@ -187,7 +294,8 @@ class FullDipoleProvider:
     """Native A and derivatives from the published, full-tensor source history.
 
     Derivative indices refer to (ct, x, y, z), not (t, x, y, z).
-    This reference path reuses analytical jets, not the sparse compiled kernel.
+    Analytical full-tensor response reuses strict compiled Taylor arithmetic
+    when Numba is available; it is not the earlier sparse full-response kernel.
     """
 
     def __init__(
@@ -195,6 +303,9 @@ class FullDipoleProvider:
         history: FullDipoleHistory,
         charge_native: float,
         startup_duration_ns: float = 0.0,
+        startup_smoothness: int = 5,
+        *,
+        one_sided_derivatives: bool = False,
     ) -> None:
         if history.speed_limit != c or not np.isfinite(charge_native):
             raise ValueError(
@@ -202,8 +313,18 @@ class FullDipoleProvider:
             )
         self.history = history
         self.charge_native = float(charge_native)
+        self.startup_duration_ns = startup_duration_ns
+        self.startup_smoothness = startup_smoothness
+        if not isinstance(one_sided_derivatives, bool):
+            raise ValueError("Explicit one-sided derivative policy required")
+        self.one_sided_derivatives = one_sided_derivatives
         self.samples: list[tuple[float, float, float]] = []
-        self.prepared = smooth_start_native(self._response, startup_duration_ns)
+        self.prepared = smooth_start_native(
+            self._response, startup_duration_ns, startup_smoothness
+        )
+        if startup_duration_ns:
+            self.zero_before_ns = 0.0
+            self.reaction_startup_boundaries_ns = (0.0, startup_duration_ns)
 
     def __call__(
         self, time_ns: float, position_mm: np.ndarray
@@ -251,6 +372,82 @@ class FullDipoleProvider:
             "Retarded source time is outside published history; no extrapolation"
         )
 
+    def taylor_response_length_time(self, events):
+        """Analytical response along observer motion; strict at nonsmooth joins.
+
+        Events and responses already use length-time units. No native-unit
+        conversion is applied a second time by the provider adapter.
+        """
+        from math import comb
+        from .full_dipole_response import response_taylor
+        from .taylor_series import Series, to_series, from_series
+
+        events = np.asarray(events, dtype=float)
+        if events.shape != (5, 4) or not np.isfinite(events).all():
+            raise ValueError("Finite order-four observer coefficients required")
+        duration = c * self.startup_duration_ns
+        if duration and events[0, 0] <= duration and self.startup_smoothness != 7:
+            raise ValueError("Analytical reaction derivatives require C7 startup")
+        if duration and events[0, 0] <= 0:
+            return tuple(
+                np.zeros((5,) + shape) for shape in ((4,), (4, 4), (4, 4), (4, 4, 4))
+            )
+        for segment in reversed(self.history.segments):
+
+            def cone(time):
+                x, _ = segment.sample(time)
+                return events[0, 0] - c * time - np.linalg.norm(events[0, 1:] - x)
+
+            if cone(segment.start) >= 0 and cone(segment.end) <= 0:
+                # Declared coasting intervals have unique derivatives at their
+                # mutual knots. Evolved C4/C3 history joins do not: fail there.
+                inertial = (
+                    self.history.inertial_until is not None
+                    and segment.end < self.history.inertial_until
+                )
+                values = response_taylor(
+                    events,
+                    c * segment.start,
+                    c * segment.duration,
+                    segment.position,
+                    segment.dipole / c,
+                    charge=self.charge_native / c,
+                    allow_boundary=inertial or self.one_sided_derivatives,
+                )
+                break
+        else:
+            raise ValueError(
+                "Retarded source time is outside published history; no extrapolation"
+            )
+        if not duration or events[0, 0] >= duration:
+            return values
+        s = Series(events[:, 0]) / duration
+        z = 1 - s if s.c[0] > 0.5 else s
+        ramp = sum(
+            (-1) ** k * comb(7 + k, k) * comb(15, 7 - k) * z ** (8 + k)
+            for k in range(8)
+        )
+        if s.c[0] > 0.5:
+            ramp = 1 - ramp
+        normalization = 15 * comb(14, 7)
+        dr = normalization * (s * (1 - s)) ** 7 / duration
+        ddr = normalization * 7 * (1 - 2 * s) * (s * (1 - s)) ** 6 / duration**2
+        a, da, field, gradient = map(to_series, values)
+        wedge = np.full((4, 4), Series.constant(0), dtype=object)
+        wedge[0, :] += a
+        wedge[:, 0] -= a
+        new_da = ramp * da
+        new_da[0] += dr * a
+        new_gradient = ramp * gradient
+        new_gradient[0] += dr * field + ddr * wedge
+        for k in range(4):
+            new_gradient[k, 0, :] += dr * da[k]
+            new_gradient[k, :, 0] -= dr * da[k]
+        return tuple(
+            from_series(v)
+            for v in (ramp * a, new_da, ramp * field + dr * wedge, new_gradient)
+        )
+
 
 def initialize_pair(
     particles: list[MomentumCenterParticle],
@@ -258,10 +455,27 @@ def initialize_pair(
     histories: list[FullDipoleHistory],
     *,
     startup_duration_ns: float = 0.0,
+    startup_smoothness: int | None = None,
+    inertial_prehistory: bool = False,
+    preserve_source_increments: bool = False,
+    integration_method: str = "rk4",
+    internal_step_settings=None,
 ) -> dict[str, Any]:
     """Checkpoint accepted native states and their already prepared source past."""
     if len(particles) != 2 or len(histories) != 2:
         raise ValueError("Exactly two particles and histories required")
+    if integration_method not in ("rk4", "dop853"):
+        raise ValueError("Integration method must be rk4 or dop853")
+    if integration_method == "dop853" and not preserve_source_increments:
+        raise ValueError("DOP853 requires preserved source increments")
+    if not isinstance(inertial_prehistory, bool):
+        raise ValueError("Explicit boolean inertial_prehistory required")
+    if inertial_prehistory:
+        from dataclasses import replace
+
+        # Explicit caller declaration, validated against all supplied samples.
+        # Existing checkpoints are never silently reclassified on restore.
+        histories = [replace(h, inertial_until=float(h.time[-1])) for h in histories]
     payload = dict(
         model=MODEL,
         units=UNITS,
@@ -270,9 +484,131 @@ def initialize_pair(
         histories=[h.to_checkpoint_payload() for h in histories],
         accepted_steps=0,
         startup_duration_ns=startup_duration_ns,
+        startup_smoothness=(
+            (
+                7
+                if any(p.reaction_mode in FULL_DIPOLE_REACTION_MODES for p in particles)
+                else 5
+            )
+            if startup_smoothness is None
+            else startup_smoothness
+        ),
     )
     _restore(payload)
+    if preserve_source_increments:
+        payload = _initialize_source_precision(payload)
+        _restore(payload)
+    if integration_method != "rk4":
+        payload["integration_method"] = integration_method
+    if internal_step_settings is not None:
+        from .pair_step_error import InternalStepSettings
+
+        if not isinstance(internal_step_settings, InternalStepSettings):
+            raise ValueError("Explicit InternalStepSettings required")
+        payload["internal_step_control"] = asdict(internal_step_settings)
+        _restore(payload)
     return payload
+
+
+def _preserved_dipole(reference, high, low, particle, provider, diagnostic, dref):
+    from .preserved_source import dipole_parts, rounded_state
+
+    state = rounded_state(reference, high, low)
+    a, _, field, gradient = _provider_length_time(provider)(_to_length_time(state)[:4])
+    if particle.reaction_mode in FULL_DIPOLE_REACTION_MODES:
+        reaction = diagnostic["length_time"]["reaction"]
+        field = field + reaction["self_field"]
+        gradient = gradient + reaction["self_gradient"]
+    return dipole_parts(
+        reference, high, low, particle.length_time_particle(), a, field, gradient, dref
+    )
+
+
+def _initialize_source_precision(payload):
+    """Explicit fresh-run policy; never manufacture lost checkpoint precision."""
+    from dataclasses import replace
+    from .preserved_source import rounded_state
+
+    particles, states, histories = _restore(payload)
+    if (
+        payload["accepted_steps"]
+        or np.any(states[:, 0])
+        or not payload["startup_duration_ns"]
+    ):
+        raise ValueError(
+            "Preserved source initialization requires a fresh driven start at zero"
+        )
+    if any(h.inertial_until != 0 or h.derivative_degree != 10 for h in histories):
+        raise ValueError(
+            "Preserved source initialization requires declared inertial degree-ten histories"
+        )
+    result = copy.deepcopy(payload)
+    source = dict(
+        format="preserved-pair-source-v1",
+        reference=states.tolist(),
+        high=np.zeros_like(states).tolist(),
+        low=np.zeros_like(states).tolist(),
+    )
+    updated = []
+    for i, history in enumerate(histories):
+        provider = FullDipoleProvider(
+            histories[1 - i],
+            particles[1 - i].charge_native,
+            payload["startup_duration_ns"],
+            payload["startup_smoothness"],
+        )
+        _, diagnostic = dynamics_native(states[i], particles[i], provider)
+        reference = history.dipole[-1]
+        high, low = _preserved_dipole(
+            states[i],
+            np.zeros(14),
+            np.zeros(14),
+            particles[i],
+            provider,
+            diagnostic,
+            reference,
+        )
+        value = rounded_state(reference, high, low)
+        updated.append(
+            replace(
+                history,
+                segments=(),
+                dipole=np.broadcast_to(value, history.dipole.shape),
+                dipole_reference=reference,
+                dipole_high=np.broadcast_to(high, history.dipole.shape),
+                dipole_low=np.broadcast_to(low, history.dipole.shape),
+            ).completed()
+        )
+    result["histories"] = [h.to_checkpoint_payload() for h in updated]
+    result["source_precision"] = source
+    return result
+
+
+def _source_components(payload, states, histories):
+    from .preserved_source import rounded_state
+
+    source = payload.get("source_precision")
+    if source is None:
+        if any(h.dipole_reference is not None for h in histories):
+            raise ValueError(
+                "Preserved pair histories require state increment metadata"
+            )
+        return None
+    if (
+        not isinstance(source, dict)
+        or source.get("format") != "preserved-pair-source-v1"
+    ):
+        raise ValueError("Invalid preserved pair source format")
+    values = tuple(
+        np.asarray(source.get(key), dtype=float) for key in ("reference", "high", "low")
+    )
+    if any(v.shape != (2, 14) or not np.isfinite(v).all() for v in values):
+        raise ValueError("Invalid preserved pair state components")
+    if not np.array_equal(rounded_state(*values), states) or any(
+        h.dipole_reference is None for h in histories
+    ):
+        raise ValueError("Preserved pair state components disagree with checkpoint")
+    return values
 
 
 def _restore(
@@ -280,7 +616,36 @@ def _restore(
 ) -> tuple[list[MomentumCenterParticle], np.ndarray, list[FullDipoleHistory]]:
     if payload.get("model") != MODEL or payload.get("units") != UNITS:
         raise ValueError("Wrong nonlinear pair model or units")
-    particles = [MomentumCenterParticle(**p) for p in payload["particles"]]
+    method = payload.get("integration_method", "rk4")
+    if method not in ("rk4", "dop853"):
+        raise ValueError("Integration method must be rk4 or dop853")
+    if method == "dop853" and payload.get("source_precision") is None:
+        raise ValueError("DOP853 requires preserved source increments")
+    particles = [
+        MomentumCenterParticle(
+            **dict(
+                dict(
+                    reaction_derivative_method=(
+                        "centered"
+                        if p.get("reaction_mode") == "full_dipole_coupled"
+                        else "backward"
+                    )
+                ),
+                **p,
+            )
+        )
+        for p in payload["particles"]
+    ]
+    if "internal_step_control" in payload:
+        from .pair_step_error import InternalStepSettings
+
+        InternalStepSettings.from_payload(payload["internal_step_control"])
+        if payload.get("integration_method") != "dop853" or any(
+            p.reaction_mode == "charge_ll" for p in particles
+        ):
+            raise ValueError(
+                "Internal error control requires preserved DOP853 with off or full-dipole reaction"
+            )
     histories = [
         FullDipoleHistory.from_checkpoint_payload(h) for h in payload["histories"]
     ]
@@ -302,11 +667,14 @@ def _restore(
             or not np.array_equal(history.position[-1], state[1:4])
         ):
             raise ValueError("History endpoint must match the native accepted state")
+    _source_components(payload, states, histories)
     providers = [
         FullDipoleProvider(
             histories[1 - i],
             particles[1 - i].charge_native,
             payload.get("startup_duration_ns", 0.0),
+            payload.get("startup_smoothness", 5),
+            one_sided_derivatives="internal_step_control" in payload,
         )
         for i in range(2)
     ]
@@ -329,7 +697,7 @@ def _restore(
 def advance_pair(
     payload: dict[str, Any], width_ns: float, steps: int = 1
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    """Fixed lab-time RK4, returning new checkpoint and accepted-end diagnostics.
+    """Fixed lab-time RK4 or DOP853, with matched reaction quadrature.
 
     Failure returns no partial checkpoint and never mutates the input. A smaller
     step does not necessarily repair insufficient published source history.
@@ -342,6 +710,11 @@ def advance_pair(
     ):
         raise ValueError("Positive finite step width and integer step count required")
     particles, states, histories = _restore(payload)
+    source_components = _source_components(payload, states, histories)
+    if source_components is not None:
+        source_reference, source_high, source_low = (
+            v.copy() for v in source_components
+        )
     ledger_keys = (
         "applied_impulse_native",
         "outward_radiation_native",
@@ -368,12 +741,70 @@ def advance_pair(
     ):
         raise ValueError("Invalid reaction ledger in checkpoint")
     records = []
+    internal_settings = None
+    if "internal_step_control" in payload:
+        from .pair_step_error import InternalStepSettings
+
+        internal_settings = InternalStepSettings.from_payload(
+            payload["internal_step_control"]
+        )
+    dipole_ledger = copy.deepcopy(
+        payload.get(
+            "dipole_reaction_ledger",
+            [
+                dict(
+                    applied_impulse_native=[0.0] * 4,
+                    applied_torque_native=[0.0] * 6,
+                    external_action_mass_exchange=0.0,
+                    sectors={
+                        key: dict(impulse_native=[0.0] * 4, torque_native=[0.0] * 6)
+                        for key in ("q_squared", "qD", "D_squared")
+                    },
+                )
+                for _ in range(2)
+            ],
+        )
+    )
+    if not isinstance(dipole_ledger, list) or len(dipole_ledger) != 2:
+        raise ValueError("Invalid dipole reaction ledger")
+    for row in dipole_ledger:
+        if (
+            not isinstance(row, dict)
+            or set(row)
+            != {
+                "applied_impulse_native",
+                "applied_torque_native",
+                "external_action_mass_exchange",
+                "sectors",
+            }
+            or np.shape(row["applied_impulse_native"]) != (4,)
+            or np.shape(row["applied_torque_native"]) != (6,)
+            or not np.isfinite(row["applied_impulse_native"]).all()
+            or not np.isfinite(row["applied_torque_native"]).all()
+            or not np.isscalar(row["external_action_mass_exchange"])
+            or not np.isfinite(row["external_action_mass_exchange"])
+            or not isinstance(row["sectors"], dict)
+            or set(row["sectors"]) != {"q_squared", "qD", "D_squared"}
+        ):
+            raise ValueError("Invalid dipole reaction ledger")
+        for sector in row["sectors"].values():
+            if (
+                not isinstance(sector, dict)
+                or set(sector) != {"impulse_native", "torque_native"}
+                or np.shape(sector["impulse_native"]) != (4,)
+                or np.shape(sector["torque_native"]) != (6,)
+                or not np.isfinite(sector["impulse_native"]).all()
+                or not np.isfinite(sector["torque_native"]).all()
+            ):
+                raise ValueError("Invalid dipole reaction sector ledger")
     for _ in range(steps):
         providers = [
             FullDipoleProvider(
                 histories[1 - i],
                 particles[1 - i].charge_native,
                 payload.get("startup_duration_ns", 0.0),
+                payload.get("startup_smoothness", 5),
+                one_sided_derivatives=internal_settings is not None,
             )
             for i in range(2)
         ]
@@ -389,24 +820,81 @@ def advance_pair(
                 stage_diagnostics.append(data["length_time"])
                 return rate
 
-            k1 = rhs(state)
-            k2 = rhs(state + width_ns * k1 / 2)
-            k3 = rhs(state + width_ns * k2 / 2)
-            k4 = rhs(state + width_ns * k3)
-            trial = state + width_ns * (k1 + 2 * k2 + 2 * k3 + k4) / 6
+            weights, divisor = (1, 2, 2, 1), 6
+            integrated_reaction, internal_statistics = None, None
+            if internal_settings is not None:
+                from .pair_internal_step import integrate_particle
+
+                (
+                    source_high[i],
+                    source_low[i],
+                    integrated_reaction,
+                    internal_statistics,
+                ) = integrate_particle(
+                    source_reference[i],
+                    source_high[i],
+                    source_low[i],
+                    width_ns,
+                    particle,
+                    provider,
+                    internal_settings,
+                )
+                weights, divisor = (), 1
+            elif payload.get("integration_method", "rk4") == "dop853":
+                from .preserved_runge_kutta import dop853_step
+
+                source_high[i], source_low[i], weights = dop853_step(
+                    source_reference[i], source_high[i], source_low[i], width_ns, rhs
+                )
+                divisor = 1
+            else:
+                k1 = rhs(state)
+                k2 = rhs(state + width_ns * k1 / 2)
+                k3 = rhs(state + width_ns * k2 / 2)
+                k4 = rhs(state + width_ns * k3)
+                trial = state + width_ns * (k1 + 2 * k2 + 2 * k3 + k4) / 6
+            if source_components is not None:
+                from .preserved_source import rk_increment, rounded_state
+
+                if divisor == 6:
+                    source_high[i], source_low[i] = rk_increment(
+                        source_high[i], source_low[i], (k1, k2, k3, k4), width_ns
+                    )
+                # Shared accepted lab time is the controller's exact float value.
+                source_high[i, 0] = endpoint - source_reference[i, 0]
+                source_low[i, 0] = 0.0
+                trial = rounded_state(
+                    source_reference[i], source_high[i], source_low[i]
+                )
             trial[0] = endpoint
             rate, diagnostic = dynamics_native(trial, particle, provider)
+            parts = None
+            dipole = diagnostic["proper_dipole_native"]
+            if source_components is not None:
+                parts = _preserved_dipole(
+                    source_reference[i],
+                    source_high[i],
+                    source_low[i],
+                    particle,
+                    provider,
+                    diagnostic,
+                    history.dipole_reference,
+                )
+                dipole = rounded_state(history.dipole_reference, *parts)
             candidate_histories.append(
                 history.append(
                     endpoint,
                     trial[1:4],
                     rate[1:4],
-                    diagnostic["proper_dipole_native"],
+                    dipole,
+                    dipole_parts=parts,
                 )
             )
             trials.append(trial)
+            if internal_statistics is not None:
+                diagnostic["internal_step_control"] = internal_statistics
             diagnostics.append(diagnostic)
-            if particle.reaction_mode != "off":
+            if particle.reaction_mode == "charge_ll":
                 for key, source in zip(
                     ledger_keys,
                     ("force", "outward_radiation_rate", "bound_momentum_rate"),
@@ -414,15 +902,57 @@ def advance_pair(
                     increment = (
                         width_ns
                         * c**2
-                        / 6
+                        / divisor
                         * sum(
                             weight
                             * np.asarray(d["reaction"][source])
                             / d["proper_velocity"][0]
-                            for weight, d in zip((1, 2, 2, 1), stage_diagnostics)
+                            for weight, d in zip(weights, stage_diagnostics)
                         )
                     )
                     ledger[i][key] = (np.asarray(ledger[i][key]) + increment).tolist()
+            if particle.reaction_mode in FULL_DIPOLE_REACTION_MODES:
+                if integrated_reaction is not None:
+                    from .nonlinear_pair_adaptive import _add_ledgers
+
+                    dipole_ledger[i] = _add_ledgers(
+                        dipole_ledger[i], integrated_reaction
+                    )
+                row = dipole_ledger[i]
+                for weight, data in zip(weights, stage_diagnostics):
+                    factor = (
+                        weight * width_ns * c / (divisor * data["proper_velocity"][0])
+                    )
+                    reaction = data["reaction"]
+                    for target, source in (
+                        ("applied_impulse_native", "force"),
+                        ("applied_torque_native", "torque"),
+                    ):
+                        value = (
+                            reaction[source]
+                            if source == "force"
+                            else model.pack(reaction[source])
+                        )
+                        row[target] = (
+                            np.asarray(row[target]) + c * factor * value
+                        ).tolist()
+                    row["external_action_mass_exchange"] += (
+                        factor * reaction["external_action_mass_rate"]
+                    )
+                    for key, sector in reaction["sectors"].items():
+                        for target, source in (
+                            ("impulse_native", "force"),
+                            ("torque_native", "torque"),
+                        ):
+                            value = (
+                                sector[source]
+                                if source == "force"
+                                else model.pack(sector[source])
+                            )
+                            row["sectors"][key][target] = (
+                                np.asarray(row["sectors"][key][target])
+                                + c * factor * value
+                            ).tolist()
         states, histories = np.asarray(trials), candidate_histories
         records.append(
             dict(
@@ -448,9 +978,33 @@ def advance_pair(
         histories=[h.to_checkpoint_payload() for h in histories],
         accepted_steps=payload["accepted_steps"] + steps,
         startup_duration_ns=payload.get("startup_duration_ns", 0.0),
+        startup_smoothness=payload.get("startup_smoothness", 5),
     )
-    if "reaction_ledger" in payload or any(p.reaction_mode != "off" for p in particles):
+    if "dipole_budget_policy" in payload:
+        from copy import deepcopy
+
+        result["dipole_budget_policy"] = deepcopy(payload["dipole_budget_policy"])
+    if "reaction_ledger" in payload or any(
+        p.reaction_mode == "charge_ll" for p in particles
+    ):
         result["reaction_ledger"] = ledger
+    if source_components is not None:
+        result["source_precision"] = dict(
+            format="preserved-pair-source-v1",
+            reference=source_reference.tolist(),
+            high=source_high.tolist(),
+            low=source_low.tolist(),
+        )
+    if "integration_method" in payload:
+        result["integration_method"] = payload["integration_method"]
+    if "internal_step_control" in payload:
+        result["internal_step_control"] = copy.deepcopy(
+            payload["internal_step_control"]
+        )
+    if "dipole_reaction_ledger" in payload or any(
+        p.reaction_mode in FULL_DIPOLE_REACTION_MODES for p in particles
+    ):
+        result["dipole_reaction_ledger"] = dipole_ledger
     return result, records
 
 
@@ -465,6 +1019,11 @@ def advance_pair_refined(
     """
     if type(max_halvings) is not int or not 0 <= max_halvings <= 10:
         raise ValueError("Source-position recovery requires 0 to 10 step halvings")
+    if max_halvings and "internal_step_control" in payload:
+        raise ValueError(
+            "Internal error control keeps source-recording cadence fixed; "
+            "combining it with source-position step halving is not supported"
+        )
     try:
         return advance_pair(payload, width_ns, 1)
     except SourcePositionError:

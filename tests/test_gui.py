@@ -376,7 +376,7 @@ def test_save_config_normalizes_filename_and_updates_ui(tmp_path, monkeypatch):
         lambda opts, path: saved.update({"options": opts, "path": path}),
     )
     monkeypatch.setattr(
-        "lw_integrator.gui_config_mixins.messagebox.showinfo",
+        "tkinter.messagebox.showinfo",
         lambda title, message: info_calls.append((title, message)),
     )
 
