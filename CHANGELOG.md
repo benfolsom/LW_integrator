@@ -1,6 +1,12 @@
 # Changelog
 
-## Unreleased — finite-spin pair milestone
+## v0.9.0 — 2026-09-21 — finite-spin pair milestone
+
+Release validation: 1,632 unit tests passed; five failures also reproduced on
+the development baseline. The documentation build passed with warnings treated
+as errors. Repository-wide type checking remains unresolved (2,521 errors,
+compared with 2,323 on the baseline); this release does not claim a clean type
+check. See the [merge review](docs/merge_readiness_2026-09-20.md) for details.
 
 The separate pair runner now defaults to coordinated single-fit histories on
 compatible fresh fixed-recording inputs. Existing checkpoints preserve their
