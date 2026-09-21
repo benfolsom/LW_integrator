@@ -1,0 +1,286 @@
+"""Configuration tests for selectable magnetic-dipole model pairs."""
+
+from __future__ import annotations
+
+import pytest
+
+from core.types import (
+    DipoleLocalJetScaleConfig,
+    DipoleSourceConfig,
+    MagneticDipoleConfig,
+)
+
+
+def test_magnetic_dipole_defaults_to_disabled_rfs_pair() -> None:
+    config = MagneticDipoleConfig()
+
+    assert config.enabled is False
+    assert config.spin_model == "rfs_minimal_2021"
+    assert config.stern_gerlach_model == "rfs_full_g"
+    assert config.exact_retarded_backend == "python"
+    assert config.exact_retarded_update == "first_order_endpoint"
+    assert config.source.model == "off"
+    assert not hasattr(config.source, "backend")
+    assert config.source.active is False
+
+
+@pytest.mark.parametrize(
+    ("spin_model", "stern_gerlach_model"),
+    (
+        ("rfs_minimal_2021", "rfs_full_g"),
+        ("bmt_frenkel", "static_rest_gradient"),
+    ),
+)
+def test_magnetic_dipole_accepts_matched_model_pairs(
+    spin_model: str, stern_gerlach_model: str
+) -> None:
+    config = MagneticDipoleConfig(
+        spin_model=spin_model,
+        stern_gerlach_model=stern_gerlach_model,
+    )
+
+    assert config.spin_model == spin_model
+    assert config.stern_gerlach_model == stern_gerlach_model
+
+
+@pytest.mark.parametrize(
+    ("spin_model", "stern_gerlach_model", "required_model"),
+    (
+        ("bmt_frenkel", "rfs_full_g", "rfs_minimal_2021"),
+        ("rfs_minimal_2021", "static_rest_gradient", "bmt_frenkel"),
+    ),
+)
+def test_magnetic_dipole_rejects_mismatched_model_pairs(
+    spin_model: str, stern_gerlach_model: str, required_model: str
+) -> None:
+    with pytest.raises(ValueError, match=f"requires spin_model '{required_model}'"):
+        MagneticDipoleConfig(
+            spin_model=spin_model,
+            stern_gerlach_model=stern_gerlach_model,
+        )
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    (
+        ({"spin_model": "unknown"}, "spin_model must be one of"),
+        (
+            {"stern_gerlach_model": "unknown"},
+            "stern_gerlach_model must be one of",
+        ),
+    ),
+)
+def test_magnetic_dipole_rejects_unknown_models(
+    overrides: dict[str, str], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        MagneticDipoleConfig(**overrides)
+
+
+def test_retarded_dipole_source_normalizes_alias_and_nested_mapping() -> None:
+    config = MagneticDipoleConfig(
+        enabled=True,
+        exact_retarded_backend="numba_roots_exact_serial",
+        source={
+            "model": "full-retarded-point",
+            "minimum_separation_mm": 3.0e-9,
+            "relative_stencil_step": 5.0e-4,
+        },
+    )
+
+    assert isinstance(config.source, DipoleSourceConfig)
+    assert config.source.model == "covariant_retarded_point"
+    assert config.exact_retarded_backend == "numba_roots_exact_serial"
+    assert config.source.active is True
+    assert config.source.minimum_separation_mm == 3.0e-9
+    assert config.source.relative_stencil_step == 5.0e-4
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    (("c1", "causal_frozen_c1"), ("causal-c5", "causal_c5")),
+)
+def test_retarded_dipole_source_normalizes_history_model(
+    value: str,
+    expected: str,
+) -> None:
+    assert DipoleSourceConfig(history_model=value).history_model == expected
+
+
+def test_retarded_dipole_source_rejects_unknown_history_model() -> None:
+    with pytest.raises(ValueError, match="history_model"):
+        DipoleSourceConfig(history_model="future_spline")
+
+
+def test_local_jet_requires_ordered_explicit_physical_windows() -> None:
+    with pytest.raises(ValueError, match="requires either local_jet_scales"):
+        DipoleSourceConfig(history_model="causal_local_jet")
+    with pytest.raises(ValueError, match="narrow < primary < wide"):
+        DipoleSourceConfig(
+            history_model="causal_local_jet",
+            local_jet_narrow_half_width_ns=2.0e-8,
+            local_jet_primary_half_width_ns=1.0e-8,
+            local_jet_wide_half_width_ns=3.0e-8,
+        )
+
+    config = DipoleSourceConfig(
+        history_model="local-jet",
+        local_jet_narrow_half_width_ns=1.0e-8,
+        local_jet_primary_half_width_ns=1.2e-8,
+        local_jet_wide_half_width_ns=1.5e-8,
+    )
+    assert config.history_model == "causal_local_jet"
+    assert config.local_jet_acceleration_samples == "interval_mean"
+    assert config.local_jet_window_alignment == "past"
+
+
+def test_local_jet_accepts_ordered_named_physical_scales() -> None:
+    config = DipoleSourceConfig(
+        history_model="causal_local_jet",
+        local_jet_scales=(
+            {
+                "name": "near",
+                "narrow_half_width_ns": 2.0e-9,
+                "primary_half_width_ns": 3.0e-9,
+                "wide_half_width_ns": 5.0e-9,
+            },
+            DipoleLocalJetScaleConfig(
+                name="far",
+                narrow_half_width_ns=5.0e-9,
+                primary_half_width_ns=1.2e-8,
+                wide_half_width_ns=1.5e-8,
+            ),
+        ),
+        local_jet_maximum_cross_scale_relative_spread=2.5e-4,
+    )
+
+    assert tuple(scale.name for scale in config.local_jet_scales) == ("near", "far")
+    assert config.local_jet_scales[0].primary_half_width_ns == 3.0e-9
+    assert config.local_jet_maximum_cross_scale_relative_spread == 2.5e-4
+
+
+def test_local_jet_rejects_ambiguous_or_unchecked_scale_ladders() -> None:
+    near = DipoleLocalJetScaleConfig("near", 2.0e-9, 3.0e-9, 4.0e-9)
+    far = DipoleLocalJetScaleConfig("far", 5.0e-9, 7.0e-9, 1.0e-8)
+
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        DipoleSourceConfig(
+            history_model="causal_local_jet",
+            local_jet_narrow_half_width_ns=1.0e-9,
+            local_jet_primary_half_width_ns=2.0e-9,
+            local_jet_wide_half_width_ns=3.0e-9,
+            local_jet_scales=(near, far),
+        )
+    with pytest.raises(ValueError, match="must overlap"):
+        DipoleSourceConfig(
+            history_model="causal_local_jet",
+            local_jet_scales=(near, far),
+        )
+    with pytest.raises(ValueError, match="at least two"):
+        DipoleSourceConfig(
+            history_model="causal_local_jet",
+            local_jet_scales=(near,),
+        )
+
+
+def test_magnetic_dipole_accepts_full_strict_exact_retarded_backend() -> None:
+    config = MagneticDipoleConfig(exact_retarded_backend="numba_full_strict_serial")
+
+    assert config.exact_retarded_backend == "numba_full_strict_serial"
+
+
+def test_magnetic_dipole_accepts_analytical_charge_response_backend() -> None:
+    config = MagneticDipoleConfig(
+        exact_retarded_backend="numba_analytic_charge_response_serial"
+    )
+
+    assert config.exact_retarded_backend == "numba_analytic_charge_response_serial"
+
+
+def test_magnetic_dipole_accepts_analytical_charge_dipole_response_backend() -> None:
+    config = MagneticDipoleConfig(
+        exact_retarded_backend="numba_analytic_charge_dipole_response_serial"
+    )
+
+    assert config.exact_retarded_backend == (
+        "numba_analytic_charge_dipole_response_serial"
+    )
+
+
+def test_magnetic_dipole_accepts_certified_metal_backend() -> None:
+    config = MagneticDipoleConfig(exact_retarded_backend="metal_certified_full_strict")
+
+    assert config.exact_retarded_backend == "metal_certified_full_strict"
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    (
+        ("first-order", "first_order_endpoint"),
+        ("second_order", "second_order_start_taylor_endpoint"),
+        ("second-order-taylor", "second_order_start_taylor_endpoint"),
+        (
+            "second_order_taylor_endpoint",
+            "second_order_start_taylor_endpoint",
+        ),
+        (
+            "second-order-start-taylor",
+            "second_order_start_taylor_endpoint",
+        ),
+    ),
+)
+def test_magnetic_dipole_normalizes_exact_retarded_update(
+    value: str,
+    expected: str,
+) -> None:
+    config = MagneticDipoleConfig(exact_retarded_update=value)
+
+    assert config.exact_retarded_update == expected
+
+
+def test_magnetic_dipole_rejects_unknown_exact_retarded_update() -> None:
+    with pytest.raises(ValueError, match="exact_retarded_update"):
+        MagneticDipoleConfig(exact_retarded_update="adaptive_magic")
+
+
+def test_intrinsic_spin_self_reaction_diagnostic_requires_second_order() -> None:
+    with pytest.raises(ValueError, match="self-reaction evaluation requires"):
+        MagneticDipoleConfig(intrinsic_spin_self_reaction_mode="diagnostic")
+
+    config = MagneticDipoleConfig(
+        exact_retarded_update="second_order_start_taylor_endpoint",
+        intrinsic_spin_self_reaction_mode="diagnostic",
+    )
+    assert config.intrinsic_spin_self_reaction_mode == "diagnostic"
+
+
+def test_magnetic_dipole_rejects_unknown_intrinsic_spin_self_reaction_mode() -> None:
+    with pytest.raises(ValueError, match="intrinsic_spin_self_reaction_mode"):
+        MagneticDipoleConfig(
+            exact_retarded_update="second_order_start_taylor_endpoint",
+            intrinsic_spin_self_reaction_mode="apply_now",
+        )
+
+
+def test_magnetic_dipole_rejects_unknown_exact_retarded_backend() -> None:
+    with pytest.raises(ValueError, match="exact_retarded_backend"):
+        MagneticDipoleConfig(exact_retarded_backend="auto")
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    (
+        ({"model": "quasistatic"}, "model"),
+        ({"minimum_separation_mm": 0.0}, "minimum_separation"),
+        ({"relative_stencil_step": 0.05}, "relative_stencil_step"),
+        ({"minimum_stencil_step_mm": float("nan")}, "minimum_stencil"),
+        ({"root_tolerance_mm": -1.0}, "root_tolerance"),
+        ({"max_root_iterations": 0}, "max_root_iterations"),
+    ),
+)
+def test_invalid_retarded_dipole_source_config_fails_explicitly(
+    overrides: dict[str, object],
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        DipoleSourceConfig(**overrides)

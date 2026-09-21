@@ -18,6 +18,143 @@ Use the pytest suite as the primary regression gate:
 
 For broad local validation, run ``pytest`` from the repository root.
 
+Magnetic-moment checks
+----------------------
+
+Run the deterministic magnetic helper and integration tests with:
+
+.. code-block:: bash
+
+   pytest tests/unit/test_species.py \
+      tests/unit/test_magnetic_dipole.py \
+      tests/unit/test_magnetic_dipole_config.py \
+      tests/unit/test_rfs.py \
+      tests/unit/test_rfs_radiation_reaction.py \
+      tests/unit/test_medina_radiation_reaction.py \
+      tests/unit/test_retarded_fields.py \
+      tests/unit/test_charge_source_interactions.py \
+      tests/unit/test_retarded_dipole_fields.py \
+      tests/unit/test_retarded_dipole_numba_full_strict.py \
+      tests/unit/test_dipole_source_backend_benchmark.py \
+      tests/unit/test_dipole_source_interactions.py \
+      tests/unit/test_inertial_prehistory.py \
+      tests/unit/test_rfs_integration.py \
+      tests/unit/test_magnetic_dipole_integration.py \
+      tests/unit/test_retarded_dipole_source_integration.py
+
+These tests validate signed moments, tensor conventions, charged and neutral
+limits, the three covariant spin/velocity constraints, full-G response in
+vacuum and current regions, analytic light-cone roots, complete retarded field
+gradients, matched model configuration, the static-gradient diagnostic, and
+the feature-off regression.  They also compare randomized native-Gaussian RFS
+states against an SI equation oracle, certify static, moving, and accelerated
+Lienard--Wiechert fields across the unit boundary, and verify that the source
+evaluator uses the stored native charge without renormalization.  The dipole
+source checks cover the static and uniform-motion limits, induced electric
+field invariants, source identity exclusion, retarded-time stencil
+convergence, mechanical/canonical response equivalence, accepted-endpoint
+canonical reconstruction, and mutual neutral RFS response.  The
+inertial-startup checks cover the eight sparse coasting knots, conservative
+causal sizing, geometric full-stencil preflight, hidden-prefix output, exact
+charge/dipole startup readiness, the one-time
+:math:`P=p+q(A_q+A_{\rm dip})/c` rebase, unprimed Medina history, and hard
+failure when exact source history is missing.  They also require
+:math:`P-p=q(A_q+A_{\rm dip})/c` at evolved endpoints and preserve append-only
+retarded-history preparation across the representation update.
+
+The optional ``numba_roots_exact_serial`` exact-retarded backend is checked
+against the complete Python charge and dipole provider results, not only
+against isolated roots.  Its tests vary the configured Numba thread count and
+require identical source addition and finite-difference results.  The shared
+canonical setting is ``magnetic_dipole.exact_retarded_backend`` and the CLI
+option is ``--exact-retarded-backend``.  For a representative full-state
+comparison, run the maintained 300-sample benchmark with a flyby testbed
+configuration::
+
+   python scripts/benchmark_exact_retarded_backends.py CONFIG.json \
+      --steps 300 --output /tmp/exact-retarded-backends.json --quiet
+
+The report compares every public trajectory array and side channel for rider
+and driver, records cold and warm timings separately, and leaves the input
+configuration unchanged.
+
+The explicit ``numba_full_strict_serial`` backend uses a physical tolerance
+contract because finite differences amplify event-level last-bit changes.  Its
+unit suite requires deterministic strict-serial execution, bounded charge and
+Hertz provider differences, reference event/source ordering, and a short
+trajectory below the ``0.025 meV`` cumulative projection-energy budget.
+Charge and dipole stencil centers remain Python reference evaluations;
+source reduction and finite-difference assembly also remain in reference-order
+Python.  Run the full 300-sample comparison with::
+
+   python scripts/benchmark_exact_retarded_backends.py CONFIG.json \
+      --backend numba_full_strict_serial \
+      --steps 300 --output /tmp/exact-retarded-full-strict.json --quiet
+
+The JSON records both bitwise equality and ``tolerance_passed``.  A full
+backend result is acceptable only when both cold and warm comparisons pass the
+tolerance contract and run status is unchanged.  Provider-level derivative
+differences should additionally be checked across force, spin, and stencil
+convergence before merging or using the backend for a production study.
+Saved ``local_magnetic_field_*`` visualization arrays have a separate absolute
+``1e-12 T`` comparison budget, while ordinary state arrays use ``2e-12``
+relative tolerance.  The local-field arrays are not force-path validation;
+force-center fields and the dynamics must pass their own comparisons.
+
+The explicit ``numba_analytic_charge_response_serial`` backend has a different
+comparison contract.  It replaces the charge finite-difference derivative by
+an analytical one-root response derivative, so last-bit or near-zero
+diagnostic agreement with the finite stencil is not the accuracy target.
+Validation must show that the maintained stencil converges to the analytical
+result, then bound the full trajectory discrepancy by independently measured
+timestep/stencil uncertainty.  The maintained acceptance uses at most 10
+percent of that uncertainty, an absolute ceiling for projection/energy
+quantities, and a unit-scale roundoff floor for residuals of normalized spin
+invariants.  Reports must also retain analytical/fallback call counts and
+failure reasons.  A segment-boundary fallback is acceptable evidence only
+when its count and location are explicit; silent fallback is not.
+
+``numba_analytic_charge_dipole_response_serial`` extends that contract to the
+retarded intrinsic-dipole Hertz response.  Smooth-segment provider tests compare
+the one-root third-order Taylor jet with adaptive adjacent-stencil Richardson
+limits for :math:`A`, :math:`F`, :math:`\partial F`, force, and spin.  The
+trajectory test judges complete Cartesian vectors, not isolated near-zero
+components, and gives each radiation/projection ledger an independent
+``1e-6 meV`` backend budget.  A separate common-horizon run must show improving
+timestep refinement in endpoint energy, projection, radiation, position,
+velocity, and spin.  Segment-boundary, mutable-tail, short-history, and
+particle-loss-wavefront fallbacks must remain explicit and use the full strict
+oracle.
+
+The sparse dipole-response implementation is additionally checked against the
+dense analytical jet on randomized relativistic, accelerated, and rotating-
+spin segments.  Its structural table must report exactly 144 influential and
+66 unused Hertz coefficients, while its public payload remains the 34 consumed
+components.  A provider-level guard proves that the smooth sparse route does
+not construct a center Hertz tensor, and direct packed charge/RFS contractions
+are compared with the dense tensor formulation.
+
+The first coupled RFS implementation has intentionally narrow integration
+guards: fixed-step ``COLD_START`` or ``INERTIAL_PREHISTORY``
+``BUNCH_TO_BUNCH`` point charges, no same-bunch RFS field, no nonzero smearing,
+no beamline visibility stencil, no pseudo-grid, and polarization zero or one.
+Inertial prehistory is an exact RFS/retarded-dipole startup mode, not a general
+replacement for startup handling.  Dynamic recoil is limited to the explicit
+charge-only ``medina_lad`` hybrid; its :math:`q\mu` and :math:`\mu^2`
+self-radiation sectors are absent.  The full-retarded point source is further
+limited to one physical particle per bunch, without macro moment scaling,
+driver trains, or cavity-exit synthetic coasting tails.  Passing these tests
+does not validate dipole self-reaction, contact or finite-size physics, atomic
+binding, or long-time electron--proton capture.
+
+Capture runs remain classical characterization studies and must reject capped
+Medina impulses.  A first-pass capture classification must converge with
+timestep, field-gradient stencil, and active starting separation.  Following
+a weakly bound return orbit is a later history-preserving multirate problem;
+neither first-pass binding nor a return trajectory closes the total energy and
+radiation balance while the :math:`q\mu` and :math:`\mu^2` self-recoil sectors
+are absent.
+
 Maintained Plotting Validation
 ------------------------------
 

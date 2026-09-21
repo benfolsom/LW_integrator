@@ -91,9 +91,26 @@ simulation, and confirm that the regression tooling works on your machine.
    configuration through ``SimulationOptions`` and executes ``run_testbed()``,
    preserving the configured 3D particle setup, beamline geometry, source
    smearing, driver train, startup mode, self-consistency, and output settings.
-   The JSON is authoritative; direct-run CLI overrides are not applied. Use
-   ``--config`` only for the separate native direct-integrator schema; accompany
-   ``--testbed-config`` only with ``--output`` or ``--quiet``.
+   The JSON is authoritative for physics settings. Direct-run CLI overrides are
+   not applied, but ``--checkpoint-dir``, ``--resume-from``, and the checkpoint
+   interval flags may be supplied operationally. Use ``--config`` only for the
+   separate native direct-integrator schema. See :doc:`checkpoints` for restart
+   commands and the fixed-step and exact-pair checkpoint boundaries.
+
+   For the guarded one-rider/one-driver exact-retarded return path, add an
+   absolute shared lab-time target and a checkpoint directory:
+
+   .. code-block:: bash
+
+      lw-simulate --testbed-config capture.json \
+        --adaptive-pair-return \
+        --adaptive-pair-target-time-ns 1.0e-6 \
+        --checkpoint-dir results/capture-return.checkpoint \
+        --checkpoint-every-seconds 900
+
+   This path is independent of the legacy adaptive-timestep option and rejects
+   unsupported scheduler or particle-count combinations before integration.
+   See :doc:`multirate_return` for the complete guard list.
 
    Example native direct-integrator JSON configuration structure:
 
@@ -120,6 +137,75 @@ simulation, and confirm that the regression tooling works on your machine.
    Additional options include ``--chrono-mode``, ``--startup-mode``,
    ``--image-weighting``, and ``--self-consistency``. Run ``lw-simulate --help``
    for the complete list.
+
+   Intrinsic magnetic moments are experimental and off by default.  The
+   selected RFS model is currently guarded to fixed-step
+   ``BUNCH_TO_BUNCH`` point-charge runs using ``COLD_START`` or
+   ``INERTIAL_PREHISTORY``, with same-bunch space charge disabled.
+   Dynamic recoil is either off or the explicit charge-only ``medina_lad``
+   hybrid.  For example, add these switches to a
+   suitable electron--proton BUNCH_TO_BUNCH run:
+
+   .. code-block:: bash
+
+      lw-simulate --simulation-type bunch-to-bunch \
+         --startup-mode inertial-prehistory \
+         --radiation-reaction-mode off --no-adaptive-timestep \
+         --magnetic-dipoles --stern-gerlach \
+         --rider-magnetic-species electron --rider-spin 1 0 0 \
+         --driver-magnetic-species proton --driver-spin 0 0 1
+
+   ``--magnetic-dipoles`` without ``--stern-gerlach`` enables spin transport
+   only.  Adding ``--stern-gerlach`` selects the fully coupled full-G response;
+   ``--no-spin-precession`` leaves a frozen-spin force diagnostic rather than a
+   complete RFS evolution.  To add the ordinary non-self field of each moment,
+   also select ``--dipole-source full-retarded-point``.  The optional
+   ``--dipole-source-cutoff-mm`` value is a strict point-singularity abort
+   boundary, not softening.  ``--exact-retarded-backend
+   numba_roots_exact_serial`` opts the exact charge and dipole providers into a
+   cross-platform serial CPU root kernel while preserving Python source and
+   stencil assembly; ``python`` is the default.
+   ``numba_full_strict_serial`` additionally compiles the strict per-source
+   charge and Hertz event paths.  It is faster but tolerance-validated rather
+   than bitwise-identical.  Charge and dipole stencil centers stay on the
+   Python reference path.
+   ``numba_analytic_charge_dipole_response_serial`` instead differentiates one
+   retarded root through the charge response and dipole Hertz response on
+   smooth history segments.  It is fully relativistic and falls back to the
+   full strict oracle at spin/history nonsmoothness.  On Apple silicon,
+   ``metal_certified_full_strict`` may accelerate sufficiently large dipole
+   root batches, but only as float32 bracket proposals certified against the
+   original float64 data; the strict CPU root and fields remain authoritative.
+   Small calls stay on the CPU and there is no automatic platform dispatch.
+   ``--exact-retarded-update second_order_start_taylor_endpoint`` opts the
+   ordinary exact-source Lorentz translation into the experimental
+   accepted-start second-order Taylor update; ``first_order_endpoint`` remains
+   the default.  Backend and update choices are independent.
+   ``--intrinsic-spin-self-reaction-mode diagnostic`` adds a checkpointed
+   analytical/causal estimate of the linear-spin self-force to that
+   second-order adaptive path.  It is a measurement only: the estimate is not
+   applied to momentum or spin.  ``off`` remains the default.
+   Neutral
+   particles and prescribed gradients are best configured in a saved JSON.
+   See :doc:`magnetic_dipole_moments` for the numerical contract, all hard
+   scope guards, the diagnostic legacy models, and retarded-source limits.
+
+   ``inertial-prehistory`` is the appropriate boundary model for an incoming
+   particle that existed before active time zero.  It constructs eight sparse
+   coasting knots, extends their causal span until every initial exact charge
+   and dipole stencil is bracketed, hides those knots from normal output, and
+   initializes canonical momentum once from the total retarded potential.
+   Each later accepted step advances mechanical :math:`qF+\mu G` and then
+   reconstructs canonical momentum from the accepted endpoint potential.  It
+   does not reconstruct the earlier interacting trajectory or prime Medina's
+   force derivative, so encounter results must converge as the active starting
+   separation is moved outward.  Use ``cold-start`` instead for a physical
+   field turn-on transient.
+
+   Replacing ``--radiation-reaction-mode off`` with ``medina_lad`` enables the
+   charge-only RFS/Medina hybrid.  It does not include intrinsic-dipole
+   self-recoil or charge--dipole radiation-interference recoil, and any run
+   with a capped Medina impulse is unsuitable as capture evidence.
 
    **Running a parameter sweep from the CLI:**
 

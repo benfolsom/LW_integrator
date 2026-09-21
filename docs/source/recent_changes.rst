@@ -3,14 +3,73 @@
 Recent Changes
 ==============
 
-*Last updated: August 2026*
+*Last updated: September 2026*
 
 This page summarizes recent improvements to the LW integrator, including
 optimization features, convergence enhancements, and critical physics
 corrections.
 
+September 2026: finite-spin pair workflow
+-------------------------------------------
+
+The :doc:`finite_spin_pair` guide covers the separate coupled-reaction pair
+solver, CLI and GUI controls, checkpoint restart, and automatic single-fit
+history selection for compatible fresh fixed-recording inputs. Dipole budgets
+now have a documented relative scale, an absolute override, and recorded
+provenance. Internal DOP853 adaptation is supported with fixed recording times;
+arbitrary adaptive recording remains unsupported for this representation.
+
+The completed coarse–fine benchmark reduced late dipole-squared reaction
+disagreement from 5.819e-2 to 1.034e-5 relative to the fine result. This passes
+the campaign's recording-resolution target. It does not establish independent
+conservation or universal validity across relativistic regimes. Existing
+charge-only and bunch solver defaults remain separate.
+
 August 2026 Updates
 -------------------
+
+Experimental magnetic moments and spin (August 2026)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* Added an immutable, cited species registry with signed moments for common
+  accelerator, plasma, and fusion particles, including neutral neutrons.
+* Selected the signed 2021 minimal RFS spin equation and full 2018
+  :math:`G^{\mu\nu}` tensor for charged and neutral response.  The BMT/Frenkel
+  and static-rest-gradient pair remains a named diagnostic.
+* Added an observer-charge-independent point-charge Lienard--Wiechert
+  potential and field evaluator.  It re-solves the light cone at the observer
+  and at every spacetime-gradient stencil event rather than freezing one
+  retarded sample, and returns consistent derivatives of both :math:`A` and
+  :math:`F`.
+* Preserved the charge-canonical momentum definition and added only the RFS
+  dipole four-force.  CLI and GUI switches expose off, spin-only, and fully
+  coupled operation.  Exact inertial evolution advances the ordinary
+  mechanical :math:`qF` response, then reconstructs
+  :math:`P_{n+1}=p_{n+1}+qA_{n+1}/c` after both bunch endpoints are available;
+  this removes a one-step start-potential lag.  COLD_START retains the
+  established charge kernel plus the separate exact RFS sample.
+* Added ``INERTIAL_PREHISTORY`` for exact-field startup.  It builds eight
+  sparse coasting knots, sizes them conservatively, geometrically extends them
+  until all initial charge/dipole stencils preflight, hides the prefix from
+  output, and performs one time-zero
+  :math:`P=p+q(A_q+A_{\rm dip})/c` initialization.  Medina remains unprimed,
+  and a later missing light-cone root is an error.
+* Added explicit safety guards for the first implementation: fixed-step
+  ``COLD_START`` or ``INERTIAL_PREHISTORY`` ``BUNCH_TO_BUNCH`` point charges
+  only, no same-bunch RFS response, no nonzero smearing, beamline stencil
+  boundaries, adaptive substeps, or pseudo-grid reconstruction, and
+  polarization zero or one.  Dynamic recoil is restricted to the explicit
+  charge-only ``medina_lad`` hybrid.
+* Corrected production Medina/LAD to retain the complete force derivative and
+  coupled its actually applied post-cap force to RFS spin through the matching
+  Fermi--Walker term.  Charge--dipole and intrinsic-dipole self-recoil remain
+  outside this named hybrid.
+* Added an optional full-retarded point-dipole source for the ordinary non-self
+  Maxwell field.  The total field now supplies charge--dipole and
+  dipole--dipole response without another pair-force law.  Dipole self-reaction,
+  contact terms, finite-size sources, and conducting dipole images remain
+  deferred.  See :doc:`magnetic_dipole_moments` for the model equations,
+  references, singularity boundary, and capture-study limits.
 
 Testbed CLI and GUI Configuration Fidelity (August 2026)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

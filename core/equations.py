@@ -72,7 +72,7 @@ See :class:`core.self_consistency.SelfConsistencyConfig` for configuration.
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 
 import numpy as np
 
@@ -86,8 +86,16 @@ from .distances import (
     compute_retarded_distance_soa,
 )
 from .beamline_geometry import compute_directional_visibility_mask
-from .external_fields import compute_uniform_external_field_impulse
+from .external_fields import (
+    compute_uniform_external_field_impulse,
+    evaluate_external_field_native,
+    evaluate_external_field_si,
+)
 from .macroparticle_smearing import smear_source_samples
+from .medina_radiation_reaction import (
+    MedinaRadiationReactionResult,
+    compute_medina_radiation_reaction,
+)
 from .self_consistency import (
     SelfConsistencyConfig,
     canonicalize_self_consistency_mode,
@@ -97,6 +105,7 @@ from .types import (
     ChronoMatchingMode,
     GammaReconciliationMethod,
     MacroparticleSmearingConfig,
+    MagneticDipoleConfig,
     ParticleState,
     SimulationType,
     StartupMode,
@@ -202,6 +211,22 @@ def _ensure_startup_metadata(state: ParticleState) -> None:
         state["radiation_energy_applied"] = np.zeros_like(
             state.get("x", np.array([])), dtype=float
         )
+    if "mass_shell_projection_energy" not in state:
+        state["mass_shell_projection_energy"] = np.zeros_like(
+            state.get("x", np.array([])), dtype=float
+        )
+    if np.any(np.asarray(state.get("magnetic_dipole_active", []), dtype=float)):
+        particle_template = state.get("x", np.array([]))
+        for name in (
+            "spin_x",
+            "spin_y",
+            "spin_z",
+            "local_magnetic_field_x_t",
+            "local_magnetic_field_y_t",
+            "local_magnetic_field_z_t",
+        ):
+            if name not in state:
+                state[name] = np.zeros_like(particle_template, dtype=float)
 
 
 def _extract_self_consistency_params(
@@ -329,7 +354,35 @@ def _initialize_result_state(current_state: ParticleState) -> ParticleState:
         "radiation_power": np.zeros_like(current_state["x"], dtype=float),
         "radiation_energy": np.zeros_like(current_state["x"], dtype=float),
         "radiation_energy_applied": np.zeros_like(current_state["x"], dtype=float),
+        "mass_shell_projection_energy": np.zeros_like(current_state["x"], dtype=float),
     }
+
+    magnetic_fields = (
+        "spin_x",
+        "spin_y",
+        "spin_z",
+        "local_magnetic_field_x_t",
+        "local_magnetic_field_y_t",
+        "local_magnetic_field_z_t",
+        "magnetic_moment_j_per_t",
+        "magnetic_moment_native",
+        "spin_quantum_number",
+        "gyromagnetic_ratio_rad_s_t",
+        "magnetic_dipole_active",
+        "spin_precession_active",
+        "stern_gerlach_active",
+        "dipole_source_canonical_ready",
+    )
+    for name in magnetic_fields:
+        if name in current_state:
+            result[name] = np.array(current_state[name], dtype=float, copy=True)
+
+    if "charge_source_canonical_ready" in current_state:
+        result["charge_source_canonical_ready"] = np.array(
+            current_state["charge_source_canonical_ready"],
+            dtype=bool,
+            copy=True,
+        )
 
     # Preserve dead particle metadata to prevent redundant logging
     if "_dead_particles" in current_state:
@@ -342,6 +395,41 @@ def _initialize_result_state(current_state: ParticleState) -> ParticleState:
         }
 
     return result
+
+
+def _initialize_medina_step_state(result: ParticleState) -> None:
+    """Reset Medina diagnostics and accepted-force history for one trial step.
+
+    The caller populates the force-history fields only after it has recomputed
+    the complete non-radiation-reaction force for the current trial.  Starting
+    from invalid history here is important: a rejected adaptive trial or a run
+    that changes radiation-reaction mode cannot leak a stale force derivative
+    into a later accepted step.
+    """
+
+    particle_template = result["x"]
+    for name in (
+        "radiation_reaction_work",
+        "medina_cross_field_energy",
+        "medina_cross_field_energy_change",
+        "medina_external_force_x",
+        "medina_external_force_y",
+        "medina_external_force_z",
+    ):
+        result[name] = np.zeros_like(particle_template, dtype=float)
+    result["medina_external_force_sample_time"] = np.full_like(
+        particle_template,
+        np.nan,
+        dtype=float,
+    )
+    result["medina_force_derivative_ready"] = np.zeros_like(
+        particle_template,
+        dtype=bool,
+    )
+    result["medina_impulse_capped"] = np.zeros_like(
+        particle_template,
+        dtype=bool,
+    )
 
 
 def _get_state_scalar(
@@ -412,6 +500,29 @@ def _mechanical_momentum_components(
     )
 
 
+def _stable_kinetic_energy_native(
+    mechanical_momentum: Sequence[float] | np.ndarray,
+    particle_mass: float,
+) -> float:
+    """Return kinetic energy without subtracting the rest energy."""
+
+    momentum = np.asarray(mechanical_momentum, dtype=float)
+    if momentum.shape != (3,) or not np.all(np.isfinite(momentum)):
+        raise ValueError("mechanical_momentum must be a finite three-vector")
+    mass = float(particle_mass)
+    if not np.isfinite(mass) or mass <= 0.0:
+        raise ValueError("particle_mass must be finite and positive")
+    magnitude = float(
+        np.hypot(
+            np.hypot(abs(float(momentum[0])), abs(float(momentum[1]))),
+            abs(float(momentum[2])),
+        )
+    )
+    rest_momentum = mass * C_MMNS
+    total_momentum = float(np.hypot(rest_momentum, magnitude))
+    return float(C_MMNS * magnitude**2 / (total_momentum + rest_momentum))
+
+
 def _canonical_pt_from_mechanical_mass_shell(
     *,
     px: float,
@@ -436,6 +547,228 @@ def _canonical_pt_from_mechanical_mass_shell(
     kinetic_pt = np.sqrt(p_spatial_sq + np.float64(particle_mass * C_MMNS) ** 2)
     canonical_pt = kinetic_pt + np.float64(scalar_potential_contribution)
     return float(kinetic_pt), float(canonical_pt)
+
+
+def _four_velocity_native(beta: np.ndarray) -> np.ndarray:
+    """Return native contravariant ``u=(gamma*c, gamma*c*beta)``."""
+
+    beta_squared = float(beta @ beta)
+    if beta_squared >= 1.0:
+        raise ValueError("beta magnitude must be less than one")
+    gamma = 1.0 / np.sqrt(1.0 - beta_squared)
+    return np.concatenate(([gamma * C_MMNS], gamma * C_MMNS * beta))
+
+
+def _project_normalized_spin(
+    spin_four_vector: np.ndarray,
+    four_velocity: np.ndarray,
+    target_rest_magnitude: float,
+) -> np.ndarray:
+    """Project spin onto u-orthogonal space and restore its invariant norm."""
+
+    from .rfs import minkowski_dot
+
+    target = float(target_rest_magnitude)
+    if target == 0.0:
+        return np.zeros(4, dtype=float)
+    projected = np.asarray(spin_four_vector, dtype=float) - np.asarray(
+        four_velocity, dtype=float
+    ) * (minkowski_dot(four_velocity, spin_four_vector) / C_MMNS**2)
+    norm_squared = -minkowski_dot(projected, projected)
+    if not np.isfinite(norm_squared) or norm_squared <= 0.0:
+        raise FloatingPointError("RFS spin update produced a non-spacelike spin")
+    return np.asarray(projected * (target / np.sqrt(norm_squared)), dtype=float)
+
+
+def _advance_rfs_rest_spin(
+    rest_spin: np.ndarray,
+    *,
+    beta_start: np.ndarray,
+    beta_end: np.ndarray,
+    field_tensor: np.ndarray,
+    partial_f: np.ndarray,
+    charge_native: float,
+    mass_amu: float,
+    magnetic_moment_native: float,
+    spin_quantum_number: float,
+    proper_time_step_ns: float,
+    applied_radiation_reaction_force_native: np.ndarray | None = None,
+    analytic_antisymmetric_response: np.ndarray | None = None,
+    analytic_partial_antisymmetric_response: np.ndarray | None = None,
+    analytic_response_contraction: str = "python",
+) -> np.ndarray:
+    """Advance normalized RFS four-spin and return rest-frame polarization.
+
+    When supplied, ``applied_radiation_reaction_force_native`` is the Medina
+    lab three-force that the momentum update actually received after any
+    numerical impulse cap.  The same step-averaged force is converted at the
+    start and midpoint four-velocity/spin states so both Runge--Kutta stages
+    include the matching Fermi--Walker correction.
+    """
+
+    from .magnetic_dipole import (
+        HBAR_NATIVE,
+        boost_rest_polarization,
+        rest_polarization_from_four_vector,
+    )
+    from .rfs import (
+        rfs_charge_radiation_reaction_terms_native,
+        rfs_spin_rhs_native,
+    )
+    from .antisymmetric_response_rfs import antisymmetric_response_rfs_native
+
+    rest_spin = np.asarray(rest_spin, dtype=float)
+    polarization = float(np.linalg.norm(rest_spin))
+    if polarization == 0.0 or proper_time_step_ns == 0.0:
+        return rest_spin.copy()
+    invariant_spin = float(spin_quantum_number) * HBAR_NATIVE
+    if invariant_spin <= 0.0:
+        return rest_spin.copy()
+    applied_rr_force = (
+        np.zeros(3, dtype=float)
+        if applied_radiation_reaction_force_native is None
+        else np.asarray(applied_radiation_reaction_force_native, dtype=float)
+    )
+    if applied_rr_force.shape != (3,) or not np.all(np.isfinite(applied_rr_force)):
+        raise ValueError(
+            "applied_radiation_reaction_force_native must contain three finite "
+            "components"
+        )
+    radiation_reaction_active = bool(np.any(applied_rr_force != 0.0))
+    packed_analytic_response = (
+        None
+        if analytic_antisymmetric_response is None
+        else np.asarray(analytic_antisymmetric_response, dtype=float)
+    )
+    partial_packed_analytic_response = (
+        None
+        if analytic_partial_antisymmetric_response is None
+        else np.asarray(analytic_partial_antisymmetric_response, dtype=float)
+    )
+    if (packed_analytic_response is None) != (partial_packed_analytic_response is None):
+        raise ValueError(
+            "analytical response and its derivative must be supplied together"
+        )
+    if analytic_response_contraction not in ("python", "numba_strict_serial"):
+        raise ValueError(
+            "analytic_response_contraction must be 'python' or " "'numba_strict_serial'"
+        )
+
+    def analytical_spin_rhs(
+        four_velocity: np.ndarray, spin_four_vector: np.ndarray
+    ) -> np.ndarray:
+        if packed_analytic_response is None or partial_packed_analytic_response is None:
+            return np.zeros(4, dtype=float)
+        if analytic_response_contraction == "numba_strict_serial":
+            from .contracted_antisymmetric_response_numba import (
+                antisymmetric_response_rfs_strict_serial,
+            )
+
+            return antisymmetric_response_rfs_strict_serial(
+                four_velocity,
+                spin_four_vector,
+                packed_analytic_response,
+                partial_packed_analytic_response,
+                float(charge_native),
+                float(mass_amu),
+                float(magnetic_moment_native),
+                float(invariant_spin),
+            )[3]
+        return antisymmetric_response_rfs_native(
+            four_velocity_mm_ns=four_velocity,
+            spin_four_vector=spin_four_vector,
+            antisymmetric_response=packed_analytic_response,
+            partial_antisymmetric_response=partial_packed_analytic_response,
+            charge_native=charge_native,
+            mass_amu=mass_amu,
+            magnetic_moment_native=magnetic_moment_native,
+            invariant_spin_native=invariant_spin,
+        ).spin_rhs
+
+    u_start = _four_velocity_native(beta_start)
+    u_end = _four_velocity_native(beta_end)
+    beta_midpoint = 0.5 * (beta_start + beta_end)
+    if float(beta_midpoint @ beta_midpoint) >= 1.0:
+        beta_midpoint *= np.nextafter(1.0, 0.0) / np.linalg.norm(beta_midpoint)
+    u_midpoint = _four_velocity_native(beta_midpoint)
+    spin_start = boost_rest_polarization(rest_spin, beta_start)
+    delta_tau_ns = float(proper_time_step_ns)
+
+    derivative_start = rfs_spin_rhs_native(
+        four_velocity_mm_ns=u_start,
+        spin_four_vector=spin_start,
+        field_tensor=field_tensor,
+        partial_f=partial_f,
+        charge_native=charge_native,
+        mass_amu=mass_amu,
+        magnetic_moment_native=magnetic_moment_native,
+        invariant_spin_native=invariant_spin,
+    )
+    derivative_start += analytical_spin_rhs(u_start, spin_start)
+    if radiation_reaction_active:
+        derivative_start += rfs_charge_radiation_reaction_terms_native(
+            four_velocity_mm_ns=u_start,
+            spin_four_vector=spin_start,
+            applied_radiation_reaction_force_native=applied_rr_force,
+            mass_amu=mass_amu,
+        ).spin_rhs_correction
+    spin_midpoint = _project_normalized_spin(
+        spin_start + 0.5 * delta_tau_ns * derivative_start,
+        u_midpoint,
+        polarization,
+    )
+    derivative_midpoint = rfs_spin_rhs_native(
+        four_velocity_mm_ns=u_midpoint,
+        spin_four_vector=spin_midpoint,
+        field_tensor=field_tensor,
+        partial_f=partial_f,
+        charge_native=charge_native,
+        mass_amu=mass_amu,
+        magnetic_moment_native=magnetic_moment_native,
+        invariant_spin_native=invariant_spin,
+    )
+    derivative_midpoint += analytical_spin_rhs(u_midpoint, spin_midpoint)
+    if radiation_reaction_active:
+        derivative_midpoint += rfs_charge_radiation_reaction_terms_native(
+            four_velocity_mm_ns=u_midpoint,
+            spin_four_vector=spin_midpoint,
+            applied_radiation_reaction_force_native=applied_rr_force,
+            mass_amu=mass_amu,
+        ).spin_rhs_correction
+    spin_end = _project_normalized_spin(
+        spin_start + delta_tau_ns * derivative_midpoint,
+        u_end,
+        polarization,
+    )
+    rest_end = rest_polarization_from_four_vector(spin_end, beta_end)
+    rest_norm = float(np.linalg.norm(rest_end))
+    if rest_norm == 0.0:
+        raise FloatingPointError("RFS spin update collapsed a nonzero spin")
+    return rest_end * (polarization / rest_norm)
+
+
+def _external_tensor_gradient(
+    electric_field_native: np.ndarray,
+    magnetic_field_native: np.ndarray,
+    magnetic_gradient_native_per_mm: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Build native ``F`` and ``partial_lambda F`` from native field values."""
+
+    from .rfs import electromagnetic_field_tensor_native
+
+    field_tensor = electromagnetic_field_tensor_native(
+        tuple(float(value) for value in electric_field_native),
+        tuple(float(value) for value in magnetic_field_native),
+    )
+    partial_f = np.zeros((4, 4, 4), dtype=float)
+    for coordinate in range(3):
+        partial_f[coordinate + 1] = electromagnetic_field_tensor_native(
+            (0.0, 0.0, 0.0),
+            tuple(
+                float(value) for value in magnetic_gradient_native_per_mm[:, coordinate]
+            ),
+        )
+    return field_tensor, partial_f
 
 
 def _refresh_kinematics_from_canonical_momentum(
@@ -1015,86 +1348,144 @@ def _compute_lienard_radiated_power(
     return float((2.0 * charge**2 / (3.0 * C_MMNS)) * gamma**6 * transverse_term)
 
 
-def _compute_medina_radiation_reaction_impulse(
+def _accepted_medina_force_derivative(
     *,
-    external_force: tuple[float, float, float],
-    beta: tuple[float, float, float],
-    beta_dot_t: tuple[float, float, float],
-    gamma: float,
-    dgamma_dt: float,
-    mass: float,
-    charge: float,
-    coordinate_dt: float,
-    max_impulse_fraction: float = 0.25,
+    current_state: ParticleState,
+    particle_idx: int,
+    current_force: tuple[float, float, float],
+    current_sample_time: float,
 ) -> tuple[tuple[float, float, float], bool]:
-    """Return Medina/LAD radiation-reaction impulse in native momentum units.
+    """Backward-difference two accepted midpoint force samples.
 
-    The Medina form is treated as an experimental candidate self-force:
+    Each force sample is the average non-radiation-reaction mechanical force
+    over one on-shell predictor interval and is timestamped at that interval's
+    midpoint.  A later Medina endpoint kick may shift the accepted endpoint
+    time by second-order terms; it does not retrospectively move the force
+    sample.  The resulting derivative is first-order accurate at the current
+    predictor midpoint.  A nonlinear iteration never writes ``current_state``;
+    rejected adaptive trials are therefore excluded automatically.
 
-    The direct form,
-
-    ``F_rad = tau0 * (dgamma_dt * F_ext - gamma^3/c^2 * (F_ext·a) * v)``,
-
-    suffers catastrophic cancellation for head-on longitudinal acceleration at
-    high gamma. This implementation uses the equivalent beta-parallel /
-    beta-transverse decomposition:
-
-    ``F_rad = tau0/(m c) * ((beta·F) F_perp - gamma^2 |F_perp|^2 beta)``
-
-    where ``F_perp`` is the component of the external mechanical force
-    perpendicular to ``beta``. The returned impulse is
-    ``F_rad * coordinate_dt``. A small cap is used only as a numerical guard for
-    the experimental mode.
+    Missing history and history whose timestamp lies after the accepted state
+    are treated as unprimed.  The caller must not apply a Medina impulse until
+    this function reports readiness.
     """
-    if coordinate_dt <= 0.0 or mass <= 0.0 or gamma <= 0.0 or charge == 0.0:
-        return (0.0, 0.0, 0.0), False
 
-    force_vec = np.asarray(external_force, dtype=float)
-    beta_vec = np.asarray(beta, dtype=float)
-    beta_dot_vec = np.asarray(beta_dot_t, dtype=float)
-    if not (
-        np.all(np.isfinite(force_vec))
-        and np.all(np.isfinite(beta_vec))
-        and np.all(np.isfinite(beta_dot_vec))
-        and np.isfinite(dgamma_dt)
+    force_keys = (
+        "medina_external_force_x",
+        "medina_external_force_y",
+        "medina_external_force_z",
+    )
+    if any(key not in current_state for key in force_keys) or (
+        "medina_external_force_sample_time" not in current_state
     ):
         return (0.0, 0.0, 0.0), False
 
-    if float(np.linalg.norm(force_vec)) <= 0.0:
+    try:
+        previous_force = np.asarray(
+            [current_state[key][particle_idx] for key in force_keys],
+            dtype=float,
+        )
+        previous_sample_time = float(
+            current_state["medina_external_force_sample_time"][particle_idx]
+        )
+        accepted_state_time = float(current_state["t"][particle_idx])
+    except (IndexError, KeyError, TypeError, ValueError):
         return (0.0, 0.0, 0.0), False
 
-    beta_sq = float(np.dot(beta_vec, beta_vec))
-    if beta_sq <= 0.0:
+    current_force_vector = np.asarray(current_force, dtype=float)
+    values_are_finite = bool(
+        np.all(np.isfinite(previous_force))
+        and np.all(np.isfinite(current_force_vector))
+        and np.isfinite(previous_sample_time)
+        and np.isfinite(current_sample_time)
+        and np.isfinite(accepted_state_time)
+    )
+    if not values_are_finite:
         return (0.0, 0.0, 0.0), False
 
-    force_norm = float(np.linalg.norm(force_vec))
-    beta_dot_force = float(np.dot(beta_vec, force_vec))
-    force_parallel = beta_vec * (beta_dot_force / beta_sq)
-    force_perp = force_vec - force_parallel
-    force_perp_norm = float(np.linalg.norm(force_perp))
-    if force_perp_norm <= 1.0e-14 * force_norm:
+    timestamp_tolerance = (
+        64.0
+        * np.finfo(float).eps
+        * max(
+            1.0,
+            abs(previous_sample_time),
+            abs(accepted_state_time),
+        )
+    )
+    if previous_sample_time > accepted_state_time + timestamp_tolerance:
         return (0.0, 0.0, 0.0), False
 
-    tau0 = (2.0 / 3.0) * charge**2 / (mass * C_MMNS**3)
-    force_perp_sq = float(np.dot(force_perp, force_perp))
-    radiation_force = (tau0 / (mass * C_MMNS)) * (
-        beta_dot_force * force_perp - gamma**2 * force_perp_sq * beta_vec
+    sample_interval = float(current_sample_time - previous_sample_time)
+    if sample_interval <= 0.0 or not np.isfinite(sample_interval):
+        return (0.0, 0.0, 0.0), False
+
+    derivative = (current_force_vector - previous_force) / sample_interval
+    if not np.all(np.isfinite(derivative)):
+        return (0.0, 0.0, 0.0), False
+    return (
+        (float(derivative[0]), float(derivative[1]), float(derivative[2])),
+        True,
     )
 
-    if not np.all(np.isfinite(radiation_force)):
+
+def _cap_medina_radiation_reaction_impulse(
+    *,
+    impulse: tuple[float, float, float],
+    external_force: tuple[float, float, float],
+    coordinate_dt: float,
+    max_impulse_fraction: float = 0.25,
+) -> tuple[tuple[float, float, float], bool]:
+    """Apply the legacy Medina step guard and report whether it activated.
+
+    The pure Medina kernel remains uncapped.  Production retains the historical
+    guard at 25 percent of the non-RR external impulse, but publishes a flag so
+    validation and capture studies can reject guarded steps rather than
+    silently treating them as physical results.
+    """
+
+    impulse_vector = np.asarray(impulse, dtype=float)
+    force_vector = np.asarray(external_force, dtype=float)
+    if not (
+        impulse_vector.shape == (3,)
+        and force_vector.shape == (3,)
+        and np.all(np.isfinite(impulse_vector))
+        and np.all(np.isfinite(force_vector))
+        and np.isfinite(coordinate_dt)
+        and coordinate_dt > 0.0
+    ):
         return (0.0, 0.0, 0.0), False
 
-    impulse = radiation_force * coordinate_dt
-    capped = False
-    if max_impulse_fraction > 0.0:
-        reference_impulse = max(float(np.linalg.norm(force_vec)) * coordinate_dt, 0.0)
-        max_impulse = max_impulse_fraction * reference_impulse
-        impulse_norm = float(np.linalg.norm(impulse))
-        if max_impulse > 0.0 and impulse_norm > max_impulse:
-            impulse *= max_impulse / impulse_norm
-            capped = True
+    if max_impulse_fraction <= 0.0:
+        return (
+            (
+                float(impulse_vector[0]),
+                float(impulse_vector[1]),
+                float(impulse_vector[2]),
+            ),
+            False,
+        )
 
-    return (float(impulse[0]), float(impulse[1]), float(impulse[2])), capped
+    reference_impulse = float(np.linalg.norm(force_vector)) * coordinate_dt
+    maximum_impulse = max_impulse_fraction * reference_impulse
+    impulse_norm = float(np.linalg.norm(impulse_vector))
+    if maximum_impulse > 0.0 and impulse_norm > maximum_impulse:
+        impulse_vector *= maximum_impulse / impulse_norm
+        return (
+            (
+                float(impulse_vector[0]),
+                float(impulse_vector[1]),
+                float(impulse_vector[2]),
+            ),
+            True,
+        )
+    return (
+        (
+            float(impulse_vector[0]),
+            float(impulse_vector[1]),
+            float(impulse_vector[2]),
+        ),
+        False,
+    )
 
 
 def _derive_relativistic_kinematics_from_force(
@@ -1378,6 +1769,13 @@ def retarded_equations_of_motion(
     pseudo_grid_space_charge_source_radii_mm: Optional[np.ndarray] = None,
     macroparticle_smearing: Optional[MacroparticleSmearingConfig] = None,
     beamline_geometry: Optional[BeamlineGeometryConfig] = None,
+    magnetic_dipole: Optional[MagneticDipoleConfig] = None,
+    exact_source_history: Optional[Any] = None,
+    exact_dipole_source_collection: Optional[Any] = None,
+    exact_source_spin_interpolation_model: str = "centered_c1",
+    moment_impulse_diagnostic: Optional[Any] = None,
+    moment_radiation_force_native: Optional[Any] = None,
+    _experimental_linear_spin_adapter: bool = False,
 ) -> ParticleState:
     """Core equations of motion preserving the validated reference behavior.
 
@@ -1404,6 +1802,18 @@ def retarded_equations_of_motion(
         until sufficient observer travel has occurred, while
         ``APPROXIMATE_BACK_HISTORY`` assumes constant source velocity to
         reconstruct an analytic history.
+    exact_source_history:
+        Optional immutable source-history view used by exact charge and dipole
+        providers without replacing the accepted chronology/gating history.
+    exact_dipole_source_collection:
+        Optional ordered causal dipole history selected by
+        ``magnetic_dipole.source.history_model``. Charge providers continue to
+        use ``exact_source_history``; only the intrinsic-dipole Maxwell source is
+        replaced. This separation prevents a spin-history experiment from
+        changing the already validated charge chronology.
+    exact_source_spin_interpolation_model:
+        Spin interpolation contract for ``exact_source_history``. Trial overlays
+        require ``"causal_frozen_c1"`` so accepted spin segments stay fixed.
     self_consistency:
         Optional configuration for self-consistency iterations. If provided and
         enabled, each particle's update will iterate until gamma converges,
@@ -1426,8 +1836,118 @@ def retarded_equations_of_motion(
     current_state = trajectory[index_traj]
     result = _initialize_result_state(current_state)
     radiation_mode = _canonicalize_radiation_reaction_mode(radiation_reaction_mode)
+    if radiation_mode == "medina_lad":
+        _initialize_medina_step_state(result)
 
     num_particles = len(current_state["x"])
+    if moment_impulse_diagnostic is not None and radiation_mode == "medina_lad":
+        moment_rr_force = np.asarray(moment_radiation_force_native, dtype=float)
+        if moment_rr_force.shape != (num_particles, 3) or not np.all(
+            np.isfinite(moment_rr_force)
+        ):
+            raise ValueError(
+                "Medina moment correction requires a finite force estimate"
+            )
+        result["_moment_applied_medina_force_native"] = np.zeros((num_particles, 3))
+    else:
+        if moment_radiation_force_native is not None:
+            raise ValueError(
+                "radiation force estimate requires Medina moment diagnostic"
+            )
+        moment_rr_force = np.zeros((num_particles, 3))
+    exact_endpoint_recomposition_selected = bool(
+        magnetic_dipole is not None
+        and magnetic_dipole.enabled
+        and magnetic_dipole.spin_model == "rfs_minimal_2021"
+        and startup_mode is StartupMode.INERTIAL_PREHISTORY
+        and sim_type == SimulationType.BUNCH_TO_BUNCH
+    )
+    second_order_exact_source_selected = bool(
+        exact_endpoint_recomposition_selected
+        and magnetic_dipole is not None
+        and magnetic_dipole.exact_retarded_update
+        == "second_order_start_taylor_endpoint"
+    )
+    if moment_impulse_diagnostic is not None and not second_order_exact_source_selected:
+        raise ValueError(
+            "moment impulse diagnostic requires exact second-order pair stepping"
+        )
+    if (
+        magnetic_dipole is not None
+        and magnetic_dipole.intrinsic_spin_self_reaction_mode
+        == "experimental_linear_spin"
+        and (
+            not second_order_exact_source_selected
+            or not _experimental_linear_spin_adapter
+        )
+    ):
+        raise ValueError(
+            "experimental linear-spin recoil requires the maintained exact-pair adapter"
+        )
+    intrinsic_spin_diagnostic_selected = bool(
+        second_order_exact_source_selected
+        and magnetic_dipole is not None
+        and magnetic_dipole.intrinsic_spin_self_reaction_mode
+        in {"diagnostic", "experimental_linear_spin"}
+    )
+    if exact_endpoint_recomposition_selected:
+        # Private, step-local handoff to the pair-level accepted-endpoint
+        # finalizer in integration_runner.  It is intentionally absent from
+        # TrajectoryArrays and public output.
+        result["_exact_source_start_four_potential"] = np.zeros(
+            (num_particles, 4), dtype=float
+        )
+        result["_exact_source_endpoint_rebase_required"] = np.zeros(
+            num_particles, dtype=bool
+        )
+    if exact_dipole_source_collection is not None and not (
+        exact_endpoint_recomposition_selected
+        and magnetic_dipole is not None
+        and magnetic_dipole.source.active
+    ):
+        raise ValueError(
+            "causal dipole history requires the exact inertial dipole-source path"
+        )
+    if second_order_exact_source_selected:
+        # Accepted-trial metadata for the source and diagnostic intrinsic-spin
+        # histories. These values belong to the step start and are calculated
+        # before Medina adds its charge-radiation impulse. Private fields are
+        # consumed only by the exact-pair adaptive controller; the explicitly
+        # timed source acceleration is retained in TrajectoryArrays when it is
+        # known to include every applied force sector.
+        result["_intrinsic_spin_start_four_velocity"] = np.full(
+            (num_particles, 4), np.nan, dtype=float
+        )
+        result["_intrinsic_spin_start_non_self_four_acceleration"] = np.full(
+            (num_particles, 4), np.nan, dtype=float
+        )
+        result["_source_start_acceleration_complete"] = np.zeros(
+            num_particles, dtype=bool
+        )
+        for axis in "xyz":
+            result[f"source_start_beta_prime_{axis}_per_mm"] = np.zeros(
+                num_particles, dtype=float
+            )
+        result["source_start_beta_prime_ready"] = np.zeros(num_particles, dtype=bool)
+        result["_intrinsic_spin_start_physical_four_spin"] = np.full(
+            (num_particles, 4), np.nan, dtype=float
+        )
+        if intrinsic_spin_diagnostic_selected:
+            result["_intrinsic_spin_start_analytical_reduction"] = [
+                None
+            ] * num_particles
+            result["_intrinsic_spin_start_analytical_unavailable_reason"] = [
+                "not evaluated"
+            ] * num_particles
+            result["_intrinsic_spin_charge_native"] = np.full(
+                num_particles, np.nan, dtype=float
+            )
+            result["_intrinsic_spin_mass_amu"] = np.full(
+                num_particles, np.nan, dtype=float
+            )
+            result["_intrinsic_spin_g_factor"] = np.full(
+                num_particles, np.nan, dtype=float
+            )
     pseudo_grid_sc_charge_matrix = None
     pseudo_grid_sc_source_radii = None
     if pseudo_grid_space_charge_source_radii_mm is not None:
@@ -1517,6 +2037,12 @@ def retarded_equations_of_motion(
                 "bdotx",
                 "bdoty",
                 "bdotz",
+                "spin_x",
+                "spin_y",
+                "spin_z",
+                "local_magnetic_field_x_t",
+                "local_magnetic_field_y_t",
+                "local_magnetic_field_z_t",
             ]:
                 if key in current_state:
                     result[key][particle_idx] = current_state[key][particle_idx]
@@ -1541,11 +2067,56 @@ def retarded_equations_of_motion(
         accumulated_field_y: float = 0.0
         accumulated_field_z: float = 0.0
         accumulated_scalar_potential: float = 0.0
+        local_electric_field_v_m = np.zeros(3, dtype=float)
+        local_magnetic_field_t = np.zeros(3, dtype=float)
+        local_magnetic_gradient_t_per_m = np.zeros((3, 3), dtype=float)
+        local_electric_field_native = np.zeros(3, dtype=float)
+        local_magnetic_field_native = np.zeros(3, dtype=float)
+        local_magnetic_gradient_native_per_mm = np.zeros((3, 3), dtype=float)
+        rfs_field_tensor = np.zeros((4, 4), dtype=float)
+        rfs_partial_f = np.zeros((4, 4, 4), dtype=float)
+        stern_gerlach_impulse_applied = False
+        rfs_selected = bool(
+            magnetic_dipole is not None
+            and magnetic_dipole.enabled
+            and magnetic_dipole.spin_model == "rfs_minimal_2021"
+        )
+        rfs_force_selected = bool(
+            rfs_selected
+            and magnetic_dipole is not None
+            and magnetic_dipole.stern_gerlach_model == "rfs_full_g"
+        )
+        dipole_source_selected = bool(
+            magnetic_dipole is not None
+            and magnetic_dipole.enabled
+            and magnetic_dipole.source.active
+        )
+        exact_charge_source_selected = exact_endpoint_recomposition_selected
+        on_shell_kinematic_boundary_selected = bool(
+            exact_charge_source_selected or radiation_mode == "medina_lad"
+        )
+        exact_charge_field_cache = None
+        dipole_source_field_cache = None
+        exact_charge_source_interaction = None
+        exact_charge_analytic_response = None
+        exact_dipole_analytic_response = None
+        exact_analytic_antisymmetric_response = None
+        exact_analytic_partial_antisymmetric_response = None
+        dipole_source_interaction = None
+        exact_source_start_four_potential = np.zeros(4, dtype=float)
+        # This is the Medina three-force actually applied during the final
+        # nonlinear trial.  It stays exactly zero for off, neutral, and
+        # derivative-unprimed steps so their RFS spin update is unchanged.
+        applied_medina_force_native = np.zeros(3, dtype=float)
 
         # Self-consistency loop: iterate until gamma converges
         converged = False
         last_mass_shell_error = float("inf")
         for sc_iteration in range(sc_max_iterations):
+            # Only the final self-consistency trial feeds the once-per-step
+            # spin update.  Resetting here prevents an earlier trial's Medina
+            # force from leaking into it.
+            applied_medina_force_native.fill(0.0)
             # Check for cancellation during self-consistency iterations
             if cancel_callback is not None and cancel_callback():
                 raise IntegrationCancelled("Integration cancelled by caller.")
@@ -1686,7 +2257,7 @@ def retarded_equations_of_motion(
             nhat = None
             indices_bounded = None
 
-            if not skip_external_forces:
+            if not skip_external_forces and not exact_charge_source_selected:
                 if startup_mode is StartupMode.APPROXIMATE_BACK_HISTORY:
                     external_current_step_idx = min(
                         index_traj,
@@ -1761,6 +2332,7 @@ def retarded_equations_of_motion(
             accumulated_momentum_y = current_state["Py"][particle_idx]
             accumulated_momentum_z = current_state["Pz"][particle_idx]
             accumulated_momentum_t = current_state["Pt"][particle_idx]
+            exact_mechanical_temporal_impulse = 0.0
 
             # Accumulated field contributions (used in position update)
             accumulated_field_x = 0.0
@@ -1769,13 +2341,45 @@ def retarded_equations_of_motion(
 
             # Accumulated scalar potential (used in gamma calculation)
             accumulated_scalar_potential = 0.0
+            # Each nonlinear iteration recomputes the physical step from the
+            # accepted start state. Only the final iteration may trigger the
+            # dipole-specific mass-shell projection below.
+            stern_gerlach_impulse_applied = False
+            rfs_field_tensor = np.zeros((4, 4), dtype=float)
+            rfs_partial_f = np.zeros((4, 4, 4), dtype=float)
+            exact_charge_source_interaction = None
+            exact_charge_analytic_response = None
+            exact_dipole_analytic_response = None
+            exact_analytic_antisymmetric_response = None
+            exact_analytic_partial_antisymmetric_response = None
+            dipole_source_interaction = None
+            rfs_dipole_force_native = np.zeros(4, dtype=float)
+            additional_start_force_native = np.zeros(4, dtype=float)
+            exact_ordinary_response_beta = (
+                np.asarray(
+                    (
+                        current_state["bx"][particle_idx],
+                        current_state["by"][particle_idx],
+                        current_state["bz"][particle_idx],
+                    ),
+                    dtype=float,
+                )
+                if second_order_exact_source_selected
+                else np.asarray(
+                    (working_beta_x, working_beta_y, working_beta_z),
+                    dtype=float,
+                )
+            )
+            exact_source_start_four_potential.fill(0.0)
 
             # ================================================================
             # STEP 4: Determine if external forces should be applied
             # ================================================================
             # If we already determined to skip (COLD_START early exit), use that
             # Otherwise, do the full check with computed nhat values
-            if skip_external_forces:
+            if exact_charge_source_selected:
+                apply_forces = True
+            elif skip_external_forces:
                 apply_forces = False
             elif nhat is not None:
                 # Do full gating check with actual retarded distances
@@ -1794,7 +2398,12 @@ def retarded_equations_of_motion(
             # ================================================================
             # STEP 4: Compute and accumulate external force contributions
             # ================================================================
-            if apply_forces and nhat["R"].size > 0:
+            if (
+                apply_forces
+                and not exact_charge_source_selected
+                and nhat is not None
+                and nhat["R"].size > 0
+            ):
                 # Gather external particle data at retarded times (with interpolation if enabled)
                 _external_include_positions = bool(
                     (
@@ -2214,6 +2823,38 @@ def retarded_equations_of_motion(
             # STEP 4c: Prescribed external uniform fields
             # ================================================================
             if external_field is not None and getattr(external_field, "enabled", False):
+                if sc_convergence_mode == "variable_geometry" and sc_iteration > 0:
+                    field_position = (
+                        float(working_x),
+                        float(working_y),
+                        float(working_z),
+                    )
+                else:
+                    field_position = (
+                        float(current_state["x"][particle_idx]),
+                        float(current_state["y"][particle_idx]),
+                        float(current_state["z"][particle_idx]),
+                    )
+                if rfs_selected:
+                    (
+                        local_electric_field_native,
+                        local_magnetic_field_native,
+                        local_magnetic_gradient_native_per_mm,
+                    ) = evaluate_external_field_native(
+                        external_field,
+                        position_mm=field_position,
+                        time_ns=float(current_state["t"][particle_idx]),
+                    )
+                else:
+                    (
+                        local_electric_field_v_m,
+                        local_magnetic_field_t,
+                        local_magnetic_gradient_t_per_m,
+                    ) = evaluate_external_field_si(
+                        external_field,
+                        position_mm=field_position,
+                        time_ns=float(current_state["t"][particle_idx]),
+                    )
                 (
                     ext_dp_x,
                     ext_dp_y,
@@ -2222,24 +2863,1079 @@ def retarded_equations_of_motion(
                 ) = compute_uniform_external_field_impulse(
                     external_field,
                     charge=float(force_particle_charge),
-                    gamma=float(particle_gamma),
+                    gamma=(
+                        float(current_state["gamma"][particle_idx])
+                        if second_order_exact_source_selected
+                        else float(particle_gamma)
+                    ),
                     beta=(
-                        float(particle_beta[0]),
-                        float(particle_beta[1]),
-                        float(particle_beta[2]),
+                        float(exact_ordinary_response_beta[0]),
+                        float(exact_ordinary_response_beta[1]),
+                        float(exact_ordinary_response_beta[2]),
                     ),
                     h_step=float(h),
-                    position=(
-                        float(working_x),
-                        float(working_y),
-                        float(working_z),
-                    ),
+                    position=field_position,
                     time=float(current_state["t"][particle_idx]),
                 )
                 accumulated_momentum_x += ext_dp_x
                 accumulated_momentum_y += ext_dp_y
                 accumulated_momentum_z += ext_dp_z
                 accumulated_momentum_t += ext_dp_t
+                if exact_endpoint_recomposition_selected:
+                    exact_mechanical_temporal_impulse += float(ext_dp_t)
+                if second_order_exact_source_selected:
+                    additional_start_force_native += np.asarray(
+                        (ext_dp_t, ext_dp_x, ext_dp_y, ext_dp_z),
+                        dtype=float,
+                    ) / float(h)
+
+                dipole_active = (
+                    bool(
+                        _get_state_scalar(
+                            current_state,
+                            "magnetic_dipole_active",
+                            particle_idx,
+                        )
+                    )
+                    if "magnetic_dipole_active" in current_state
+                    else False
+                )
+                sg_active = (
+                    bool(
+                        _get_state_scalar(
+                            current_state,
+                            "stern_gerlach_active",
+                            particle_idx,
+                        )
+                    )
+                    if "stern_gerlach_active" in current_state
+                    else False
+                )
+                if dipole_active and sg_active and not rfs_force_selected:
+                    from .magnetic_dipole import (
+                        STATIC_REST_GRADIENT_MAX_BETA,
+                        stern_gerlach_rest_impulse_native,
+                    )
+
+                    spin_vector = np.asarray(
+                        (
+                            current_state["spin_x"][particle_idx],
+                            current_state["spin_y"][particle_idx],
+                            current_state["spin_z"][particle_idx],
+                        ),
+                        dtype=float,
+                    )
+                    signed_moment = float(
+                        _get_state_scalar(
+                            current_state,
+                            "magnetic_moment_j_per_t",
+                            particle_idx,
+                        )
+                    )
+                    sg_impulse = np.asarray(
+                        stern_gerlach_rest_impulse_native(
+                            signed_moment * spin_vector,
+                            local_magnetic_gradient_t_per_m,
+                            float(h),
+                        ),
+                        dtype=float,
+                    )
+                    beta_magnitude = float(np.linalg.norm(exact_ordinary_response_beta))
+                    trial_px = accumulated_momentum_x + float(sg_impulse[0])
+                    trial_py = accumulated_momentum_y + float(sg_impulse[1])
+                    trial_pz = accumulated_momentum_z + float(sg_impulse[2])
+                    trial_mechanical_momentum = np.asarray(
+                        _mechanical_momentum_components(
+                            px=trial_px,
+                            py=trial_py,
+                            pz=trial_pz,
+                            particle_mass=particle_mass,
+                            field_x=accumulated_field_x,
+                            field_y=accumulated_field_y,
+                            field_z=accumulated_field_z,
+                        ),
+                        dtype=float,
+                    )
+                    trial_momentum_magnitude = float(
+                        np.linalg.norm(trial_mechanical_momentum)
+                    )
+                    trial_beta_magnitude = trial_momentum_magnitude / float(
+                        np.sqrt(
+                            trial_momentum_magnitude**2 + (particle_mass * C_MMNS) ** 2
+                        )
+                    )
+                    if (
+                        np.any(sg_impulse)
+                        and max(beta_magnitude, trial_beta_magnitude)
+                        > STATIC_REST_GRADIENT_MAX_BETA
+                    ):
+                        raise NotImplementedError(
+                            "static_rest_gradient is restricted to "
+                            f"|beta| <= {STATIC_REST_GRADIENT_MAX_BETA:g}; "
+                            "this step would span "
+                            f"|beta|={beta_magnitude:.6g} to "
+                            f"{trial_beta_magnitude:.6g}. "
+                            "Disable the Stern-Gerlach force or choose a future "
+                            "named covariant gradient model."
+                        )
+                    accumulated_momentum_x += float(sg_impulse[0])
+                    accumulated_momentum_y += float(sg_impulse[1])
+                    accumulated_momentum_z += float(sg_impulse[2])
+                    accumulated_momentum_t += float(
+                        np.dot(exact_ordinary_response_beta, sg_impulse)
+                    )
+                    if exact_endpoint_recomposition_selected:
+                        exact_mechanical_temporal_impulse += float(
+                            np.dot(exact_ordinary_response_beta, sg_impulse)
+                        )
+                    if second_order_exact_source_selected:
+                        additional_start_force_native += np.asarray(
+                            (
+                                np.dot(exact_ordinary_response_beta, sg_impulse),
+                                sg_impulse[0],
+                                sg_impulse[1],
+                                sg_impulse[2],
+                            ),
+                            dtype=float,
+                        ) / float(h)
+                    stern_gerlach_impulse_applied = bool(np.any(sg_impulse))
+
+            # ================================================================
+            # STEP 4d: Exact ordinary charge/dipole sources and RFS response
+            # ================================================================
+            dipole_active = bool(
+                current_state.get("magnetic_dipole_active", np.zeros(num_particles))[
+                    particle_idx
+                ]
+            )
+            precession_active = bool(
+                current_state.get("spin_precession_active", np.zeros(num_particles))[
+                    particle_idx
+                ]
+            )
+            sg_active = bool(
+                current_state.get("stern_gerlach_active", np.zeros(num_particles))[
+                    particle_idx
+                ]
+            )
+            if (
+                exact_charge_source_selected
+                and sim_type == SimulationType.BUNCH_TO_BUNCH
+                and len(trajectory_ext) > 0
+            ):
+                from .charge_source_interactions import (
+                    charge_source_interaction_from_field_native,
+                    charge_source_interaction_from_response_native,
+                )
+                from .retarded_fields import (
+                    ObserverEvent,
+                    RetardedChargeResponseGradientResult,
+                    RetardedHistoryError,
+                    evaluate_retarded_charge_field_gradient_native,
+                    evaluate_retarded_charge_response_gradient_native,
+                )
+
+                if sc_convergence_mode == "variable_geometry" and sc_iteration > 0:
+                    charge_source_position = (
+                        float(working_x),
+                        float(working_y),
+                        float(working_z),
+                    )
+                else:
+                    charge_source_position = (
+                        float(current_state["x"][particle_idx]),
+                        float(current_state["y"][particle_idx]),
+                        float(current_state["z"][particle_idx]),
+                    )
+                try:
+                    if (
+                        sc_convergence_mode == "fixed_geometry"
+                        and exact_charge_field_cache is not None
+                    ):
+                        exact_charge_field = exact_charge_field_cache
+                    else:
+                        charge_history = (
+                            exact_source_history
+                            if exact_source_history is not None
+                            else (
+                                traj_ext_soa
+                                if traj_ext_soa is not None
+                                else trajectory_ext
+                            )
+                        )
+                        charge_event = ObserverEvent(
+                            time_ns=float(current_state["t"][particle_idx]),
+                            position_mm=charge_source_position,
+                        )
+                        charge_relative_step = max(
+                            1.0e-4,
+                            (
+                                float(magnetic_dipole.source.relative_stencil_step)
+                                if magnetic_dipole is not None
+                                and magnetic_dipole.source.active
+                                else 1.0e-4
+                            ),
+                        )
+                        charge_minimum_step = max(
+                            1.0e-15,
+                            (
+                                float(magnetic_dipole.source.minimum_stencil_step_mm)
+                                if magnetic_dipole is not None
+                                and magnetic_dipole.source.active
+                                else 1.0e-15
+                            ),
+                        )
+                        charge_root_tolerance = (
+                            float(magnetic_dipole.source.root_tolerance_mm)
+                            if magnetic_dipole is not None
+                            and magnetic_dipole.source.active
+                            else 1.0e-21
+                        )
+                        charge_root_iterations = (
+                            int(magnetic_dipole.source.max_root_iterations)
+                            if magnetic_dipole is not None
+                            and magnetic_dipole.source.active
+                            else 96
+                        )
+                        charge_backend = (
+                            magnetic_dipole.exact_retarded_backend
+                            if magnetic_dipole is not None
+                            else "python"
+                        )
+                        if charge_backend in {
+                            "numba_analytic_charge_response_serial",
+                            "numba_analytic_charge_dipole_response_serial",
+                        }:
+                            exact_charge_field = (
+                                evaluate_retarded_charge_response_gradient_native(
+                                    charge_history,
+                                    charge_event,
+                                    relative_step=charge_relative_step,
+                                    minimum_step_mm=charge_minimum_step,
+                                    root_tolerance_mm=charge_root_tolerance,
+                                    max_root_iterations=charge_root_iterations,
+                                )
+                            )
+                        else:
+                            exact_charge_field = (
+                                evaluate_retarded_charge_field_gradient_native(
+                                    charge_history,
+                                    charge_event,
+                                    relative_step=charge_relative_step,
+                                    minimum_step_mm=charge_minimum_step,
+                                    root_tolerance_mm=charge_root_tolerance,
+                                    max_root_iterations=charge_root_iterations,
+                                    backend=charge_backend,
+                                )
+                            )
+                        if sc_convergence_mode == "fixed_geometry":
+                            exact_charge_field_cache = exact_charge_field
+                except RetardedHistoryError:
+                    # INERTIAL_PREHISTORY preflights every displaced light cone.
+                    # Missing history after that gate is a model failure, never a
+                    # request to fall back to cold-start force suppression.
+                    raise
+
+                if isinstance(exact_charge_field, RetardedChargeResponseGradientResult):
+                    exact_charge_analytic_response = exact_charge_field
+                    exact_charge_source_interaction = (
+                        charge_source_interaction_from_response_native(
+                            exact_charge_field,
+                            four_velocity_mm_ns=_four_velocity_native(
+                                exact_ordinary_response_beta
+                            ),
+                            observer_charge_native=float(force_particle_charge),
+                            proper_time_step_ns=float(h),
+                            contraction_backend="numba_strict_serial",
+                        )
+                    )
+                else:
+                    exact_charge_source_interaction = (
+                        charge_source_interaction_from_field_native(
+                            exact_charge_field,
+                            four_velocity_mm_ns=_four_velocity_native(
+                                exact_ordinary_response_beta
+                            ),
+                            observer_charge_native=float(force_particle_charge),
+                            proper_time_step_ns=float(h),
+                        )
+                    )
+
+                # Evolve the gauge-invariant mechanical momentum.  The
+                # accepted canonical state is rebuilt from A at the endpoint
+                # after both bunch endpoints have been appended to history.
+                charge_mechanical_impulse = (
+                    exact_charge_source_interaction.mechanical_four_impulse
+                )
+                accumulated_momentum_t += float(charge_mechanical_impulse[0])
+                exact_mechanical_temporal_impulse += float(charge_mechanical_impulse[0])
+                accumulated_momentum_x += float(charge_mechanical_impulse[1])
+                accumulated_momentum_y += float(charge_mechanical_impulse[2])
+                accumulated_momentum_z += float(charge_mechanical_impulse[3])
+
+                charge_potential_momentum = (
+                    exact_charge_source_interaction.canonical_potential_momentum
+                )
+                charge_canonical_ready = bool(
+                    current_state.get(
+                        "charge_source_canonical_ready",
+                        np.zeros(num_particles, dtype=bool),
+                    )[particle_idx]
+                )
+                if not charge_canonical_ready:
+                    # Public t=0 input is mechanical.  The inertial prefix makes
+                    # the ordinary retarded potential available immediately, so
+                    # initialize P=p+qA/c once without changing p or beta.
+                    accumulated_momentum_t += float(charge_potential_momentum[0])
+                    accumulated_momentum_x += float(charge_potential_momentum[1])
+                    accumulated_momentum_y += float(charge_potential_momentum[2])
+                    accumulated_momentum_z += float(charge_potential_momentum[3])
+                result["charge_source_canonical_ready"][particle_idx] = True
+                accumulated_field_x += float(
+                    charge_potential_momentum[1] / particle_mass
+                )
+                accumulated_field_y += float(
+                    charge_potential_momentum[2] / particle_mass
+                )
+                accumulated_field_z += float(
+                    charge_potential_momentum[3] / particle_mass
+                )
+                accumulated_scalar_potential += float(
+                    exact_charge_source_interaction.four_potential[0]
+                )
+                exact_source_start_four_potential += (
+                    exact_charge_source_interaction.four_potential
+                )
+                if exact_charge_source_interaction.field is not None:
+                    rfs_field_tensor += (
+                        exact_charge_source_interaction.field.field.field_tensor
+                    )
+                    rfs_partial_f += exact_charge_source_interaction.field.partial_f
+
+            if (
+                dipole_source_selected
+                and sim_type == SimulationType.BUNCH_TO_BUNCH
+                and len(trajectory_ext) > 0
+            ):
+                assert magnetic_dipole is not None
+                from .dipole_source_interactions import (
+                    dipole_source_interaction_from_field_native,
+                    dipole_source_interaction_from_response_native,
+                )
+                from .dipole_hertz_jet import (
+                    evaluate_retarded_dipole_field_gradient_hertz_jet_native,
+                )
+                from .retarded_dipole_fields import (
+                    RetardedDipoleResponseGradientResult,
+                    evaluate_retarded_dipole_field_gradient_native,
+                )
+                from .retarded_fields import ObserverEvent, RetardedHistoryError
+
+                if exact_dipole_source_collection is not None:
+                    if magnetic_dipole.source.history_model == "causal_c5":
+                        from .causal_c5_dipole_provider import (
+                            evaluate_causal_c5_dipole_source_collection_native,
+                        )
+                    elif magnetic_dipole.source.history_model == "causal_local_jet":
+                        from .causal_local_source_jet import (
+                            evaluate_configured_causal_local_source_jet_collection_native,
+                        )
+                    else:
+                        raise ValueError(
+                            "an independent exact dipole history requires causal_c5 "
+                            "or causal_local_jet selection"
+                        )
+
+                if sc_convergence_mode == "variable_geometry" and sc_iteration > 0:
+                    dipole_source_position = (
+                        float(working_x),
+                        float(working_y),
+                        float(working_z),
+                    )
+                else:
+                    dipole_source_position = (
+                        float(current_state["x"][particle_idx]),
+                        float(current_state["y"][particle_idx]),
+                        float(current_state["z"][particle_idx]),
+                    )
+                try:
+                    if (
+                        sc_convergence_mode == "fixed_geometry"
+                        and dipole_source_field_cache is not None
+                    ):
+                        dipole_source_field = dipole_source_field_cache
+                    else:
+                        if exact_dipole_source_collection is not None:
+                            if magnetic_dipole.source.history_model == "causal_c5":
+                                dipole_source_field = (
+                                    evaluate_causal_c5_dipole_source_collection_native(
+                                        exact_dipole_source_collection,
+                                        ObserverEvent(
+                                            time_ns=float(
+                                                current_state["t"][particle_idx]
+                                            ),
+                                            position_mm=dipole_source_position,
+                                        ),
+                                        root_tolerance_mm=(
+                                            magnetic_dipole.source.root_tolerance_mm
+                                        ),
+                                        max_root_iterations=(
+                                            magnetic_dipole.source.max_root_iterations
+                                        ),
+                                        minimum_separation_mm=(
+                                            magnetic_dipole.source.minimum_separation_mm
+                                        ),
+                                    )
+                                )
+                            else:
+                                dipole_source_field = evaluate_configured_causal_local_source_jet_collection_native(
+                                    exact_dipole_source_collection,
+                                    ObserverEvent(
+                                        time_ns=float(current_state["t"][particle_idx]),
+                                        position_mm=dipole_source_position,
+                                    ),
+                                    source_options=magnetic_dipole.source,
+                                )
+                        elif (
+                            exact_endpoint_recomposition_selected
+                            and magnetic_dipole.exact_retarded_backend
+                            == "numba_analytic_charge_dipole_response_serial"
+                        ):
+                            dipole_source_field = evaluate_retarded_dipole_field_gradient_hertz_jet_native(
+                                (
+                                    exact_source_history
+                                    if exact_source_history is not None
+                                    else (
+                                        traj_ext_soa
+                                        if traj_ext_soa is not None
+                                        else trajectory_ext
+                                    )
+                                ),
+                                ObserverEvent(
+                                    time_ns=float(current_state["t"][particle_idx]),
+                                    position_mm=dipole_source_position,
+                                ),
+                                require_complete_history=True,
+                                fallback_relative_step=(
+                                    magnetic_dipole.source.relative_stencil_step
+                                ),
+                                fallback_minimum_step_mm=(
+                                    magnetic_dipole.source.minimum_stencil_step_mm
+                                ),
+                                minimum_separation_mm=(
+                                    magnetic_dipole.source.minimum_separation_mm
+                                ),
+                                root_tolerance_mm=(
+                                    magnetic_dipole.source.root_tolerance_mm
+                                ),
+                                max_root_iterations=(
+                                    magnetic_dipole.source.max_root_iterations
+                                ),
+                                response_kernel="numba_sparse_strict_serial",
+                                fallback_backend="numba_full_strict_serial",
+                                spin_interpolation_model=(
+                                    exact_source_spin_interpolation_model
+                                ),
+                            ).response
+                        else:
+                            dipole_source_field = (
+                                evaluate_retarded_dipole_field_gradient_native(
+                                    (
+                                        exact_source_history
+                                        if exact_source_history is not None
+                                        else (
+                                            traj_ext_soa
+                                            if traj_ext_soa is not None
+                                            else trajectory_ext
+                                        )
+                                    ),
+                                    ObserverEvent(
+                                        time_ns=float(current_state["t"][particle_idx]),
+                                        position_mm=dipole_source_position,
+                                    ),
+                                    relative_step=(
+                                        magnetic_dipole.source.relative_stencil_step
+                                    ),
+                                    minimum_step_mm=(
+                                        magnetic_dipole.source.minimum_stencil_step_mm
+                                    ),
+                                    minimum_separation_mm=(
+                                        magnetic_dipole.source.minimum_separation_mm
+                                    ),
+                                    root_tolerance_mm=(
+                                        magnetic_dipole.source.root_tolerance_mm
+                                    ),
+                                    max_root_iterations=(
+                                        magnetic_dipole.source.max_root_iterations
+                                    ),
+                                    backend=magnetic_dipole.exact_retarded_backend,
+                                    spin_interpolation_model=(
+                                        exact_source_spin_interpolation_model
+                                    ),
+                                )
+                            )
+                        if sc_convergence_mode == "fixed_geometry":
+                            dipole_source_field_cache = dipole_source_field
+                except RetardedHistoryError:
+                    if startup_mode is StartupMode.INERTIAL_PREHISTORY:
+                        raise
+                    # As for the exact charge-field derivative, COLD_START
+                    # contributes nothing until every nested stencil event has
+                    # an explicitly bracketed source light cone.
+                    dipole_source_field = None
+
+                if dipole_source_field is not None:
+                    if isinstance(
+                        dipole_source_field, RetardedDipoleResponseGradientResult
+                    ):
+                        exact_dipole_analytic_response = dipole_source_field
+                        dipole_source_interaction = (
+                            dipole_source_interaction_from_response_native(
+                                dipole_source_field,
+                                four_velocity_mm_ns=_four_velocity_native(
+                                    exact_ordinary_response_beta
+                                ),
+                                observer_charge_native=float(force_particle_charge),
+                                proper_time_step_ns=float(h),
+                                contraction_backend="numba_strict_serial",
+                            )
+                        )
+                    else:
+                        dipole_source_interaction = (
+                            dipole_source_interaction_from_field_native(
+                                dipole_source_field,
+                                four_velocity_mm_ns=_four_velocity_native(
+                                    exact_ordinary_response_beta
+                                ),
+                                observer_charge_native=float(force_particle_charge),
+                                proper_time_step_ns=float(h),
+                            )
+                        )
+
+                if dipole_source_interaction is not None:
+                    if exact_endpoint_recomposition_selected:
+                        ordinary_dipole_impulse = (
+                            dipole_source_interaction.mechanical_four_impulse
+                        )
+                    else:
+                        # Retain the older COLD_START diagnostic boundary until
+                        # it receives the same pair-level endpoint finalizer.
+                        ordinary_dipole_impulse = (
+                            dipole_source_interaction.canonical_four_impulse
+                        )
+                        if ordinary_dipole_impulse is None:
+                            raise RuntimeError(
+                                "compact dipole response is unavailable for the "
+                                "legacy canonical-force path"
+                            )
+                    accumulated_momentum_t += float(ordinary_dipole_impulse[0])
+                    if exact_endpoint_recomposition_selected:
+                        exact_mechanical_temporal_impulse += float(
+                            ordinary_dipole_impulse[0]
+                        )
+                    accumulated_momentum_x += float(ordinary_dipole_impulse[1])
+                    accumulated_momentum_y += float(ordinary_dipole_impulse[2])
+                    accumulated_momentum_z += float(ordinary_dipole_impulse[3])
+
+                    dipole_potential_momentum = (
+                        dipole_source_interaction.canonical_potential_momentum
+                    )
+                    dipole_canonical_ready = bool(
+                        current_state.get(
+                            "dipole_source_canonical_ready",
+                            np.zeros(num_particles, dtype=bool),
+                        )[particle_idx]
+                    )
+                    if not dipole_canonical_ready:
+                        # Public initial states specify mechanical momentum.  A
+                        # COLD_START dipole field becomes available only after
+                        # an explicit light cone can be bracketed.  Rebase the
+                        # state once from p to P=p+qA/c when that happens so the
+                        # newly available vector potential cannot create a
+                        # spurious mechanical-momentum jump.
+                        accumulated_momentum_t += float(dipole_potential_momentum[0])
+                        accumulated_momentum_x += float(dipole_potential_momentum[1])
+                        accumulated_momentum_y += float(dipole_potential_momentum[2])
+                        accumulated_momentum_z += float(dipole_potential_momentum[3])
+                    result["dipole_source_canonical_ready"][particle_idx] = True
+                    accumulated_field_x += float(
+                        dipole_potential_momentum[1] / particle_mass
+                    )
+                    accumulated_field_y += float(
+                        dipole_potential_momentum[2] / particle_mass
+                    )
+                    accumulated_field_z += float(
+                        dipole_potential_momentum[3] / particle_mass
+                    )
+                    # accumulated_scalar_potential stores raw phi; its q/c
+                    # conversion remains centralized below with the charge
+                    # source potential.
+                    accumulated_scalar_potential += float(
+                        dipole_source_interaction.four_potential[0]
+                    )
+                    if exact_endpoint_recomposition_selected:
+                        exact_source_start_four_potential += (
+                            dipole_source_interaction.four_potential
+                        )
+
+            analytic_response_payloads = tuple(
+                payload
+                for payload in (
+                    exact_charge_analytic_response,
+                    exact_dipole_analytic_response,
+                )
+                if payload is not None
+            )
+            if analytic_response_payloads:
+                exact_analytic_antisymmetric_response = np.sum(
+                    [
+                        payload.antisymmetric_response
+                        for payload in analytic_response_payloads
+                    ],
+                    axis=0,
+                )
+                exact_analytic_partial_antisymmetric_response = np.sum(
+                    [
+                        payload.partial_antisymmetric_response
+                        for payload in analytic_response_payloads
+                    ],
+                    axis=0,
+                )
+
+            if rfs_selected and dipole_active and (precession_active or sg_active):
+                from .magnetic_dipole import HBAR_NATIVE, boost_rest_polarization
+                from .retarded_fields import (
+                    ObserverEvent,
+                    evaluate_retarded_charge_field_gradient_native,
+                )
+                from .rfs import rfs_four_force_native
+
+                external_tensor, external_partial_f = _external_tensor_gradient(
+                    local_electric_field_native,
+                    local_magnetic_field_native,
+                    local_magnetic_gradient_native_per_mm,
+                )
+                rfs_field_tensor += external_tensor
+                rfs_partial_f += external_partial_f
+
+                if (
+                    dipole_source_interaction is not None
+                    and dipole_source_interaction.field is not None
+                ):
+                    rfs_field_tensor += dipole_source_interaction.field.field_tensor
+                    rfs_partial_f += dipole_source_interaction.field.partial_f
+
+                if (
+                    not exact_charge_source_selected
+                    and sim_type == SimulationType.BUNCH_TO_BUNCH
+                    and len(trajectory_ext) > 0
+                ):
+                    if sc_convergence_mode == "variable_geometry" and sc_iteration > 0:
+                        rfs_position = (
+                            float(working_x),
+                            float(working_y),
+                            float(working_z),
+                        )
+                    else:
+                        rfs_position = (
+                            float(current_state["x"][particle_idx]),
+                            float(current_state["y"][particle_idx]),
+                            float(current_state["z"][particle_idx]),
+                        )
+                    from .retarded_fields import RetardedHistoryError
+
+                    try:
+                        charge_field = evaluate_retarded_charge_field_gradient_native(
+                            (
+                                traj_ext_soa
+                                if traj_ext_soa is not None
+                                else trajectory_ext
+                            ),
+                            ObserverEvent(
+                                time_ns=float(current_state["t"][particle_idx]),
+                                position_mm=rfs_position,
+                            ),
+                            backend=magnetic_dipole.exact_retarded_backend,
+                        )
+                    except RetardedHistoryError:
+                        if startup_mode is StartupMode.INERTIAL_PREHISTORY:
+                            raise
+                        # COLD_START intentionally supplies no extrapolated
+                        # field until explicit source samples bracket the light
+                        # cone at every finite-difference stencil event.
+                        charge_field = None
+                    if charge_field is not None:
+                        rfs_field_tensor += charge_field.field.field_tensor
+                        rfs_partial_f += charge_field.partial_f
+
+                # The ordinary exact-source path already supplies q F u as a
+                # mechanical impulse. Inject only the normalized-spin dipole
+                # term (mu/c) G[a] u here, in all four components, to avoid
+                # counting the Lorentz force twice.
+                if rfs_force_selected and sg_active:
+                    signed_moment_native = float(
+                        current_state["magnetic_moment_native"][particle_idx]
+                    )
+                    spin_quantum_number = float(
+                        current_state["spin_quantum_number"][particle_idx]
+                    )
+                    if spin_quantum_number > 0.0 and signed_moment_native != 0.0:
+                        rest_spin = np.asarray(
+                            (
+                                current_state["spin_x"][particle_idx],
+                                current_state["spin_y"][particle_idx],
+                                current_state["spin_z"][particle_idx],
+                            ),
+                            dtype=float,
+                        )
+                        beta_vector = (
+                            exact_ordinary_response_beta
+                            if second_order_exact_source_selected
+                            else np.asarray(particle_beta, dtype=float)
+                        )
+                        normalized_spin = boost_rest_polarization(
+                            rest_spin, beta_vector
+                        )
+                        dipole_force_native = rfs_four_force_native(
+                            four_velocity_mm_ns=_four_velocity_native(beta_vector),
+                            spin_four_vector=normalized_spin,
+                            field_tensor=rfs_field_tensor,
+                            partial_f=rfs_partial_f,
+                            charge_native=0.0,
+                            magnetic_moment_native=signed_moment_native,
+                        )
+                        if exact_analytic_antisymmetric_response is not None:
+                            from .contracted_antisymmetric_response_numba import (
+                                antisymmetric_response_rfs_strict_serial,
+                            )
+
+                            dipole_force_native += (
+                                antisymmetric_response_rfs_strict_serial(
+                                    _four_velocity_native(beta_vector),
+                                    normalized_spin,
+                                    exact_analytic_antisymmetric_response,
+                                    exact_analytic_partial_antisymmetric_response,
+                                    float(force_particle_charge),
+                                    float(particle_mass),
+                                    signed_moment_native,
+                                    spin_quantum_number * HBAR_NATIVE,
+                                )[1]
+                            )
+                        rfs_dipole_force_native += dipole_force_native
+                        dipole_impulse_native = dipole_force_native * float(h)
+                        accumulated_momentum_t += float(dipole_impulse_native[0])
+                        if exact_endpoint_recomposition_selected:
+                            exact_mechanical_temporal_impulse += float(
+                                dipole_impulse_native[0]
+                            )
+                        accumulated_momentum_x += float(dipole_impulse_native[1])
+                        accumulated_momentum_y += float(dipole_impulse_native[2])
+                        accumulated_momentum_z += float(dipole_impulse_native[3])
+
+            if second_order_exact_source_selected:
+                from .antisymmetric_response_rfs import (
+                    antisymmetric_response_charge_force_derivative_native,
+                )
+                from .canonical_momentum import (
+                    mechanical_lorentz_four_force_derivative_native,
+                )
+
+                start_four_velocity = _four_velocity_native(
+                    exact_ordinary_response_beta
+                )
+                ordinary_force_native = np.zeros(4, dtype=float)
+                for interaction in (
+                    exact_charge_source_interaction,
+                    dipole_source_interaction,
+                ):
+                    if interaction is not None:
+                        ordinary_force_native += interaction.mechanical_four_force
+                start_four_acceleration = (
+                    ordinary_force_native
+                    + rfs_dipole_force_native
+                    + additional_start_force_native
+                ) / particle_mass
+                from .magnetic_dipole import HBAR_NATIVE, boost_rest_polarization
+
+                start_rest_spin = np.asarray(
+                    (
+                        current_state["spin_x"][particle_idx],
+                        current_state["spin_y"][particle_idx],
+                        current_state["spin_z"][particle_idx],
+                    ),
+                    dtype=float,
+                )
+                invariant_spin_native = (
+                    float(current_state["spin_quantum_number"][particle_idx])
+                    * HBAR_NATIVE
+                )
+                result["_intrinsic_spin_start_four_velocity"][
+                    particle_idx
+                ] = start_four_velocity
+                result["_intrinsic_spin_start_non_self_four_acceleration"][
+                    particle_idx
+                ] = start_four_acceleration
+                # This start-event value contains the ordinary charge force,
+                # RFS dipole force, prescribed external force, and configured
+                # Stern--Gerlach force. It is the complete trajectory
+                # acceleration only when no later reaction impulse is applied.
+                result["_source_start_acceleration_complete"][particle_idx] = (
+                    radiation_mode == "off"
+                )
+                if radiation_mode == "off":
+                    from .source_kinematics import (
+                        coordinate_beta_prime_from_four_kinematics,
+                    )
+
+                    source_start_beta_prime = (
+                        coordinate_beta_prime_from_four_kinematics(
+                            start_four_velocity,
+                            start_four_acceleration,
+                        )
+                    )
+                    for axis_index, axis in enumerate("xyz"):
+                        result[f"source_start_beta_prime_{axis}_per_mm"][
+                            particle_idx
+                        ] = source_start_beta_prime[axis_index]
+                    result["source_start_beta_prime_ready"][particle_idx] = True
+                result["_intrinsic_spin_start_physical_four_spin"][particle_idx] = (
+                    invariant_spin_native
+                    * boost_rest_polarization(
+                        start_rest_spin,
+                        exact_ordinary_response_beta,
+                    )
+                )
+                if intrinsic_spin_diagnostic_selected:
+                    charge_for_reduction = float(force_particle_charge)
+                    signed_moment_for_reduction = float(
+                        current_state["magnetic_moment_native"][particle_idx]
+                    )
+                    if charge_for_reduction == 0.0 or invariant_spin_native == 0.0:
+                        g_factor = 0.0
+                        unavailable_reason = (
+                            "intrinsic q-mu reduction requires nonzero charge and spin"
+                        )
+                        analytical_reduction = None
+                    else:
+                        g_factor = (
+                            2.0
+                            * particle_mass
+                            * C_MMNS
+                            * signed_moment_for_reduction
+                            / (charge_for_reduction * invariant_spin_native)
+                        )
+                        unavailable_reason = None
+                        analytical_reduction = None
+                        from .external_potential_derivatives import (
+                            supports_uniform_external_potential,
+                        )
+
+                        if (
+                            external_field is not None
+                            and not supports_uniform_external_potential(external_field)
+                        ):
+                            unavailable_reason = (
+                                "bounded or nonuniform external-field analytical "
+                                "potential derivatives are unavailable"
+                            )
+                        elif exact_dipole_source_collection is not None:
+                            # This analytical reduction reads the legacy spin
+                            # chronology, not the independent causal C5/local
+                            # dipole provider used by the actual step. Mixing
+                            # them would differentiate a different force model.
+                            unavailable_reason = (
+                                "selected causal dipole provider has no matching "
+                                "analytical spin-reduction derivatives"
+                            )
+                        elif exact_source_history is None:
+                            unavailable_reason = (
+                                "exact retarded source history is unavailable"
+                            )
+                        else:
+                            from .spin_self_force_reduction_oracle import (
+                                evaluate_retarded_potential_intrinsic_spin_reduction_native,
+                            )
+                            from .retarded_fields import ObserverEvent
+
+                            source_settings = magnetic_dipole.source
+                            analytical_result = evaluate_retarded_potential_intrinsic_spin_reduction_native(
+                                source_history=exact_source_history,
+                                observer_event=ObserverEvent(
+                                    time_ns=float(current_state["t"][particle_idx]),
+                                    position_mm=(
+                                        float(current_state["x"][particle_idx]),
+                                        float(current_state["y"][particle_idx]),
+                                        float(current_state["z"][particle_idx]),
+                                    ),
+                                ),
+                                four_velocity_mm_ns=start_four_velocity,
+                                normalized_spin_four_vector=(
+                                    boost_rest_polarization(
+                                        start_rest_spin,
+                                        exact_ordinary_response_beta,
+                                    )
+                                ),
+                                charge_native=charge_for_reduction,
+                                mass_amu=particle_mass,
+                                invariant_spin_native=invariant_spin_native,
+                                g_factor=g_factor,
+                                require_complete_history=True,
+                                include_dipole_source=(source_settings.active),
+                                minimum_separation_mm=(
+                                    source_settings.minimum_separation_mm
+                                    if source_settings.active
+                                    else 1.0e-15
+                                ),
+                                root_tolerance_mm=(
+                                    source_settings.root_tolerance_mm
+                                    if source_settings.active
+                                    else 1.0e-21
+                                ),
+                                max_root_iterations=(
+                                    source_settings.max_root_iterations
+                                    if source_settings.active
+                                    else 96
+                                ),
+                                spin_interpolation_model=(
+                                    exact_source_spin_interpolation_model
+                                ),
+                                external_field=external_field,
+                            )
+                            analytical_reduction = analytical_result.reduction
+                            unavailable_reason = analytical_result.unavailable_reason
+                    result["_intrinsic_spin_start_analytical_reduction"][
+                        particle_idx
+                    ] = analytical_reduction
+                    result["_intrinsic_spin_start_analytical_unavailable_reason"][
+                        particle_idx
+                    ] = unavailable_reason
+                    result["_intrinsic_spin_charge_native"][
+                        particle_idx
+                    ] = charge_for_reduction
+                    result["_intrinsic_spin_mass_amu"][particle_idx] = particle_mass
+                    result["_intrinsic_spin_g_factor"][particle_idx] = g_factor
+                ordinary_force_derivative = np.zeros(4, dtype=float)
+                if external_field is not None and getattr(
+                    external_field, "enabled", False
+                ):
+                    # The first-order external impulse above is an ordinary
+                    # Lorentz force too.  Differentiate it with the same total
+                    # start acceleration used for the retarded source forces;
+                    # otherwise a uniform magnetic bend remains explicit Euler
+                    # inside an update advertised as second order.  The linear
+                    # field model is smooth away from configured hard window
+                    # boundaries, where no local Taylor method can represent
+                    # the discontinuity without explicit event handling.
+                    external_tensor, external_partial_f = _external_tensor_gradient(
+                        local_electric_field_native,
+                        local_magnetic_field_native,
+                        local_magnetic_gradient_native_per_mm,
+                    )
+                    ordinary_force_derivative += (
+                        mechanical_lorentz_four_force_derivative_native(
+                            four_velocity_mm_ns=start_four_velocity,
+                            four_acceleration_mm_ns2=start_four_acceleration,
+                            field_tensor=external_tensor,
+                            partial_f=external_partial_f,
+                            charge_native=float(force_particle_charge),
+                        )
+                    )
+                for interaction in (
+                    exact_charge_source_interaction,
+                    dipole_source_interaction,
+                ):
+                    if interaction is None:
+                        continue
+                    if interaction.response is not None:
+                        ordinary_force_derivative += (
+                            antisymmetric_response_charge_force_derivative_native(
+                                four_velocity_mm_ns=start_four_velocity,
+                                four_acceleration_mm_ns2=start_four_acceleration,
+                                antisymmetric_response=(
+                                    interaction.response.antisymmetric_response
+                                ),
+                                partial_antisymmetric_response=(
+                                    interaction.response.partial_antisymmetric_response
+                                ),
+                                charge_native=float(force_particle_charge),
+                            )
+                        )
+                    elif interaction.field is not None:
+                        interaction_field = interaction.field
+                        if hasattr(interaction_field, "field"):
+                            field_tensor = interaction_field.field.field_tensor
+                        else:
+                            field_tensor = interaction_field.field_tensor
+                        ordinary_force_derivative += (
+                            mechanical_lorentz_four_force_derivative_native(
+                                four_velocity_mm_ns=start_four_velocity,
+                                four_acceleration_mm_ns2=start_four_acceleration,
+                                field_tensor=field_tensor,
+                                partial_f=interaction_field.partial_f,
+                                charge_native=float(force_particle_charge),
+                            )
+                        )
+                second_order_correction = (
+                    0.5 * float(h) * float(h) * ordinary_force_derivative
+                )
+                if moment_impulse_diagnostic is not None:
+                    if (
+                        radiation_mode not in ("off", "medina_lad")
+                        or not callable(moment_impulse_diagnostic)
+                        or exact_source_history is None
+                        or exact_dipole_source_collection is None
+                        or magnetic_dipole is None
+                        or magnetic_dipole.source.history_model != "causal_local_jet"
+                        or not rfs_force_selected
+                        or not sg_active
+                        or not precession_active
+                        or (
+                            external_field is not None
+                            and getattr(external_field, "enabled", False)
+                        )
+                    ):
+                        raise ValueError(
+                            "moment impulse diagnostic requires a local-history magnetic pair, active spin/force, no external field and off or Medina radiation"
+                        )
+                    # Add only the difference from the already applied h*K.
+                    # Do not change the physical start force, source acceleration
+                    # or force memory to impersonate a higher-order impulse.
+                    correction = np.asarray(
+                        moment_impulse_diagnostic(
+                            proper_step_ns=float(h),
+                            observer_time_ns=float(current_state["t"][particle_idx]),
+                            observer_position_mm=np.array(
+                                [current_state[axis][particle_idx] for axis in "xyz"]
+                            ),
+                            four_velocity_mm_ns=start_four_velocity.copy(),
+                            four_acceleration_mm_ns2=start_four_acceleration.copy(),
+                            applied_radiation_reaction_force_native=moment_rr_force[
+                                particle_idx
+                            ].copy(),
+                            rest_spin=start_rest_spin.copy(),
+                            charge_native=float(force_particle_charge),
+                            mass_amu=float(particle_mass),
+                            magnetic_moment_native=float(
+                                current_state["magnetic_moment_native"][particle_idx]
+                            ),
+                            invariant_spin_native=float(invariant_spin_native),
+                            start_moment_force=rfs_dipole_force_native.copy(),
+                            charge_history=exact_source_history,
+                            dipole_source_collection=exact_dipole_source_collection,
+                            source_options=magnetic_dipole.source,
+                        ),
+                        dtype=float,
+                    )
+                    if correction.shape != (4,) or not np.all(np.isfinite(correction)):
+                        raise ValueError(
+                            "moment impulse correction must be a finite four-vector"
+                        )
+                    second_order_correction += correction
+                accumulated_momentum_t += float(second_order_correction[0])
+                accumulated_momentum_x += float(second_order_correction[1])
+                accumulated_momentum_y += float(second_order_correction[2])
+                accumulated_momentum_z += float(second_order_correction[3])
+                exact_mechanical_temporal_impulse += float(second_order_correction[0])
 
             # ================================================================
             # STEP 4: Update momentum and derive gamma from Pt
@@ -2252,6 +3948,33 @@ def retarded_equations_of_motion(
             scalar_potential_contribution = _scalar_potential_momentum_contribution(
                 force_particle_charge, accumulated_scalar_potential
             )
+
+            # Preserve the unconstrained temporal canonical update before any
+            # named mass-shell projection or nonlinear relaxation. Non-exact
+            # paths ledger the correction from this raw value. The exact
+            # accepted-on-shell path uses the stable mechanical energy balance
+            # below so rest-scale subtraction cannot dominate atomic energies.
+            raw_canonical_pt_before_constraints = float(result["Pt"][particle_idx])
+
+            if stern_gerlach_impulse_applied:
+                # The static-gradient helper supplies a mechanical spatial
+                # impulse, not a complete canonical Hamiltonian. Put the
+                # combined momentum back on the ordinary mass shell before
+                # positions, acceleration, radiation, and running averages
+                # are evaluated. This is deliberately part of the named
+                # approximation and must be replaced with its energy model if
+                # a covariant Stern--Gerlach Hamiltonian is added later.
+                _, sg_projected_pt = _canonical_pt_from_mechanical_mass_shell(
+                    px=result["Px"][particle_idx],
+                    py=result["Py"][particle_idx],
+                    pz=result["Pz"][particle_idx],
+                    particle_mass=particle_mass,
+                    scalar_potential_contribution=scalar_potential_contribution,
+                    field_x=accumulated_field_x,
+                    field_y=accumulated_field_y,
+                    field_z=accumulated_field_z,
+                )
+                result["Pt"][particle_idx] = sg_projected_pt
 
             # ================================================================
             # STEP 4a: Correct Pt during SC iterations based on mode
@@ -2342,6 +4065,169 @@ def retarded_equations_of_motion(
 
             gamma_mass_shell = kinetic_pt_from_mass_shell / (particle_mass * C_MMNS)
 
+            spatial_momentum_authoritative = exact_charge_source_selected
+            if radiation_mode == "medina_lad" and not exact_charge_source_selected:
+                # The maintained non-exact Medina path historically treats
+                # canonical temporal energy as authoritative.  Put its spatial
+                # mechanical momentum on that shell *before* predictor drift,
+                # beta, and force sampling.  The exact charge/RFS path instead
+                # remains spatial-momentum-authoritative so its RR-off and
+                # RR-on capture controls share one boundary.
+                energy_boundary_momentum = np.asarray(
+                    _mechanical_momentum_components(
+                        px=result["Px"][particle_idx],
+                        py=result["Py"][particle_idx],
+                        pz=result["Pz"][particle_idx],
+                        particle_mass=particle_mass,
+                        field_x=accumulated_field_x,
+                        field_y=accumulated_field_y,
+                        field_z=accumulated_field_z,
+                    ),
+                    dtype=float,
+                )
+                gamma_energy_boundary = float(result["gamma"][particle_idx])
+                momentum_is_finite = bool(np.all(np.isfinite(energy_boundary_momentum)))
+                mechanical_magnitude = float(
+                    np.hypot(
+                        np.hypot(
+                            abs(float(energy_boundary_momentum[0])),
+                            abs(float(energy_boundary_momentum[1])),
+                        ),
+                        abs(float(energy_boundary_momentum[2])),
+                    )
+                )
+                with np.errstate(over="ignore", invalid="ignore"):
+                    target_factor = float(
+                        np.sqrt(
+                            (gamma_energy_boundary - 1.0)
+                            * (gamma_energy_boundary + 1.0)
+                        )
+                    )
+                    target_mechanical_magnitude = float(
+                        particle_mass * C_MMNS * target_factor
+                    )
+                valid_rest_boundary = bool(
+                    gamma_energy_boundary == 1.0 and mechanical_magnitude == 0.0
+                )
+                valid_moving_boundary = bool(
+                    gamma_energy_boundary > 1.0
+                    and mechanical_magnitude > 0.0
+                    and target_mechanical_magnitude > 0.0
+                )
+                can_use_energy_boundary = bool(
+                    np.isfinite(gamma_energy_boundary)
+                    and momentum_is_finite
+                    and np.isfinite(mechanical_magnitude)
+                    and np.isfinite(target_mechanical_magnitude)
+                    and (valid_rest_boundary or valid_moving_boundary)
+                )
+                if can_use_energy_boundary and valid_moving_boundary:
+                    scale = target_mechanical_magnitude / mechanical_magnitude
+                    scaled_momentum = energy_boundary_momentum * scale
+                    if not np.isfinite(scale) or not np.all(
+                        np.isfinite(scaled_momentum)
+                    ):
+                        can_use_energy_boundary = False
+                    else:
+                        result["Px"][particle_idx] = float(
+                            scaled_momentum[0] + accumulated_field_x * particle_mass
+                        )
+                        result["Py"][particle_idx] = float(
+                            scaled_momentum[1] + accumulated_field_y * particle_mass
+                        )
+                        result["Pz"][particle_idx] = float(
+                            scaled_momentum[2] + accumulated_field_z * particle_mass
+                        )
+                        gamma_mass_shell = gamma_energy_boundary
+                if not can_use_energy_boundary:
+                    # At the near-rest/roundoff boundary, an energy-derived
+                    # target can be imaginary, zero for nonzero p, directionless
+                    # for p=0, or nonfinite.  Falling back to finite spatial p
+                    # prevents the old sqrt(max(gamma**2-1, 0)) zeroing bug.
+                    spatial_momentum_authoritative = True
+
+            if spatial_momentum_authoritative:
+                # Reconstruct the complete physical state from spatial
+                # p = P - q A / c.  Near rest this avoids cancellation in
+                # Pt - q Phi / c, and exact RR-off/RR-on capture controls both
+                # use this same projection.
+                on_shell_mechanical_momentum = np.asarray(
+                    _mechanical_momentum_components(
+                        px=result["Px"][particle_idx],
+                        py=result["Py"][particle_idx],
+                        pz=result["Pz"][particle_idx],
+                        particle_mass=particle_mass,
+                        field_x=accumulated_field_x,
+                        field_y=accumulated_field_y,
+                        field_z=accumulated_field_z,
+                    ),
+                    dtype=float,
+                )
+                on_shell_mechanical_magnitude = float(
+                    np.hypot(
+                        np.hypot(
+                            abs(float(on_shell_mechanical_momentum[0])),
+                            abs(float(on_shell_mechanical_momentum[1])),
+                        ),
+                        abs(float(on_shell_mechanical_momentum[2])),
+                    )
+                )
+                on_shell_kinetic_pt = float(
+                    np.hypot(
+                        particle_mass * C_MMNS,
+                        on_shell_mechanical_magnitude,
+                    )
+                )
+                gamma_mass_shell = on_shell_kinetic_pt / (particle_mass * C_MMNS)
+                Pt_from_mass_shell = float(
+                    on_shell_kinetic_pt + scalar_potential_contribution
+                )
+                result["Px"][particle_idx] = float(
+                    on_shell_mechanical_momentum[0]
+                    + accumulated_field_x * particle_mass
+                )
+                result["Py"][particle_idx] = float(
+                    on_shell_mechanical_momentum[1]
+                    + accumulated_field_y * particle_mass
+                )
+                result["Pz"][particle_idx] = float(
+                    on_shell_mechanical_momentum[2]
+                    + accumulated_field_z * particle_mass
+                )
+                result["Pt"][particle_idx] = Pt_from_mass_shell
+                result["gamma"][particle_idx] = gamma_mass_shell
+                if exact_endpoint_recomposition_selected:
+                    start_mechanical_momentum = np.asarray(
+                        _mechanical_momentum_components(
+                            px=float(current_state["Px"][particle_idx]),
+                            py=float(current_state["Py"][particle_idx]),
+                            pz=float(current_state["Pz"][particle_idx]),
+                            particle_mass=particle_mass,
+                            field_x=accumulated_field_x,
+                            field_y=accumulated_field_y,
+                            field_z=accumulated_field_z,
+                        ),
+                        dtype=float,
+                    )
+                    start_kinetic_energy = _stable_kinetic_energy_native(
+                        start_mechanical_momentum,
+                        particle_mass,
+                    )
+                    end_kinetic_energy = _stable_kinetic_energy_native(
+                        on_shell_mechanical_momentum,
+                        particle_mass,
+                    )
+                    result["mass_shell_projection_energy"][particle_idx] = float(
+                        end_kinetic_energy
+                        - start_kinetic_energy
+                        - C_MMNS * exact_mechanical_temporal_impulse
+                    )
+                else:
+                    result["mass_shell_projection_energy"][particle_idx] = float(
+                        C_MMNS
+                        * (Pt_from_mass_shell - raw_canonical_pt_before_constraints)
+                    )
+
             if sc_verbosity >= 3 and sc_enabled and sc_iteration > 0:
                 # Use Pt BEFORE projection to show the actual difference
                 gamma_from_conjugate_before = Pt_before_projection / (
@@ -2366,8 +4252,19 @@ def retarded_equations_of_motion(
                 )
 
             # Update x^0 = dt = dtau * gamma
+            if second_order_exact_source_selected:
+                proper_to_coordinate_dt = float(
+                    0.5
+                    * h
+                    * (
+                        float(current_state["gamma"][particle_idx])
+                        + float(result["gamma"][particle_idx])
+                    )
+                )
+            else:
+                proper_to_coordinate_dt = float(h * result["gamma"][particle_idx])
             result["t"][particle_idx] = (
-                current_state["t"][particle_idx] + h * result["gamma"][particle_idx]
+                current_state["t"][particle_idx] + proper_to_coordinate_dt
             )
 
             # ================================================================
@@ -2376,15 +4273,56 @@ def retarded_equations_of_motion(
             # Position update in proper time formulation: dx/dτ = v·γ
             # Since h = dτ = dt/γ, we have: dx = v·γ·dτ = (P/m)·h
             # where v = P/(γ·m) and γ cancels in the product v·γ = P/m
-            result["x"][particle_idx] = current_state["x"][particle_idx] + h / (
-                particle_mass
-            ) * (result["Px"][particle_idx] - accumulated_field_x * particle_mass)
-            result["y"][particle_idx] = current_state["y"][particle_idx] + h / (
-                particle_mass
-            ) * (result["Py"][particle_idx] - accumulated_field_y * particle_mass)
-            result["z"][particle_idx] = current_state["z"][particle_idx] + h / (
-                particle_mass
-            ) * (result["Pz"][particle_idx] - accumulated_field_z * particle_mass)
+            if second_order_exact_source_selected:
+                start_mechanical_momentum = (
+                    float(current_state["gamma"][particle_idx])
+                    * particle_mass
+                    * C_MMNS
+                    * np.asarray(
+                        (
+                            current_state["bx"][particle_idx],
+                            current_state["by"][particle_idx],
+                            current_state["bz"][particle_idx],
+                        ),
+                        dtype=float,
+                    )
+                )
+                end_mechanical_momentum = np.asarray(
+                    (
+                        result["Px"][particle_idx]
+                        - accumulated_field_x * particle_mass,
+                        result["Py"][particle_idx]
+                        - accumulated_field_y * particle_mass,
+                        result["Pz"][particle_idx]
+                        - accumulated_field_z * particle_mass,
+                    ),
+                    dtype=float,
+                )
+                displacement = (
+                    0.5
+                    * float(h)
+                    * (start_mechanical_momentum + end_mechanical_momentum)
+                    / particle_mass
+                )
+                result["x"][particle_idx] = (
+                    current_state["x"][particle_idx] + displacement[0]
+                )
+                result["y"][particle_idx] = (
+                    current_state["y"][particle_idx] + displacement[1]
+                )
+                result["z"][particle_idx] = (
+                    current_state["z"][particle_idx] + displacement[2]
+                )
+            else:
+                result["x"][particle_idx] = current_state["x"][particle_idx] + h / (
+                    particle_mass
+                ) * (result["Px"][particle_idx] - accumulated_field_x * particle_mass)
+                result["y"][particle_idx] = current_state["y"][particle_idx] + h / (
+                    particle_mass
+                ) * (result["Py"][particle_idx] - accumulated_field_y * particle_mass)
+                result["z"][particle_idx] = current_state["z"][particle_idx] + h / (
+                    particle_mass
+                ) * (result["Pz"][particle_idx] - accumulated_field_z * particle_mass)
 
             # ================================================================
             # STEP 6: Compute velocity (beta) from position changes
@@ -2401,12 +4339,33 @@ def retarded_equations_of_motion(
 
             # β = Δx/(c·Δt) using the actual coordinate-time step
             # Since Δx = (P/m)·h and Δt = γ·h, we get β = P/(γ·m·c)
-            coordinate_dt = result["t"][particle_idx] - current_state["t"][particle_idx]
+            coordinate_dt = (
+                proper_to_coordinate_dt
+                if on_shell_kinematic_boundary_selected
+                else result["t"][particle_idx] - current_state["t"][particle_idx]
+            )
             if coordinate_dt == 0.0:
-                coordinate_dt = h * result["gamma"][particle_idx]
-            beta_x = position_change_x / (C_MMNS * coordinate_dt)
-            beta_y = position_change_y / (C_MMNS * coordinate_dt)
-            beta_z = position_change_z / (C_MMNS * coordinate_dt)
+                coordinate_dt = proper_to_coordinate_dt
+            if on_shell_kinematic_boundary_selected:
+                # Derive beta from the same on-shell mechanical momentum used
+                # for gamma.  Recovering it from two close positions can erase
+                # the motion of a nearly stationary massive particle.
+                beta_denominator = (
+                    result["gamma"][particle_idx] * particle_mass * C_MMNS
+                )
+                beta_x = (
+                    result["Px"][particle_idx] - accumulated_field_x * particle_mass
+                ) / beta_denominator
+                beta_y = (
+                    result["Py"][particle_idx] - accumulated_field_y * particle_mass
+                ) / beta_denominator
+                beta_z = (
+                    result["Pz"][particle_idx] - accumulated_field_z * particle_mass
+                ) / beta_denominator
+            else:
+                beta_x = position_change_x / (C_MMNS * coordinate_dt)
+                beta_y = position_change_y / (C_MMNS * coordinate_dt)
+                beta_z = position_change_z / (C_MMNS * coordinate_dt)
 
             # Enforce speed of light limit IMMEDIATELY after calculation
             beta_x_limited, beta_y_limited, beta_z_limited = _limit_beta_magnitude(
@@ -2638,29 +4597,14 @@ def retarded_equations_of_motion(
                             beta_z_limited - current_state["bz"][particle_idx]
                         ) / time_factor
             elif radiation_mode == "medina_lad":
-                mechanical_px = (
-                    result["Px"][particle_idx] - accumulated_field_x * particle_mass
-                )
-                mechanical_py = (
-                    result["Py"][particle_idx] - accumulated_field_y * particle_mass
-                )
-                mechanical_pz = (
-                    result["Pz"][particle_idx] - accumulated_field_z * particle_mass
-                )
-                mechanical_vec = np.asarray(
-                    (mechanical_px, mechanical_py, mechanical_pz), dtype=float
-                )
-                mechanical_mag = float(np.linalg.norm(mechanical_vec))
-                target_mechanical_mag = float(
-                    particle_mass
-                    * C_MMNS
-                    * np.sqrt(max(result["gamma"][particle_idx] ** 2 - 1.0, 0.0))
-                )
-                if mechanical_mag > 0.0:
-                    mechanical_vec *= target_mechanical_mag / mechanical_mag
-                    mechanical_px = float(mechanical_vec[0])
-                    mechanical_py = float(mechanical_vec[1])
-                    mechanical_pz = float(mechanical_vec[2])
+                predictor_coordinate_dt = coordinate_dt
+                # These are the already on-shell, non-RR momenta used for the
+                # position and beta update.  Do not rescale them from an
+                # independently accumulated gamma: at the near-rest boundary,
+                # sqrt(max(gamma**2 - 1, 0)) can collapse real momentum to zero.
+                mechanical_px = physical_mechanical_px
+                mechanical_py = physical_mechanical_py
+                mechanical_pz = physical_mechanical_pz
                 previous_mechanical_px = (
                     current_state["gamma"][particle_idx]
                     * particle_mass
@@ -2679,60 +4623,158 @@ def retarded_equations_of_motion(
                     * C_MMNS
                     * current_state["bz"][particle_idx]
                 )
-                if coordinate_dt > 0.0:
+                if predictor_coordinate_dt > 0.0 and force_particle_charge != 0.0:
                     external_force = (
                         float(
                             (physical_mechanical_px - previous_mechanical_px)
-                            / coordinate_dt
+                            / predictor_coordinate_dt
                         ),
                         float(
                             (physical_mechanical_py - previous_mechanical_py)
-                            / coordinate_dt
+                            / predictor_coordinate_dt
                         ),
                         float(
                             (physical_mechanical_pz - previous_mechanical_pz)
-                            / coordinate_dt
+                            / predictor_coordinate_dt
                         ),
                     )
-                    medina_beta_dot_t, dgamma_dt = (
-                        _derive_relativistic_kinematics_from_force(
-                            external_force,
-                            beta_tuple,
-                            float(result["gamma"][particle_idx]),
-                            float(particle_mass),
+                    current_force_sample_time = float(
+                        current_state["t"][particle_idx] + 0.5 * predictor_coordinate_dt
+                    )
+                    result["medina_external_force_x"][particle_idx] = external_force[0]
+                    result["medina_external_force_y"][particle_idx] = external_force[1]
+                    result["medina_external_force_z"][particle_idx] = external_force[2]
+                    result["medina_external_force_sample_time"][
+                        particle_idx
+                    ] = current_force_sample_time
+
+                    external_force_time_derivative, derivative_ready = (
+                        _accepted_medina_force_derivative(
+                            current_state=current_state,
+                            particle_idx=particle_idx,
+                            current_force=external_force,
+                            current_sample_time=current_force_sample_time,
                         )
                     )
-                    medina_impulse, medina_capped = (
-                        _compute_medina_radiation_reaction_impulse(
+                    result["medina_force_derivative_ready"][
+                        particle_idx
+                    ] = derivative_ready
+
+                    medina_beta_dot_t, _ = _derive_relativistic_kinematics_from_force(
+                        external_force,
+                        beta_tuple,
+                        float(result["gamma"][particle_idx]),
+                        float(particle_mass),
+                    )
+                    medina_acceleration = tuple(
+                        C_MMNS * component for component in medina_beta_dot_t
+                    )
+                    medina_result: MedinaRadiationReactionResult = (
+                        compute_medina_radiation_reaction(
                             external_force=external_force,
+                            external_force_time_derivative=(
+                                external_force_time_derivative
+                                if derivative_ready
+                                else (0.0, 0.0, 0.0)
+                            ),
                             beta=beta_tuple,
-                            beta_dot_t=medina_beta_dot_t,
+                            acceleration=medina_acceleration,
                             gamma=float(result["gamma"][particle_idx]),
-                            dgamma_dt=dgamma_dt,
                             mass=float(particle_mass),
                             charge=float(force_particle_charge),
-                            coordinate_dt=float(coordinate_dt),
+                            coordinate_dt=float(predictor_coordinate_dt),
                         )
                     )
+                    # Far radiation and the instantaneous cross-field energy do
+                    # not require dF_ext/dt, so they remain valid while the
+                    # first accepted force sample primes the derivative.
+                    result["radiation_power"][
+                        particle_idx
+                    ] = medina_result.far_radiated_power
+                    result["radiation_energy"][
+                        particle_idx
+                    ] = medina_result.far_radiated_energy
+                    result["medina_cross_field_energy"][
+                        particle_idx
+                    ] = medina_result.cross_field_energy
+
+                    if not derivative_ready:
+                        medina_impulse = (0.0, 0.0, 0.0)
+                        medina_capped = False
+                    else:
+                        result["medina_cross_field_energy_change"][
+                            particle_idx
+                        ] = medina_result.cross_field_energy_change
+                        medina_impulse, medina_capped = (
+                            _cap_medina_radiation_reaction_impulse(
+                                impulse=medina_result.radiation_reaction_impulse,
+                                external_force=external_force,
+                                coordinate_dt=float(predictor_coordinate_dt),
+                            )
+                        )
+                        result["medina_impulse_capped"][particle_idx] = medina_capped
+                        uncapped_impulse_norm = float(
+                            np.linalg.norm(
+                                np.asarray(
+                                    medina_result.radiation_reaction_impulse,
+                                    dtype=float,
+                                )
+                            )
+                        )
+                        applied_impulse_norm = float(
+                            np.linalg.norm(np.asarray(medina_impulse, dtype=float))
+                        )
+                        impulse_scale = (
+                            applied_impulse_norm / uncapped_impulse_norm
+                            if uncapped_impulse_norm > 0.0
+                            else 1.0
+                        )
+                        signed_reaction_work = float(
+                            impulse_scale * medina_result.reaction_work
+                        )
+                        result["radiation_reaction_work"][
+                            particle_idx
+                        ] = signed_reaction_work
+                        result["radiation_energy_applied"][particle_idx] = max(
+                            0.0,
+                            -signed_reaction_work,
+                        )
+
                     if medina_capped and sc_verbosity >= 2:
                         print(
                             "      Medina radiation-reaction impulse capped "
                             "by numerical guard"
                         )
                     impulse_vec = np.asarray(medina_impulse, dtype=float)
-                    if float(np.linalg.norm(impulse_vec)) > 0.0:
-                        gamma_before_medina = float(result["gamma"][particle_idx])
+                    if derivative_ready:
+                        # Use the same coordinate-time interval that formed
+                        # and capped the applied impulse.  The RFS helper later
+                        # converts this lab three-force separately at its start
+                        # and midpoint four-velocity/spin states.
+                        applied_medina_force_native[:] = impulse_vec / float(
+                            predictor_coordinate_dt
+                        )
+                    if moment_impulse_diagnostic is not None:
+                        result["_moment_applied_medina_force_native"][
+                            particle_idx
+                        ] = applied_medina_force_native
+                    if derivative_ready and float(np.linalg.norm(impulse_vec)) > 0.0:
                         mechanical_px = float(mechanical_px + impulse_vec[0])
                         mechanical_py = float(mechanical_py + impulse_vec[1])
                         mechanical_pz = float(mechanical_pz + impulse_vec[2])
-                        mechanical_p_sq = (
-                            mechanical_px**2 + mechanical_py**2 + mechanical_pz**2
-                        )
-                        medina_gamma = float(
-                            np.sqrt(
-                                1.0 + mechanical_p_sq / (particle_mass * C_MMNS) ** 2
+                        mechanical_p_magnitude = float(
+                            np.hypot(
+                                np.hypot(abs(mechanical_px), abs(mechanical_py)),
+                                abs(mechanical_pz),
                             )
                         )
+                        medina_kinetic_pt = float(
+                            np.hypot(
+                                particle_mass * C_MMNS,
+                                mechanical_p_magnitude,
+                            )
+                        )
+                        medina_gamma = medina_kinetic_pt / (particle_mass * C_MMNS)
                         result["Px"][particle_idx] = (
                             mechanical_px + accumulated_field_x * particle_mass
                         )
@@ -2743,25 +4785,19 @@ def retarded_equations_of_motion(
                             mechanical_pz + accumulated_field_z * particle_mass
                         )
                         result["gamma"][particle_idx] = medina_gamma
+                        # The next nonlinear trial must start from one
+                        # post-kick state.  Keeping the pre-RR gamma beside the
+                        # post-RR beta would make its trial four-velocity
+                        # internally inconsistent.
+                        reconciled_gamma_for_iteration = medina_gamma
                         scalar_potential_contribution = (
                             _scalar_potential_momentum_contribution(
                                 force_particle_charge, accumulated_scalar_potential
                             )
                         )
-                        result["Pt"][particle_idx] = (
-                            medina_gamma * particle_mass * C_MMNS
-                            + scalar_potential_contribution
+                        result["Pt"][particle_idx] = float(
+                            medina_kinetic_pt + scalar_potential_contribution
                         )
-                        removed_energy = max(
-                            0.0,
-                            (gamma_before_medina - medina_gamma)
-                            * particle_mass
-                            * C_MMNS**2,
-                        )
-                        result["radiation_energy_applied"][
-                            particle_idx
-                        ] = removed_energy
-
                         beta_denom = medina_gamma * particle_mass * C_MMNS
                         if beta_denom > 0.0:
                             beta_x_limited = float(mechanical_px / beta_denom)
@@ -2779,6 +4815,62 @@ def retarded_equations_of_motion(
                             result["bx"][particle_idx] = beta_x_limited
                             result["by"][particle_idx] = beta_y_limited
                             result["bz"][particle_idx] = beta_z_limited
+                            # Ordinary and RFS forces in this solver are kicks
+                            # followed by an endpoint drift.  Medina is
+                            # evaluated from the non-RR predictor above, then
+                            # joins that same split at first order: rebuild the
+                            # endpoint from the final mechanical momentum and
+                            # its mass-shell gamma.  Pt is reconstructed from
+                            # p and q Phi / c; there is no independent temporal
+                            # radiation-reaction kick.
+                            if second_order_exact_source_selected:
+                                result["x"][particle_idx] = (
+                                    current_state["x"][particle_idx]
+                                    + 0.5
+                                    * h
+                                    * (previous_mechanical_px + mechanical_px)
+                                    / particle_mass
+                                )
+                                result["y"][particle_idx] = (
+                                    current_state["y"][particle_idx]
+                                    + 0.5
+                                    * h
+                                    * (previous_mechanical_py + mechanical_py)
+                                    / particle_mass
+                                )
+                                result["z"][particle_idx] = (
+                                    current_state["z"][particle_idx]
+                                    + 0.5
+                                    * h
+                                    * (previous_mechanical_pz + mechanical_pz)
+                                    / particle_mass
+                                )
+                                coordinate_dt = float(
+                                    0.5
+                                    * h
+                                    * (
+                                        float(current_state["gamma"][particle_idx])
+                                        + medina_gamma
+                                    )
+                                )
+                            else:
+                                result["x"][particle_idx] = (
+                                    current_state["x"][particle_idx]
+                                    + h * mechanical_px / particle_mass
+                                )
+                                result["y"][particle_idx] = (
+                                    current_state["y"][particle_idx]
+                                    + h * mechanical_py / particle_mass
+                                )
+                                result["z"][particle_idx] = (
+                                    current_state["z"][particle_idx]
+                                    + h * mechanical_pz / particle_mass
+                                )
+                                coordinate_dt = float(h * medina_gamma)
+                            result["t"][particle_idx] = (
+                                current_state["t"][particle_idx] + coordinate_dt
+                            )
+                            time_factor = C_MMNS * coordinate_dt
                             result["bdotx"][particle_idx] = (
                                 beta_x_limited - current_state["bx"][particle_idx]
                             ) / time_factor
@@ -2788,6 +4880,7 @@ def retarded_equations_of_motion(
                             result["bdotz"][particle_idx] = (
                                 beta_z_limited - current_state["bz"][particle_idx]
                             ) / time_factor
+                            gamma_from_velocity = medina_gamma
 
             # ================================================================
             # STEP 9: Update running average of beta
@@ -2956,6 +5049,12 @@ def retarded_equations_of_motion(
                 last_mass_shell_error,
             )
 
+        if exact_endpoint_recomposition_selected:
+            result["_exact_source_start_four_potential"][
+                particle_idx
+            ] = exact_source_start_four_potential
+            result["_exact_source_endpoint_rebase_required"][particle_idx] = True
+
         # ================================================================
         # AFTER self-consistency loop: Apply mass-shell projection if needed
         # ================================================================
@@ -3020,6 +5119,192 @@ def retarded_equations_of_motion(
                     accumulated_field_y,
                     accumulated_field_z,
                 )
+
+        # Spin is advanced exactly once per accepted physical step, after all
+        # self-consistency iterations. Reusing the start-of-step spin avoids
+        # accidentally applying one precession update per nonlinear iteration.
+        if bool(
+            current_state.get("magnetic_dipole_active", np.zeros(num_particles))[
+                particle_idx
+            ]
+        ):
+            diagnostic_magnetic_field_t = np.zeros(3, dtype=float)
+            if external_field is not None and getattr(external_field, "enabled", False):
+                diagnostic_position = (
+                    float(result["x"][particle_idx]),
+                    float(result["y"][particle_idx]),
+                    float(result["z"][particle_idx]),
+                )
+                if rfs_selected:
+                    from .magnetic_dipole import magnetic_field_native_to_tesla
+
+                    _, diagnostic_b_native, _ = evaluate_external_field_native(
+                        external_field,
+                        position_mm=diagnostic_position,
+                        time_ns=float(result["t"][particle_idx]),
+                    )
+                    diagnostic_magnetic_field_t = np.asarray(
+                        [
+                            magnetic_field_native_to_tesla(value)
+                            for value in diagnostic_b_native
+                        ],
+                        dtype=float,
+                    )
+                else:
+                    _, diagnostic_magnetic_field_t, _ = evaluate_external_field_si(
+                        external_field,
+                        position_mm=diagnostic_position,
+                        time_ns=float(result["t"][particle_idx]),
+                    )
+            if (
+                rfs_selected
+                and sim_type == SimulationType.BUNCH_TO_BUNCH
+                and len(trajectory_ext) > 0
+            ):
+                from .retarded_fields import (
+                    ObserverEvent,
+                    RetardedHistoryError,
+                    evaluate_retarded_charge_field_native,
+                )
+
+                try:
+                    diagnostic_charge_field = evaluate_retarded_charge_field_native(
+                        (
+                            exact_source_history
+                            if exact_source_history is not None
+                            else (
+                                traj_ext_soa
+                                if traj_ext_soa is not None
+                                else trajectory_ext
+                            )
+                        ),
+                        ObserverEvent(
+                            time_ns=float(result["t"][particle_idx]),
+                            position_mm=(
+                                float(result["x"][particle_idx]),
+                                float(result["y"][particle_idx]),
+                                float(result["z"][particle_idx]),
+                            ),
+                        ),
+                        backend=magnetic_dipole.exact_retarded_backend,
+                    )
+                except RetardedHistoryError:
+                    diagnostic_charge_field = None
+                if diagnostic_charge_field is not None:
+                    from .magnetic_dipole import magnetic_field_native_to_tesla
+
+                    diagnostic_magnetic_field_t += np.asarray(
+                        [
+                            magnetic_field_native_to_tesla(value)
+                            for value in diagnostic_charge_field.magnetic_field_native
+                        ],
+                        dtype=float,
+                    )
+            result["local_magnetic_field_x_t"][particle_idx] = (
+                diagnostic_magnetic_field_t[0]
+            )
+            result["local_magnetic_field_y_t"][particle_idx] = (
+                diagnostic_magnetic_field_t[1]
+            )
+            result["local_magnetic_field_z_t"][particle_idx] = (
+                diagnostic_magnetic_field_t[2]
+            )
+            precession_active = bool(
+                current_state.get("spin_precession_active", np.zeros(num_particles))[
+                    particle_idx
+                ]
+            )
+            if precession_active:
+                spin_start = np.asarray(
+                    (
+                        current_state["spin_x"][particle_idx],
+                        current_state["spin_y"][particle_idx],
+                        current_state["spin_z"][particle_idx],
+                    ),
+                    dtype=float,
+                )
+                beta_start = np.asarray(
+                    (
+                        current_state["bx"][particle_idx],
+                        current_state["by"][particle_idx],
+                        current_state["bz"][particle_idx],
+                    ),
+                    dtype=float,
+                )
+                beta_end = np.asarray(
+                    (
+                        result["bx"][particle_idx],
+                        result["by"][particle_idx],
+                        result["bz"][particle_idx],
+                    ),
+                    dtype=float,
+                )
+                if rfs_selected:
+                    spin_next = _advance_rfs_rest_spin(
+                        spin_start,
+                        beta_start=beta_start,
+                        beta_end=beta_end,
+                        field_tensor=rfs_field_tensor,
+                        partial_f=rfs_partial_f,
+                        charge_native=float(force_particle_charge),
+                        mass_amu=float(particle_mass),
+                        magnetic_moment_native=float(
+                            current_state["magnetic_moment_native"][particle_idx]
+                        ),
+                        spin_quantum_number=float(
+                            current_state["spin_quantum_number"][particle_idx]
+                        ),
+                        proper_time_step_ns=float(h),
+                        applied_radiation_reaction_force_native=(
+                            applied_medina_force_native
+                        ),
+                        analytic_antisymmetric_response=(
+                            exact_analytic_antisymmetric_response
+                        ),
+                        analytic_partial_antisymmetric_response=(
+                            exact_analytic_partial_antisymmetric_response
+                        ),
+                        analytic_response_contraction=(
+                            "numba_strict_serial"
+                            if exact_analytic_antisymmetric_response is not None
+                            else "python"
+                        ),
+                    )
+                else:
+                    from .constants import ELEMENTARY_CHARGE
+                    from .external_fields import AMU_KG, ELEMENTARY_CHARGE_COULOMB
+                    from .magnetic_dipole import advance_spin_uniform_fields
+
+                    beta_midpoint = 0.5 * (beta_start + beta_end)
+                    coordinate_step_s = (
+                        max(
+                            float(
+                                result["t"][particle_idx]
+                                - current_state["t"][particle_idx]
+                            ),
+                            0.0,
+                        )
+                        * 1.0e-9
+                    )
+                    spin_next = advance_spin_uniform_fields(
+                        spin_start,
+                        beta=beta_midpoint,
+                        electric_field_v_m=local_electric_field_v_m,
+                        magnetic_field_t=local_magnetic_field_t,
+                        charge_coulomb=(
+                            float(force_particle_charge)
+                            / ELEMENTARY_CHARGE
+                            * ELEMENTARY_CHARGE_COULOMB
+                        ),
+                        mass_kg=float(particle_mass) * AMU_KG,
+                        gyromagnetic_ratio_rad_s_t=float(
+                            current_state["gyromagnetic_ratio_rad_s_t"][particle_idx]
+                        ),
+                        delta_time_s=coordinate_step_s,
+                    )
+                result["spin_x"][particle_idx] = spin_next[0]
+                result["spin_y"][particle_idx] = spin_next[1]
+                result["spin_z"][particle_idx] = spin_next[2]
 
     # Log summary if any particles died in this step
     if particles_marked_dead_this_step > 0:

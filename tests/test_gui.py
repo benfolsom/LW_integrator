@@ -376,7 +376,7 @@ def test_save_config_normalizes_filename_and_updates_ui(tmp_path, monkeypatch):
         lambda opts, path: saved.update({"options": opts, "path": path}),
     )
     monkeypatch.setattr(
-        "lw_integrator.gui_config_mixins.messagebox.showinfo",
+        "tkinter.messagebox.showinfo",
         lambda title, message: info_calls.append((title, message)),
     )
 
@@ -791,6 +791,100 @@ def test_radiation_reaction_mode_round_trips_through_gui_options():
         rebuilt = app._build_options_from_ui()
 
         assert rebuilt.radiation_reaction_mode == "power_matched_damping"
+    finally:
+        root.destroy()
+
+
+def test_checkpoint_settings_round_trip_through_gui_options(tmp_path: Path):
+    try:
+        root = tk.Tk()
+    except tk.TclError as exc:
+        pytest.skip(f"Tk display unavailable: {exc}")
+
+    root.withdraw()
+    try:
+        app = gui.IntegratorGUI(root)
+        checkpoint_path = tmp_path / "capture.checkpoint"
+        app._apply_options_to_ui(
+            SimulationOptions(
+                checkpoint_enabled=True,
+                checkpoint_resume_from=checkpoint_path,
+                checkpoint_interval_steps=125,
+                checkpoint_interval_seconds=45.0,
+            ),
+            preserve_directories=True,
+        )
+
+        assert app.checkpoint_enabled_var.get() is True
+        assert app.checkpoint_resume_from_var.get() == str(checkpoint_path)
+
+        rebuilt = app._build_options_from_ui()
+
+        assert rebuilt.checkpoint_enabled is True
+        assert rebuilt.checkpoint_directory is None
+        assert rebuilt.checkpoint_resume_from == checkpoint_path
+        assert rebuilt.checkpoint_interval_steps == 125
+        assert rebuilt.checkpoint_interval_seconds == pytest.approx(45.0)
+    finally:
+        root.destroy()
+
+
+def test_adaptive_pair_return_settings_round_trip_through_gui_options():
+    try:
+        root = tk.Tk()
+    except tk.TclError as exc:
+        pytest.skip(f"Tk display unavailable: {exc}")
+
+    root.withdraw()
+    try:
+        app = gui.IntegratorGUI(root)
+        app._apply_options_to_ui(
+            SimulationOptions(
+                adaptive_pair_return_enabled=True,
+                adaptive_pair_target_lab_time_ns=1.5,
+                adaptive_pair_tolerance_scale=0.25,
+                adaptive_pair_minimum_step_factor=1.0 / 128.0,
+                adaptive_pair_maximum_step_factor=16.0,
+                adaptive_pair_public_sample_interval_ns=0.02,
+                adaptive_pair_shared_time_absolute_tolerance_ns=3.0e-20,
+                adaptive_pair_shared_time_relative_tolerance=4.0e-13,
+                adaptive_pair_maximum_attempts=123,
+                adaptive_pair_maximum_accepted_slabs=456,
+            ),
+            preserve_directories=True,
+        )
+
+        assert app.adaptive_pair_return_enabled_var.get() is True
+        assert app.adaptive_pair_target_lab_time_ns_var.get() == "1.5"
+        assert all(
+            str(widget.cget("state")) == "normal"
+            for widget in app._adaptive_pair_return_controls
+        )
+
+        rebuilt = app._build_options_from_ui()
+
+        assert rebuilt.adaptive_pair_return_enabled is True
+        assert rebuilt.adaptive_pair_target_lab_time_ns == pytest.approx(1.5)
+        assert rebuilt.adaptive_pair_tolerance_scale == pytest.approx(0.25)
+        assert rebuilt.adaptive_pair_minimum_step_factor == pytest.approx(1.0 / 128.0)
+        assert rebuilt.adaptive_pair_maximum_step_factor == pytest.approx(16.0)
+        assert rebuilt.adaptive_pair_public_sample_interval_ns == pytest.approx(0.02)
+        assert rebuilt.adaptive_pair_shared_time_absolute_tolerance_ns == pytest.approx(
+            3.0e-20
+        )
+        assert rebuilt.adaptive_pair_shared_time_relative_tolerance == pytest.approx(
+            4.0e-13
+        )
+        assert rebuilt.adaptive_pair_maximum_attempts == 123
+        assert rebuilt.adaptive_pair_maximum_accepted_slabs == 456
+        assert rebuilt.checkpoint_enabled is True
+        assert rebuilt.particle_loss_enabled is False
+        assert rebuilt.adaptive_timestep_enabled is False
+        assert rebuilt.core_params["startup_mode"] == "INERTIAL_PREHISTORY"
+        assert (
+            rebuilt.magnetic_dipole_exact_retarded_update
+            == "second_order_start_taylor_endpoint"
+        )
     finally:
         root.destroy()
 

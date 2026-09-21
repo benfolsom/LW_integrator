@@ -7,6 +7,7 @@ import pytest
 
 import core.integration_runner as integration_runner
 from core.equations import GammaBlowupError
+from core.external_fields import ExternalFieldConfig, evaluate_external_field_si
 from core.pseudo_grid import PseudoGridStepSchedule
 from core.integration_runner import (
     AdaptiveTimestepConfig,
@@ -19,6 +20,8 @@ from core.integration_runner import (
 from core.types import (
     CavityExitConfig,
     DriverTrainConfig,
+    MagneticDipoleConfig,
+    MagneticDipoleParticleConfig,
     PseudoGridConfig,
     SimulationType,
     SpaceChargeConfig,
@@ -2132,6 +2135,18 @@ def test_retarded_integrator_runs_residual_tail_after_driver_exit(
     driver = _make_particle_state(z=5.0)
     driver["bz"] = np.array([-0.5], dtype=float)
     driver["gamma"] = np.array([1.0], dtype=float)
+    external_field = ExternalFieldConfig(
+        magnetic_field_gradient_t_per_m=(
+            (-0.5, 0.0, 0.0),
+            (0.0, -0.5, 0.0),
+            (0.0, 0.0, 1.0),
+        )
+    )
+    magnetic_particle = MagneticDipoleParticleConfig(
+        species="custom",
+        magnetic_moment_j_per_t=1.0e-26,
+        spin_quantum_number=0.5,
+    )
 
     trajectory, driver_traj, *_soa_out = retarded_integrator(
         steps=5,
@@ -2149,6 +2164,13 @@ def test_retarded_integrator_runs_residual_tail_after_driver_exit(
             residual_tail_factor=200.0,
             max_residual_tail_steps=2,
         ),
+        external_field=external_field,
+        magnetic_dipole=MagneticDipoleConfig(
+            enabled=True,
+            spin_precession_enabled=False,
+            rider=magnetic_particle,
+            driver=magnetic_particle,
+        ),
         use_numba=False,
     )
 
@@ -2162,6 +2184,21 @@ def test_retarded_integrator_runs_residual_tail_after_driver_exit(
     assert trajectory[-1]["_residual_tail_time_ns"] > 0.0
     assert driver_traj[-1]["_cavity_exit_tail_mode"] == "coasted"
     assert driver_traj[-1]["z"][0] < driver_traj[-2]["z"][0]
+    _, expected_field_t, _ = evaluate_external_field_si(
+        external_field,
+        position_mm=(
+            float(driver_traj[-1]["x"][0]),
+            float(driver_traj[-1]["y"][0]),
+            float(driver_traj[-1]["z"][0]),
+        ),
+        time_ns=float(driver_traj[-1]["t"][0]),
+    )
+    assert driver_traj[-1]["local_magnetic_field_z_t"][0] == pytest.approx(
+        expected_field_t[2]
+    )
+    assert driver_traj[-1]["local_magnetic_field_z_t"][0] != pytest.approx(
+        driver_traj[-2]["local_magnetic_field_z_t"][0]
+    )
 
 
 def test_retarded_integrator_logs_relative_cutoff_debug_message(

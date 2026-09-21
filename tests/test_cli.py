@@ -16,7 +16,221 @@ import lw_integrator
 from core.external_fields import electric_field_v_per_m_to_native
 from core.types import ChronoMatchingMode, SimulationType, StartupMode
 from lw_integrator import cli
-from lw_integrator.testbed_runner import SimulationOptions
+from lw_integrator.testbed_runner import SimulationOptions, build_magnetic_dipole_config
+
+
+def test_cli_direct_checkpoint_flags_build_core_config(tmp_path: Path) -> None:
+    config_path = tmp_path / "run.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "steps": 4,
+                "time_step": 1.0e-3,
+                "wall_position": 0.0,
+                "aperture_radius": 1.0,
+                "simulation_type": "bunch-to-bunch",
+                "rider": {},
+                "driver": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    checkpoint_path = tmp_path / "capture.checkpoint"
+
+    request = cli.build_request(
+        cli.parse_args(
+            [
+                "--config",
+                str(config_path),
+                "--checkpoint-dir",
+                str(checkpoint_path),
+                "--checkpoint-every-steps",
+                "25",
+                "--checkpoint-every-seconds",
+                "60",
+            ]
+        )
+    )
+
+    assert request.config.checkpoint.enabled is True
+    assert request.config.checkpoint.directory == str(checkpoint_path)
+    assert request.config.checkpoint.resume_from is None
+    assert request.config.checkpoint.interval_steps == 25
+    assert request.config.checkpoint.interval_seconds == pytest.approx(60.0)
+
+
+def test_cli_direct_adaptive_pair_flags_build_core_config(tmp_path: Path) -> None:
+    config_path = tmp_path / "run.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "steps": 16,
+                "time_step": 1.0e-3,
+                "wall_position": 0.0,
+                "aperture_radius": 1.0,
+                "simulation_type": "bunch-to-bunch",
+                "startup_mode": "inertial-prehistory",
+                "particle_loss": {"enabled": False},
+                "rider": {},
+                "driver": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    checkpoint_path = tmp_path / "capture.checkpoint"
+
+    request = cli.build_request(
+        cli.parse_args(
+            [
+                "--config",
+                str(config_path),
+                "--checkpoint-dir",
+                str(checkpoint_path),
+                "--adaptive-pair-return",
+                "--adaptive-pair-target-time-ns",
+                "2.5",
+                "--adaptive-pair-tolerance-scale",
+                "0.5",
+                "--adaptive-pair-maximum-step-factor",
+                "32",
+                "--adaptive-pair-shared-time-absolute-tolerance-ns",
+                "2e-20",
+            ]
+        )
+    )
+
+    adaptive = request.config.adaptive_pair_return
+    assert adaptive.enabled is True
+    assert adaptive.target_lab_time_ns == pytest.approx(2.5)
+    assert adaptive.tolerance_scale == pytest.approx(0.5)
+    assert adaptive.maximum_step_factor == pytest.approx(32.0)
+    assert adaptive.shared_time_absolute_tolerance_ns == pytest.approx(2.0e-20)
+    assert request.config.checkpoint.directory == str(checkpoint_path)
+
+
+@pytest.mark.parametrize("override", [False, True])
+def test_native_json_preserves_checkpoint_and_adaptive_pair_settings(
+    tmp_path, override
+):
+    payload = {
+        "steps": 4,
+        "time_step": 1e-3,
+        "wall_position": 0,
+        "aperture_radius": 1,
+        "simulation_type": "bunch-to-bunch",
+        "rider": {},
+        "driver": {},
+        "checkpoint": {
+            "enabled": True,
+            "directory": str(tmp_path / "saved"),
+            "interval_steps": 3,
+        },
+        "adaptive_pair_return": {
+            "enabled": True,
+            "target_lab_time_ns": 0.01,
+            "tolerance_scale": 0.5,
+            "maximum_attempts": 37,
+        },
+    }
+    config = tmp_path / "native.json"
+    config.write_text(json.dumps(payload))
+    arguments = ["--config", str(config)]
+    if override:
+        arguments += [
+            "--resume-from",
+            str(tmp_path / "resumed"),
+            "--adaptive-pair-target-time-ns",
+            "0.02",
+        ]
+    request = cli.build_request(cli.parse_args(arguments))
+    assert request.config.checkpoint.enabled
+    assert request.config.checkpoint.interval_steps == 3
+    assert request.config.adaptive_pair_return.enabled
+    assert request.config.adaptive_pair_return.maximum_attempts == 37
+    assert request.config.adaptive_pair_return.tolerance_scale == 0.5
+    assert request.config.adaptive_pair_return.target_lab_time_ns == (
+        0.02 if override else 0.01
+    )
+    if override:
+        assert request.config.checkpoint.directory is None
+        assert request.config.checkpoint.resume_from == str(tmp_path / "resumed")
+    else:
+        assert request.config.checkpoint.directory == str(tmp_path / "saved")
+
+
+@pytest.mark.parametrize("key", ["checkpoint", "adaptive_pair_return"])
+@pytest.mark.parametrize("value", [[], "invalid"])
+def test_native_json_rejects_invalid_checkpoint_or_adaptive_object(key, value):
+    with pytest.raises(cli.SimulationConfigError, match="object"):
+        cli._merge_simulation_payload({key: value}, cli.parse_args([]))
+
+
+def test_direct_report_preserves_adaptive_counts_restart_and_recoil_ledger():
+    summary = {
+        "completed": True,
+        "accepted_slabs": 16,
+        "checkpoint_resumed": True,
+        "intrinsic_spin_self_reaction_diagnostics": {
+            "mode": "experimental_linear_spin",
+            "applied_as_force": True,
+            "rider": {"feedback_applied_records": 27, "feedback_work_native": 0.1},
+        },
+    }
+    trajectory = [
+        {
+            "t": np.array([0.0]),
+            "z": np.array([1.0]),
+            "gamma": np.array([1.0]),
+            "bz": np.array([0.0]),
+            "_adaptive_pair_return": summary,
+        }
+    ]
+    report = cli.build_report(trajectory)
+    assert report["adaptive_pair_return"] == summary
+    assert report["adaptive_pair_return"] is not summary
+
+
+def test_cli_testbed_resume_flag_overrides_loaded_checkpoint(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "testbed.json"
+    config_path.write_text(json.dumps({"steps": 4}), encoding="utf-8")
+    checkpoint_path = tmp_path / "capture.checkpoint"
+    captured: dict[str, SimulationOptions] = {}
+
+    def fake_run(options: SimulationOptions):
+        captured["options"] = options
+        return SimpleNamespace(
+            duration_s=0.0,
+            filename_base="test",
+            halted_early=False,
+            halt_reason=None,
+            num_particles_dead=0,
+            rider_delta_e=0.0,
+            rider_gamma_initial=1.0,
+            rider_gamma_final=1.0,
+            driver_gamma_initial=None,
+            driver_gamma_final=None,
+            energy_ledger_metrics={},
+            saved_paths={},
+        )
+
+    monkeypatch.setattr("lw_integrator.testbed_runner.run_testbed", fake_run)
+
+    result = cli.main(
+        [
+            "--testbed-config",
+            str(config_path),
+            "--resume-from",
+            str(checkpoint_path),
+            "--quiet",
+        ]
+    )
+
+    assert result == 0
+    assert captured["options"].checkpoint_enabled is True
+    assert captured["options"].checkpoint_resume_from == checkpoint_path
 
 
 def _make_args(**overrides) -> argparse.Namespace:
@@ -64,6 +278,17 @@ def _make_args(**overrides) -> argparse.Namespace:
         "chrono_adaptive_tolerance": None,
         "startup_mode": None,
         "radiation_reaction_mode": None,
+        "magnetic_dipole_enabled": None,
+        "dipole_source_model": None,
+        "dipole_source_history_model": None,
+        "exact_retarded_backend": None,
+        "dipole_source_minimum_separation_mm": None,
+        "rider_magnetic_species": None,
+        "driver_magnetic_species": None,
+        "rider_spin": None,
+        "driver_spin": None,
+        "stern_gerlach_force_enabled": None,
+        "spin_precession_enabled": None,
         "image_subcharge_count": None,
         "use_image_weighting": None,
         "pseudo_grid_enabled": None,
@@ -102,6 +327,7 @@ def _make_args(**overrides) -> argparse.Namespace:
         "external_e_field_native": None,
         "external_e_field_v_per_m": None,
         "external_b_field_native": None,
+        "external_b_field_tesla": None,
     }
     for axis in ("x", "y", "z", "t"):
         defaults[f"external_field_{axis}_min"] = None
@@ -154,6 +380,11 @@ class TestCliConfigParsing:
         assert args.chrono_tolerance == pytest.approx(5e-4)
         assert args.chrono_high_precision is True
         assert args.chrono_adaptive_tolerance is True
+
+    def test_parse_args_accepts_inertial_prehistory(self):
+        args = cli.parse_args(["--startup-mode", "inertial-prehistory"])
+
+        assert args.startup_mode == "inertial-prehistory"
 
     def test_package_exports_only_maintained_entry_points(self):
         assert lw_integrator.__all__ == ["__version__", "VERSION"]
@@ -221,6 +452,10 @@ class TestCliConfigParsing:
                 "0",
                 "3",
                 "0",
+                "--external-b-field-tesla",
+                "0.1",
+                "0.2",
+                "0.3",
                 "--external-field-z-min",
                 "-0.2",
                 "--external-field-t-max",
@@ -230,6 +465,7 @@ class TestCliConfigParsing:
 
         assert args.external_e_field_v_per_m == [0.0, 0.0, -1.5e9]
         assert args.external_b_field_native == [0.0, 3.0, 0.0]
+        assert args.external_b_field_tesla == [0.1, 0.2, 0.3]
         assert args.external_field_z_min == pytest.approx(-0.2)
         assert args.external_field_t_max == pytest.approx(1.0e-6)
 
@@ -237,6 +473,186 @@ class TestCliConfigParsing:
         args = cli.parse_args(["--radiation-reaction-mode", "off"])
 
         assert args.radiation_reaction_mode == "off"
+
+    def test_parse_args_accepts_magnetic_dipole_options_and_species_aliases(self):
+        args = cli.parse_args(
+            [
+                "--magnetic-dipoles",
+                "--rider-magnetic-species",
+                "n",
+                "--driver-magnetic-species",
+                "h-",
+                "--rider-spin",
+                "0",
+                "3",
+                "4",
+                "--driver-spin",
+                "1",
+                "0",
+                "0",
+                "--stern-gerlach",
+                "--dipole-source",
+                "full-retarded-point",
+                "--dipole-source-history",
+                "causal-c5",
+                "--exact-retarded-backend",
+                "numba_roots_exact_serial",
+                "--exact-retarded-update",
+                "second_order_start_taylor_endpoint",
+                "--intrinsic-spin-self-reaction-mode",
+                "diagnostic",
+                "--dipole-source-cutoff-mm",
+                "2e-9",
+            ]
+        )
+
+        assert args.magnetic_dipole_enabled is True
+        assert args.rider_magnetic_species == "neutron"
+        assert args.driver_magnetic_species == "h_minus"
+        assert args.rider_spin == [0.0, 3.0, 4.0]
+        assert args.driver_spin == [1.0, 0.0, 0.0]
+        assert args.stern_gerlach_force_enabled is True
+        assert args.dipole_source_model == "full-retarded-point"
+        assert args.dipole_source_history_model == "causal-c5"
+        assert args.exact_retarded_backend == "numba_roots_exact_serial"
+        assert args.exact_retarded_update == "second_order_start_taylor_endpoint"
+        assert args.intrinsic_spin_self_reaction_mode == "diagnostic"
+        assert args.dipole_source_minimum_separation_mm == pytest.approx(2.0e-9)
+
+    def test_parse_args_accepts_disabling_magnetic_dipole_options(self):
+        args = cli.parse_args(
+            ["--no-magnetic-dipoles", "--no-stern-gerlach", "--no-spin-precession"]
+        )
+
+        assert args.magnetic_dipole_enabled is False
+        assert args.stern_gerlach_force_enabled is False
+        assert args.spin_precession_enabled is False
+
+    def test_parse_args_accepts_causal_local_jet_controls(self):
+        args = cli.parse_args(
+            [
+                "--dipole-source-history",
+                "causal-local-jet",
+                "--dipole-local-jet-narrow-half-width-ns",
+                "1e-8",
+                "--dipole-local-jet-primary-half-width-ns",
+                "1.2e-8",
+                "--dipole-local-jet-wide-half-width-ns",
+                "1.5e-8",
+                "--dipole-local-jet-acceleration-samples",
+                "interval-mean",
+                "--dipole-local-jet-acceleration-degree",
+                "6",
+                "--dipole-local-jet-spin-degree",
+                "7",
+                "--dipole-local-jet-maximum-condition-number",
+                "2e5",
+                "--dipole-local-jet-maximum-relative-spread",
+                "2.5e-4",
+                "--dipole-local-jet-window-alignment",
+                "past",
+                "--dipole-local-jet-window-weighting",
+                "tricube",
+                "--dipole-local-jet-inertial-prehistory",
+                "assumed-inertial",
+            ]
+        )
+
+        assert args.dipole_source_history_model == "causal-local-jet"
+        assert args.dipole_local_jet_narrow_half_width_ns == pytest.approx(1.0e-8)
+        assert args.dipole_local_jet_primary_half_width_ns == pytest.approx(1.2e-8)
+        assert args.dipole_local_jet_wide_half_width_ns == pytest.approx(1.5e-8)
+        assert args.dipole_local_jet_acceleration_samples == "interval-mean"
+        assert args.dipole_local_jet_acceleration_degree == 6
+        assert args.dipole_local_jet_spin_degree == 7
+        assert args.dipole_local_jet_maximum_condition_number == pytest.approx(2.0e5)
+        assert args.dipole_local_jet_maximum_relative_spread == pytest.approx(2.5e-4)
+        assert args.dipole_local_jet_window_alignment == "past"
+        assert args.dipole_local_jet_window_weighting == "tricube"
+        assert args.dipole_local_jet_inertial_prehistory == "assumed-inertial"
+
+    def test_parse_args_accepts_named_local_jet_scale_ladder(self):
+        args = cli.parse_args(
+            [
+                "--dipole-local-jet-scale",
+                "near:2e-9:3e-9:5e-9",
+                "--dipole-local-jet-scale",
+                "far:5e-9:1.2e-8:1.5e-8",
+                "--dipole-local-jet-maximum-cross-scale-relative-spread",
+                "2.5e-4",
+            ]
+        )
+
+        assert [scale["name"] for scale in args.dipole_local_jet_scale] == [
+            "near",
+            "far",
+        ]
+        assert args.dipole_local_jet_scale[0]["primary_half_width_ns"] == (
+            pytest.approx(3.0e-9)
+        )
+        assert args.dipole_local_jet_maximum_cross_scale_relative_spread == (
+            pytest.approx(2.5e-4)
+        )
+
+    def test_parse_args_accepts_full_strict_exact_retarded_backend(self):
+        args = cli.parse_args(["--exact-retarded-backend", "numba_full_strict_serial"])
+
+        assert args.exact_retarded_backend == "numba_full_strict_serial"
+
+    def test_parse_args_accepts_second_order_start_taylor_update(self):
+        args = cli.parse_args(
+            [
+                "--exact-retarded-update",
+                "second_order_start_taylor_endpoint",
+            ]
+        )
+
+        assert args.exact_retarded_update == ("second_order_start_taylor_endpoint")
+
+    def test_parse_args_accepts_analytical_charge_response_backend(self):
+        args = cli.parse_args(
+            [
+                "--exact-retarded-backend",
+                "numba_analytic_charge_response_serial",
+            ]
+        )
+
+        assert args.exact_retarded_backend == "numba_analytic_charge_response_serial"
+
+    def test_parse_args_accepts_analytical_charge_dipole_response_backend(self):
+        args = cli.parse_args(
+            [
+                "--exact-retarded-backend",
+                "numba_analytic_charge_dipole_response_serial",
+            ]
+        )
+
+        assert args.exact_retarded_backend == (
+            "numba_analytic_charge_dipole_response_serial"
+        )
+
+    def test_parse_args_accepts_certified_metal_exact_retarded_backend(self):
+        args = cli.parse_args(
+            ["--exact-retarded-backend", "metal_certified_full_strict"]
+        )
+
+        assert args.exact_retarded_backend == "metal_certified_full_strict"
+
+    def test_magnetic_dipole_help_names_rfs_defaults(self, capsys):
+        with pytest.raises(SystemExit) as exc_info:
+            cli.parse_args(["--help"])
+
+        help_text = " ".join(capsys.readouterr().out.split())
+        assert exc_info.value.code == 0
+        assert "intrinsic magnetic-moment dynamics (RFS by default)" in help_text
+        assert "full RFS G tensor by default" in help_text
+        assert "RFS minimal 2021 by default" in help_text
+        assert "full retarded point-dipole oracle (experimental)" in help_text
+        assert "Crossing it aborts the run; it is not softening" in help_text
+
+    def test_magnetic_species_choices_include_neutral_and_h_minus_presets(self):
+        assert "neutron" in cli.MAGNETIC_SPECIES_CHOICES
+        assert "h_minus" in cli.MAGNETIC_SPECIES_CHOICES
 
     def test_parse_args_accepts_pseudo_grid_options(self):
         args = cli.parse_args(
@@ -420,9 +836,30 @@ class TestCliConfigParsing:
         assert cli._parse_startup_mode("approximate") == (
             StartupMode.APPROXIMATE_BACK_HISTORY
         )
+        assert cli._parse_startup_mode("inertial-prehistory") == (
+            StartupMode.INERTIAL_PREHISTORY
+        )
+        assert cli._parse_startup_mode("inertial_prehistory") == (
+            StartupMode.INERTIAL_PREHISTORY
+        )
+        assert cli._parse_startup_mode("inertial") == (StartupMode.INERTIAL_PREHISTORY)
         assert cli._parse_startup_mode(StartupMode.COLD_START) == (
             StartupMode.COLD_START
         )
+
+    def test_build_integrator_config_accepts_inertial_prehistory(self):
+        config = cli._build_integrator_config(
+            {
+                "steps": 12,
+                "time_step": 0.25,
+                "wall_position": 1.5,
+                "aperture_radius": 0.002,
+                "simulation_type": "bunch-to-bunch",
+                "startup_mode": "inertial-prehistory",
+            }
+        )
+
+        assert config.startup_mode is StartupMode.INERTIAL_PREHISTORY
 
     def test_parse_startup_mode_rejects_invalid_values(self):
         with pytest.raises(cli.SimulationConfigError, match="Unknown startup_mode"):
@@ -566,6 +1003,7 @@ class TestCliBuildRequest:
         args = _make_args(
             external_e_field_v_per_m=[0.0, 0.0, -1.5e9],
             external_b_field_native=[0.0, 3.0, 0.0],
+            external_b_field_tesla=[0.0, 0.0, 2.0],
             external_field_z_min=-0.2,
             external_field_t_max=1.0e-6,
         )
@@ -576,6 +1014,7 @@ class TestCliBuildRequest:
             "enabled": True,
             "electric_field_v_per_m": [0.0, 0.0, -1.5e9],
             "magnetic_field_native": [0.0, 3.0, 0.0],
+            "magnetic_field_tesla": [0.0, 0.0, 2.0],
             "z_min": -0.2,
             "t_max": 1.0e-6,
         }
@@ -652,6 +1091,85 @@ class TestCliBuildRequest:
         assert smearing["position_sigma_mm"] == pytest.approx(0.1)
         assert smearing["refresh_policy"] == "per_step"
 
+    def test_merge_simulation_payload_applies_magnetic_dipole_overrides(self):
+        payload = cli._merge_simulation_payload(
+            {
+                "magnetic_dipole": {
+                    "enabled": True,
+                    "stern_gerlach_force_enabled": True,
+                    "exact_retarded_backend": "python",
+                    "source": {
+                        "model": "covariant_retarded_point",
+                        "history_model": "causal_c5",
+                        "minimum_separation_mm": 4.0e-9,
+                        "relative_stencil_step": 2.0e-3,
+                        "minimum_stencil_step_mm": 3.0e-15,
+                        "root_tolerance_mm": 4.0e-21,
+                        "max_root_iterations": 72,
+                    },
+                    "rider": {
+                        "species": "electron",
+                        "magnetic_moment_j_per_t": -1.0e-23,
+                    },
+                }
+            },
+            _make_args(
+                magnetic_dipole_enabled=False,
+                rider_magnetic_species="neutron",
+                rider_spin=[0.0, 1.0, 0.0],
+                driver_magnetic_species="antiproton",
+                driver_spin=[1.0, 0.0, 0.0],
+                stern_gerlach_force_enabled=False,
+                spin_precession_enabled=False,
+                dipole_source_model="off",
+                dipole_source_history_model="causal-frozen-c1",
+                exact_retarded_backend="numba_roots_exact_serial",
+                dipole_source_minimum_separation_mm=8.0e-9,
+            ),
+        )
+
+        magnetic = payload["magnetic_dipole"]
+        assert magnetic["enabled"] is False
+        assert magnetic["stern_gerlach_force_enabled"] is False
+        assert magnetic["spin_precession_enabled"] is False
+        assert magnetic["exact_retarded_backend"] == "numba_roots_exact_serial"
+        assert magnetic["source"] == {
+            "model": "off",
+            "history_model": "causal-frozen-c1",
+            "minimum_separation_mm": 8.0e-9,
+            "relative_stencil_step": 2.0e-3,
+            "minimum_stencil_step_mm": 3.0e-15,
+            "root_tolerance_mm": 4.0e-21,
+            "max_root_iterations": 72,
+        }
+        assert magnetic["rider"]["species"] == "neutron"
+        assert magnetic["rider"]["rest_spin"] == [0.0, 1.0, 0.0]
+        assert magnetic["rider"]["magnetic_moment_j_per_t"] == pytest.approx(-1.0e-23)
+        assert magnetic["driver"]["species"] == "antiproton"
+        assert magnetic["driver"]["rest_spin"] == [1.0, 0.0, 0.0]
+
+    def test_merge_simulation_payload_canonicalizes_legacy_backend_alias(self):
+        payload = cli._merge_simulation_payload(
+            {"magnetic_dipole": {"source": {"backend": "numba_full_strict_serial"}}},
+            _make_args(),
+        )
+
+        magnetic = payload["magnetic_dipole"]
+        assert magnetic["exact_retarded_backend"] == "numba_full_strict_serial"
+        assert "backend" not in magnetic["source"]
+
+    def test_merge_simulation_payload_rejects_conflicting_backend_alias(self):
+        with pytest.raises(cli.SimulationConfigError, match="conflicts with legacy"):
+            cli._merge_simulation_payload(
+                {
+                    "magnetic_dipole": {
+                        "exact_retarded_backend": "python",
+                        "source": {"backend": "numba_full_strict_serial"},
+                    }
+                },
+                _make_args(),
+            )
+
     def test_merge_simulation_payload_applies_cavity_exit_mode_override(self):
         payload = cli._merge_simulation_payload(
             {"cavity_exit": {"enabled": False, "mode": "first_exit"}},
@@ -712,6 +1230,329 @@ class TestCliBuildRequest:
 
         assert request.config.radiation_reaction_mode == "medina_lad"
 
+    def test_build_request_keeps_magnetic_dipoles_off_by_default(self):
+        request = cli.build_request(_make_args())
+
+        assert request.config.magnetic_dipole.enabled is False
+        assert request.config.magnetic_dipole.spin_model == "rfs_minimal_2021"
+        assert request.config.magnetic_dipole.stern_gerlach_model == "rfs_full_g"
+        assert request.config.magnetic_dipole.exact_retarded_backend == "python"
+        assert request.config.magnetic_dipole.source.model == "off"
+        assert request.config.magnetic_dipole.source.minimum_separation_mm == (
+            pytest.approx(2.0e-9)
+        )
+        assert request.config.magnetic_dipole.rider.species == "electron"
+        assert request.config.magnetic_dipole.driver.species == "proton"
+
+    def test_direct_config_accepts_legacy_magnetic_diagnostic_pair(self):
+        magnetic = cli._build_magnetic_dipole_config(
+            {
+                "spin_model": "bmt_frenkel",
+                "stern_gerlach_model": "static_rest_gradient",
+            }
+        )
+
+        assert magnetic.spin_model == "bmt_frenkel"
+        assert magnetic.stern_gerlach_model == "static_rest_gradient"
+
+    def test_direct_config_preserves_full_retarded_source_controls(self):
+        magnetic = cli._build_magnetic_dipole_config(
+            {
+                "exact_retarded_backend": "numba_roots_exact_serial",
+                "source": {
+                    "model": "full_retarded_point",
+                    "minimum_separation_mm": 7.0e-9,
+                    "relative_stencil_step": 2.0e-3,
+                    "minimum_stencil_step_mm": 3.0e-15,
+                    "root_tolerance_mm": 4.0e-21,
+                    "max_root_iterations": 80,
+                },
+            }
+        )
+
+        assert magnetic.source.model == "covariant_retarded_point"
+        assert magnetic.exact_retarded_backend == "numba_roots_exact_serial"
+        assert magnetic.source.minimum_separation_mm == pytest.approx(7.0e-9)
+        assert magnetic.source.relative_stencil_step == pytest.approx(2.0e-3)
+        assert magnetic.source.minimum_stencil_step_mm == pytest.approx(3.0e-15)
+        assert magnetic.source.root_tolerance_mm == pytest.approx(4.0e-21)
+        assert magnetic.source.max_root_iterations == 80
+
+    def test_direct_config_accepts_legacy_source_backend_alias(self):
+        magnetic = cli._build_magnetic_dipole_config(
+            {"source": {"backend": "numba_full_strict_serial"}}
+        )
+
+        assert magnetic.exact_retarded_backend == "numba_full_strict_serial"
+
+    def test_direct_config_accepts_matching_backend_alias(self):
+        magnetic = cli._build_magnetic_dipole_config(
+            {
+                "exact_retarded_backend": "numba_roots_exact_serial",
+                "source": {"backend": "numba_roots_exact_serial"},
+            }
+        )
+
+        assert magnetic.exact_retarded_backend == "numba_roots_exact_serial"
+
+    def test_direct_config_rejects_conflicting_backend_alias(self):
+        with pytest.raises(cli.SimulationConfigError, match="conflicts with legacy"):
+            cli._build_magnetic_dipole_config(
+                {
+                    "exact_retarded_backend": "python",
+                    "source": {"backend": "numba_full_strict_serial"},
+                }
+            )
+
+    def test_direct_config_rejects_non_object_dipole_source(self):
+        with pytest.raises(
+            cli.SimulationConfigError,
+            match="magnetic_dipole.source must be a JSON object",
+        ):
+            cli._build_magnetic_dipole_config({"source": "full-retarded-point"})
+
+    @pytest.mark.parametrize(
+        ("spin_model", "stern_gerlach_model", "required_model"),
+        (
+            ("bmt_frenkel", "rfs_full_g", "rfs_minimal_2021"),
+            ("rfs_minimal_2021", "static_rest_gradient", "bmt_frenkel"),
+        ),
+    )
+    def test_direct_config_rejects_mismatched_magnetic_models(
+        self,
+        spin_model: str,
+        stern_gerlach_model: str,
+        required_model: str,
+    ):
+        with pytest.raises(
+            cli.SimulationConfigError,
+            match=f"requires spin_model '{required_model}'",
+        ):
+            cli._build_magnetic_dipole_config(
+                {
+                    "spin_model": spin_model,
+                    "stern_gerlach_model": stern_gerlach_model,
+                }
+            )
+
+    def test_build_request_applies_direct_magnetic_dipole_options(self):
+        request = cli.build_request(
+            _make_args(
+                magnetic_dipole_enabled=True,
+                rider_magnetic_species="neutron",
+                driver_magnetic_species="antiproton",
+                rider_spin=[0.0, 3.0, 4.0],
+                driver_spin=[1.0, 0.0, 0.0],
+                stern_gerlach_force_enabled=True,
+                dipole_source_model="full-retarded-point",
+                dipole_source_history_model="causal-c5",
+                exact_retarded_backend="numba_roots_exact_serial",
+                dipole_source_minimum_separation_mm=6.0e-9,
+            )
+        )
+
+        magnetic = request.config.magnetic_dipole
+        assert magnetic.enabled is True
+        assert magnetic.stern_gerlach_force_enabled is True
+        assert magnetic.rider.species == "neutron"
+        assert magnetic.rider.rest_spin == pytest.approx((0.0, 0.6, 0.8))
+        assert magnetic.driver.species == "antiproton"
+        assert magnetic.driver.rest_spin == pytest.approx((1.0, 0.0, 0.0))
+        assert magnetic.source.model == "covariant_retarded_point"
+        assert magnetic.source.history_model == "causal_c5"
+        assert magnetic.exact_retarded_backend == "numba_roots_exact_serial"
+        assert magnetic.source.minimum_separation_mm == pytest.approx(6.0e-9)
+        assert request.config.radiation_reaction_mode == "off"
+
+    def test_build_request_preserves_explicit_rr_with_rfs(self):
+        request = cli.build_request(
+            _make_args(
+                magnetic_dipole_enabled=True,
+                radiation_reaction_mode="medina_lad",
+            )
+        )
+
+        assert request.config.radiation_reaction_mode == "medina_lad"
+
+    def test_build_request_applies_causal_local_jet_contract(self):
+        request = cli.build_request(
+            _make_args(
+                dipole_source_history_model="causal-local-jet",
+                dipole_local_jet_narrow_half_width_ns=1.0e-11,
+                dipole_local_jet_primary_half_width_ns=2.0e-11,
+                dipole_local_jet_wide_half_width_ns=4.0e-11,
+                dipole_local_jet_acceleration_samples="interval-mean",
+                dipole_local_jet_acceleration_degree=6,
+                dipole_local_jet_spin_degree=7,
+                dipole_local_jet_maximum_condition_number=2.0e5,
+                dipole_local_jet_maximum_relative_spread=2.5e-4,
+                dipole_local_jet_window_alignment="past",
+                dipole_local_jet_window_weighting="tricube",
+                dipole_local_jet_inertial_prehistory="assumed-inertial",
+            )
+        )
+
+        source = request.config.magnetic_dipole.source
+        assert source.history_model == "causal_local_jet"
+        assert source.local_jet_narrow_half_width_ns == pytest.approx(1.0e-11)
+        assert source.local_jet_primary_half_width_ns == pytest.approx(2.0e-11)
+        assert source.local_jet_wide_half_width_ns == pytest.approx(4.0e-11)
+        assert source.local_jet_acceleration_samples == "interval_mean"
+        assert source.local_jet_acceleration_degree == 6
+        assert source.local_jet_spin_degree == 7
+        assert source.local_jet_maximum_condition_number == pytest.approx(2.0e5)
+        assert source.local_jet_maximum_relative_spread == pytest.approx(2.5e-4)
+        assert source.local_jet_window_alignment == "past"
+        assert source.local_jet_window_weighting == "tricube"
+        assert source.local_jet_inertial_prehistory == "assumed_inertial"
+
+    def test_build_request_applies_named_local_jet_scale_ladder(self):
+        scales = [
+            {
+                "name": "near",
+                "narrow_half_width_ns": 2.0e-9,
+                "primary_half_width_ns": 3.0e-9,
+                "wide_half_width_ns": 5.0e-9,
+            },
+            {
+                "name": "far",
+                "narrow_half_width_ns": 5.0e-9,
+                "primary_half_width_ns": 1.2e-8,
+                "wide_half_width_ns": 1.5e-8,
+            },
+        ]
+        request = cli.build_request(
+            _make_args(
+                dipole_source_history_model="causal-local-jet",
+                dipole_local_jet_scale=scales,
+                dipole_local_jet_maximum_cross_scale_relative_spread=2.5e-4,
+            )
+        )
+
+        source = request.config.magnetic_dipole.source
+        assert tuple(scale.name for scale in source.local_jet_scales) == (
+            "near",
+            "far",
+        )
+        assert source.local_jet_maximum_cross_scale_relative_spread == (
+            pytest.approx(2.5e-4)
+        )
+
+    def test_driver_from_rider_inherits_magnetic_species_unless_overridden(self):
+        request = cli.build_request(
+            _make_args(
+                simulation_type="bunch-to-bunch",
+                driver_from_rider=True,
+                magnetic_dipole_enabled=True,
+                rider_magnetic_species="electron",
+                rider_spin=[0.0, 1.0, 0.0],
+            )
+        )
+
+        assert request.config.magnetic_dipole.rider.species == "electron"
+        assert request.config.magnetic_dipole.driver.species == "electron"
+        assert request.config.magnetic_dipole.driver.rest_spin == pytest.approx(
+            (0.0, 1.0, 0.0)
+        )
+
+    def test_driver_from_rider_preserves_explicit_driver_spin(self):
+        request = cli.build_request(
+            _make_args(
+                simulation_type="bunch-to-bunch",
+                driver_from_rider=True,
+                magnetic_dipole_enabled=True,
+                rider_magnetic_species="electron",
+                rider_spin=[0.0, 1.0, 0.0],
+                driver_spin=[1.0, 0.0, 0.0],
+            )
+        )
+
+        assert request.config.magnetic_dipole.driver.species == "electron"
+        assert request.config.magnetic_dipole.driver.rest_spin == pytest.approx(
+            (1.0, 0.0, 0.0)
+        )
+
+    def test_build_request_native_json_can_supply_custom_h_minus_moment(
+        self, tmp_path: Path
+    ):
+        config_path = tmp_path / "h_minus.json"
+        config_path.write_text(
+            json.dumps(
+                {
+                    "magnetic_dipole": {
+                        "enabled": True,
+                        "rider": {
+                            "species": "h_minus",
+                            "magnetic_moment_j_per_t": -9.2e-24,
+                            "spin_quantum_number": 0.5,
+                        },
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        request = cli.build_request(_make_args(config=config_path))
+
+        rider = request.config.magnetic_dipole.rider
+        assert rider.species == "h_minus"
+        assert rider.magnetic_moment_j_per_t == pytest.approx(-9.2e-24)
+        assert rider.spin_quantum_number == pytest.approx(0.5)
+
+    def test_build_request_rejects_h_minus_without_custom_moment(self):
+        with pytest.raises(
+            cli.SimulationConfigError,
+            match="h_minus.*no supported moment preset",
+        ):
+            cli.build_request(
+                _make_args(
+                    magnetic_dipole_enabled=True,
+                    rider_magnetic_species="h_minus",
+                )
+            )
+
+    def test_build_request_rejects_magnetic_dipoles_with_pseudo_grid(self):
+        with pytest.raises(
+            cli.SimulationConfigError,
+            match="not compatible with pseudo-grid",
+        ):
+            cli.build_request(
+                _make_args(
+                    magnetic_dipole_enabled=True,
+                    pseudo_grid_enabled=True,
+                )
+            )
+
+    def test_build_request_supports_neutral_rider_from_native_particle_json(
+        self, tmp_path: Path
+    ):
+        config_path = tmp_path / "neutron.json"
+        config_path.write_text(
+            json.dumps(
+                {
+                    "rider": {
+                        "kinetic_energy_mev": 1.0,
+                        "mass_amu": 1.00866491606,
+                        "charge_sign": 0.0,
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        request = cli.build_request(
+            _make_args(
+                config=config_path,
+                magnetic_dipole_enabled=True,
+                rider_magnetic_species="neutron",
+            )
+        )
+
+        assert request.config.magnetic_dipole.rider.species == "neutron"
+        assert np.all(request.rider["q"] == 0.0)
+        assert np.all(request.rider["q_source"] == 0.0)
+        assert np.all(request.rider["q_observer"] == 0.0)
+
     def test_build_request_rr_flag_overrides_config_file(self, tmp_path: Path):
         config_path = tmp_path / "rr_mode.json"
         config_path.write_text(
@@ -737,6 +1578,11 @@ class TestCliBuildRequest:
                         "enabled": True,
                         "electric_field_v_per_m": [0.0, 0.0, -1.5e9],
                         "magnetic_field_native": [0.0, 3.0, 0.0],
+                        "magnetic_field_gradient_t_per_m": [
+                            [-1.0, 0.0, 0.0],
+                            [0.0, -2.0, 0.0],
+                            [0.0, 0.0, 3.0],
+                        ],
                         "z_min": -0.2,
                         "z_max": 0.2,
                         "t_min": 1.0e-6,
@@ -756,10 +1602,28 @@ class TestCliBuildRequest:
         assert request.external_field.magnetic_field_native == pytest.approx(
             (0.0, 3.0, 0.0)
         )
+        np.testing.assert_allclose(
+            request.external_field.magnetic_field_gradient_t_per_m,
+            ((-1.0, 0.0, 0.0), (0.0, -2.0, 0.0), (0.0, 0.0, 3.0)),
+        )
         assert request.external_field.z_min == pytest.approx(-0.2)
         assert request.external_field.z_max == pytest.approx(0.2)
         assert request.external_field.t_min == pytest.approx(1.0e-6)
         assert request.external_field.t_max == pytest.approx(2.0e-6)
+
+    def test_build_external_field_accepts_magnetic_field_in_tesla(self):
+        from core.external_fields import magnetic_field_native_to_tesla
+
+        field = cli._build_external_field_config(
+            {"enabled": True, "magnetic_field_tesla": [0.1, -0.2, 0.3]}
+        )
+
+        assert field is not None
+        converted = tuple(
+            magnetic_field_native_to_tesla(component)
+            for component in field.magnetic_field_native
+        )
+        assert converted == pytest.approx((0.1, -0.2, 0.3))
 
     def test_build_request_clones_driver_from_rider(self):
         args = _make_args(
@@ -1412,6 +2276,182 @@ class TestCliMain:
         assert report["driver_summary"]["steps_completed"] == 1
         assert report["driver_summary"]["initial_z_mm"] == pytest.approx(5.0)
 
+    def test_build_report_records_source_model_and_exact_retarded_backend(self):
+        trajectory = [
+            {
+                "t": np.array([0.0]),
+                "z": np.array([1.0]),
+                "gamma": np.array([2.0]),
+                "bz": np.array([0.25]),
+            }
+        ]
+        magnetic = cli._build_magnetic_dipole_config(
+            {
+                "exact_retarded_backend": "numba_roots_exact_serial",
+                "source": {
+                    "model": "covariant_retarded_point",
+                    "history_model": "causal_c5",
+                },
+            }
+        )
+
+        report = cli.build_report(trajectory, magnetic_dipole=magnetic)
+
+        assert report["magnetic_dipole_source"] == {
+            "model": "covariant_retarded_point",
+            "history_model": "causal_c5",
+        }
+        assert report["exact_retarded"] == {
+            "backend": "numba_roots_exact_serial",
+            "update": "first_order_endpoint",
+            "intrinsic_spin_self_reaction_mode": "off",
+        }
+
+    def test_testbed_report_records_source_model_and_exact_retarded_backend(
+        self, tmp_path: Path
+    ):
+        result = SimpleNamespace(
+            duration_s=1.25,
+            filename_base="capture",
+            halted_early=False,
+            halt_reason=None,
+            num_particles_dead=0,
+            rider_delta_e=0.0,
+            rider_gamma_initial=1.0,
+            rider_gamma_final=1.0,
+            driver_gamma_initial=1.0,
+            driver_gamma_final=1.0,
+            energy_ledger_metrics={},
+            saved_paths={},
+        )
+        options = SimulationOptions(
+            magnetic_dipole_source_model="covariant_retarded_point",
+            magnetic_dipole_source_history_model="causal_c5",
+            magnetic_dipole_exact_retarded_backend="numba_full_strict_serial",
+        )
+
+        report = cli._build_testbed_report(result, tmp_path / "capture.json", options)
+
+        assert report["magnetic_dipole_source"] == {
+            "model": "covariant_retarded_point",
+            "history_model": "causal_c5",
+        }
+        assert report["exact_retarded"] == {
+            "backend": "numba_full_strict_serial",
+            "update": "first_order_endpoint",
+            "intrinsic_spin_self_reaction_mode": "off",
+        }
+
+    def test_reports_record_complete_causal_local_jet_contract(self, tmp_path: Path):
+        trajectory = [
+            {
+                "t": np.array([0.0]),
+                "z": np.array([1.0]),
+                "gamma": np.array([2.0]),
+                "bz": np.array([0.25]),
+            }
+        ]
+        options = SimulationOptions(
+            magnetic_dipole_source_model="covariant_retarded_point",
+            magnetic_dipole_source_history_model="causal_local_jet",
+            magnetic_dipole_source_local_jet_narrow_half_width_ns=1.0e-11,
+            magnetic_dipole_source_local_jet_primary_half_width_ns=2.0e-11,
+            magnetic_dipole_source_local_jet_wide_half_width_ns=4.0e-11,
+            magnetic_dipole_source_local_jet_acceleration_degree=6,
+            magnetic_dipole_source_local_jet_spin_degree=7,
+            magnetic_dipole_source_local_jet_maximum_condition_number=2.0e5,
+            magnetic_dipole_source_local_jet_maximum_relative_spread=2.5e-4,
+            magnetic_dipole_source_local_jet_inertial_prehistory="assumed_inertial",
+        )
+        magnetic = build_magnetic_dipole_config(options)
+        testbed_result = SimpleNamespace(
+            duration_s=1.25,
+            filename_base="capture",
+            halted_early=False,
+            halt_reason=None,
+            num_particles_dead=0,
+            rider_delta_e=0.0,
+            rider_gamma_initial=1.0,
+            rider_gamma_final=1.0,
+            driver_gamma_initial=1.0,
+            driver_gamma_final=1.0,
+            energy_ledger_metrics={},
+            saved_paths={},
+        )
+
+        direct = cli.build_report(trajectory, magnetic_dipole=magnetic)
+        testbed = cli._build_testbed_report(
+            testbed_result,
+            tmp_path / "capture.json",
+            options,
+        )
+
+        assert direct["magnetic_dipole_source"] == testbed["magnetic_dipole_source"]
+        assert direct["magnetic_dipole_source"]["local_jet"] == {
+            "narrow_half_width_ns": 1.0e-11,
+            "primary_half_width_ns": 2.0e-11,
+            "wide_half_width_ns": 4.0e-11,
+            "acceleration_samples": "interval_mean",
+            "acceleration_degree": 6,
+            "spin_degree": 7,
+            "maximum_condition_number": 2.0e5,
+            "maximum_relative_spread": 2.5e-4,
+            "scales": [],
+            "maximum_cross_scale_relative_spread": 1.0e-3,
+            "window_alignment": "past",
+            "window_weighting": "tricube",
+            "inertial_prehistory": "assumed_inertial",
+        }
+
+    def test_metal_report_records_certification_and_fallback_counts(self, monkeypatch):
+        from core.metal_certified_roots import MetalCertifiedRootDiagnostics
+
+        monkeypatch.setattr(
+            "core.metal_certified_roots.metal_certified_root_diagnostics",
+            lambda: MetalCertifiedRootDiagnostics(7, 5, 2, 2047, 1, 0),
+        )
+
+        report = cli._exact_retarded_report("metal_certified_full_strict")
+
+        assert report == {
+            "backend": "metal_certified_full_strict",
+            "metal_certified_roots": {
+                "calls": 7,
+                "below_threshold_calls": 5,
+                "dispatches": 2,
+                "accepted_proposals": 2047,
+                "cpu_fallbacks": 1,
+                "dispatch_failures": 0,
+            },
+        }
+
+    def test_analytical_charge_report_records_fallback_counts(self, monkeypatch):
+        from core.analytic_charge_response_diagnostics import (
+            AnalyticChargeResponseDiagnostics,
+        )
+
+        monkeypatch.setattr(
+            "core.analytic_charge_response_diagnostics."
+            "analytic_charge_response_diagnostics",
+            lambda: AnalyticChargeResponseDiagnostics(7, 5, 2, 2, 0, 0, 14, 3.5),
+        )
+
+        report = cli._exact_retarded_report("numba_analytic_charge_response_serial")
+
+        assert report == {
+            "backend": "numba_analytic_charge_response_serial",
+            "analytic_charge_response": {
+                "calls": 7,
+                "analytical_calls": 5,
+                "fallback_calls": 2,
+                "fallback_segment_boundary": 2,
+                "fallback_nontimelike_bound": 0,
+                "fallback_nonfinite": 0,
+                "valid_sources": 14,
+                "minimum_segment_margin_ratio": 3.5,
+            },
+        }
+
     def test_main_writes_driver_summary_to_output_json(
         self, monkeypatch, tmp_path: Path
     ):
@@ -1462,6 +2502,14 @@ class TestCliMain:
         assert result == 2
         assert "Error: bad config" in capsys.readouterr().err
 
+    def test_main_presents_pseudo_grid_magnetic_incompatibility(self, capsys):
+        result = cli.main(["--pseudo-grid", "--magnetic-dipoles", "--quiet"])
+
+        assert result == 2
+        error = capsys.readouterr().err
+        assert "not compatible with pseudo-grid" in error
+        assert "--no-magnetic-dipoles" in error
+
 
 class TestCliRuntimeHelpers:
     def test_run_simulation_forwards_request_to_retarded_integrator(self, monkeypatch):
@@ -1503,6 +2551,9 @@ class TestCliRuntimeHelpers:
         assert (
             captured["macroparticle_smearing"] is request.config.macroparticle_smearing
         )
+        assert captured["magnetic_dipole"] is request.config.magnetic_dipole
+        assert captured["checkpoint"] is request.config.checkpoint
+        assert captured["adaptive_pair_return"] is request.config.adaptive_pair_return
 
     def test_run_simulation_applies_auto_duration_when_enabled(self, monkeypatch):
         request = cli.build_request(

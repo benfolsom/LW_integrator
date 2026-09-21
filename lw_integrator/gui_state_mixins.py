@@ -15,6 +15,7 @@ class IntegratorGUIStateMixin:
 
     def _on_sim_type_change(self) -> None:
         self._update_driver_visibility()
+        self._toggle_magnetic_dipole_controls()
         self._update_cavity_spacing_state()
         self._update_image_subcharge_state()
         self._update_macroparticle_state()
@@ -27,6 +28,36 @@ class IntegratorGUIStateMixin:
             sim_type_value = self.sim_type_var.get()
             if hasattr(self.optimization_tab, "sim_type_var"):
                 self.optimization_tab.sim_type_var.set(sim_type_value)
+
+    def _toggle_adaptive_pair_return_controls(self) -> None:
+        """Enable exact-pair return entries only when the mode is selected."""
+
+        enabled_var = getattr(self, "adaptive_pair_return_enabled_var", None)
+        enabled = bool(enabled_var is not None and enabled_var.get())
+        state = "normal" if enabled else "disabled"
+        color = "black" if enabled else "gray60"
+        for widget in getattr(self, "_adaptive_pair_return_controls", []):
+            widget.configure(state=state)
+        for label in getattr(self, "_adaptive_pair_return_labels", []):
+            label.configure(foreground=color)
+
+    def _on_adaptive_pair_return_toggle(self) -> None:
+        """Select the validated prerequisites when adaptive return is enabled."""
+
+        enabled = bool(self.adaptive_pair_return_enabled_var.get())
+        if enabled:
+            if hasattr(self, "checkpoint_enabled_var"):
+                self.checkpoint_enabled_var.set(True)
+            if hasattr(self, "adaptive_timestep_enabled_var"):
+                self.adaptive_timestep_enabled_var.set(False)
+            core_vars = getattr(self, "core_param_vars", {})
+            if "startup_mode" in core_vars:
+                core_vars["startup_mode"].set("INERTIAL_PREHISTORY")
+            if hasattr(self, "magnetic_dipole_exact_retarded_update_var"):
+                self.magnetic_dipole_exact_retarded_update_var.set(
+                    "Second-order accepted-start Taylor"
+                )
+        self._toggle_adaptive_pair_return_controls()
 
     def _update_driver_visibility(self) -> None:
         sim_type = SimulationType[self.sim_type_var.get()]
@@ -56,6 +87,71 @@ class IntegratorGUIStateMixin:
             label.configure(foreground=label_color)
         for label in getattr(self, "_driver_offset_labels", []):
             label.configure(foreground=label_color)
+
+    def _toggle_magnetic_dipole_controls(self) -> None:
+        """Enable spin controls only when their associated particle is active."""
+        if not hasattr(self, "magnetic_dipole_enabled_var"):
+            return
+
+        enabled = bool(self.magnetic_dipole_enabled_var.get())
+        sim_type = SimulationType[self.sim_type_var.get()]
+        driver_enabled = enabled and sim_type == SimulationType.BUNCH_TO_BUNCH
+        source_var = getattr(self, "magnetic_dipole_source_model_var", None)
+        source_selection = str(source_var.get()) if source_var is not None else "off"
+        source_enabled = (
+            enabled
+            and sim_type == SimulationType.BUNCH_TO_BUNCH
+            and source_selection.strip().lower().replace("-", "_")
+            not in {"off", "none", "disabled"}
+        )
+
+        for widget, active_state in getattr(
+            self, "_magnetic_dipole_common_controls", []
+        ):
+            widget.configure(state=active_state if enabled else "disabled")
+        for widget, active_state in getattr(
+            self, "_magnetic_dipole_rider_controls", []
+        ):
+            widget.configure(state=active_state if enabled else "disabled")
+        for widget, active_state in getattr(
+            self, "_magnetic_dipole_driver_controls", []
+        ):
+            widget.configure(state=active_state if driver_enabled else "disabled")
+        for widget, active_state in getattr(
+            self, "_magnetic_dipole_source_controls", []
+        ):
+            widget.configure(state=active_state if source_enabled else "disabled")
+
+        common_color = "black" if enabled else "gray"
+        driver_color = "black" if driver_enabled else "gray"
+        source_color = "black" if source_enabled else "gray"
+        for label in getattr(self, "_magnetic_dipole_common_labels", []):
+            label.configure(foreground=common_color)
+        for label in getattr(self, "_magnetic_dipole_rider_labels", []):
+            label.configure(foreground=common_color)
+        for label in getattr(self, "_magnetic_dipole_driver_labels", []):
+            label.configure(foreground=driver_color)
+        for label in getattr(self, "_magnetic_dipole_source_labels", []):
+            label.configure(foreground=source_color)
+
+    def _on_magnetic_dipole_toggle(self) -> None:
+        """Apply the safe RFS default when the user enables dipole dynamics."""
+
+        rfs_enabled = (
+            bool(self.magnetic_dipole_enabled_var.get())
+            and str(getattr(self, "_magnetic_dipole_spin_model", "rfs_minimal_2021"))
+            .strip()
+            .lower()
+            == "rfs_minimal_2021"
+        )
+        if rfs_enabled:
+            if hasattr(self, "radiation_reaction_mode_var") and str(
+                self.radiation_reaction_mode_var.get()
+            ).strip().lower() not in {"off", "diagnostic_only"}:
+                self.radiation_reaction_mode_var.set("off")
+            if hasattr(self, "adaptive_timestep_enabled_var"):
+                self.adaptive_timestep_enabled_var.set(False)
+        self._toggle_magnetic_dipole_controls()
 
     def _update_image_subcharge_state(self) -> None:
         sim_type = SimulationType[self.sim_type_var.get()]

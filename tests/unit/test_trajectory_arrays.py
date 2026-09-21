@@ -5,7 +5,6 @@ import pytest
 
 from core.types import TrajectoryBuilder
 
-
 N_STEPS = 5
 N_PARTICLES = 3
 
@@ -37,6 +36,7 @@ def _make_state(step: int, n: int, include_optional: bool = True) -> dict:
         "radiation_power": rng.random(n),
         "radiation_energy": rng.random(n),
         "radiation_energy_applied": rng.random(n),
+        "mass_shell_projection_energy": rng.random(n) - 0.5,
         "q": q_source,
         "q_species": q_species,
         "q_observer": q_observer,
@@ -67,6 +67,48 @@ def _build_trajectory(include_optional: bool = True) -> tuple:
         states.append(s)
     traj = builder.build()
     return traj, states
+
+
+def test_canonical_momentum_only_update_preserves_source_storage_versions() -> None:
+    builder = TrajectoryBuilder(3, 2)
+    original = _make_state(0, 2)
+    builder.set_step(0, original)
+    before = builder.build_partial(1)
+    generation = before.storage_generation
+    rewrite_epoch = before.storage_rewrite_epoch
+    array_revision = before.storage_array_revision
+    x_before = np.copy(before.x)
+
+    rebased = dict(original)
+    for offset, field_name in enumerate(("Pt", "Px", "Py", "Pz"), start=1):
+        rebased[field_name] = np.asarray(original[field_name]) + float(offset)
+    builder.set_canonical_momentum_step(0, rebased)
+    after = builder.build_partial(1)
+
+    assert after.storage_generation == generation
+    assert after.storage_rewrite_epoch == rewrite_epoch
+    assert after.storage_array_revision == array_revision
+    np.testing.assert_array_equal(after.x, x_before)
+    for field_name in ("Pt", "Px", "Py", "Pz"):
+        np.testing.assert_array_equal(
+            getattr(after, field_name)[0],
+            rebased[field_name],
+        )
+
+
+def test_canonical_momentum_only_update_requires_a_published_finite_row() -> None:
+    builder = TrajectoryBuilder(2, 2)
+    state = _make_state(0, 2)
+    builder.set_step(0, state)
+
+    with pytest.raises(IndexError, match="must already be published"):
+        builder.set_canonical_momentum_step(0, state)
+
+    builder.build_partial(1)
+    invalid = dict(state)
+    invalid["Px"] = np.array([np.nan, 0.0])
+    with pytest.raises(ValueError, match="Px must contain only finite"):
+        builder.set_canonical_momentum_step(0, invalid)
 
 
 class TestShapeProperties:
@@ -114,6 +156,16 @@ class TestShapeProperties:
             "radiation_power",
             "radiation_energy",
             "radiation_energy_applied",
+            "mass_shell_projection_energy",
+            "radiation_reaction_work",
+            "medina_cross_field_energy",
+            "medina_cross_field_energy_change",
+            "medina_force_derivative_ready",
+            "medina_impulse_capped",
+            "medina_external_force_x",
+            "medina_external_force_y",
+            "medina_external_force_z",
+            "medina_external_force_sample_time",
         ):
             arr = getattr(traj, field)
             assert arr.shape == (N_STEPS, N_PARTICLES), field
@@ -136,6 +188,10 @@ class TestRoundTrip:
             np.testing.assert_array_equal(
                 s["radiation_energy_applied"],
                 states[step]["radiation_energy_applied"],
+            )
+            np.testing.assert_array_equal(
+                s["mass_shell_projection_energy"],
+                states[step]["mass_shell_projection_energy"],
             )
 
     def test_particle_consts_from_step0(self):
@@ -210,6 +266,86 @@ class TestHaltMetadata:
 
 
 class TestMissingOptionalFields:
+    def test_disabled_medina_sidecars_use_constant_broadcast_storage(self):
+        builder = TrajectoryBuilder(100, 200)
+        trajectory = builder.build()
+
+        assert trajectory.radiation_reaction_work.shape == (100, 200)
+        assert not trajectory.radiation_reaction_work.flags.writeable
+        assert not trajectory.medina_force_derivative_ready.flags.writeable
+        assert np.all(np.isnan(trajectory.medina_external_force_sample_time))
+
+    def test_medina_sidecars_allocate_lazily_and_round_trip(self):
+        builder = TrajectoryBuilder(2, 1)
+        state = _make_state(0, 1)
+        state.update(
+            {
+                "radiation_reaction_work": np.array([-2.0]),
+                "medina_cross_field_energy": np.array([3.0]),
+                "medina_cross_field_energy_change": np.array([-4.0]),
+                "medina_force_derivative_ready": np.array([True]),
+                "medina_impulse_capped": np.array([False]),
+                "medina_external_force_x": np.array([5.0]),
+                "medina_external_force_y": np.array([6.0]),
+                "medina_external_force_z": np.array([7.0]),
+                "medina_external_force_sample_time": np.array([0.25]),
+            }
+        )
+
+        builder.set_step(0, state)
+        trajectory = builder.build()
+        restored = trajectory.state_at(0)
+
+        assert not trajectory.radiation_reaction_work.flags.writeable
+        assert trajectory.medina_force_derivative_ready.dtype == bool
+        np.testing.assert_array_equal(restored["radiation_reaction_work"], (-2.0,))
+        np.testing.assert_array_equal(
+            restored["medina_force_derivative_ready"], (True,)
+        )
+        np.testing.assert_array_equal(
+            restored["medina_external_force_sample_time"], (0.25,)
+        )
+
+    def test_disabled_magnetic_sidecars_use_constant_broadcast_storage(self):
+        builder = TrajectoryBuilder(100, 200)
+        trajectory = builder.build()
+
+        assert trajectory.spin_x.shape == (100, 200)
+        assert not trajectory.spin_x.flags.writeable
+        assert np.shares_memory(trajectory.spin_x, trajectory.spin_x.base)
+        assert not trajectory.source_start_beta_prime_x_per_mm.flags.writeable
+        assert not trajectory.source_start_beta_prime_ready.flags.writeable
+        assert not np.any(trajectory.source_start_beta_prime_ready)
+
+    def test_magnetic_sidecars_allocate_lazily_when_spin_state_is_present(self):
+        builder = TrajectoryBuilder(2, 1)
+        state = _make_state(0, 1)
+        state["spin_x"] = np.array([0.25])
+        state["spin_y"] = np.array([0.5])
+        state["spin_z"] = np.array([0.75])
+        state["source_start_beta_prime_x_per_mm"] = np.array([1.0e-4])
+        state["source_start_beta_prime_y_per_mm"] = np.array([-2.0e-4])
+        state["source_start_beta_prime_z_per_mm"] = np.array([3.0e-4])
+        state["source_start_beta_prime_ready"] = np.array([True])
+        state["magnetic_dipole_active"] = np.array([1.0])
+
+        builder.set_step(0, state)
+        trajectory = builder.build()
+
+        assert not trajectory.spin_x.flags.writeable
+        np.testing.assert_array_equal(trajectory.spin_x[0], (0.25,))
+        np.testing.assert_array_equal(trajectory.spin_y[0], (0.5,))
+        np.testing.assert_array_equal(trajectory.spin_z[0], (0.75,))
+        assert trajectory.source_start_beta_prime_ready.dtype == bool
+        np.testing.assert_array_equal(
+            trajectory.source_start_beta_prime_x_per_mm[0],
+            (1.0e-4,),
+        )
+        np.testing.assert_array_equal(
+            trajectory.state_at(0)["source_start_beta_prime_ready"],
+            (True,),
+        )
+
     def test_origin_defaults_to_zero(self):
         traj, _ = _build_trajectory(include_optional=False)
         assert traj.origin_x.shape == (N_STEPS, N_PARTICLES)
@@ -230,11 +366,13 @@ class TestMissingOptionalFields:
             state.pop("radiation_power")
             state.pop("radiation_energy")
             state.pop("radiation_energy_applied")
+            state.pop("mass_shell_projection_energy")
             builder.set_step(step, state)
         traj = builder.build()
         np.testing.assert_array_equal(traj.radiation_power, 0.0)
         np.testing.assert_array_equal(traj.radiation_energy, 0.0)
         np.testing.assert_array_equal(traj.radiation_energy_applied, 0.0)
+        np.testing.assert_array_equal(traj.mass_shell_projection_energy, 0.0)
 
 
 class TestBuildPartial:
@@ -266,7 +404,9 @@ class TestBuildPartial:
         np.testing.assert_array_equal(partial_full.q_species, full.q_species)
         np.testing.assert_array_equal(partial_full.q_observer, full.q_observer)
         np.testing.assert_array_equal(partial_full.q_source, full.q_source)
-        np.testing.assert_array_equal(partial_full.macro_population, full.macro_population)
+        np.testing.assert_array_equal(
+            partial_full.macro_population, full.macro_population
+        )
         np.testing.assert_array_equal(partial_full.m_species, full.m_species)
         assert partial_full.n_steps == full.n_steps
 

@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
+
+import pytest
 
 import core
 from core.types import SimulationType
@@ -10,7 +13,10 @@ from lw_integrator.testbed_runner import SimulationOptions, run_testbed
 from optimization.single_integration_helpers import calculate_rider_starting_pz
 
 
-def test_run_testbed_returns_and_copies_exact_debug_log(tmp_path: Path):
+@pytest.mark.parametrize("save_trajectory", [False, True])
+def test_run_testbed_returns_and_copies_exact_debug_log(
+    tmp_path: Path, save_trajectory
+):
     output_dir = tmp_path / "single_run"
     options = SimulationOptions(
         steps=2,
@@ -55,7 +61,7 @@ def test_run_testbed_returns_and_copies_exact_debug_log(tmp_path: Path):
         gamma_save=False,
         zposition_display=False,
         zposition_save=False,
-        trajectory_save=False,
+        trajectory_save=save_trajectory,
         output_dir=output_dir,
         config_name="logging_smoke.json",
         self_consistency_enabled=False,
@@ -78,6 +84,14 @@ def test_run_testbed_returns_and_copies_exact_debug_log(tmp_path: Path):
     copied_debug_log = result.saved_paths["debug_log"]
     assert copied_debug_log.exists()
     assert copied_debug_log.name == result.debug_log_path.name
-    assert copied_debug_log.read_text(encoding="utf-8") == result.debug_log_path.read_text(
+    assert copied_debug_log.read_text(
         encoding="utf-8"
-    )
+    ) == result.debug_log_path.read_text(encoding="utf-8")
+    if save_trajectory:
+        archives = list(output_dir.glob("*trajectory_data_*.json"))
+        assert len(archives) == 1
+        payload = json.loads(archives[0].read_text(encoding="utf-8"))["core"]["rider"]
+        assert payload["rest_energy_mev"] == pytest.approx(0.00054857990907 * 931.494)
+        from lw_integrator.trajectory_plotter import infer_rest_energy_mev
+
+        assert infer_rest_energy_mev(payload) == payload["rest_energy_mev"]

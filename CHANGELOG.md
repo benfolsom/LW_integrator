@@ -1,8 +1,1201 @@
 # Changelog
 
+## v0.9.0 — 2026-09-21 — finite-spin pair milestone
+
+Release validation: 1,632 unit tests passed; five failures also reproduced on
+the development baseline. The documentation build passed with warnings treated
+as errors. Repository-wide type checking remains unresolved (2,521 errors,
+compared with 2,323 on the baseline); this release does not claim a clean type
+check. See the [merge review](docs/merge_readiness_2026-09-20.md) for details.
+
+The separate pair runner now defaults to coordinated single-fit histories on
+compatible fresh fixed-recording inputs. Existing checkpoints preserve their
+settings. Missing dipole budgets use a provisional relative allowance of 1e-10
+against each initial tensor norm; explicit overrides remain available. CLI and
+GUI settings, checkpoint policy, benchmark results, and adaptive-recording
+limitations are documented in the [user guide](docs/source/finite_spin_pair.rst).
+The detailed entries below retain the implementation history; earlier statements
+about pending validation or unchanged defaults describe their original stage.
+
+- Add a scale-aware fresh-run dipole drift policy: derive each absolute budget
+  from 1e-10 of its initial tensor norm, record the policy in checkpoints, and
+  print the selected scales and budgets. Expose relative and absolute overrides
+  in the CLI and GUI, preserve resume settings, and require an explicit absolute
+  budget for a zero initial scale. Document the benchmark basis and frame limits.
+
+- Default the fixed-recording pair CLI and GUI to automatic single-fit history
+  selection for compatible fresh data. Save the selected physical spacing,
+  record a derived or explicit drift budget, and preserve prepared single-fit settings
+  and evolved checkpoints. Provide a preserve override for fresh legacy inputs.
+
+- Expose coordinated single-fit source histories in the pair CLI and GUI,
+  with explicit physical sample spacing and a dipole drift budget. Validate
+  recording-grid compatibility before stepping, preserve checkpoint choices,
+  and reject unsupported adaptive recording schedules. Internal DOP853
+  adaptation remains supported with fixed recording intervals.
+
+- Complete the live coarse–fine validation of coordinated single-fit motion
+  and moment histories after evolved signals arrive. Late dipole-squared
+  reaction disagreement falls from 5.819e-2 to 1.034e-5 relative to the fine
+  result, passing the predeclared 1e-2 target. Record the reviewed fine-run
+  guard continuation and remaining limits in the method documentation.
+
+- Account for accumulated timestamp roundoff when matching the single-fit
+  sampling clock. Test the full coarse and fine campaign grids and restart
+  sample choices; keep all physical accuracy guards unchanged.
+
+- Add a native single-fit source-motion candidate with matching physical sample
+  spacing for motion and magnetic moment. Preserve lower derivatives across
+  intervals, accepted-sample causality, position/dipole drift guards and exact
+  checkpoint restart through history v7. Defaults remain unchanged while the
+  fit-span and adaptive-recording interface is integrated. See
+  [selection and limitations](docs/single_fit_geometry.md).
+
+- Expose source-history selection and explicit dipole-drift budgets in the
+  nonlinear pair CLI and GUI. Preserve checkpoint settings by default; reject
+  silent changes on evolved trajectories and explain dipole-drift stops.
+  Connected histories pass the 896-step post-arrival/restart comparison;
+  recording-resolution accuracy remains under test before default promotion.
+
+- Cache immutable connected-history reconstruction weights across checkpoint
+  rebuilds; coefficients and acceptance limits remain unchanged. The cache is
+  bounded and keyed by exact source times, interval start and width.
+
+- Add opt-in connected direct dipole histories with an explicit absolute
+  endpoint-drift budget. Preserve lower-derivative connections without changing
+  fitted derivatives of order four and higher. History checkpoint v6 restores
+  the choice and budget; earlier formats and defaults remain unchanged.
+  This initial path requires preserved, one-sided startup and consecutive
+  sampling; full reciprocal radiation-accuracy validation remains open.
+  See [native API and checkpoint behavior](docs/connected_dipole_histories.md).
+
+- Report native checkpoint-runner interruption cleanly with exit status 130 and
+  the last saved checkpoint. Preserve input and completed saves. Update internal
+  error-control documentation with the completed same-grid tolerance comparison
+  and the separately unresolved source-grid radiation discrepancy.
+
+- Cache analytical response derivative-index bookkeeping without changing
+  coefficient arithmetic. An alternating full coupled endpoint benchmark shows
+  1.17x median speedup; all 85 order-zero-through-three index permutations and
+  the measured endpoint rate remain bitwise equal to the reference calculation.
+
+- Add internal preserved DOP853 error control for motion and separate reaction
+  integrals while keeping the requested source-recording cadence. Expose explicit
+  physical settings through the API, CLI and checkpoint GUI; preserve them on
+  restart and reject stacking internal and outer adaptive controllers. Limit
+  one-sided history-join derivatives to this controlled numerical integration;
+  general derivative queries remain strict. See [internal error control](docs/internal_error_control.md).
+- Add explicit time-balanced source derivative sampling with immutable published
+  history and checkpoint v5 metadata. Keep older sampling on ordinary restart.
+  This repairs the clustered-sample fit refusal, not all radiation-accuracy or
+  conservation checks.
+
+- Add preserved-increment DOP853 stepping to the native pair. Apply the same
+  twelve-stage weights to motion, charge/full-dipole reaction impulses, torques
+  and action-mass exchange. Checkpoints record the method; CLI selection cannot
+  change it on an evolved trajectory. Older checkpoints retain RK4. This is a
+  stepping change, not a different force law or completed radiation validation.
+- Connect shared-time step doubling through `core/nonlinear_pair_adaptive.py`
+  and `python -m lw_integrator.nonlinear_pair_adaptive`. Compare kinetic momentum,
+  momentum-rest-frame spin and separately scaled reaction-sector impulses,
+  torques and mass exchange. Save controller state with an atomic pair checkpoint.
+  The checkpoint GUI adds method selection and adaptive-checkpoint resume;
+  initial adaptive tolerance preparation remains in the API/CLI. Local acceptance
+  does not certify old source histories. See [higher-order and adaptive stepping](docs/higher_order_pair_and_adaptive.md).
+
+- Connect optional fresh-pair source-increment preservation through accepted
+  RK4 changes, full-spin dipole normalization, general history reconstruction
+  and v4 checkpoint storage. Preserve both spin and normalization changes using
+  shared force-model algebra. Field/root solves and RK rates remain float64;
+  this is not a high-precision trajectory solver. Completed 128/256-step runs
+  improve momentum agreement, but dipole radiation accuracy remains open.
+  See [preserved source history](docs/preserved_source_history.md).
+- Reconcile shared-time cancellation, tolerated-undershoot and initial-secant
+  fixes from the aneutronic worktree, retaining the current 64-iteration budget.
+  These fixes do not yet connect adaptive stepping to the nonlinear pair.
+
+- Add tested compensated source-history arithmetic helpers: preserve high/low
+  parts through addition, multiplication and caller-supplied reconstruction
+  maps. The optional live connection is recorded above; no force law or
+  automatic default changes. See
+  [preserved source history](docs/preserved_source_history.md).
+
+- Add explicit `FullDipoleHistory(startup_fit="one_sided")` for declared inertial
+  startup. First evolved derivative windows no longer mix samples across that
+  boundary; publication waits for eleven accepted on-or-after-start samples.
+  History v3 records this choice, while v1/v2 retain their reconstruction.
+  Preserve all position/speed/root thresholds. See the boundary-window section
+  in [analytical derivatives and controller status](docs/analytic_reaction_and_controllers.md).
+
+- Implement `reaction_derivative_method="analytic"` in the maintained full-spin
+  pair. Differentiate the retarded full-tensor potential and shared force/spin
+  algebra directly, including moving sources; reuse strict compiled Taylor
+  arithmetic. No fitting window is required. C7 driven startup and smooth
+  source segments are required; nonsmooth joins are rejected without a fitting
+  fallback. The earlier boundary-aware fit remains a separate diagnostic.
+- Expose analytical derivatives in the checkpoint CLI/GUI. Fresh explicit
+  coupled CLI preparations select them; evolved checkpoints preserve their
+  recorded method and reject incompatible changes. Document fixed shared-lab
+  timing, the still-unconnected adaptive controller, and unsupported magnetic
+  pseudogrids. Post-arrival source-history accuracy remains a separate gate;
+  no tolerance or physical-domain condition is relaxed. See
+  [analytical derivatives and controller status](docs/analytic_reaction_and_controllers.md).
+
+- Preserve explicitly declared inertial prehistory when constructing later
+  full-dipole intervals. Store the declaration in history format v2; preserve
+  v1 replay without inferring or rewriting its past. New pair initializations
+  can request `inertial_prehistory=True` after validating coasting inputs.
+- Add an opt-in `boundary_aware` reaction-derivative diagnostic, using the same
+  equations in kinetic-increment coordinates and compensated velocity changes.
+  It avoids declared startup boundaries but is **not the default**: the narrow
+  startup-ramp case still fails its accuracy and consistency checks. General
+  high-derivative history-join treatment remains open. Main trajectories retain
+  stored momentum `P=p+qA`; no force model or tolerance is changed.
+
+- Integrate `full_dipole_coupled` as the working full-spin reaction selection
+  in the native pair and CLI. Preserve the coupled mode and ledgers across
+  restart; recommend it on older-method velocity failures without switching
+  equations inside evolved checkpoints. Add a detached GUI checkpoint launcher
+  using the same CLI. Keep reduced-order `full_dipole_rr` as a legacy comparison.
+- Reuse existing strict-float64 compiled Taylor multiplication/reciprocal
+  arithmetic in the analytical provider, preserving the Python reference
+  fallback. Document remaining physics gates and why older charge-solver
+  self-consistency/chrono options are not removed or copied into the new runner.
+  See [integration and option audit](docs/coupled_integration_and_option_audit.md).
+
+- Improve experimental full-dipole reaction derivatives using centered ordinary
+  trajectories and compensated momentum/spin increments. Add stable C7 driven
+  preparation for new full-reaction pairs while retaining checkpointed C5 and
+  backward-fit replay. Add a separate matched source radiation/bound-momentum
+  diagnostic; it does not replace applied recoil or establish full conservation.
+
+- Implement opt-in experimental `full_dipole_rr` self-force and torque from
+  the time-antisymmetric full charge/dipole field, retaining charge–dipole and
+  dipole-squared terms. Use ordinary-motion derivatives (reduction in reaction
+  strength, not spin), an explicit proper-time derivative window, the nonlinear
+  velocity solve, and checkpointed sector impulses/torques and action-mass
+  exchange. This is a specified radiative finite-part model with a dynamic
+  mass relation, not validated full conservation, a finite-size model, or a
+  demonstrated cure for the velocity boundary. See
+  [model and limitations](docs/full_dipole_self_reaction.md).
+
+- Add optional `charge_ll` reaction to the experimental nonlinear pair runner
+  for exactly zero-spin states. Evaluate reduced-order charge recoil from the
+  potential provider's analytical field derivatives; preserve mode and separate
+  recoil/radiation/bound-momentum integrals in checkpoints. Finite-spin reaction
+  is not implied, and nonzero spin is rejected rather than discarded.
+- Add an experimental prescribed force/torque coupling contract for full spin,
+  with spin-constraint solving and mass-law compatibility checks. Add the
+  fixed-time dipole endpoint needed for particle/current momentum accounting;
+  neither helper is a completed self-force or total conservation test.
+- Extract emission-matched charge, charge–dipole and full dipole-squared
+  outward radiation from accepted full-tensor histories. Check static-location
+  electric/magnetic radiation and charge radiation independently of recoil.
+  Leading far fields do not supply angular momentum or the local bound terms.
+- Allow opt-in bounded step subdivision for source-position accuracy failures
+  in the nonlinear checkpoint runner. Do not retry velocity-domain or missing
+  causal-history failures, and do not relax source accuracy budgets.
+
+- Expose the experimental nonlinear pair through a checkpoint-based command
+  (`python -m lw_integrator.nonlinear_pair`). Save accepted checkpoints by
+  atomic replacement, preserve the input, and report the last saved state on
+  failure. Expose radiation capabilities explicitly: this nonlinear model
+  currently supports only off, while established reaction modes remain on
+  their existing runners. No unsupported recoil or production-default change
+  is implied by the new command.
+  Add a momentum-rest-frame relative-speed diagnostic to distinguish normal
+  fast coasting from spin-induced momentum/velocity separation; it changes no
+  force or admissibility threshold.
+
+- Reject nonfinite nonlinear momentum/field inputs instead of returning NaN
+  velocities. Report unusable timelike branches with a dedicated ValueError
+  subtype carrying the attempted lab-speed ratio when available. Preserve
+  atomic pair rejection and allow spatial proper velocities greater than c.
+  Correct analytical-provider type annotations and result narrowing so the
+  nonlinear API's imported-module type check passes without exclusions.
+
+- Add a checkpointed smooth-start potential to the experimental nonlinear
+  reciprocal pair. Include its time-derivative contributions to the force and
+  potential derivatives in native units. Record evolved-source sampling and
+  minimum signal delays. Validate longer reciprocal trajectories through
+  receipt of newly evolved source histories against the retained study model;
+  the startup is explicitly driven and radiation reaction remains off.
+
+- Connect the experimental nonlinear momentum-and-spin-tensor equations to
+  native-unit reciprocal stepping and full-dipole causal histories. Add an
+  explicitly versioned whole-pair JSON checkpoint, atomic source publication,
+  and unavailable-history rejection. Check native conversions against the
+  existing magnetic provider and the retained study equations. This separate
+  radiation-off API does not change CLI/GUI defaults, enable nonlinear
+  self-reaction, or establish full particle-plus-field conservation.
+
+- Add an experimental full-dipole history component with shared fourth-order
+  position and third-order dipole endpoint derivatives. Derivatives use only
+  accepted sample windows; published intervals never change, and the newest
+  five intervals remain unavailable. Include explicit speed/unit checks and
+  versioned history restart data. Position can be reconstructed by integrating
+  the velocity interpolant, with explicit rejection if its disagreement with
+  accepted positions exceeds the caller's error budget. This is an immutable reference component,
+  not a new CLI/GUI force model or a completed nonlinear radiation-reaction
+  implementation. Existing simulation defaults are unchanged.
+
+- Report all four stored-minus-reconstructed momentum components in the
+  experimental Jakobsen pair diagnostics. Spatial components expose the
+  first-order momentum inverse's finite-spin remainder; temporal diagnostics
+  retain their existing meaning. Forces, trajectories and checkpoint formats
+  are unchanged. This is not a new finite-spin conservation claim.
+
+- Add diagnostic radiation measurements on accepted reciprocal histories:
+  distant-field extrapolation, an independent charge-radiation reference,
+  and per-source emission-time matching. Add a matched local intrinsic-spin
+  endpoint-balance adapter. These diagnostics do not change the force,
+  production defaults, or the approximation's omitted moment-squared terms.
+
+- Add an experimental reciprocal reaction switch using analytical derivatives
+  of the same frozen source intervals as the ordinary force. Source endpoint
+  accelerations and applied-force accounting now reuse the stepper's total
+  response. Derivatives at nonsmooth history joins remain explicit errors;
+  the higher derivative currently uses the Python reference implementation.
+  This does not change CLI/GUI defaults or add moment-squared radiation.
+
+- Extend the sparse dipole provider with opt-in potential derivatives and the
+  potential's proper-time rate. Six additional Hertz coefficients suffice;
+  the default 34-output response remains unchanged. Add an experimental
+  radiation-off reciprocal Jakobsen pair adapter with immutable accepted
+  source intervals, simultaneous role updates, timelike-source bounds,
+  explicit unavailable-history rejection, and JSON restart data. This adapter
+  is not a new CLI/GUI mode. Reciprocal cold-start/warm-up, frame, and
+  force-impulse checks are recorded in the study campaign documentation.
+
+- Add an explicitly experimental Jakobsen linear-spin core API with matching
+  ordinary force, spin transport, canonical momentum and midpoint stepping.
+  A single-observer supplied-potential adapter reuses the maintained lab-time
+  and step-doubling controllers and provides model-tagged JSON checkpoints.
+  Opt-in reaction combines order-reduced Medina charge reaction with the
+  intrinsic linear-spin kernel; required field-gradient rates must be supplied
+  explicitly. Spin corrections are calculated separately from the much larger
+  charge response. These APIs do not change RFS defaults or expose a new
+  CLI/GUI/coupled-pair mode. Moment-squared radiation remains outside their
+  approximation. See `docs/source/jakobsen_experimental.md` for boundaries.
+
+- Correct saved-JSON trajectory energy plots: export explicit rest energy and
+  stop inferring mass from canonical `Pt/gamma`, which missed the native speed
+  of light and potential offset. Older JSON without mass metadata warns and
+  uses the supplied fallback (`--mass-amu`, electron by default). Runtime
+  forces and trajectory stepping are unchanged.
+
+- Preserve native CLI JSON checkpoint and shared-time controller settings
+  before applying command-line overrides. Previously these nested settings
+  were dropped unless supplied as flags. Include accepted-interval counts,
+  restart status and cumulative experimental recoil records in CLI reports.
+
+- Keep the analytical charge response across neighbouring source intervals
+  only when their stored polynomials are exactly identical and stationary and
+  cover the complete comparison stencil. This avoids an artificial force jump
+  that contaminates high self-reaction derivatives. Moving or curved neighbours,
+  insufficient history and numerically exact knots keep their existing guards.
+
+- Correct an outdated trial-history test that still required writable source
+  interpolation buffers to be shared with accepted history. The September 2
+  isolation fix intentionally prevents that sharing; the test now checks both
+  private trial buffers and unchanged accepted coefficients. No runtime change.
+
+- Evaluate the experimental recoil's existing spin transport directly as a
+  rest-frame rotation. This avoids subtracting large boosted spin components
+  at high speed without adding a physical torque. Independent circular-orbit
+  and Thomas--BMT spin derivatives now test the uniform-field reduction through
+  beta 0.9999; repeated inverse kicks test spin transport at much higher gamma.
+
+- Supply exact potential derivatives for unbounded uniform prescribed fields
+  in the experimental spin-reaction calculation. Include the total source
+  plus external acceleration when differentiating, so mixed terms are retained.
+  These fields no longer need sampled-history warmup; hard windows, magnetic
+  gradients and independently represented causal dipole sources retain their
+  existing explicit fallback. Ordinary force stepping and defaults are unchanged.
+
+- Taper the initial coasting-history spacing for all checkpointed exact-pair
+  runs that do not use a separately configured local-fit history. This avoids
+  interpolated charge velocities becoming superluminal when a very short
+  first curved step follows a long sparse seed interval. The equations and
+  actual initial trajectory are unchanged; existing C5 startup already used
+  this spacing rule.
+
+- Add an opt-in, experimental first-order-in-spin recoil to checkpointed
+  adaptive exact-pair runs, with consistent spin transport and separate
+  accumulated impulse/work records. CLI and GUI expose the selection;
+  fixed-step and many-particle use are rejected. Medina charge reaction and
+  defaults remain unchanged. Pure magnetic-moment-squared reaction and full
+  conservation validation remain open; see
+  `docs/experimental_linear_spin_reaction.md`.
+
+- Extend the opt-in magnetic-force timestep correction to Medina-on trials,
+  matching the applied radiation force to the acceleration and spin predictor
+  with a bounded iteration. Keep production defaults unchanged and reject
+  unprimed, capped or nonconvergent diagnostic steps.
+
+- Add an explicit, diagnostic-only moment-impulse callback for exact pair
+  trials. It adjusts the impulse before momentum/velocity reconstruction,
+  without replacing the physical start force or force memory. The default
+  route is unchanged; this first experiment rejects radiation reaction and
+  unsupported source/field setups. Matched checkpoint checks are documented
+  in `docs/moment_boundary_checkpoint_diagnostic.md`.
+
+- Add an opt-in charge-source directional gradient for the magnetic-force
+  time derivative. It reuses the existing analytical provider's roots,
+  segments and acceleration convention, leaving ordinary outputs unchanged.
+  Boundary fallback explicitly withholds the extra derivative. Local algebra,
+  source-contract and saved-flyby-state checks pass; the live force update
+  and production defaults remain unchanged.
+
+- Validate a degree-six acceleration-fit candidate for the optional local
+  dipole directional derivative against smooth source histories. The saved
+  outbound sensitivity is isolated to acceleration, not spin; all six saved
+  cases accept the candidate under unchanged limits. No fit default or live
+  force update is changed.
+
+- Add an opt-in directional derivative to the current local dipole source
+  provider, using its existing polynomial and retarded root. The extra packed
+  response participates in fit-window and scale-overlap checks; unavailable
+  derivatives fail closed. Ordinary source outputs and default stepping are
+  unchanged. Saved flyby checks pass for five of six cases; an outbound-proton
+  fit-sensitivity failure remains open before live force integration.
+
+- Add a packed analytical derivative of the existing magnetic-moment force,
+  retaining observer acceleration, spin evolution, and directional change
+  of the source response. This preparatory kernel uses two 4-by-6 response
+  arrays instead of a full higher-derivative field tensor. It is not yet wired
+  into the live stepper and does not change radiation reaction or defaults.
+
+- Add a vector angular-momentum ledger for two distinct concentric shells with
+  opposite charges. Direct surface Lorentz torques, electromagnetic angular
+  momentum inside a finite sphere, and outward angular-momentum flux close
+  with second-order time refinement. The calculation retains the reversible
+  charge--moment reservoir between the shells; a separation ladder shows that
+  reservoir vanishing linearly while the exterior pure-magnetic sector tends
+  to a finite limit.
+
+- Add an independent finite-sphere field-energy oracle for the neutral
+  counter-rotating shell. It evaluates the exact causal vector potential
+  inside and outside the material shell, integrates electromagnetic energy in
+  two radial regions, and evaluates Poynting flux at the same coordinate time.
+  A static control matches the closed form, while a smooth transient closes
+  field change plus self-work plus outward flux with second-order convergence.
+  This remains a fixed-axis finite-source diagnostic, not an applied
+  intrinsic-particle torque.
+
+- Add a diagnostic energy ledger for a smooth rotation pulse of the explicit
+  neutral counter-rotating shell. It compares exact finite-shell self-torque
+  work with an independently evaluated finite-size magnetic-radiation
+  spectrum, and reports boundary and high-frequency resolution checks. This
+  validates integrated pure-magnetic dissipation when the source begins and
+  ends at rest. The complete time-dependent torque and outward power are also
+  returned with a conservation-inferred reversible field-energy history; an
+  independent near-field integral, local intrinsic-dipole torque, and applied
+  recoil force remain absent.
+
+- Expose the opt-in guarded local-source-jet scale ladder through direct JSON,
+  testbed configuration, repeated `--dipole-local-jet-scale` CLI options, and
+  lossless GUI config load/save. Live equations-of-motion, endpoint
+  recomposition, and inertial-prehistory sizing now use the same configured
+  evaluator. Named ladders remain mutually exclusive with the original single
+  narrow/primary/wide fields, and no default history route changes.
+
+- Add an internal, opt-in multi-scale selector for causal local source jets.
+  It accepts an ordered list of explicitly named physical window triplets,
+  chooses the shortest triplet that has enough trusted accepted history and
+  passes its own narrow/primary/wide response check, and requires agreement
+  with the immediately adjacent longer valid triplet before any scale
+  transition. It fails closed if
+  no scale is ready, adjacent scales disagree, or a shorter selected scale has
+  no valid overlap comparison. Diagnostics record the selected and comparison
+  scales, cross-scale response spread, and unavailable candidates. This is a
+  provider primitive only; it is not yet exposed through production config,
+  CLI, GUI, or equations-of-motion selection, and the existing single-scale
+  and legacy routes are unchanged.
+
+- Prevent provisional charge and legacy dipole history overlays from mutating
+  the append-aware cache of accepted source history. Reconstructing an
+  instantaneous charge acceleration from accepted velocity differences
+  correctly changes the former boundary estimate when a real knot is
+  appended, but the same operation was being performed through shallow NumPy
+  buffer copies for full-step and half-step candidates. A rejected or merely
+  unpublished trial could therefore change the cached last two worldline
+  segments. Trial preparation now owns the derivative, quintic-coefficient,
+  spin, and spin-slope buffers it may rewrite. A focused regression verifies
+  that both accepted caches remain bitwise equal to a clean rebuild after a
+  provisional tail is evaluated. This fix applies to the charge interpolator
+  used by dipole and nondipole exact-source calculations; it does not change
+  the stored `bdot` diagnostic or its preceding-interval meaning.
+
+- Correct two startup boundaries exposed by the first live
+  `causal_local_jet` inbound-distance calibration. Constant-velocity seed
+  history now extends one resolved interval beyond the widest requested fit,
+  because interval-mean acceleration lives between position knots rather than
+  on the oldest knot. Endpoint canonical recomposition now sees a detached
+  provisional local-history tail when the close-separation retarded event lies
+  inside the current unpublished slab; rejected slabs still publish nothing.
+  Focused history, endpoint, adaptive-controller, checkpoint, and real
+  equations-of-motion tests pass. With the unchanged $10^{-3}$ nested-spread
+  limit, hard starts at $100\,\mathrm{pm}$ and $200\,\mathrm{pm}$ remain useful
+  negative controls, while a $500\,\mathrm{pm}$ coarse inbound calibration
+  completes ten slabs with finite state and nonzero Medina/LAD reaction work.
+
+- Add the opt-in `causal_local_jet` magnetic source-history route to the
+  production exact-pair equations of motion. The full step and both refined
+  half-steps now see the correct immutable accepted prefix; only an accepted
+  refined path publishes its midpoint and endpoint. Canonical endpoint
+  recomposition, disk resume, direct CLI settings, saved testbed configs, GUI
+  controls, console logs, and JSON reports all use the same three physical fit
+  widths and guarded reconstruction settings. Synthetic constant-velocity
+  prehistory remains unavailable unless the user explicitly selects it as a
+  boundary model. A short real-equations-of-motion smoke run inside that
+  boundary passes, while a deliberately hard-started $10\,\mathrm{pm}$ run is
+  correctly rejected when its nested response spread reaches
+  $2.518716\times10^{-2}$, above the $10^{-3}$ limit. This means a close
+  encounter must begin far enough inbound to replace the boundary with
+  accepted physical history. Existing magnetic history modes and the default
+  selection remain unchanged; focused charge, trajectory, checkpoint, and
+  magnetic-feature-off regressions pass.
+
+- Make accepted local source history transactional across the adaptive
+  exact-pair boundary and resumable through the production disk checkpoint.
+  A rejected step-doubling trial cannot publish its provisional midpoint or
+  endpoint acceleration interval; rider and driver rows become visible only
+  after the pair trajectory is jointly accepted. Checkpoints store the
+  explicit trusted-interval mask and fixed source/chart identity alongside
+  the authoritative trajectory, then restore every local-history array
+  bitwise without consulting legacy `bdot`. This is production-history
+  plumbing only: the local jet is still not selected by the equations of
+  motion, and existing causal-$C^5$ and nondipole paths remain unchanged.
+
+- Add an opt-in `interval_mean` acceleration source for the local retarded
+  jet. It reconstructs the total acceleration from each accepted velocity
+  change, including a split radiation-reaction impulse, and locates that
+  centered estimate at the interval midpoint. It never reads legacy `bdot`.
+  A separate readiness mask distinguishes trusted dynamical intervals from
+  synthetic inertial prehistory; the provider fails closed if an untrusted
+  interval enters its fit window. Existing trajectories conservatively
+  identify physical radiation-off intervals through exact-start readiness and
+  physical Medina intervals through their finite accepted force-sample
+  timestamp; both markers remain absent in synthetic prehistory. `exact_start`
+  remains the default while the midpoint route is tested on Medina/LAD
+  trajectories. The analytic circular oracle converges under sample
+  refinement, and the saved four-level radiation-off trajectory retains its
+  response-refinement gates. Existing equations-of-motion selection and
+  nondipole trajectories remain unchanged.
+
+- Give the opt-in local source-jet provider its own accepted-history model,
+  independent of the causal-$C^5$ segment builder. The exact acceleration for
+  the accepted interval from $t_i$ to $t_{i+1}$ is now stored directly at
+  interval index $i$; the provider no longer has to shift an endpoint sidecar
+  backward by one row, and it never reads legacy `bdot`. A growable owner
+  preflights midpoint and endpoint rows beyond an immutable visible prefix and
+  publishes rider and driver histories only through a joint commit. The
+  compact history also has a versioned JSON-compatible checkpoint payload,
+  although exact-pair disk-checkpoint wiring remains part of the later
+  production integration step. Replaying the accepted $1\,\mathrm{mm}$
+  four-level calibration through the new history reproduces every numerical
+  response and acceptance gate exactly. The provider is still not selected by
+  the equations of motion, so existing dipole and nondipole trajectories are
+  unchanged.
+
+- Add an explicit past-only alignment to the opt-in local source-jet fit. It
+  uses the same total duration as the centered window but ends at the retarded
+  source event, with a smooth zero-weight boundary at both ends. An exact
+  circular-source test bounds its $\partial F$ error and a prefix-invariance
+  test proves that samples later than the retarded event cannot affect it.
+  Centered alignment remains the default while live close-pass evidence is
+  gathered.
+
+- Make the opt-in local source-jet fit continuous when accepted samples enter
+  or leave its physical window by applying a compact tricube weight by
+  default; retain uniform weighting for diagnostics. Add a nested narrow,
+  primary, and wide fit comparison that reports the largest relative change
+  in $A$, $\partial A$, $F$, and $\partial F$ and fails closed when the
+  declared response-stability threshold is exceeded. Exact circular-source,
+  unequal-sampling, root-boundary, and fit-window-boundary tests now exercise
+  the complete analytical response.
+
+- Add an opt-in local retarded source-jet provider primitive. A cubic curve
+  fixed by accepted position and velocity now locates the light-cone event;
+  local least-squares fits of the explicitly timed equations-of-motion
+  acceleration and stereographic spin history supply the derivatives used by
+  the analytical dipole Hertz response. The fitted values are encoded as a
+  centered Taylor jet at one retarded event and are not joined into a global
+  degree-11 worldline. The provider exposes its sample provenance, condition
+  numbers, root segment, and light-cone residual, and fails closed unless the
+  full requested physical window is present on both sides. It is not yet
+  selected by the equations of motion and therefore does not change existing
+  dipole or nondipole trajectories.
+
+- Preserve the equations-of-motion acceleration evaluated at the start of an
+  accepted exact-source step, with its timing stated explicitly. An endpoint
+  row now carries the start acceleration of the step that ended at that row;
+  the causal source history shifts it back to the physical start knot instead
+  of relabelling it as endpoint data. The value is marked ready only when no
+  later radiation-reaction impulse is applied, so Medina/LAD and other
+  reaction modes continue to use the velocity-derived fallback rather than an
+  incomplete acceleration. Charge-only trajectories retain broadcast-zero
+  magnetic sidecars and require no new configuration. The causal-$C^5$
+  checkpoint sub-schema advances to version 3 and the accepted-pair schema to
+  version 4; older exact-pair causal-$C^5$ checkpoints fail explicitly on
+  resume. Existing fixed-step checkpoints retain their schema and restore the
+  new sidecars as unready, so nondipole restart remains compatible. A
+  four-level live test confirms the timing and bitwise restart contract, but
+  also shows that exact acceleration samples alone do not make
+  trajectory-derived jerk or $\partial F$ converge. Higher source derivatives
+  still need independent information or a different continuous integration
+  representation.
+
+- Corrected the meaning of source acceleration used by retarded-field history
+  interpolation. The trajectory field named `bdot` remains a diagnostic for
+  the velocity change over the preceding accepted step; charge and live
+  causal-$C^5$ source histories now reconstruct an instantaneous knot
+  acceleration from accepted velocities and their actual coordinate times
+  instead of treating that interval average as an endpoint value. An analytic
+  circular-source check reduces representative magnetic-field errors by
+  several orders of magnitude, and the existing charge-only physics tests
+  remain unchanged. Analytic source histories that already supply exact
+  endpoint acceleration can select the explicit `instantaneous` semantics;
+  this keeps the independent radiation-flux oracle at its original strict
+  tolerance without confusing analytic data with production `bdot`. This
+  correction does not yet solve the live dipole
+  derivative problem: jerk and the third spin derivative still require a new
+  accepted-event source-derivative contract. The causal-$C^5$ checkpoint
+  sub-schema is now version 2 because its recorded acceleration provenance
+  uses nine velocity knots; version-1 causal-$C^5$ checkpoints fail explicitly
+  on resume. Nondipole checkpoint data and simulation routes are unchanged.
+
+- Complete the second-order exact-pair Taylor momentum update for prescribed
+  external electromagnetic fields. Uniform magnetic bends previously retained
+  a first-order Euler energy error even when
+  `second_order_start_taylor_endpoint` was selected; the update now includes
+  the external Lorentz-force derivative and has a focused projection-order
+  regression.
+
+- Increased the bounded shared-lab-time proper-step solve from 32 to 64
+  iterations. A safeguarded secant proposal near a bracket edge deliberately
+  falls back to bisection; at strict time tolerances, 32 bisections could stop
+  just above the requested residual even though the endpoint map remained
+  finite and monotone. The larger bound preserves the existing tolerance and
+  acceptance checks and changes only cases that previously raised without an
+  endpoint. A fine live-C5 calibration exposed the limit on its final clipped
+  slab.
+- Stabilized live causal ``C5`` startup and adaptive sampling without weakening
+  the existing derivative-fit guard. The inertial prefix now retains coarse
+  remote samples but tapers its interval by no more than 5 percent between
+  neighboring knots until it matches the first step-doubling midpoint. While
+  C5 is active, accepted adaptive steps may likewise grow by at most 5 percent;
+  other history modes retain the ordinary factor-of-two limit. This prevents a
+  smooth moving/precessing source from looking numerically singular solely
+  because the sampling cadence changed abruptly. A representative
+  electron--proton probe that previously failed after two accepted slabs now
+  completes six unequal slabs with no rejection.
+- Promoted the causally frozen ``C5`` intrinsic-dipole source history into the
+  opt-in exact-pair adaptive equations of motion. Charge fields continue to use
+  their established accepted chronology, while dipole ``A``, ``F``, and
+  ``partial F`` come from the independent smooth history and the existing
+  canonical-momentum and RFS force contractions. Start and endpoint canonical
+  momentum now use the same C5 potential representation. Adaptive full-step
+  and two-half-step trials see only private candidates; rejected trials publish
+  nothing, accepted midpoint/endpoints commit jointly, and checkpoint restart
+  restores the frozen coefficients. The JSON, CLI, GUI, run log, and summary
+  surfaces now preserve ``source.history_model``. C5 currently requires the
+  checkpointed exact-pair adaptive controller; fixed-step selection fails
+  explicitly rather than falling back to C1. This changes mutual dipole-source
+  fields only and does not yet apply the diagnostic ``q*mu`` or missing
+  ``mu^2`` self-reaction sectors.
+- Added the internal ordered multi-source layer for causally frozen ``C5``
+  dipole histories. Stable string identities now define both exclusion and
+  floating-point summation order; each source solves the full relativistic
+  light cone on its frozen segment and exposes auditable individual plus summed
+  ``A``, ``F``, and ``partial F`` responses. The shared-time adaptive path can
+  carry this state transactionally: rejected trials leave it untouched, while
+  a healthy refined midpoint and endpoint are appended before the pair rows are
+  jointly published. Newly frozen polynomial coefficients are appended to the
+  same immutable NPZ checkpoint chunks as accepted trajectory rows; the
+  manifest stores only source topology, frames, moments, and counts. Restart
+  reuses those exact coefficients and reproduces the provider response
+  bit-for-bit. This remains an explicit internal validation surface, is not
+  selected by the equations of motion, and applies no self-reaction force.
+- Bounded nonuniform accepted-step tests now vary the causal source cadence
+  smoothly by 20 percent and reproduce incrementally frozen coefficients
+  bit-for-bit from a one-pass reconstruction. The immutable validation object
+  still copies its full sample arrays on append and is therefore explicitly
+  not the production long-history store; live selection waits for a growable,
+  transaction-safe implementation.
+- Added that growable transaction-safe causal ``C5`` history store as a
+  separate internal primitive. It grows accepted sample buffers geometrically,
+  preflights new rows and every newly ready segment beyond the published
+  boundary, invalidates overwritten or failed candidates, and commits without
+  copying the accepted prefix. The shared-time adaptive validation path can
+  now use the growable rider/driver pair; rejected trials publish neither role,
+  while accepted and checkpoint-resumed paths reproduce the immutable oracle
+  coefficients and provider response bit-for-bit. Live equations still do not
+  select this provider and no self-reaction force is applied.
+- Added the first isolated production-state layer for a causal ``C5`` source
+  history.  Accepted position, velocity, acceleration, and unit-spin samples
+  now produce immutable degree-eleven worldline and stereographic-spin
+  segments only after their complete seven- and fifteen-knot derivative
+  windows are accepted.  A named unavailable error replaces silent
+  lower-smoothness fallback; future appends cannot mutate published
+  coefficients; fixed chart-pole and ``1e5`` conditioning guards fail closed;
+  and a strict checkpoint payload preserves samples, readiness, windows, and
+  coefficients bit-for-bit.  An isolated one-source adapter now solves the
+  light cone wholly inside the ready degree-eleven worldline and feeds the
+  matching stereographic segment into the generic Hertz jet; checkpoint
+  restore reproduces the complete response bit-for-bit.  It is not selected
+  by production multi-source dispatch or the equations of motion, so
+  trajectories and self-reaction remain unchanged.
+- Added a validation-only polynomial dipole-Hertz response jet.  Offline
+  studies can now differentiate smoother worldline and rest-spin polynomial
+  segments through the same covariant retarded-potential algebra used by the
+  production oracle.  It also accepts two stereographic spin-coordinate
+  polynomials in a declared orthonormal frame, mapping them analytically onto
+  the unit sphere so the norm constraint and all normalization derivatives are
+  part of the jet.  The existing quintic-worldline/cubic-spin entry point,
+  Numba kernels, and production backend selection are unchanged; a bitwise
+  regression locks the legacy wrapper to the generic implementation.
+- Added an immutable six-sample accepted-history state for the causal
+  intrinsic-spin reduction fallback.  Tentative appends return a new object,
+  so discarded adaptive/nonlinear trials cannot mutate accepted diagnostic
+  history; strict checkpoint payloads reproduce the next candidate and causal
+  force exactly.  A rider/driver pair wrapper can now participate in the live
+  shared-time adaptive transaction: its pure candidate is built before the
+  refined trajectory is published, adopted only after joint acceptance, and
+  stored in accepted-pair checkpoint schema 3.  Rejected trials never invoke
+  the update, and restart reproduces the uninterrupted diagnostic history.
+  A pure selector records analytical smooth-segment, causal boundary-fallback,
+  or insufficient-history routes.  The second-order exact equations now expose
+  private start-event velocity, physical spin, and non-self four-acceleration
+  before Medina's charge-radiation kick.  Second-order adaptive runs retain
+  this accepted causal input history and report its sample count.  The new
+  explicit ``intrinsic_spin_self_reaction_mode=diagnostic`` option additionally
+  evaluates the analytical smooth-segment reduction at each accepted start or
+  midpoint, switches to the six-sample causal estimate at guarded segment
+  boundaries, and checkpoints a bounded recent trace plus lifetime route
+  counts.  It records the linear-spin force separately from the charge-ALD
+  comparison term and still applies no magnetic self-reaction force.  A causal
+  unequal-step derivative fit whose scaled condition number exceeds ``1e5``
+  now fails closed: its condition is retained in the trace, but no force
+  estimate is returned.  A production adaptive RFS + retarded-dipole + Medina
+  regression now proves that enabling this trace leaves every compared
+  trajectory and Medina ledger array unchanged even when the Medina work is
+  nonzero, while each record keeps the linear-spin term, charge-ALD comparator,
+  and their sum separate.
+- Added a diagnostic smooth-segment retarded-potential derivative bridge for
+  linear-spin reduction of order.  One safeguarded charge or dipole root now
+  supplies the potential Hessian and only the three higher directional
+  contractions consumed by the local RFS/Jakobsen calculation, without
+  constructing electric or magnetic three-fields, a field tensor, or its
+  gradient.  History-facing charge and dipole providers sum sources in their
+  declared order and explicitly report the derivative unavailable at a
+  worldline or spin-interpolation boundary.  The dense Taylor table remains a
+  validation oracle.  A weak leading-trajectory test agrees with the
+  independent centered and causal sampled reductions to about ``1.8e-8`` and
+  ``5.8e-7`` respectively in linear-spin force-vector norm.  No self-reaction
+  impulse is applied to trajectories.
+- Exposed the checkpointed exact-retarded adaptive pair integrator through the
+  core configuration, direct CLI, testbed JSON, and GUI. The mode advances one
+  rider and one driver on shared lab-time barriers, keeps accepted midpoint
+  source-history knots, flushes the latest joint state on cancellation, and
+  resumes its variable-length controller/history checkpoint. Strict startup,
+  endpoint, physics, particle-count, and scheduler guards fail before a run;
+  the existing fixed-step and legacy adaptive paths remain unchanged.
+- Made causal-frozen spin-history preparation append only the newly accepted
+  slope tail in managed prepared-history buffers.  The previous validation
+  helper recomputed and recopied the complete accepted prefix on every trial,
+  making a long adaptive dipole run quadratic in history length even though
+  the causal slope rule is local.  Storage token/generation/rewrite checks and
+  read-only published arrays remain the prefix-validity authority.  A
+  9,216-knot two-step adaptive checkpoint probe is byte-for-byte unchanged and
+  improves from about 2.24 s to 1.03 s after warm compilation.
+- Made accepted-endpoint canonical recomposition use the same analytical
+  dipole Hertz potential as the following step-start decode when
+  ``numba_analytic_charge_dipole_response_serial`` is selected.  The previous
+  mix of analytical start potential and nine-event finite-difference endpoint
+  potential introduced a step-size-independent ``q*Delta(A)/c`` mechanical-
+  momentum jump in adaptive two-half-step trials.  A saved flyby checkpoint
+  reproduced the defect component by component; matching the potential
+  provider reduced the limiting momentum discrepancy from about ``1.7e-13``
+  to ``1.1e-18`` native momentum and restored normal adaptive step growth.
+  Boundary cases still use the same declared full-strict fallback as the
+  analytical force provider.
+- Added an isolated growable, append-only trajectory-history builder for the
+  future exact-retarded multirate integrator. Accepted source-history knots can
+  now grow independently of public output capacity while retaining managed
+  read-only views, explicit stale-view invalidation at geometric reallocations,
+  and append-aware charge/dipole provider caching. The fixed-step solver does
+  not use this builder yet, so existing trajectories are unchanged.
+- Added a pure causal-frozen $C^1$ rest-spin slope oracle for the future
+  multirate dipole history. It uses only accepted past knots, preserves every
+  queryable slope under future appends, and is not yet selected by production
+  field providers.
+- Extended the existing immutable checkpoint-row format to restore growable
+  accepted histories in contiguous blocks. The current checkpoint manifest
+  still requires a declared fixed total and does not yet persist an adaptive
+  controller; this is storage-format validation, not adaptive restart support.
+- Added a separate append-only accepted-pair checkpoint manifest that does not
+  require a final adaptive knot count. It stores equal rider/driver history
+  chunks plus controller and public-output cursor state, with compatibility
+  hashes and atomic manifest updates. The guarded public adaptive exact-pair
+  mode now selects this format.
+- Added a shared-lab-time solver for the $1+1$ exact-retarded
+  return mode. It solves separate rider/driver proper-time increments against
+  one coordinate-time target and preflights both growable-history rows before
+  publishing either. The guarded adaptive exact-pair mode now wires it into the
+  production integration loop.
+- Added an isolated step-doubling error budget and bounded step controller for
+  the future return mode. Position, mechanical momentum, rest spin, and
+  slab-summed diagnostics use independent absolute/relative scales. The
+  complete RFS-plus-Medina path remains conservatively first order until an
+  end-to-end refinement study proves otherwise.
+- Added an immutable one- or two-row trial-history overlay for exact charge and
+  dipole providers. It extends a private shallow clone of cached accepted
+  history, so a full or half-step trial can expose provisional light-cone
+  segments without publishing rejected knots. It shares existing prepared
+  prefix buffers and copies them only at an amortized geometric-capacity
+  boundary. Dipole overlays hard-require the causal-frozen spin model; the
+  centered fixed-step default is rejected because appending would revise its
+  tail.
+- Added an internal equations-of-motion seam that separates the exact provider
+  source history from legacy chronology and gating history. Future half-step
+  trials can keep the accepted chronology view while giving charge and dipole
+  providers an immutable provisional overlay. Existing callers do not pass
+  the seam and retain their previous behavior.
+- Added a non-production transactional exact-pair slab adapter. It solves the
+  rider and driver proper steps against one lab-time barrier, exposes a prior
+  trial midpoint only through immutable provider history, evaluates both
+  endpoint potentials before changing either canonical state, and publishes
+  nothing until a later acceptance layer explicitly commits the pair.
+- Composed the exact-pair slab into unpublished full-step and two-half-step
+  paths. The componentwise acceptance state reconstructs gauge-independent
+  mechanical momentum and sums radiation, Medina, cross-field, and projection
+  increments over both refined half steps; the accepted-history builders stay
+  unchanged regardless of the provisional decision.
+- Added a joint two-row acceptance gate for the refined midpoint and endpoint.
+  Both rider/driver sequences and both capacity expansions are preflighted
+  before publication; rejected trials and ordinary validation failures append
+  no history, while the one-full-step comparison path is never committed.
+- Added hard health gates above the adaptive error norm. A trial containing a
+  particle death, Medina impulse cap, negative/invalid far-radiated energy, or
+  an unexpected charged-particle Medina derivative-readiness transition is
+  never eligible for commit even when its scaled local error is below one.
+- Added a checkpointable scalar adaptive-attempt controller for the internal
+  exact-pair path. Healthy accepted attempts commit the refined midpoint and
+  endpoint, ordinary error failures shrink without publication, Medina caps
+  force a smaller retry, and non-recoverable health failures abort explicitly.
+- Added strict controller serialization for the variable-length accepted-pair
+  checkpoint. A focused interrupted/resumed adaptive sequence restores both
+  histories and reproduces the next accepted attempt bit-for-bit against the
+  uninterrupted path.
+- Added a bounded exact-pair adaptive run window. It clips the last
+  shared-lab-time slab to a declared target, retains every accepted midpoint
+  and endpoint in causal source history, and selects public output only by
+  accepted row index. Changing the public sampling interval is regression
+  tested not to change dynamics. Attempt and accepted-slab limits fail
+  explicitly, irreducible minimum-step rejection cannot loop forever, and the
+  variable-length pair checkpoint now reproduces the full run window and its
+  output cursor bit-for-bit after interruption. A short charged RFS + Medina +
+  retarded-dipole run exercises the complete path. The guarded production
+  integrator, CLI, testbed JSON, and GUI now expose this mode.
+- Made consecutive exact-pair slabs use the same two-root synchronization
+  envelope already enforced at joint commit. A pair whose two independently
+  solved endpoint times were valid at one shared barrier can no longer fail
+  immediately as the next slab's starting boundary solely because the start
+  check was twice as strict.
+- Expanded irreducible adaptive-step errors with the normalized position,
+  mechanical-momentum, spin, and diagnostic components, so a tolerance floor
+  can be diagnosed without instrumenting or mutating the accepted run.
+- Applied the accepted pair's two-root synchronization envelope when entering
+  or resuming a bounded adaptive window. A valid checkpoint boundary is no
+  longer revalidated with a stricter one-root threshold before its next slab.
+- Added an opt-in, read-only adaptive-attempt trace for calibration. It records
+  the attempted shared step and the normalized position, mechanical-momentum,
+  spin, and diagnostic errors; the default path retains no trace or added
+  per-step storage.
+- Added the role/component index that produced each step-doubling group
+  maximum to the opt-in calibration trace. This distinguishes, for example,
+  an electron $x$-momentum limit from a proton near-rest rounding floor without
+  storing provisional trial states.
+
 All notable changes and updates to the LW Integrator project are documented in this file.
 
 ## v0.8.5 — August 2026
+
+### Experimental Magnetic Dipole Moments (August 2026)
+
+- Added a diagnostic native-unit translation of Jakobsen's covariant
+  point-particle self-force through first order in spin and magnetization.  It
+  reports the charge ALD term and the linear ``q mu``/``q S`` correction,
+  including the derivative of the moving body-frame cross product, but does
+  not alter production trajectories.  Tests cover the rest-frame reduction,
+  the Medina charge coefficient, Lorentz covariance, force orthogonality,
+  neutral and static ``g=2`` limits.  Pure ``mu^2`` recoil, reduction of the
+  higher worldline derivatives, and bound-field balance remain explicit
+  acceptance gates.  A periodic fixed-magnitude intrinsic-spin benchmark now
+  closes the local linear-spin impulse against both an independent
+  Maxwell-stress evaluation of outward ``q mu`` momentum and the complete
+  retarded charge/dipole providers.  A transverse finite-radius term decreases
+  as ``1/R`` while the radiative component is radius invariant.  A second,
+  dynamically consistent circular-orbit benchmark makes the supplemental
+  spin--radiative-field term nonzero and closes the complete retarded
+  interference energy to about two parts per million.  The oracle now reports
+  that balance-only term separately from the mechanical force, plus the
+  intrinsic-spin radiated loss and reversible bound-field momentum of
+  supplemental Eq. (33).  An arbitrary-state test closes the full local
+  identity without periodic cancellation.  A matched-light-cone nonperiodic
+  provider test now makes the bound-momentum endpoint change nonzero, verifies
+  every retarded root, applies the per-ray observation/source-time Jacobian,
+  and extrapolates three radii to null infinity.  The small spatial components
+  close within two percent while the energy closes more tightly.  Reduction
+  of order now has a diagnostic sampled oracle: it differentiates a short
+  leading, non-self proper-time stencil, reports a velocity/acceleration
+  consistency residual, exactly recovers irregular-grid polynomials, and
+  converges at fourth order to the unreduced circular benchmark.  It uses a
+  centered future stencil and is not a production force.  A companion
+  six-sample backward oracle now evaluates at the newest accepted state,
+  supports unequal proper-time spacing, reports stencil conditioning, and
+  converges at fourth order on the circular benchmark.  It remains diagnostic
+  until accepted-only history, checkpoint, and rejected-trial isolation are
+  wired and validated.  A potential-only analytical bridge now computes the
+  same leading acceleration, jerk, snap, and spin derivatives without
+  materializing electric/magnetic fields or complete higher-rank potential
+  tensors.  It consumes only the third- and fourth-derivative contractions
+  along velocity and acceleration that the reduced self-force actually uses;
+  retarded-provider generation of those contractions remains open.
+- Added a diagnostic radiation-flux oracle that samples the independent
+  retarded charge and intrinsic-dipole fields on a sphere and integrates
+  outward electromagnetic energy, linear momentum, and angular momentum.  It
+  reports the charge-only, signed charge--dipole interference, dipole-only,
+  and total sectors separately.  The oracle does not feed a force or torque
+  back into the trajectory.  Pure flux tests cover the Gaussian Poynting
+  vector and Maxwell stress, sector closure, change of angular-momentum
+  origin, and the oscillating-magnetic-dipole power law.  Provider-level tests
+  reproduce Larmor charge power, rotating-dipole power, and the far-zone
+  charge--dipole interference momentum while checking matched-retarded-time
+  radius convergence.  A pure follow-up layer integrates an irregularly
+  sampled flux history in time, preserving the sector split and provider
+  diagnostics.  It deliberately reports transported field quantities rather
+  than labeling them as recoil before the bound/Schott field change is
+  accounted for.  A pure balance helper now compares outward transport with
+  supplied mechanical and bound-field changes using an explicit conservation
+  sign convention.  Tests close Medina's known charge-sector bound energy and
+  momentum under timestep refinement and reproduce the angular momentum
+  emitted by a circularly rotating magnetic dipole, while leaving magnetic
+  recoil and self-torque unimplemented.  A complete-period harmonic-charge
+  benchmark independently evaluates retarded sphere flux at two radii and
+  closes it against Medina reaction work; the periodic bound field returns to
+  its initial value, so this check does not hide an inferred Schott boundary
+  term.  Added the Bonga--Poisson--Yang finite spinning-shell oracle for the
+  signed charge--moment (``q mu``) angular-momentum sector.  It independently
+  reports shell self-torque, outward angular-momentum flux, near- and wave-zone
+  field angular momentum, and conservation residual.  A companion result
+  separates reversible electromagnetic-inertia terms from the terms that
+  change sign between retarded and advanced boundary conditions.  This
+  corrects an earlier roadmap ambiguity: the charged-shell calculation is a
+  ``q mu`` benchmark, not a pure ``mu^2`` self-torque law, and remains outside
+  production dynamics.  Added the exact Mansuripur--Jakobsen harmonic response
+  of that finite charged shell.  It reports the complex self-torque,
+  cycle-averaged self-work and outward power, ordinary magnetic-moment
+  amplitude, finite-size form factor, and surface-speed check.  Tests close
+  torque work against radiation, match the point-size limit to an independent
+  Maxwell-stress sphere flux, and recover the Bonga--Poisson--Yang local
+  derivative expansion as ``omega R/c`` decreases.  This remains a
+  diagnostic fixed-axis harmonic model; causality and a neutral intrinsic
+  moment require later, separate validation.  Added the exact complex-frequency
+  transfer function and a finite-rectangle Cauchy argument-principle pole
+  counter.  For the paper's 1-nm electron shell, expanding upper-half-plane
+  searches find no poles with the exact response but find two with the known
+  acausal small-radius truncation; a lower-half-plane control finds thirteen
+  exact poles.  This is finite-window causality evidence, not yet a global
+  proof.  Added a refined inverse-Fourier impulse-response diagnostic that
+  subtracts and analytically restores the bare-inertia jump.  The exact model's
+  sampled pre-impulse response converges below ``1e-9`` in normalized units,
+  while the truncated control retains a converged signal above ``0.3``.  Added
+  an explicit neutral counter-rotating two-shell source description.  Its
+  opposite charges cancel net charge, its opposite rotations make the two
+  magnetic moments add, and its collective harmonic response matches the
+  paper's effective one-shell equation.  The neutral result remains a
+  finite-size internal-current model, not a universal point-dipole law.
+
+- Added the opt-in exact-retarded translation update
+  ``second_order_start_taylor_endpoint``.  It evaluates the ordinary charge
+  and dipole-source Lorentz force and its proper-time derivative at the same
+  accepted start phase-space event, applies
+  ``h K + h^2 dK/dtau / 2``, uses a matching trapezoidal worldline update, and
+  retains accepted-endpoint canonical-potential recomposition.  The first
+  prototype exposed and fixed an important sampling error: a nonlinear trial
+  endpoint velocity must never be contracted with the start-event field in a
+  start-Taylor update.  On the maintained electron--proton calibration horizon,
+  full RFS/Medina position and momentum differences now decrease at about
+  second order, while accumulated mass-shell projection decreases at order
+  1.94--1.99.  The established ``first_order_endpoint`` path remains the
+  default.  RFS moment-force and Medina derivatives are not promoted to second
+  order by this option and retain their separate validation requirements.
+
+- Reused the authoritative rider and driver trajectory builders during fixed-step
+  ``INERTIAL_PREHISTORY`` exact-retarded runs.  The previous non-adaptive path
+  reconstructed both complete accepted histories before every step, making a
+  nominally fixed run quadratic in its number of stored samples and eventually
+  hiding the analytical-provider speedup.  Adaptive, substep, and pseudo-grid
+  paths retain their isolated trial histories.  In a 2,500-sample analytical
+  electron--proton checkpoint probe, the new path preserved the complete result
+  byte-for-byte, reduced wall time from 37.81 to 7.79 seconds despite checkpoint
+  writes, and kept the final four 500-step intervals flat at 1.19--1.43 seconds.
+
+- Compiled the state-specific ordinary-charge, RFS magnetic-moment, and spin
+  contractions used by the analytical charge-plus-dipole backend while keeping
+  its reusable 34-value ``(A, F, partial F)`` response.  A dependency audit
+  rejected a proposed 30-value Bianchi packing: it removes four redundant
+  interface values but still requires all 144 influential Hertz coefficients,
+  and its materializer was not faster.  On the M5 Pro the cached-response
+  contraction fell from 16.083 to 0.987 microseconds once its already-validated
+  arrays entered the strict kernel; seven contention-affected interleaved
+  300-sample runs improved from 1.5129 to 1.4765 seconds median (1.025x), with
+  identical complete rider and driver state hashes.  Python and every
+  non-analytical backend retain their existing contraction path.
+- Added the explicit ``numba_analytic_charge_dipole_response_serial``
+  potential-first backend.  On smooth source-history segments it differentiates
+  the implicit retarded time and covariant Hertz tensor with one strict
+  binary64 third-order Taylor jet, replacing the 129 displaced dipole events
+  with one root/source while retaining the complete relativistic ordinary and
+  RFS responses.  The maintained finite-difference oracle remains the strict
+  fallback at segment boundaries, on the mutable spin tail, for one-knot
+  histories, and near particle-loss wavefronts.  A structural audit identifies
+  66 of 210 raw antisymmetric Hertz-jet coefficients as response-unused or
+  diagnostic/redundant.  The maintained exact-endpoint path now omits those
+  coefficients, emits only the 34 consumed values (four-potential, six packed
+  field coefficients, and 24 packed field derivatives), and contracts them
+  directly into ordinary charge force and RFS force/spin response without
+  materializing ``partial A``, ``F``, or ``partial F`` tensors.  The legacy
+  canonical-force path and every declared analytical fallback retain the dense
+  oracle.
+  Provider continuum, grouped trajectory, energy-ledger, and independent
+  timestep-refinement gates pass.  On the M5 Pro the 300-sample precession
+  stress path measured 1.636 s analytical versus 2.561 s full-strict and
+  11.126 s Python; backend acceptance remains separate from full-flyby physics
+  authorization.
+- Added the explicit ``numba_analytic_charge_response_serial`` exact-retarded
+  backend.  For the point-charge contribution it solves one center light cone,
+  returns the ordinary four-potential plus six independent antisymmetric
+  response coefficients and their 24 spacetime derivatives, and contracts
+  charge force, RFS dipole force, and spin response directly.  The production
+  path therefore no longer constructs charge ``F`` or ``partial_F`` tensor
+  intermediates.  Near a worldline-segment boundary or a failed timelike
+  smoothness bound it records the reason and falls back to the maintained
+  strict finite-difference oracle.  Python remains the reference/default and
+  the analytical backend remains opt-in.
+- The production acceptance suite covers rest through ``beta=0.9999``, 20,000
+  randomized covariant response contractions, failure ordering, a 19,137-knot
+  prepared history, and common-horizon electron--proton trajectory refinement.
+  On the M5 Pro, the one-root provider was 42.1x faster than the maintained
+  nine-event provider.  A 300-sample warm trajectory measured 2.370 s versus
+  2.474 s for the previous full-strict backend and 10.805 s for Python.  All
+  backend discrepancies passed the independent 0.1-times-discretization
+  uncertainty gate; this backend acceptance does not authorize a long capture
+  run.
+
+- Added atomic, append-only accepted-step checkpoints for fixed-step
+  ``BUNCH_TO_BUNCH`` runs. Checkpoints preserve hidden inertial history,
+  canonical/mechanical state, RFS spin fields, dead masks, and Medina's prior
+  external-force samples, and reject configuration or core-source fingerprint
+  mismatches on restart. Direct CLI flags, testbed JSON round trips, and GUI
+  directory/interval controls expose creation and resume. Adaptive timestep,
+  pseudo-grid, driver-train, and cavity-exit-tail restart remain explicit
+  preflight errors until their scheduler state is serialized.
+
+- Unified the exact retarded charge and dipole CPU selection under
+  ``magnetic_dipole.exact_retarded_backend`` and the direct CLI option
+  ``--exact-retarded-backend``. The former
+  ``magnetic_dipole.source.backend`` key remains an input-only compatibility
+  alias when the canonical key is absent or has the same value; conflicting
+  values are rejected, and saved configurations emit only the canonical key.
+  The choices are ``python`` (the reference/default),
+  ``numba_roots_exact_serial``, ``numba_full_strict_serial``, and the explicit
+  Apple-silicon option ``metal_certified_full_strict``.
+- Added a real optional Metal adapter for large dipole light-cone batches.
+  Metal performs only safe-math float32 bracket proposals. Every proposal is
+  checked with the original float64 endpoint residuals; the strict serial CPU
+  kernel still computes the root, worldline, Hertz tensor, field, and all
+  reductions. Invalid or failed proposals fall back to the exact CPU search.
+  Raw bracket proposals cross the CPU root near 1,024 observer events, while
+  float64 certification plus complete strict field work moves the production
+  crossover to roughly 8,192 events per uploaded source-history batch. Smaller
+  batches stay on the CPU. ``auto`` never selects Metal, and unsupported platforms fail
+  clearly without importing Metal code. The electron--proton capture run is
+  intentionally below the threshold and does not dispatch to the GPU.
+- Extended the two opt-in Numba backends to the exact charge one-event field,
+  exact charge nine-event gradient, and dipole nine-event endpoint-potential
+  paths. Charge and dipole stencil centers remain on the Python reference
+  path, while source accumulation and finite-difference assembly retain
+  reference-order Python arithmetic. The compiled kernels remain strict
+  serial binary64 with ``fastmath=False``: no ``prange``, automatic dispatch,
+  operating-system selection, or worker-count control is introduced.
+- Defined a separate ``1e-12 T`` absolute comparison budget for the saved
+  ``local_magnetic_field_*`` visualization diagnostics. Ordinary physical
+  state arrays retain the ``2e-12`` relative comparison budget. The saved
+  local-field arrays are not force-path validation; force-center fields and
+  the audited dynamical trajectory remained reference exact in the completion
+  probe. A fresh-cache 300-step check passed the named tolerance contract and
+  reduced the all-Python exact-retarded wall time from 10.8230 s to 2.53882 s
+  warm (4.263x). The corresponding roots-exact run was bitwise identical and
+  reduced 10.7346 s to 6.26003 s warm (1.7148x). The opt-in backends remain
+  subject to independent review before merge or capture-study use.
+
+- Added ``numba_full_strict_serial`` as a third explicit full-retarded source
+  backend. It compiles the serial light-cone, worldline, spin-interpolation,
+  moment, Hodge-dual, and per-source Hertz path with ``fastmath=False`` and no
+  ``prange``. Python remains the default; source accumulation and nested
+  finite differences keep the reference request and reduction order. This
+  backend has a tolerance contract rather than a bitwise-parity promise:
+  tested Hertz events differ by at most one binary64 ULP, while subtraction in
+  the nested derivative stencil can amplify that last-bit difference. Full
+  trajectories must preserve physical state within strict numerical tolerance
+  and keep cumulative projection-energy disagreement below ``0.025 meV``.
+
+- Added the explicit full-retarded source backend
+  ``numba_roots_exact_serial`` as a cross-platform CPU opt-in. ``python``
+  remains the reference/default and no automatic, platform-specific, parallel,
+  or Metal dispatch is exposed. The compiled seam solves only independent
+  light-cone roots; Python recomputes final worldline samples, residuals, Hertz
+  tensors, source sums, and finite differences in the established order. The
+  root batch also preserves the oracle's displaced-event first-use order, so
+  the earliest history or singularity failure is unchanged.
+  Explicit selection fails clearly when Numba is unavailable or initial JIT
+  compilation fails. A maintained 300-sample electron--proton benchmark
+  compares every public state array and side channel; on the M5 Pro validation
+  run it was bitwise identical and reduced wall time from 10.653 s to 6.775 s
+  after compilation (1.572x).
+
+- Corrected exact ``INERTIAL_PREHISTORY`` charge and dipole-source momentum
+  bookkeeping. The accepted step now advances the gauge-invariant mechanical
+  response ``q F`` together with the RFS ``mu G`` response, then reconstructs
+  ``P_end = p_end + q (A_charge,end + A_dipole,end) / c`` after both bunch
+  endpoints are available. The previous explicit path decoded the endpoint
+  with the start-event potential, producing a one-step potential-energy lag
+  and a false mass-shell correction. Endpoint dipole-potential evaluation uses
+  a dedicated nine-event Hertz stencil rather than the 129-event full field
+  gradient. Exact endpoint reconstruction currently requires
+  ``fixed_geometry`` self-consistency.
+- Made exact-charge/RFS trial kinematics authoritative from the spatial
+  mechanical momentum ``p = P - q A / c`` for matched RR-off and Medina
+  controls. The ordinary non-exact Medina path retains its historical
+  temporal-energy-authoritative shell, but now applies that shell before force
+  sampling and falls back to finite spatial momentum when the near-rest energy
+  is below one, rounds to rest despite nonzero momentum, has no momentum
+  direction, or is nonfinite. This prevents roundoff in ``Pt - q Phi / c``
+  from erasing a nearly stationary massive particle's motion. A nonzero Medina
+  impulse is applied as an endpoint kick and the final drift is rebuilt from
+  the post-kick on-shell state; its force derivative and energy terms remain
+  evaluated over the documented non-RR predictor interval.
+- Added signed per-step ``mass_shell_projection_energy`` diagnostics in native
+  energy units. For the accepted-on-shell exact path, the value is evaluated
+  stably as the non-RR on-shell kinetic-energy change minus the temporal
+  mechanical impulse, avoiding rest-energy cancellation for a nearly
+  stationary proton; a later Medina endpoint kick is not projection work.
+  Other paths retain the raw canonical-``Pt`` correction. The series is
+  available in trajectory arrays and is summarized per particle and in
+  combination by the first-pass capture audit, including both signed and
+  absolute accumulated correction energy.
+- Builder-published ``TrajectoryArrays`` now expose read-only NumPy views so
+  direct mutation cannot bypass trajectory-version and retarded-field cache
+  invalidation. Builder writes remain supported; callers that need an
+  independently mutable array must make an explicit copy.
+- Corrected the charge-canonical spatial vector-potential bookkeeping so
+  ``q A / c`` is an event-local momentum offset independent of the proper-time
+  step. The previous path included an extra factor of the timestep when
+  reconstructing mechanical momentum, which affected moving-source position,
+  mass-shell, and subsequent self-consistent dynamics. Static charge sources
+  were unaffected because their spatial vector potential is zero.
+- Added ``INERTIAL_PREHISTORY`` for exact RFS and retarded-dipole
+  ``BUNCH_TO_BUNCH`` runs. It builds eight sparse constant-velocity knots,
+  sizes their duration conservatively from the initial causal span, and
+  geometrically extends the prefix until every initial charge and dipole
+  finite-difference light cone is bracketed. The synthetic prefix is hidden
+  from normal output, and missing exact history after preflight now raises
+  instead of silently suppressing a force.
+- Extended the exact retarded charge provider to return one consistent
+  Lienard--Wiechert four-potential, field tensor, potential derivative, and
+  field derivative. At active time zero, inertial startup maps public
+  mechanical input to canonical momentum once as
+  ``P = p + q (A_charge + A_dipole) / c`` without changing the initialized
+  motion. Synthetic coasting history deliberately does not prime the Medina
+  force derivative.
+- Derived the native elementary charge from the repository's statcoulomb
+  conversion instead of retaining the historical rounded literal. This lowers
+  a singly charged native value by about 21.33 ppm and a two-charge Coulomb
+  force by about 42.66 ppm, while making the scaled-Gaussian unit identity
+  exact. Charged numerical baselines must be regenerated.
+- Corrected production Medina/LAD radiation reaction to retain the complete
+  lab-time derivative ``d(gamma F_ext)/dt``, including the previously omitted
+  ``gamma dF_ext/dt`` term. The derivative now uses accepted midpoint force
+  samples with a first-order backward difference; the first unprimed sample
+  reports far radiation but applies no incomplete self-force. Trajectories now
+  expose derivative readiness, cap activation, signed reaction work, and
+  Medina cross-field energy diagnostics. Capped steps must be rejected in
+  capture-validation studies.
+- Enabled the explicit ``rfs_minimal_2021`` plus ``medina_lad`` charge-only
+  radiation-reaction hybrid. The actually applied post-cap Medina force now
+  supplies the matching Fermi--Walker term at both RFS spin midpoint stages,
+  preserving the spin/velocity constraint at the equation level. This does
+  not add charge--dipole interference recoil or intrinsic-dipole self-recoil;
+  those missing ``q mu`` and ``mu^2`` sectors remain outside the model.
+
+- Added a shared immutable species registry with signed, cited free-particle
+  magnetic moments for electrons, positrons, protons, antiprotons, neutrons,
+  deuterons, tritons, helions, and spin-zero alpha particles. H- is explicitly
+  marked as requiring a custom bound-state moment model.
+- Selected the signed ``rfs_minimal_2021`` spin equation and full 2018
+  ``rfs_full_g`` tensor as the experimental physical model for charged and
+  neutral particle response. The earlier BMT/Frenkel plus static-rest-gradient
+  implementation remains available as a named diagnostic.
+- Added an observer-charge-independent point-charge Liénard--Wiechert
+  potential and field evaluator. It solves the light cone against interpolated
+  source histories at the observer event and re-solves it at every centred
+  finite-difference stencil event, so the full spacetime derivatives of both
+  potential and field include retarded-time variation.
+- Ported the production RFS response and exact retarded-field evaluator from an
+  internal SI island to the integrator's native scaled-Gaussian amu--mm--ns
+  units. Source charge now enters as ``q_source`` directly, measured signed
+  moments are converted once at initialization, and normalized spin avoids
+  carrying SI action through the hot path.
+- Kept the existing charge-canonical momentum definition: the charge path
+  supplies the Lorentz response, while RFS adds only the dipole ``d G u``
+  four-force. Independent switches expose off, spin-only, and fully coupled
+  RFS operation without counting the Lorentz force twice. In inertial startup,
+  exact charge potential, field, and derivatives come from one provider;
+  COLD_START retains the established charge kernel plus a separate exact RFS
+  field/gradient sample.
+- Added spin/moment trajectory state, testbed/CLI/GUI configuration surfaces,
+  and visualization-ready spin and local-field output. Magnetic dipoles remain
+  disabled by default.
+- Added explicit first-slice guards: coupled exact-field RFS is limited to
+  ``COLD_START`` or ``INERTIAL_PREHISTORY`` ``BUNCH_TO_BUNCH`` point-charge
+  sources, with same-bunch response, nonzero smearing, beamline stencil
+  boundaries, adaptive substeps, and pseudo-grid reconstruction all disabled.
+  Dynamic recoil is restricted to the named charge-only ``medina_lad`` hybrid.
+  Polarization is restricted to zero or one.
+- Added an optional full-retarded point-dipole source based on a conserved
+  antisymmetric moment tensor and retarded Hertz potential. The ordinary
+  non-self field includes near, induction, and radiation zones and feeds the
+  ordinary charge response and RFS response without a separate pair force.
+  Exact inertial runs reconstruct the canonical endpoint from its ordinary
+  potential. Neutral magnetic particles remain sources.
+- Added CLI and GUI choices for source off or full retarded point
+  (experimental), plus a strict minimum-separation abort boundary. Saved JSON
+  preserves the complete stencil and light-cone convergence controls. Source
+  off remains the default for legacy configurations.
+- Dipole self-reaction, contact and finite-size physics, conducting dipole
+  images, and coherent or incoherent macroparticle moment scaling remain
+  deferred. The point-source separation boundary is an abort, not softening.
+- Named magnetic presets are checked against the particle state's physical
+  mass and observer charge, preventing accidental electron-moment/proton-mass
+  hybrid particles. Deliberate custom models must state their moment and spin.
+- Added unit and integration coverage for tensor conventions, signed species,
+  charged and neutral limits, covariant RFS constraints, full-G current-region
+  response, analytic light-cone roots, complete retarded gradients, static
+  diagnostic response, model/scope guards, and feature-off equivalence.
 
 ### Testbed CLI and GUI Configuration Fidelity (August 2026)
 

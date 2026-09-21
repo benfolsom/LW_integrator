@@ -8,10 +8,16 @@ from tkinter import ttk
 from .testbed_runner import (
     AVAILABLE_DPI_CHOICES,
     CORE_PARAM_LABELS,
+    DIPOLE_SOURCE_HISTORY_OPTIONS,
+    DIPOLE_SOURCE_MODEL_OPTIONS,
+    EXACT_RETARDED_BACKEND_OPTIONS,
+    EXACT_RETARDED_UPDATE_OPTIONS,
+    INTRINSIC_SPIN_SELF_REACTION_OPTIONS,
     PARAM_LABELS,
     PARTICLE_PARAM_FIELDS,
     RADIATION_REACTION_MODE_CHOICES,
     SPECIES_OPTIONS,
+    STARTUP_MODE_OPTIONS,
 )
 
 
@@ -125,6 +131,339 @@ class IntegratorGUITabMixin:
                 Tooltip(driver_entry, tooltip_text)
 
         next_row = len(PARTICLE_PARAM_FIELDS) + 2
+        ttk.Separator(particle_frame, orient="horizontal").grid(
+            row=next_row, column=0, columnspan=4, sticky="ew", pady=(12, 12)
+        )
+        next_row += 1
+
+        magnetic_frame = ttk.LabelFrame(
+            particle_frame,
+            text="Magnetic dipole / spin (RFS, experimental)",
+            padding=8,
+        )
+        magnetic_frame.grid(
+            row=next_row, column=0, columnspan=4, sticky="ew", pady=(0, 8)
+        )
+        magnetic_frame.columnconfigure(1, weight=1)
+        magnetic_frame.columnconfigure(2, weight=1)
+
+        self.magnetic_dipole_enable_check = ttk.Checkbutton(
+            magnetic_frame,
+            text="Enable intrinsic magnetic dipole dynamics",
+            variable=self.magnetic_dipole_enabled_var,
+            command=self._on_magnetic_dipole_toggle,
+        )
+        self.magnetic_dipole_enable_check.grid(
+            row=0, column=0, columnspan=3, sticky="w"
+        )
+
+        self.magnetic_dipole_precession_check = ttk.Checkbutton(
+            magnetic_frame,
+            text="Spin precession",
+            variable=self.magnetic_dipole_spin_precession_enabled_var,
+        )
+        self.magnetic_dipole_precession_check.grid(
+            row=1, column=0, columnspan=2, sticky="w", padx=(20, 0), pady=2
+        )
+        self.magnetic_dipole_stern_gerlach_check = ttk.Checkbutton(
+            magnetic_frame,
+            text="Fully coupled force (Stern–Gerlach)",
+            variable=self.magnetic_dipole_stern_gerlach_force_enabled_var,
+        )
+        self.magnetic_dipole_stern_gerlach_check.grid(
+            row=1, column=2, sticky="w", pady=2
+        )
+
+        ttk.Label(
+            magnetic_frame,
+            text=(
+                "Default selection: RFS minimal 2021 spin transport; the "
+                "Stern–Gerlach toggle selects full G-tensor translation. "
+                "The optional full retarded point source supplies the ordinary "
+                "non-self dipole field. "
+                "Enabling RFS selects radiation reaction and adaptive timesteps "
+                "off; neither is yet part of the coupled model. Legacy "
+                "BMT/static-gradient diagnostics remain available in JSON."
+            ),
+            font=("TkDefaultFont", 8, "italic"),
+            foreground="gray40",
+            justify="left",
+            wraplength=720,
+        ).grid(row=2, column=0, columnspan=3, sticky="w", padx=(20, 0), pady=(0, 5))
+
+        self.magnetic_dipole_source_model_label = ttk.Label(
+            magnetic_frame, text="Intrinsic source field:"
+        )
+        self.magnetic_dipole_source_model_label.grid(
+            row=3, column=0, sticky="w", padx=(20, 8), pady=2
+        )
+        self.magnetic_dipole_source_model_combo = ttk.Combobox(
+            magnetic_frame,
+            textvariable=self.magnetic_dipole_source_model_var,
+            values=[label for label, _model in DIPOLE_SOURCE_MODEL_OPTIONS],
+            state="readonly",
+            width=34,
+        )
+        self.magnetic_dipole_source_model_combo.grid(
+            row=3, column=1, columnspan=2, sticky="ew", pady=2
+        )
+        self.magnetic_dipole_source_model_combo.bind(
+            "<<ComboboxSelected>>",
+            lambda _event: self._toggle_magnetic_dipole_controls(),
+        )
+        Tooltip(
+            self.magnetic_dipole_source_model_combo,
+            "Full retarded point includes near, induction, and radiation fields.",
+        )
+
+        self.magnetic_dipole_source_history_label = ttk.Label(
+            magnetic_frame, text="Dipole source history:"
+        )
+        self.magnetic_dipole_source_history_label.grid(
+            row=4, column=0, sticky="w", padx=(20, 8), pady=2
+        )
+        self.magnetic_dipole_source_history_combo = ttk.Combobox(
+            magnetic_frame,
+            textvariable=self.magnetic_dipole_source_history_var,
+            values=[label for label, _history in DIPOLE_SOURCE_HISTORY_OPTIONS],
+            state="readonly",
+            width=34,
+        )
+        self.magnetic_dipole_source_history_combo.grid(
+            row=4, column=1, columnspan=2, sticky="ew", pady=2
+        )
+        Tooltip(
+            self.magnetic_dipole_source_history_combo,
+            "Causal local jet fits acceleration and spin derivatives in explicit "
+            "physical time windows. Causal C5 and local jet currently require "
+            "the exact-pair adaptive controller.",
+        )
+
+        self.magnetic_dipole_local_jet_widths_label = ttk.Label(
+            magnetic_frame, text="Local jet N/P/W widths (ns):"
+        )
+        self.magnetic_dipole_local_jet_widths_label.grid(
+            row=5, column=0, sticky="w", padx=(20, 8), pady=2
+        )
+        local_width_frame = ttk.Frame(magnetic_frame)
+        local_width_frame.grid(row=5, column=1, columnspan=2, sticky="ew", pady=2)
+        self.magnetic_dipole_local_jet_width_entries = []
+        for column, (label, variable) in enumerate(
+            zip(("N", "P", "W"), self.magnetic_dipole_local_jet_width_vars)
+        ):
+            ttk.Label(local_width_frame, text=label).grid(
+                row=0, column=2 * column, padx=(0, 2)
+            )
+            entry = ttk.Entry(local_width_frame, textvariable=variable, width=10)
+            entry.grid(row=0, column=2 * column + 1, padx=(0, 8))
+            self.magnetic_dipole_local_jet_width_entries.append(entry)
+        Tooltip(
+            local_width_frame,
+            "Narrow, primary, and wide physical fit half-widths. All three are "
+            "required for the causal local jet and must increase strictly.",
+        )
+
+        self.magnetic_dipole_local_jet_boundary_check = ttk.Checkbutton(
+            magnetic_frame,
+            text="Accept constant-velocity prehistory as an explicit boundary model",
+            variable=self.magnetic_dipole_local_jet_assume_inertial_var,
+        )
+        self.magnetic_dipole_local_jet_boundary_check.grid(
+            row=6, column=0, columnspan=3, sticky="w", padx=(20, 0), pady=2
+        )
+
+        self.magnetic_dipole_exact_retarded_backend_label = ttk.Label(
+            magnetic_frame, text="Exact-retarded backend:"
+        )
+        self.magnetic_dipole_exact_retarded_backend_label.grid(
+            row=7, column=0, sticky="w", padx=(20, 8), pady=2
+        )
+        self.magnetic_dipole_exact_retarded_backend_combo = ttk.Combobox(
+            magnetic_frame,
+            textvariable=self.magnetic_dipole_exact_retarded_backend_var,
+            values=[label for label, _backend in EXACT_RETARDED_BACKEND_OPTIONS],
+            state="readonly",
+            width=34,
+        )
+        self.magnetic_dipole_exact_retarded_backend_combo.grid(
+            row=7, column=1, columnspan=2, sticky="ew", pady=2
+        )
+        Tooltip(
+            self.magnetic_dipole_exact_retarded_backend_combo,
+            "Roots-exact compiles only light-cone roots. Full strict also "
+            "compiles spin, moment, Hodge, and Hertz arithmetic. Both are "
+            "shared by charge and intrinsic-dipole exact-retarded fields, are "
+            "serial, and keep deterministic source/stencil reduction order.",
+        )
+
+        self.magnetic_dipole_exact_retarded_update_label = ttk.Label(
+            magnetic_frame, text="Exact-retarded update:"
+        )
+        self.magnetic_dipole_exact_retarded_update_label.grid(
+            row=8, column=0, sticky="w", padx=(20, 8), pady=2
+        )
+        self.magnetic_dipole_exact_retarded_update_combo = ttk.Combobox(
+            magnetic_frame,
+            textvariable=self.magnetic_dipole_exact_retarded_update_var,
+            values=[label for label, _update in EXACT_RETARDED_UPDATE_OPTIONS],
+            state="readonly",
+            width=34,
+        )
+        self.magnetic_dipole_exact_retarded_update_combo.grid(
+            row=8, column=1, columnspan=2, sticky="ew", pady=2
+        )
+        Tooltip(
+            self.magnetic_dipole_exact_retarded_update_combo,
+            "The experimental second-order option evaluates the Lorentz "
+            "force and its proper-time derivative at the accepted start "
+            "phase-space event, then recomposes canonical momentum at the "
+            "accepted endpoint.",
+        )
+
+        self.magnetic_dipole_intrinsic_spin_self_reaction_label = ttk.Label(
+            magnetic_frame, text="Intrinsic-spin self-reaction:"
+        )
+        self.magnetic_dipole_intrinsic_spin_self_reaction_label.grid(
+            row=9, column=0, sticky="w", padx=(20, 8), pady=2
+        )
+        self.magnetic_dipole_intrinsic_spin_self_reaction_combo = ttk.Combobox(
+            magnetic_frame,
+            textvariable=self.magnetic_dipole_intrinsic_spin_self_reaction_var,
+            values=[label for label, _mode in INTRINSIC_SPIN_SELF_REACTION_OPTIONS],
+            state="readonly",
+            width=34,
+        )
+        self.magnetic_dipole_intrinsic_spin_self_reaction_combo.grid(
+            row=9, column=1, columnspan=2, sticky="ew", pady=2
+        )
+        Tooltip(
+            self.magnetic_dipole_intrinsic_spin_self_reaction_combo,
+            "Diagnostic only records the analytical or causal q-mu estimate "
+            "after joint adaptive acceptance. It does not change the orbit or spin.",
+        )
+
+        self.magnetic_dipole_source_cutoff_label = ttk.Label(
+            magnetic_frame, text="Minimum separation abort (mm):"
+        )
+        self.magnetic_dipole_source_cutoff_label.grid(
+            row=10, column=0, sticky="w", padx=(20, 8), pady=2
+        )
+        self.magnetic_dipole_source_cutoff_entry = ttk.Entry(
+            magnetic_frame,
+            textvariable=self.magnetic_dipole_source_minimum_separation_var,
+            width=16,
+        )
+        self.magnetic_dipole_source_cutoff_entry.grid(
+            row=10, column=1, sticky="ew", padx=(0, 8), pady=2
+        )
+        Tooltip(
+            self.magnetic_dipole_source_cutoff_entry,
+            "Strict point-source singularity guard; this does not soften the field.",
+        )
+
+        self.magnetic_rider_heading_label = ttk.Label(
+            magnetic_frame, text="Rider", font=("TkDefaultFont", 8, "bold")
+        )
+        self.magnetic_rider_heading_label.grid(row=11, column=1, sticky="w")
+        self.magnetic_driver_heading_label = ttk.Label(
+            magnetic_frame, text="Driver", font=("TkDefaultFont", 8, "bold")
+        )
+        self.magnetic_driver_heading_label.grid(row=11, column=2, sticky="w")
+
+        self.magnetic_species_label = ttk.Label(magnetic_frame, text="Species preset:")
+        self.magnetic_species_label.grid(
+            row=12, column=0, sticky="w", padx=(20, 8), pady=2
+        )
+        magnetic_species_labels = list(self._magnetic_species_by_label)
+        self.rider_magnetic_species_combo = ttk.Combobox(
+            magnetic_frame,
+            textvariable=self.rider_magnetic_species_var,
+            values=magnetic_species_labels,
+            state="readonly",
+            width=24,
+        )
+        self.rider_magnetic_species_combo.grid(
+            row=12, column=1, sticky="ew", padx=(0, 8), pady=2
+        )
+        self.driver_magnetic_species_combo = ttk.Combobox(
+            magnetic_frame,
+            textvariable=self.driver_magnetic_species_var,
+            values=magnetic_species_labels,
+            state="readonly",
+            width=24,
+        )
+        self.driver_magnetic_species_combo.grid(row=12, column=2, sticky="ew", pady=2)
+
+        self.magnetic_spin_labels = []
+        self.rider_rest_spin_entries = []
+        self.driver_rest_spin_entries = []
+        for row_offset, axis in enumerate(("x", "y", "z"), start=13):
+            label = ttk.Label(magnetic_frame, text=f"Rest spin {axis}:")
+            label.grid(row=row_offset, column=0, sticky="w", padx=(20, 8), pady=2)
+            self.magnetic_spin_labels.append(label)
+
+            rider_entry = ttk.Entry(
+                magnetic_frame,
+                textvariable=self.rider_rest_spin_vars[row_offset - 13],
+                width=12,
+            )
+            rider_entry.grid(row=row_offset, column=1, sticky="ew", padx=(0, 8), pady=2)
+            self.rider_rest_spin_entries.append(rider_entry)
+
+            driver_entry = ttk.Entry(
+                magnetic_frame,
+                textvariable=self.driver_rest_spin_vars[row_offset - 13],
+                width=12,
+            )
+            driver_entry.grid(row=row_offset, column=2, sticky="ew", pady=2)
+            self.driver_rest_spin_entries.append(driver_entry)
+
+        self._magnetic_dipole_common_controls = [
+            (self.magnetic_dipole_precession_check, "normal"),
+            (self.magnetic_dipole_stern_gerlach_check, "normal"),
+            (self.magnetic_dipole_source_model_combo, "readonly"),
+            (self.magnetic_dipole_exact_retarded_backend_combo, "readonly"),
+            (self.magnetic_dipole_exact_retarded_update_combo, "readonly"),
+            (
+                self.magnetic_dipole_intrinsic_spin_self_reaction_combo,
+                "readonly",
+            ),
+        ]
+        self._magnetic_dipole_source_controls = [
+            (self.magnetic_dipole_source_history_combo, "readonly"),
+            (self.magnetic_dipole_source_cutoff_entry, "normal"),
+            *(
+                (entry, "normal")
+                for entry in self.magnetic_dipole_local_jet_width_entries
+            ),
+            (self.magnetic_dipole_local_jet_boundary_check, "normal"),
+        ]
+        self._magnetic_dipole_rider_controls = [
+            (self.rider_magnetic_species_combo, "readonly"),
+            *((entry, "normal") for entry in self.rider_rest_spin_entries),
+        ]
+        self._magnetic_dipole_driver_controls = [
+            (self.driver_magnetic_species_combo, "readonly"),
+            *((entry, "normal") for entry in self.driver_rest_spin_entries),
+        ]
+        self._magnetic_dipole_common_labels = [
+            self.magnetic_species_label,
+            *self.magnetic_spin_labels,
+            self.magnetic_dipole_source_model_label,
+            self.magnetic_dipole_exact_retarded_backend_label,
+            self.magnetic_dipole_exact_retarded_update_label,
+            self.magnetic_dipole_intrinsic_spin_self_reaction_label,
+        ]
+        self._magnetic_dipole_source_labels = [
+            self.magnetic_dipole_source_history_label,
+            self.magnetic_dipole_source_cutoff_label,
+            self.magnetic_dipole_local_jet_widths_label,
+        ]
+        self._magnetic_dipole_rider_labels = [self.magnetic_rider_heading_label]
+        self._magnetic_dipole_driver_labels = [self.magnetic_driver_heading_label]
+        self._toggle_magnetic_dipole_controls()
+
+        next_row += 1
         ttk.Label(particle_frame, text="Image subcharge count:").grid(
             row=next_row, column=0, sticky="w", pady=(12, 2)
         )
@@ -921,7 +1260,7 @@ class IntegratorGUITabMixin:
         startup_mode_combo = ttk.Combobox(
             core_frame,
             textvariable=self.core_param_vars["startup_mode"],
-            values=["COLD_START", "APPROXIMATE_BACK_HISTORY"],
+            values=STARTUP_MODE_OPTIONS,
             state="readonly",
             width=22,
         )
@@ -937,20 +1276,28 @@ class IntegratorGUITabMixin:
             "  • Avoids unphysical extrapolation errors\n"
             "  • Compatible with all features (adaptive timestep, energy monitor)\n"
             "  • May show startup transient in first ~100 steps\n\n"
+            "INERTIAL_PREHISTORY (exact-history startup):\n"
+            "  • Adds a finite synthetic inertial-coasting prefix before t = 0\n"
+            "  • Supplies exact retarded light-cone support immediately\n"
+            "  • Keeps the synthetic prefix out of normal trajectory output\n"
+            "  • Leaves the Medina force derivative unprimed at active t = 0\n"
+            "  • Suits incoming-particle and steady-coasting initial states\n\n"
             "APPROXIMATE_BACK_HISTORY (experimental, benchmarking only):\n"
             "  • Assumes particles had constant velocity since t = -∞\n"
             "  • Enables immediate force calculation (no gating)\n"
             "  • Intended only for benchmark/reference studies\n"
             "  • Not validated for production physics\n"
             "  • May introduce unphysical initial conditions\n\n"
-            "For production: use COLD_START\n"
+            "For physical turn-on transients: use COLD_START\n"
+            "For exact steady-coasting startup: use INERTIAL_PREHISTORY\n"
             "For reference benchmarking: use APPROXIMATE_BACK_HISTORY",
         )
         row += 1
 
         startup_help_label = ttk.Label(
             core_frame,
-            text="COLD_START (recommended): Forces gated until causal history available\n"
+            text="COLD_START: Forces gated until causal history is available\n"
+            "INERTIAL_PREHISTORY: Finite coasting prefix for exact retarded startup\n"
             "APPROXIMATE_BACK_HISTORY: Constant-velocity extrapolation (benchmarking only)",
             foreground="gray",
             font=("TkDefaultFont", 8),
@@ -1274,7 +1621,7 @@ class IntegratorGUITabMixin:
             "future extension, not this panel.",
         )
 
-        ttk.Label(field_frame, text="Electric field input:").grid(
+        ttk.Label(field_frame, text="Field input units:").grid(
             row=2, column=0, sticky="w", pady=2, padx=(20, 0)
         )
         self.external_field_input_mode_combo = ttk.Combobox(
@@ -1297,6 +1644,8 @@ class IntegratorGUITabMixin:
         self.external_electric_si_entries = []
         self.external_electric_native_labels = []
         self.external_electric_native_entries = []
+        self.external_magnetic_tesla_labels = []
+        self.external_magnetic_tesla_entries = []
         self.external_magnetic_labels = []
         self.external_magnetic_entries = []
 
@@ -1320,15 +1669,57 @@ class IntegratorGUITabMixin:
             entry.grid(row=5, column=column, sticky="ew", pady=2, padx=(0, 6))
             self.external_electric_native_entries.append(entry)
 
+        self.external_magnetic_tesla_label = ttk.Label(field_frame, text="B (T):")
+        self.external_magnetic_tesla_label.grid(
+            row=6, column=0, sticky="w", pady=2, padx=(20, 0)
+        )
+        self.external_magnetic_tesla_labels.append(self.external_magnetic_tesla_label)
+        for column, var in enumerate(self.external_magnetic_tesla_vars, start=1):
+            entry = ttk.Entry(field_frame, textvariable=var, width=14)
+            entry.grid(row=6, column=column, sticky="ew", pady=2, padx=(0, 6))
+            self.external_magnetic_tesla_entries.append(entry)
+
         self.external_magnetic_label = ttk.Label(field_frame, text="B (native):")
         self.external_magnetic_label.grid(
-            row=6, column=0, sticky="w", pady=2, padx=(20, 0)
+            row=7, column=0, sticky="w", pady=2, padx=(20, 0)
         )
         self.external_magnetic_labels.append(self.external_magnetic_label)
         for column, var in enumerate(self.external_magnetic_native_vars, start=1):
             entry = ttk.Entry(field_frame, textvariable=var, width=14)
-            entry.grid(row=6, column=column, sticky="ew", pady=2, padx=(0, 6))
+            entry.grid(row=7, column=column, sticky="ew", pady=2, padx=(0, 6))
             self.external_magnetic_entries.append(entry)
+
+        ttk.Label(
+            field_frame,
+            text=(
+                "Optional prescribed static gradient dBᵢ/dxⱼ in T/m. "
+                "Rows are Bx/By/Bz and columns are x/y/z."
+            ),
+            font=("TkDefaultFont", 8, "italic"),
+            foreground="gray50",
+            wraplength=720,
+        ).grid(row=8, column=0, columnspan=4, sticky="w", pady=(12, 4), padx=(20, 0))
+
+        gradient_frame = ttk.LabelFrame(
+            field_frame, text="Static magnetic-field gradient (T/m)", padding=8
+        )
+        gradient_frame.grid(row=9, column=0, columnspan=4, sticky="ew", pady=(0, 8))
+        for column, coordinate in enumerate(("x", "y", "z"), start=1):
+            gradient_frame.columnconfigure(column, weight=1)
+            ttk.Label(gradient_frame, text=f"d/d{coordinate}").grid(
+                row=0, column=column, sticky="w"
+            )
+        self.external_magnetic_gradient_entries = []
+        for row, (component, variables) in enumerate(
+            zip(("Bx", "By", "Bz"), self.external_magnetic_gradient_vars), start=1
+        ):
+            ttk.Label(gradient_frame, text=component).grid(
+                row=row, column=0, sticky="w", padx=(0, 8), pady=2
+            )
+            for column, var in enumerate(variables, start=1):
+                entry = ttk.Entry(gradient_frame, textvariable=var, width=14)
+                entry.grid(row=row, column=column, sticky="ew", padx=(0, 6), pady=2)
+                self.external_magnetic_gradient_entries.append(entry)
 
         ttk.Label(
             field_frame,
@@ -1336,10 +1727,10 @@ class IntegratorGUITabMixin:
             font=("TkDefaultFont", 8, "italic"),
             foreground="gray50",
             wraplength=720,
-        ).grid(row=7, column=0, columnspan=4, sticky="w", pady=(12, 4), padx=(20, 0))
+        ).grid(row=10, column=0, columnspan=4, sticky="w", pady=(12, 4), padx=(20, 0))
 
         window_frame = ttk.LabelFrame(field_frame, text="Field Window", padding=8)
-        window_frame.grid(row=8, column=0, columnspan=4, sticky="ew", pady=(0, 12))
+        window_frame.grid(row=11, column=0, columnspan=4, sticky="ew", pady=(0, 12))
         window_frame.columnconfigure(1, weight=1)
         window_frame.columnconfigure(2, weight=1)
         ttk.Label(window_frame, text="min").grid(row=0, column=1, sticky="w")
@@ -1365,8 +1756,11 @@ class IntegratorGUITabMixin:
             *self.external_electric_si_entries,
             self.external_electric_native_label,
             *self.external_electric_native_entries,
+            self.external_magnetic_tesla_label,
+            *self.external_magnetic_tesla_entries,
             self.external_magnetic_label,
             *self.external_magnetic_entries,
+            *self.external_magnetic_gradient_entries,
             *self.external_field_window_entries,
         ]
 
@@ -1396,12 +1790,30 @@ class IntegratorGUITabMixin:
                 widget.configure(state=native_state)
             except Exception:
                 pass
-        for widget in [
+        si_widgets = [
             self.external_electric_si_label,
             *self.external_electric_si_entries,
-        ]:
+        ]
+        if hasattr(self, "external_magnetic_tesla_label"):
+            si_widgets.extend(
+                [
+                    self.external_magnetic_tesla_label,
+                    *self.external_magnetic_tesla_entries,
+                ]
+            )
+        for widget in si_widgets:
             try:
                 widget.configure(state=si_state)
+            except Exception:
+                pass
+        native_magnetic_widgets = []
+        if hasattr(self, "external_magnetic_label"):
+            native_magnetic_widgets.extend(
+                [self.external_magnetic_label, *self.external_magnetic_entries]
+            )
+        for widget in native_magnetic_widgets:
+            try:
+                widget.configure(state=native_state)
             except Exception:
                 pass
 

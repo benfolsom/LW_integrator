@@ -27,7 +27,7 @@ def test_cgs_charge_constant_is_conversion_only() -> None:
     converted = ELEMENTARY_CHARGE_STATC * STATCOULOMB_TO_NATIVE_CHARGE
 
     assert ELEMENTARY_CHARGE_GU == pytest.approx(ELEMENTARY_CHARGE_STATC)
-    assert converted == pytest.approx(ELEMENTARY_CHARGE, rel=3e-5)
+    assert converted == ELEMENTARY_CHARGE
     assert ELEMENTARY_CHARGE_GU != pytest.approx(ELEMENTARY_CHARGE)
 
 

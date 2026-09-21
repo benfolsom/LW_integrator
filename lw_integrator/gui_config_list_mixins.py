@@ -108,6 +108,32 @@ class IntegratorGUIConfigListMixin:
             self._last_output_dir = directory
             self._save_preferences()
 
+    def _select_checkpoint_directory(self) -> None:
+        initial_dir = self.checkpoint_directory_var.get() or self.output_dir_var.get()
+        if not os.path.exists(initial_dir):
+            initial_dir = self._default_output_dir
+        directory = filedialog.askdirectory(
+            title="Select checkpoint directory",
+            initialdir=initial_dir,
+            mustexist=False,
+        )
+        if directory:
+            self.checkpoint_directory_var.set(directory)
+            self.checkpoint_enabled_var.set(True)
+
+    def _select_checkpoint_resume_directory(self) -> None:
+        initial_dir = self.checkpoint_resume_from_var.get() or self.output_dir_var.get()
+        if not os.path.exists(initial_dir):
+            initial_dir = self._default_output_dir
+        directory = filedialog.askdirectory(
+            title="Select checkpoint to resume",
+            initialdir=initial_dir,
+            mustexist=True,
+        )
+        if directory:
+            self.checkpoint_resume_from_var.set(directory)
+            self.checkpoint_enabled_var.set(True)
+
     def _select_sweep_config_dir(self) -> None:
         initial_dir = self.sweep_config_dir_var.get()
         if not os.path.exists(initial_dir):

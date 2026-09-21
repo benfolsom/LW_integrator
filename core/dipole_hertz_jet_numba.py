@@ -1,0 +1,914 @@
+"""Strict-float64 third-order Hertz-response jet kernel."""
+
+from __future__ import annotations
+
+from itertools import permutations, product
+from math import factorial
+from typing import cast
+
+import numpy as np
+from numba import njit  # type: ignore[import-untyped]
+
+from .constants import C_MMNS
+
+_DIMENSION = 4
+_ORDER = 3
+
+
+def _build_tables() -> tuple[
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+]:
+    multiindices: list[tuple[int, int, int, int]] = []
+    for total_degree in range(_ORDER + 1):
+        for alpha in product(range(total_degree + 1), repeat=_DIMENSION):
+            if sum(alpha) == total_degree:
+                multiindices.append(cast(tuple[int, int, int, int], alpha))
+    index = {alpha: position for position, alpha in enumerate(multiindices)}
+    maximum_splits = 8
+    split_count = np.zeros(len(multiindices), dtype=np.int64)
+    split_left = np.full((len(multiindices), maximum_splits), -1, dtype=np.int64)
+    split_right = np.full((len(multiindices), maximum_splits), -1, dtype=np.int64)
+    for result_index, alpha in enumerate(multiindices):
+        splits = list(product(*(range(value + 1) for value in alpha)))
+        split_count[result_index] = len(splits)
+        for split_index, beta in enumerate(splits):
+            beta_key = cast(tuple[int, int, int, int], beta)
+            gamma = cast(
+                tuple[int, int, int, int],
+                tuple(alpha[axis] - beta[axis] for axis in range(_DIMENSION)),
+            )
+            split_left[result_index, split_index] = index[beta_key]
+            split_right[result_index, split_index] = index[gamma]
+
+    def derivative_slot(indices: tuple[int, ...]) -> tuple[int, float]:
+        alpha = [0, 0, 0, 0]
+        for derivative_index in indices:
+            alpha[derivative_index] += 1
+        multiindex = cast(tuple[int, int, int, int], tuple(alpha))
+        scale = 1
+        for multiplicity in multiindex:
+            scale *= factorial(multiplicity)
+        return index[multiindex], float(scale)
+
+    derivative_index = np.empty((4, 4, 4), dtype=np.int64)
+    derivative_scale = np.empty((4, 4, 4), dtype=np.float64)
+    for first in range(4):
+        for second in range(4):
+            for third in range(4):
+                slot, scale = derivative_slot((first, second, third))
+                derivative_index[first, second, third] = slot
+                derivative_scale[first, second, third] = scale
+    first_index = np.empty(4, dtype=np.int64)
+    second_index = np.empty((4, 4), dtype=np.int64)
+    second_scale = np.empty((4, 4), dtype=np.float64)
+    for first in range(4):
+        first_index[first] = derivative_slot((first,))[0]
+        for second in range(4):
+            slot, scale = derivative_slot((first, second))
+            second_index[first, second] = slot
+            second_scale[first, second] = scale
+    return (
+        split_count,
+        split_left,
+        split_right,
+        first_index,
+        second_index,
+        second_scale,
+        derivative_index,
+        derivative_scale,
+    )
+
+
+(
+    _SPLIT_COUNT,
+    _SPLIT_LEFT,
+    _SPLIT_RIGHT,
+    _FIRST_INDEX,
+    _SECOND_INDEX,
+    _SECOND_SCALE,
+    _THIRD_INDEX,
+    _THIRD_SCALE,
+) = _build_tables()
+_JET_SIZE = int(_SPLIT_COUNT.size)
+_METRIC_SIGNS = np.asarray((1.0, -1.0, -1.0, -1.0))
+_HERTZ_PAIRS = ((0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3))
+_HERTZ_PAIR_ARRAY = np.asarray(_HERTZ_PAIRS, dtype=np.int64)
+
+
+def _build_sparse_response_tables(include_partial_a: bool = False) -> tuple[
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+]:
+    """Build the 34-response map, optionally including 16 potential derivatives."""
+
+    pair_index = np.full((4, 4), -1, dtype=np.int64)
+    pair_sign = np.zeros((4, 4), dtype=np.float64)
+    for index, (first, second) in enumerate(_HERTZ_PAIRS):
+        pair_index[first, second] = index
+        pair_index[second, first] = index
+        pair_sign[first, second] = 1.0
+        pair_sign[second, first] = -1.0
+
+    output_count = 50 if include_partial_a else 34
+    output_terms: list[dict[int, float]] = [dict() for _ in range(output_count)]
+
+    def add_term(output: int, mu: int, nu: int, slot: int, scale: float) -> None:
+        if mu == nu or scale == 0.0:
+            return
+        packed_index = int(pair_index[mu, nu])
+        coefficient_index = packed_index * _JET_SIZE + int(slot)
+        coefficient = float(scale) * float(pair_sign[mu, nu])
+        output_terms[output][coefficient_index] = (
+            output_terms[output].get(coefficient_index, 0.0) + coefficient
+        )
+
+    # A^mu = partial_rho H^{mu rho}.
+    for mu in range(4):
+        for rho in range(4):
+            add_term(mu, mu, rho, int(_FIRST_INDEX[rho]), 1.0)
+
+    # Pack F and partial F in the maintained upper-triangle pair order.
+    for response_pair, (mu, nu) in enumerate(_HERTZ_PAIRS):
+        field_output = 4 + response_pair
+        for rho in range(4):
+            add_term(
+                field_output,
+                nu,
+                rho,
+                int(_SECOND_INDEX[mu, rho]),
+                _METRIC_SIGNS[mu] * _SECOND_SCALE[mu, rho],
+            )
+            add_term(
+                field_output,
+                mu,
+                rho,
+                int(_SECOND_INDEX[nu, rho]),
+                -_METRIC_SIGNS[nu] * _SECOND_SCALE[nu, rho],
+            )
+        for derivative in range(4):
+            partial_output = 10 + derivative * 6 + response_pair
+            for rho in range(4):
+                add_term(
+                    partial_output,
+                    nu,
+                    rho,
+                    int(_THIRD_INDEX[derivative, mu, rho]),
+                    _METRIC_SIGNS[mu] * _THIRD_SCALE[derivative, mu, rho],
+                )
+                add_term(
+                    partial_output,
+                    mu,
+                    rho,
+                    int(_THIRD_INDEX[derivative, nu, rho]),
+                    -_METRIC_SIGNS[nu] * _THIRD_SCALE[derivative, nu, rho],
+                )
+
+    if include_partial_a:
+        for derivative in range(4):
+            for mu in range(4):
+                for rho in range(4):
+                    add_term(
+                        34 + 4 * derivative + mu,
+                        mu,
+                        rho,
+                        int(_SECOND_INDEX[derivative, rho]),
+                        _SECOND_SCALE[derivative, rho],
+                    )
+
+    # Exact cancellations implement the four Bianchi redundancies.  Remove
+    # their zero coefficients before declaring a Hertz coefficient influential.
+    normalized_terms = [
+        tuple((index, scale) for index, scale in terms.items() if scale != 0.0)
+        for terms in output_terms
+    ]
+    used = np.zeros((6, _JET_SIZE), dtype=np.bool_)
+    for terms in normalized_terms:
+        for coefficient_index, _scale in terms:
+            used[coefficient_index // _JET_SIZE, coefficient_index % _JET_SIZE] = True
+
+    used_count = np.count_nonzero(used, axis=1).astype(np.int64)
+    maximum_used = int(np.max(used_count))
+    used_slot = np.full((6, maximum_used), -1, dtype=np.int64)
+    used_offset = np.zeros(7, dtype=np.int64)
+    compact_index = np.full(6 * _JET_SIZE, -1, dtype=np.int64)
+    compact_position = 0
+    for packed_index in range(6):
+        used_offset[packed_index] = compact_position
+        ordinal = 0
+        for slot in range(_JET_SIZE):
+            if used[packed_index, slot]:
+                used_slot[packed_index, ordinal] = slot
+                compact_index[packed_index * _JET_SIZE + slot] = compact_position
+                compact_position += 1
+                ordinal += 1
+    used_offset[6] = compact_position
+
+    maximum_terms = max(len(terms) for terms in normalized_terms)
+    term_count = np.zeros(output_count, dtype=np.int64)
+    term_index = np.full((output_count, maximum_terms), -1, dtype=np.int64)
+    term_scale = np.zeros((output_count, maximum_terms), dtype=np.float64)
+    for output, terms in enumerate(normalized_terms):
+        term_count[output] = len(terms)
+        for term, (coefficient_index, scale) in enumerate(terms):
+            term_index[output, term] = compact_index[coefficient_index]
+            term_scale[output, term] = scale
+    return (
+        term_count,
+        term_index,
+        term_scale,
+        used,
+        used_count,
+        used_slot,
+        used_offset,
+    )
+
+
+(
+    _RESPONSE_TERM_COUNT,
+    _RESPONSE_TERM_INDEX,
+    _RESPONSE_TERM_SCALE,
+    _HERTZ_RESPONSE_USED,
+    _HERTZ_RESPONSE_USED_COUNT,
+    _HERTZ_RESPONSE_USED_SLOT,
+    _HERTZ_RESPONSE_USED_OFFSET,
+) = _build_sparse_response_tables()
+_SPARSE_HERTZ_SIZE = int(_HERTZ_RESPONSE_USED_OFFSET[-1])
+(
+    _POTENTIAL_RATE_TERM_COUNT,
+    _POTENTIAL_RATE_TERM_INDEX,
+    _POTENTIAL_RATE_TERM_SCALE,
+    _POTENTIAL_RATE_USED,
+    _POTENTIAL_RATE_USED_COUNT,
+    _POTENTIAL_RATE_USED_SLOT,
+    _POTENTIAL_RATE_USED_OFFSET,
+) = _build_sparse_response_tables(True)
+
+
+def _levi_civita_upper() -> np.ndarray:
+    tensor = np.zeros((4, 4, 4, 4), dtype=np.float64)
+    for permutation in permutations(range(4)):
+        inversions = sum(
+            permutation[left] > permutation[right]
+            for left in range(4)
+            for right in range(left + 1, 4)
+        )
+        tensor[permutation] = -1.0 if inversions % 2 == 0 else 1.0
+    return tensor
+
+
+_LEVI_CIVITA_UPPER = _levi_civita_upper()
+
+
+@njit(cache=True, fastmath=False, inline="always")
+def _constant(value: float) -> np.ndarray:
+    result = np.zeros(_JET_SIZE, dtype=np.float64)
+    result[0] = value
+    return result
+
+
+@njit(cache=True, fastmath=False, inline="always")
+def _variable(value: float, index: int) -> np.ndarray:
+    result = _constant(value)
+    result[_FIRST_INDEX[index]] = 1.0
+    return result  # type: ignore[no-any-return]
+
+
+@njit(cache=True, fastmath=False, inline="always")
+def _multiply(left: np.ndarray, right: np.ndarray) -> np.ndarray:
+    result = np.empty(_JET_SIZE, dtype=np.float64)
+    for result_index in range(_JET_SIZE):
+        total = 0.0
+        for split_index in range(_SPLIT_COUNT[result_index]):
+            total += (
+                left[_SPLIT_LEFT[result_index, split_index]]
+                * right[_SPLIT_RIGHT[result_index, split_index]]
+            )
+        result[result_index] = total
+    return result
+
+
+@njit(cache=True, fastmath=False, inline="always")
+def _materialize_sparse_response(hertz_compact: np.ndarray) -> np.ndarray:
+    response = np.zeros(34, dtype=np.float64)
+    for output in range(34):
+        total = 0.0
+        for term in range(_RESPONSE_TERM_COUNT[output]):
+            total += (
+                _RESPONSE_TERM_SCALE[output, term]
+                * hertz_compact[_RESPONSE_TERM_INDEX[output, term]]
+            )
+        response[output] = total
+    return response
+
+
+@njit(cache=True, fastmath=False, inline="always")
+def _reciprocal(value: np.ndarray) -> np.ndarray:
+    result = np.zeros(_JET_SIZE, dtype=np.float64)
+    result[0] = 1.0 / value[0]
+    for result_index in range(1, _JET_SIZE):
+        total = 0.0
+        for split_index in range(_SPLIT_COUNT[result_index]):
+            left_index = _SPLIT_LEFT[result_index, split_index]
+            if left_index == 0:
+                continue
+            right_index = _SPLIT_RIGHT[result_index, split_index]
+            total += value[left_index] * result[right_index]
+        result[result_index] = -total / value[0]
+    return result
+
+
+@njit(cache=True, fastmath=False, inline="always")
+def _divide(left: np.ndarray, right: np.ndarray) -> np.ndarray:
+    return _multiply(left, _reciprocal(right))  # type: ignore[no-any-return]
+
+
+@njit(cache=True, fastmath=False, inline="always")
+def _sqrt(value: np.ndarray) -> np.ndarray:
+    result = _constant(np.sqrt(value[0]))
+    for _ in range(3):
+        result = 0.5 * (result + _divide(value, result))
+    return result  # type: ignore[no-any-return]
+
+
+@njit(cache=True, fastmath=False, inline="always")
+def _polynomial(coefficients: np.ndarray, argument: np.ndarray) -> np.ndarray:
+    result = _constant(0.0)
+    for index in range(coefficients.size - 1, -1, -1):
+        result = _multiply(result, argument)
+        result[0] += coefficients[index]
+    return result  # type: ignore[no-any-return]
+
+
+@njit(cache=True, fastmath=False, inline="always")
+def _dot(left: np.ndarray, right: np.ndarray) -> np.ndarray:
+    result = _constant(0.0)
+    for index in range(left.shape[0]):
+        result += _multiply(left[index], right[index])
+    return result  # type: ignore[no-any-return]
+
+
+@njit(cache=True, fastmath=False, inline="always")
+def _source_kinematics(
+    source_coordinate: np.ndarray,
+    start_coordinate: float,
+    duration_coordinate: float,
+    position_coefficients_mm: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    normalized_time = (
+        source_coordinate - _constant(start_coordinate)
+    ) / duration_coordinate
+    source_position = np.empty((3, _JET_SIZE), dtype=np.float64)
+    source_beta = np.empty((3, _JET_SIZE), dtype=np.float64)
+    beta_coefficients = np.empty(5, dtype=np.float64)
+    for component in range(3):
+        source_position[component] = _polynomial(
+            position_coefficients_mm[:, component], normalized_time
+        )
+        for order in range(1, 6):
+            beta_coefficients[order - 1] = (
+                order * position_coefficients_mm[order, component] / duration_coordinate
+            )
+        source_beta[component] = _polynomial(beta_coefficients, normalized_time)
+    return normalized_time, source_position, source_beta
+
+
+@njit(cache=True, fastmath=False, inline="always")
+def _source_state(
+    source_coordinate: np.ndarray,
+    start_coordinate: float,
+    duration_coordinate: float,
+    position_coefficients_mm: np.ndarray,
+    spin_coefficients: np.ndarray,
+    preserve_magnitude: bool,
+    preserved_magnitude: float,
+) -> tuple[int, np.ndarray, np.ndarray, np.ndarray]:
+    normalized_time, source_position, source_beta = _source_kinematics(
+        source_coordinate,
+        start_coordinate,
+        duration_coordinate,
+        position_coefficients_mm,
+    )
+    source_spin = np.empty((3, _JET_SIZE), dtype=np.float64)
+    for component in range(3):
+        source_spin[component] = _polynomial(
+            spin_coefficients[:, component], normalized_time
+        )
+    if preserve_magnitude:
+        if preserved_magnitude == 0.0:
+            source_spin[:, :] = 0.0
+        else:
+            magnitude = _sqrt(_dot(source_spin, source_spin))
+            if magnitude[0] <= 1.0e-15:
+                return 1, source_position, source_beta, source_spin
+            scale = _divide(_constant(preserved_magnitude), magnitude)
+            for component in range(3):
+                source_spin[component] = _multiply(source_spin[component], scale)
+    return 0, source_position, source_beta, source_spin
+
+
+@njit(cache=True, fastmath=False)
+def quintic_dipole_hertz_response_coefficients_strict_serial(
+    observer_time_ns: float,
+    observer_position_mm: np.ndarray,
+    magnetic_moment_native: float,
+    segment_start_time_ns: float,
+    segment_duration_ns: float,
+    position_coefficients_mm: np.ndarray,
+    spin_coefficients: np.ndarray,
+    preserve_magnitude: bool,
+    preserved_magnitude: float,
+    retarded_time_ns: float,
+) -> tuple[
+    int,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    float,
+]:
+    """Return status, H, A, partial-A, F, partial-F, root derivatives, residual."""
+
+    observer = np.empty((4, _JET_SIZE), dtype=np.float64)
+    observer[0] = _variable(C_MMNS * observer_time_ns, 0)
+    for component in range(3):
+        observer[component + 1] = _variable(
+            observer_position_mm[component], component + 1
+        )
+    source_coordinate = _constant(C_MMNS * retarded_time_ns)
+    start_coordinate = C_MMNS * segment_start_time_ns
+    duration_coordinate = C_MMNS * segment_duration_ns
+
+    light_cone = _constant(0.0)
+    for _ in range(4):
+        status, source_position, source_beta, _ = _source_state(
+            source_coordinate,
+            start_coordinate,
+            duration_coordinate,
+            position_coefficients_mm,
+            spin_coefficients,
+            preserve_magnitude,
+            preserved_magnitude,
+        )
+        if status != 0:
+            empty4 = np.zeros(4, dtype=np.float64)
+            empty44 = np.zeros((4, 4), dtype=np.float64)
+            empty444 = np.zeros((4, 4, 4), dtype=np.float64)
+            return (
+                status,
+                empty44,
+                empty4,
+                empty44,
+                empty44,
+                empty444,
+                empty4,
+                empty44,
+                empty444,
+                np.nan,
+            )
+        separation_vector = np.empty((3, _JET_SIZE), dtype=np.float64)
+        for component in range(3):
+            separation_vector[component] = (
+                observer[component + 1] - source_position[component]
+            )
+        separation = _sqrt(_dot(separation_vector, separation_vector))
+        direction = np.empty((3, _JET_SIZE), dtype=np.float64)
+        for component in range(3):
+            direction[component] = _divide(separation_vector[component], separation)
+        light_cone = observer[0] - source_coordinate - separation
+        light_cone[0] = 0.0
+        derivative = _constant(-1.0) + _dot(direction, source_beta)
+        source_coordinate = source_coordinate - _divide(light_cone, derivative)
+
+    status, source_position, source_beta, source_spin = _source_state(
+        source_coordinate,
+        start_coordinate,
+        duration_coordinate,
+        position_coefficients_mm,
+        spin_coefficients,
+        preserve_magnitude,
+        preserved_magnitude,
+    )
+    separation_vector = np.empty((3, _JET_SIZE), dtype=np.float64)
+    for component in range(3):
+        separation_vector[component] = (
+            observer[component + 1] - source_position[component]
+        )
+    separation = _sqrt(_dot(separation_vector, separation_vector))
+    direction = np.empty((3, _JET_SIZE), dtype=np.float64)
+    for component in range(3):
+        direction[component] = _divide(separation_vector[component], separation)
+    kappa = _constant(1.0) - _dot(direction, source_beta)
+    if kappa[0] <= 1.0e-14:
+        status = 2
+    beta_squared = _dot(source_beta, source_beta)
+    if beta_squared[0] >= 1.0:
+        status = 3
+    if status != 0:
+        empty4 = np.zeros(4, dtype=np.float64)
+        empty44 = np.zeros((4, 4), dtype=np.float64)
+        empty444 = np.zeros((4, 4, 4), dtype=np.float64)
+        return (
+            status,
+            empty44,
+            empty4,
+            empty44,
+            empty44,
+            empty444,
+            empty4,
+            empty44,
+            empty444,
+            np.nan,
+        )
+    gamma = _reciprocal(_sqrt(_constant(1.0) - beta_squared))
+    projection = _dot(source_beta, source_spin)
+    boost_coefficient = _multiply(
+        _divide(_multiply(gamma, gamma), gamma + _constant(1.0)), projection
+    )
+    moment_four = np.empty((4, _JET_SIZE), dtype=np.float64)
+    moment_four[0] = magnetic_moment_native * _multiply(gamma, projection)
+    for component in range(3):
+        moment_four[component + 1] = magnetic_moment_native * (
+            source_spin[component]
+            + _multiply(boost_coefficient, source_beta[component])
+        )
+    four_velocity = np.empty((4, _JET_SIZE), dtype=np.float64)
+    four_velocity[0] = C_MMNS * gamma
+    for component in range(3):
+        four_velocity[component + 1] = C_MMNS * _multiply(gamma, source_beta[component])
+    wedge = np.empty((4, 4, _JET_SIZE), dtype=np.float64)
+    for mu in range(4):
+        for nu in range(4):
+            wedge[mu, nu] = (
+                _multiply(four_velocity[mu], moment_four[nu])
+                - _multiply(moment_four[mu], four_velocity[nu])
+            ) / C_MMNS
+    hertz_jet = np.empty((4, 4, _JET_SIZE), dtype=np.float64)
+    invariant_distance = _multiply(_multiply(gamma, separation), kappa)
+    for mu in range(4):
+        for nu in range(4):
+            dual = _constant(0.0)
+            for alpha in range(4):
+                for beta in range(4):
+                    coefficient = (
+                        0.5
+                        * _LEVI_CIVITA_UPPER[mu, nu, alpha, beta]
+                        * _METRIC_SIGNS[alpha]
+                        * _METRIC_SIGNS[beta]
+                    )
+                    if coefficient != 0.0:
+                        dual += coefficient * wedge[alpha, beta]
+            hertz_jet[mu, nu] = _divide(dual, invariant_distance)
+
+    hertz = hertz_jet[:, :, 0].copy()
+    potential = np.zeros(4, dtype=np.float64)
+    partial_a = np.zeros((4, 4), dtype=np.float64)
+    field = np.zeros((4, 4), dtype=np.float64)
+    partial_f = np.zeros((4, 4, 4), dtype=np.float64)
+    for mu in range(4):
+        for rho in range(4):
+            potential[mu] += hertz_jet[mu, rho, _FIRST_INDEX[rho]]
+    for derivative_index in range(4):
+        for mu in range(4):
+            for rho in range(4):
+                partial_a[derivative_index, mu] += (
+                    hertz_jet[mu, rho, _SECOND_INDEX[derivative_index, rho]]
+                    * _SECOND_SCALE[derivative_index, rho]
+                )
+    for mu in range(4):
+        for nu in range(4):
+            field[mu, nu] = (
+                _METRIC_SIGNS[mu] * partial_a[mu, nu]
+                - _METRIC_SIGNS[nu] * partial_a[nu, mu]
+            )
+            for derivative_index in range(4):
+                first = 0.0
+                second = 0.0
+                for rho in range(4):
+                    first += (
+                        hertz_jet[
+                            nu,
+                            rho,
+                            _THIRD_INDEX[derivative_index, mu, rho],
+                        ]
+                        * _THIRD_SCALE[derivative_index, mu, rho]
+                    )
+                    second += (
+                        hertz_jet[
+                            mu,
+                            rho,
+                            _THIRD_INDEX[derivative_index, nu, rho],
+                        ]
+                        * _THIRD_SCALE[derivative_index, nu, rho]
+                    )
+                partial_f[derivative_index, mu, nu] = (
+                    _METRIC_SIGNS[mu] * first - _METRIC_SIGNS[nu] * second
+                )
+
+    root_gradient = np.empty(4, dtype=np.float64)
+    root_hessian = np.empty((4, 4), dtype=np.float64)
+    root_third = np.empty((4, 4, 4), dtype=np.float64)
+    for first in range(4):
+        root_gradient[first] = source_coordinate[_FIRST_INDEX[first]]
+        for second in range(4):
+            root_hessian[first, second] = (
+                source_coordinate[_SECOND_INDEX[first, second]]
+                * _SECOND_SCALE[first, second]
+            )
+            for third in range(4):
+                root_third[first, second, third] = (
+                    source_coordinate[_THIRD_INDEX[first, second, third]]
+                    * _THIRD_SCALE[first, second, third]
+                )
+    final_light_cone = observer[0] - source_coordinate - separation
+    residual = 0.0
+    for coefficient in final_light_cone:
+        residual = max(residual, abs(coefficient))
+    return (
+        0,
+        hertz,
+        potential,
+        partial_a,
+        field,
+        partial_f,
+        root_gradient,
+        root_hessian,
+        root_third,
+        residual,
+    )
+
+
+@njit(cache=True, fastmath=False)
+def _quintic_dipole_hertz_sparse_response_with_rate(
+    observer_time_ns: float,
+    observer_position_mm: np.ndarray,
+    magnetic_moment_native: float,
+    segment_start_time_ns: float,
+    segment_duration_ns: float,
+    position_coefficients_mm: np.ndarray,
+    spin_coefficients: np.ndarray,
+    preserve_magnitude: bool,
+    preserved_magnitude: float,
+    retarded_time_ns: float,
+    observer_four_velocity_mm_ns: np.ndarray,
+    include_potential_rate: bool,
+) -> tuple[int, np.ndarray, np.ndarray, np.ndarray, float, np.ndarray, np.ndarray]:
+    """Return only ``A`` and packed ``F``/``partial F`` from one smooth segment.
+
+    The dense validation kernel above materializes 210 independent Hertz-jet
+    coefficients plus diagnostic tensors.  This production candidate computes
+    only the 144 coefficients that the original response map can observe,
+    or 150 when the potential derivative is requested. The original 34
+    response values retain their arithmetic order.
+    """
+
+    empty_potential = np.zeros(4, dtype=np.float64)
+    empty_field = np.zeros(6, dtype=np.float64)
+    empty_partial = np.zeros((4, 6), dtype=np.float64)
+    observer = np.empty((4, _JET_SIZE), dtype=np.float64)
+    observer[0] = _variable(C_MMNS * observer_time_ns, 0)
+    for component in range(3):
+        observer[component + 1] = _variable(
+            observer_position_mm[component], component + 1
+        )
+    source_coordinate = _constant(C_MMNS * retarded_time_ns)
+    start_coordinate = C_MMNS * segment_start_time_ns
+    duration_coordinate = C_MMNS * segment_duration_ns
+
+    light_cone = _constant(0.0)
+    for _ in range(3):
+        _, source_position, source_beta = _source_kinematics(
+            source_coordinate,
+            start_coordinate,
+            duration_coordinate,
+            position_coefficients_mm,
+        )
+        separation_vector = np.empty((3, _JET_SIZE), dtype=np.float64)
+        for component in range(3):
+            separation_vector[component] = (
+                observer[component + 1] - source_position[component]
+            )
+        separation = _sqrt(_dot(separation_vector, separation_vector))
+        direction = np.empty((3, _JET_SIZE), dtype=np.float64)
+        for component in range(3):
+            direction[component] = _divide(separation_vector[component], separation)
+        light_cone = observer[0] - source_coordinate - separation
+        light_cone[0] = 0.0
+        derivative = _constant(-1.0) + _dot(direction, source_beta)
+        source_coordinate = source_coordinate - _divide(light_cone, derivative)
+
+    status, source_position, source_beta, source_spin = _source_state(
+        source_coordinate,
+        start_coordinate,
+        duration_coordinate,
+        position_coefficients_mm,
+        spin_coefficients,
+        preserve_magnitude,
+        preserved_magnitude,
+    )
+    separation_vector = np.empty((3, _JET_SIZE), dtype=np.float64)
+    for component in range(3):
+        separation_vector[component] = (
+            observer[component + 1] - source_position[component]
+        )
+    separation = _sqrt(_dot(separation_vector, separation_vector))
+    direction = np.empty((3, _JET_SIZE), dtype=np.float64)
+    for component in range(3):
+        direction[component] = _divide(separation_vector[component], separation)
+    kappa = _constant(1.0) - _dot(direction, source_beta)
+    if kappa[0] <= 1.0e-14:
+        status = 2
+    beta_squared = _dot(source_beta, source_beta)
+    if beta_squared[0] >= 1.0:
+        status = 3
+    if status != 0:
+        return (
+            status,
+            empty_potential,
+            empty_field,
+            empty_partial,
+            np.nan,
+            np.zeros(4),
+            np.zeros((4, 4)),
+        )
+
+    gamma = _reciprocal(_sqrt(_constant(1.0) - beta_squared))
+    projection = _dot(source_beta, source_spin)
+    boost_coefficient = _multiply(
+        _divide(_multiply(gamma, gamma), gamma + _constant(1.0)), projection
+    )
+    moment_four = np.empty((4, _JET_SIZE), dtype=np.float64)
+    moment_four[0] = magnetic_moment_native * _multiply(gamma, projection)
+    for component in range(3):
+        moment_four[component + 1] = magnetic_moment_native * (
+            source_spin[component]
+            + _multiply(boost_coefficient, source_beta[component])
+        )
+    four_velocity = np.empty((4, _JET_SIZE), dtype=np.float64)
+    four_velocity[0] = C_MMNS * gamma
+    for component in range(3):
+        four_velocity[component + 1] = C_MMNS * _multiply(gamma, source_beta[component])
+    invariant_distance = _multiply(_multiply(gamma, separation), kappa)
+    inverse_distance = _reciprocal(invariant_distance)
+    used_count = _HERTZ_RESPONSE_USED_COUNT
+    used_slot = _HERTZ_RESPONSE_USED_SLOT
+    used_offset = _HERTZ_RESPONSE_USED_OFFSET
+    if include_potential_rate:
+        used_count = _POTENTIAL_RATE_USED_COUNT
+        used_slot = _POTENTIAL_RATE_USED_SLOT
+        used_offset = _POTENTIAL_RATE_USED_OFFSET
+    hertz_compact = np.empty(used_offset[-1], dtype=np.float64)
+    for pair_index in range(6):
+        mu = _HERTZ_PAIR_ARRAY[pair_index, 0]
+        nu = _HERTZ_PAIR_ARRAY[pair_index, 1]
+        dual = _constant(0.0)
+        for alpha in range(4):
+            for beta in range(4):
+                coefficient = (
+                    0.5
+                    * _LEVI_CIVITA_UPPER[mu, nu, alpha, beta]
+                    * _METRIC_SIGNS[alpha]
+                    * _METRIC_SIGNS[beta]
+                )
+                if coefficient != 0.0:
+                    wedge_component = (
+                        _multiply(four_velocity[alpha], moment_four[beta])
+                        - _multiply(moment_four[alpha], four_velocity[beta])
+                    ) / C_MMNS
+                    dual += coefficient * wedge_component
+        compact_offset = used_offset[pair_index]
+        for ordinal in range(used_count[pair_index]):
+            result_index = used_slot[pair_index, ordinal]
+            total = 0.0
+            for split_index in range(_SPLIT_COUNT[result_index]):
+                total += (
+                    dual[_SPLIT_LEFT[result_index, split_index]]
+                    * inverse_distance[_SPLIT_RIGHT[result_index, split_index]]
+                )
+            hertz_compact[compact_offset + ordinal] = total
+
+    potential_rate = np.zeros(4, dtype=np.float64)
+    partial_a = np.zeros((4, 4), dtype=np.float64)
+    if include_potential_rate:
+        # Six additional Hertz coefficients suffice. Contract each potential
+        # derivative. The small partial_A map also permits velocity inversion
+        # after summing source potentials, without repeating the source solve.
+        response = np.zeros(34, dtype=np.float64)
+        for output in range(50):
+            total = 0.0
+            for term in range(_POTENTIAL_RATE_TERM_COUNT[output]):
+                total += (
+                    _POTENTIAL_RATE_TERM_SCALE[output, term]
+                    * hertz_compact[_POTENTIAL_RATE_TERM_INDEX[output, term]]
+                )
+            if output < 34:
+                response[output] = total
+            else:
+                partial_a[(output - 34) // 4, (output - 34) % 4] = total
+                potential_rate[(output - 34) % 4] += (
+                    observer_four_velocity_mm_ns[(output - 34) // 4] * total
+                )
+    else:
+        response = _materialize_sparse_response(hertz_compact)
+    final_light_cone = observer[0] - source_coordinate - separation
+    residual = 0.0
+    for coefficient in final_light_cone:
+        residual = max(residual, abs(coefficient))
+    return (
+        0,
+        response[:4].copy(),
+        response[4:10].copy(),
+        response[10:].reshape(4, 6).copy(),
+        residual,
+        potential_rate,
+        partial_a,
+    )
+
+
+@njit(cache=True, fastmath=False)
+def quintic_dipole_hertz_sparse_response_strict_serial(
+    observer_time_ns: float,
+    observer_position_mm: np.ndarray,
+    magnetic_moment_native: float,
+    segment_start_time_ns: float,
+    segment_duration_ns: float,
+    position_coefficients_mm: np.ndarray,
+    spin_coefficients: np.ndarray,
+    preserve_magnitude: bool,
+    preserved_magnitude: float,
+    retarded_time_ns: float,
+) -> tuple[int, np.ndarray, np.ndarray, np.ndarray, float]:
+    """Original 34-output interface, unchanged for existing callers."""
+    result = _quintic_dipole_hertz_sparse_response_with_rate(
+        observer_time_ns,
+        observer_position_mm,
+        magnetic_moment_native,
+        segment_start_time_ns,
+        segment_duration_ns,
+        position_coefficients_mm,
+        spin_coefficients,
+        preserve_magnitude,
+        preserved_magnitude,
+        retarded_time_ns,
+        np.zeros(4),
+        False,
+    )
+    return result[0], result[1], result[2], result[3], result[4]
+
+
+@njit(cache=True, fastmath=False)
+def quintic_dipole_hertz_sparse_potential_rate_strict_serial(
+    observer_time_ns: float,
+    observer_position_mm: np.ndarray,
+    magnetic_moment_native: float,
+    segment_start_time_ns: float,
+    segment_duration_ns: float,
+    position_coefficients_mm: np.ndarray,
+    spin_coefficients: np.ndarray,
+    preserve_magnitude: bool,
+    preserved_magnitude: float,
+    retarded_time_ns: float,
+    observer_four_velocity_mm_ns: np.ndarray,
+) -> tuple[int, np.ndarray, np.ndarray, np.ndarray, float, np.ndarray, np.ndarray]:
+    """Status, A, packed F, packed partial_F, residual, u.partial_A, partial_A.
+
+    The contraction is in native potential per ns. The small derivative map
+    permits canonical velocity inversion after the source potentials are summed.
+    """
+    result = _quintic_dipole_hertz_sparse_response_with_rate(
+        observer_time_ns,
+        observer_position_mm,
+        magnetic_moment_native,
+        segment_start_time_ns,
+        segment_duration_ns,
+        position_coefficients_mm,
+        spin_coefficients,
+        preserve_magnitude,
+        preserved_magnitude,
+        retarded_time_ns,
+        observer_four_velocity_mm_ns,
+        True,
+    )
+    return result[0], result[1], result[2], result[3], result[4], result[5], result[6]
+
+
+__all__ = [
+    "quintic_dipole_hertz_response_coefficients_strict_serial",
+    "quintic_dipole_hertz_sparse_response_strict_serial",
+    "quintic_dipole_hertz_sparse_potential_rate_strict_serial",
+]

@@ -189,6 +189,7 @@ class LienardWiechertIntegrator:
             image_subcharge_count=image_subcharge_count,
             use_conducting_image_weighting=use_image_weighting,
             driver_train=self.config.driver_train if self.config else None,
+            magnetic_dipole=self.config.magnetic_dipole if self.config else None,
         )
 
         return trajectory, driver

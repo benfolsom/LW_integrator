@@ -7,16 +7,18 @@ from pathlib import Path
 import pytest
 
 from core.external_fields import electric_field_v_per_m_to_native
-from core.types import SimulationType
+from core.types import SimulationType, StartupMode
 from lw_integrator.testbed_runner import (
     CORE_PARAM_DEFAULTS,
     DEFAULT_DRIVER_PARAMS,
     DEFAULT_RIDER_PARAMS,
+    STARTUP_MODE_OPTIONS,
     SimulationOptions,
     build_driver_train_config,
     build_external_field_config,
     build_pseudo_grid_config,
     build_self_consistency_config,
+    build_startup_mode_enum,
 )
 
 
@@ -210,6 +212,101 @@ def test_simulation_options_roundtrip_preserves_gamma_reconciliation_fields(
     assert loaded.log_file_path == "custom.log"
 
 
+def test_simulation_options_roundtrip_preserves_checkpoint_controls(
+    tmp_path: Path,
+) -> None:
+    options = SimulationOptions(
+        checkpoint_enabled=True,
+        checkpoint_directory=tmp_path / "capture.checkpoint",
+        checkpoint_interval_steps=250,
+        checkpoint_interval_seconds=120.0,
+    )
+
+    restored = SimulationOptions.from_dict(options.to_dict())
+
+    assert restored.checkpoint_enabled is True
+    assert restored.checkpoint_directory == tmp_path / "capture.checkpoint"
+    assert restored.checkpoint_resume_from is None
+    assert restored.checkpoint_interval_steps == 250
+    assert restored.checkpoint_interval_seconds == pytest.approx(120.0)
+
+
+def test_checkpoint_resume_path_enables_checkpointing(tmp_path: Path) -> None:
+    restored = SimulationOptions.from_dict(
+        {
+            "checkpoint": {
+                "resume_from": str(tmp_path / "capture.checkpoint"),
+                "interval_steps": 100,
+                "interval_seconds": 30.0,
+            }
+        }
+    )
+
+    assert restored.checkpoint_enabled is True
+    assert restored.checkpoint_resume_from == tmp_path / "capture.checkpoint"
+
+
+def test_adaptive_pair_return_roundtrip_preserves_production_controls() -> None:
+    options = SimulationOptions(
+        adaptive_pair_return_enabled=True,
+        adaptive_pair_target_lab_time_ns=1.25,
+        adaptive_pair_tolerance_scale=0.5,
+        adaptive_pair_minimum_step_factor=1.0 / 128.0,
+        adaptive_pair_maximum_step_factor=32.0,
+        adaptive_pair_public_sample_interval_ns=0.025,
+        adaptive_pair_shared_time_absolute_tolerance_ns=2.0e-20,
+        adaptive_pair_shared_time_relative_tolerance=3.0e-13,
+        adaptive_pair_maximum_attempts=1234,
+        adaptive_pair_maximum_accepted_slabs=567,
+    )
+
+    restored = SimulationOptions.from_dict(options.to_dict())
+
+    assert restored.adaptive_pair_return_enabled is True
+    assert restored.adaptive_pair_target_lab_time_ns == pytest.approx(1.25)
+    assert restored.adaptive_pair_tolerance_scale == pytest.approx(0.5)
+    assert restored.adaptive_pair_minimum_step_factor == pytest.approx(1.0 / 128.0)
+    assert restored.adaptive_pair_maximum_step_factor == pytest.approx(32.0)
+    assert restored.adaptive_pair_public_sample_interval_ns == pytest.approx(0.025)
+    assert restored.adaptive_pair_shared_time_absolute_tolerance_ns == pytest.approx(
+        2.0e-20
+    )
+    assert restored.adaptive_pair_shared_time_relative_tolerance == pytest.approx(
+        3.0e-13
+    )
+    assert restored.adaptive_pair_maximum_attempts == 1234
+    assert restored.adaptive_pair_maximum_accepted_slabs == 567
+
+
+def test_causal_c5_dipole_history_roundtrips_in_nested_config() -> None:
+    options = SimulationOptions(
+        magnetic_dipole_source_model="covariant_retarded_point",
+        magnetic_dipole_source_history_model="causal_c5",
+    )
+
+    payload = options.to_dict()
+    restored = SimulationOptions.from_dict(payload)
+
+    assert payload["magnetic_dipole"]["source"]["history_model"] == "causal_c5"
+    assert restored.magnetic_dipole_source_history_model == "causal_c5"
+
+
+def test_flat_checkpoint_fields_remain_loadable(tmp_path: Path) -> None:
+    restored = SimulationOptions.from_dict(
+        {
+            "checkpoint_enabled": True,
+            "checkpoint_directory": str(tmp_path / "legacy.checkpoint"),
+            "checkpoint_interval_steps": 75,
+            "checkpoint_interval_seconds": 15.0,
+        }
+    )
+
+    assert restored.checkpoint_enabled is True
+    assert restored.checkpoint_directory == tmp_path / "legacy.checkpoint"
+    assert restored.checkpoint_interval_steps == 75
+    assert restored.checkpoint_interval_seconds == pytest.approx(15.0)
+
+
 def test_simulation_options_roundtrip_preserves_manual_particle_config_and_3d_payloads():
     options = SimulationOptions(
         simulation_type=SimulationType.BUNCH_TO_BUNCH,
@@ -347,6 +444,25 @@ def test_simulation_options_from_dict_falls_back_on_invalid_numeric_values():
     assert options.adaptive_timestep_min_factor == pytest.approx(1e-4)
     assert options.energy_monitor_threshold == pytest.approx(2.0)
     assert options.trajectory_interval == 10
+
+
+@pytest.mark.parametrize(
+    "value",
+    ("INERTIAL_PREHISTORY", "inertial-prehistory", "inertial_prehistory"),
+)
+def test_testbed_accepts_inertial_prehistory_spellings(value: str):
+    assert build_startup_mode_enum(value) is StartupMode.INERTIAL_PREHISTORY
+
+
+def test_inertial_prehistory_roundtrips_through_testbed_config():
+    core_params = dict(CORE_PARAM_DEFAULTS)
+    core_params["startup_mode"] = "INERTIAL_PREHISTORY"
+    options = SimulationOptions(core_params=core_params)
+
+    restored = SimulationOptions.from_dict(options.to_dict())
+
+    assert "INERTIAL_PREHISTORY" in STARTUP_MODE_OPTIONS
+    assert restored.core_params["startup_mode"] == "INERTIAL_PREHISTORY"
 
 
 def test_build_pseudo_grid_config_reflects_simulation_options():

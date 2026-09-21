@@ -25,9 +25,11 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from core.batched_logger import BatchedLogger
 from core.debug_logger import initialize_debug_logging
 from core.particle_config import DEFAULT_DRIVER_PARAMS, DEFAULT_RIDER_PARAMS
+from core.species import list_species
 from core.types import SimulationType
-from .gui_config_mixins import IntegratorGUIConfigMixin
+
 from .gui_config_list_mixins import IntegratorGUIConfigListMixin
+from .gui_config_mixins import IntegratorGUIConfigMixin
 from .gui_controller_mixins import IntegratorGUIControllerMixin
 from .gui_layout_mixins import (
     CONFIG_PANEL_MIN_WIDTH,
@@ -45,6 +47,11 @@ from .gui_tab_mixins import IntegratorGUITabMixin
 from .optimization_plugin import OptimizationPlugin
 from .testbed_runner import (
     CORE_PARAM_DEFAULTS,
+    DIPOLE_SOURCE_HISTORY_OPTIONS,
+    DIPOLE_SOURCE_MODEL_OPTIONS,
+    EXACT_RETARDED_BACKEND_OPTIONS,
+    EXACT_RETARDED_UPDATE_OPTIONS,
+    INTRINSIC_SPIN_SELF_REACTION_OPTIONS,
     PARTICLE_PARAM_FIELDS,
     SPECIES_OPTIONS,
     SimulationOptions,
@@ -285,6 +292,163 @@ class IntegratorGUI(
         )
         self.rider_species_var = tk.StringVar(value=default_species_label)
         self.driver_species_var = tk.StringVar(value=default_species_label)
+
+        magnetic_species_options = list_species()
+        self._magnetic_species_by_label = {
+            species.display_name: species.name for species in magnetic_species_options
+        }
+        self._magnetic_species_label_by_key = {
+            species.name: species.display_name for species in magnetic_species_options
+        }
+        self.magnetic_dipole_enabled_var = tk.BooleanVar(
+            value=getattr(self.options, "magnetic_dipole_enabled", False)
+        )
+        self.magnetic_dipole_spin_precession_enabled_var = tk.BooleanVar(
+            value=getattr(
+                self.options,
+                "magnetic_dipole_spin_precession_enabled",
+                True,
+            )
+        )
+        self.magnetic_dipole_stern_gerlach_force_enabled_var = tk.BooleanVar(
+            value=getattr(
+                self.options,
+                "magnetic_dipole_stern_gerlach_force_enabled",
+                False,
+            )
+        )
+        dipole_source_label_by_model = {
+            model: label for label, model in DIPOLE_SOURCE_MODEL_OPTIONS
+        }
+        dipole_source_model = str(
+            getattr(self.options, "magnetic_dipole_source_model", "off")
+        )
+        self.magnetic_dipole_source_model_var = tk.StringVar(
+            value=dipole_source_label_by_model.get(dipole_source_model, "Off")
+        )
+        dipole_source_history_label_by_name = {
+            history: label for label, history in DIPOLE_SOURCE_HISTORY_OPTIONS
+        }
+        dipole_source_history = str(
+            getattr(
+                self.options,
+                "magnetic_dipole_source_history_model",
+                "causal_frozen_c1",
+            )
+        )
+        self.magnetic_dipole_source_history_var = tk.StringVar(
+            value=dipole_source_history_label_by_name.get(
+                dipole_source_history,
+                "Frozen C1 (legacy)",
+            )
+        )
+        exact_retarded_backend_label_by_name = {
+            backend: label for label, backend in EXACT_RETARDED_BACKEND_OPTIONS
+        }
+        exact_retarded_backend = str(
+            getattr(
+                self.options,
+                "magnetic_dipole_exact_retarded_backend",
+                "python",
+            )
+        )
+        self.magnetic_dipole_exact_retarded_backend_var = tk.StringVar(
+            value=exact_retarded_backend_label_by_name.get(
+                exact_retarded_backend, "Python reference"
+            )
+        )
+        exact_retarded_update_label_by_name = {
+            update: label for label, update in EXACT_RETARDED_UPDATE_OPTIONS
+        }
+        exact_retarded_update = str(
+            getattr(
+                self.options,
+                "magnetic_dipole_exact_retarded_update",
+                "first_order_endpoint",
+            )
+        )
+        self.magnetic_dipole_exact_retarded_update_var = tk.StringVar(
+            value=exact_retarded_update_label_by_name.get(
+                exact_retarded_update, "First-order endpoint"
+            )
+        )
+        self_reaction_label_by_mode = {
+            mode: label for label, mode in INTRINSIC_SPIN_SELF_REACTION_OPTIONS
+        }
+        self_reaction_mode = str(
+            getattr(
+                self.options,
+                "magnetic_dipole_intrinsic_spin_self_reaction_mode",
+                "off",
+            )
+        )
+        self.magnetic_dipole_intrinsic_spin_self_reaction_var = tk.StringVar(
+            value=self_reaction_label_by_mode.get(self_reaction_mode, "Off")
+        )
+        self.magnetic_dipole_source_minimum_separation_var = tk.StringVar(
+            value=str(
+                getattr(
+                    self.options,
+                    "magnetic_dipole_source_minimum_separation_mm",
+                    2.0e-9,
+                )
+            )
+        )
+        self.magnetic_dipole_local_jet_width_vars = []
+        for label in ("narrow", "primary", "wide"):
+            value = getattr(
+                self.options,
+                f"magnetic_dipole_source_local_jet_{label}_half_width_ns",
+                None,
+            )
+            self.magnetic_dipole_local_jet_width_vars.append(
+                tk.StringVar(value="" if value is None else str(value))
+            )
+        self._magnetic_dipole_source_local_jet_scales = [
+            dict(scale)
+            for scale in getattr(
+                self.options,
+                "magnetic_dipole_source_local_jet_scales",
+                [],
+            )
+        ]
+        self._magnetic_dipole_source_local_jet_maximum_cross_scale_relative_spread = float(
+            getattr(
+                self.options,
+                "magnetic_dipole_source_local_jet_maximum_cross_scale_relative_spread",
+                1.0e-3,
+            )
+        )
+        self.magnetic_dipole_local_jet_assume_inertial_var = tk.BooleanVar(
+            value=(
+                getattr(
+                    self.options,
+                    "magnetic_dipole_source_local_jet_inertial_prehistory",
+                    "untrusted",
+                )
+                == "assumed_inertial"
+            )
+        )
+        self.rider_magnetic_species_var = tk.StringVar(
+            value=self._magnetic_species_label_by_key.get(
+                getattr(self.options, "rider_magnetic_species", "electron"),
+                "Electron",
+            )
+        )
+        self.driver_magnetic_species_var = tk.StringVar(
+            value=self._magnetic_species_label_by_key.get(
+                getattr(self.options, "driver_magnetic_species", "proton"),
+                "Proton",
+            )
+        )
+        self.rider_rest_spin_vars = [
+            tk.StringVar(value=str(component))
+            for component in getattr(self.options, "rider_rest_spin", (0.0, 0.0, 1.0))
+        ]
+        self.driver_rest_spin_vars = [
+            tk.StringVar(value=str(component))
+            for component in getattr(self.options, "driver_rest_spin", (0.0, 0.0, 1.0))
+        ]
 
         self.rider_param_vars: Dict[str, tk.Variable] = {}
         self.driver_param_vars: Dict[str, tk.Variable] = {}
@@ -778,6 +942,13 @@ class IntegratorGUI(
         self.external_magnetic_native_vars = [
             tk.StringVar(value="0.0") for _axis in range(3)
         ]
+        self.external_magnetic_tesla_vars = [
+            tk.StringVar(value="0.0") for _axis in range(3)
+        ]
+        self.external_magnetic_gradient_vars = [
+            [tk.StringVar(value="0.0") for _coordinate in range(3)]
+            for _component in range(3)
+        ]
         self.external_field_window_vars = {
             f"{axis}_{bound}": tk.StringVar(value="")
             for axis in ("x", "y", "z", "t")
@@ -815,6 +986,67 @@ class IntegratorGUI(
         self.sweep_config_dir_var = tk.StringVar(value=self._last_sweep_config_dir)
         self.sweep_output_dir_var = tk.StringVar(value=self._last_sweep_output_dir)
         self.config_name_var = tk.StringVar(value=self.options.config_name)
+        self.checkpoint_enabled_var = tk.BooleanVar(
+            value=self.options.checkpoint_enabled
+        )
+        self.checkpoint_directory_var = tk.StringVar(
+            value=(
+                ""
+                if self.options.checkpoint_directory is None
+                else str(self.options.checkpoint_directory)
+            )
+        )
+        self.checkpoint_resume_from_var = tk.StringVar(
+            value=(
+                ""
+                if self.options.checkpoint_resume_from is None
+                else str(self.options.checkpoint_resume_from)
+            )
+        )
+        self.checkpoint_interval_steps_var = tk.IntVar(
+            value=self.options.checkpoint_interval_steps
+        )
+        self.checkpoint_interval_seconds_var = tk.DoubleVar(
+            value=self.options.checkpoint_interval_seconds
+        )
+        self.adaptive_pair_return_enabled_var = tk.BooleanVar(
+            value=self.options.adaptive_pair_return_enabled
+        )
+        self.adaptive_pair_target_lab_time_ns_var = tk.StringVar(
+            value=(
+                ""
+                if self.options.adaptive_pair_target_lab_time_ns is None
+                else str(self.options.adaptive_pair_target_lab_time_ns)
+            )
+        )
+        self.adaptive_pair_tolerance_scale_var = tk.DoubleVar(
+            value=self.options.adaptive_pair_tolerance_scale
+        )
+        self.adaptive_pair_minimum_step_factor_var = tk.DoubleVar(
+            value=self.options.adaptive_pair_minimum_step_factor
+        )
+        self.adaptive_pair_maximum_step_factor_var = tk.DoubleVar(
+            value=self.options.adaptive_pair_maximum_step_factor
+        )
+        self.adaptive_pair_public_sample_interval_ns_var = tk.StringVar(
+            value=(
+                ""
+                if self.options.adaptive_pair_public_sample_interval_ns is None
+                else str(self.options.adaptive_pair_public_sample_interval_ns)
+            )
+        )
+        self.adaptive_pair_shared_time_absolute_tolerance_ns_var = tk.DoubleVar(
+            value=self.options.adaptive_pair_shared_time_absolute_tolerance_ns
+        )
+        self.adaptive_pair_shared_time_relative_tolerance_var = tk.DoubleVar(
+            value=self.options.adaptive_pair_shared_time_relative_tolerance
+        )
+        self.adaptive_pair_maximum_attempts_var = tk.IntVar(
+            value=self.options.adaptive_pair_maximum_attempts
+        )
+        self.adaptive_pair_maximum_accepted_slabs_var = tk.IntVar(
+            value=self.options.adaptive_pair_maximum_accepted_slabs
+        )
         self.config_file_var = tk.StringVar(value="")
         self.sweep_config_name_var = tk.StringVar(value="sweep_config.json")
 
@@ -835,6 +1067,9 @@ class IntegratorGUI(
 
         self.driver_train_enabled_var.trace_add(
             "write", lambda *_: self._toggle_driver_train_controls()
+        )
+        self.adaptive_pair_return_enabled_var.trace_add(
+            "write", lambda *_: self._on_adaptive_pair_return_toggle()
         )
         self.cavity_exit_enabled_var.trace_add(
             "write", lambda *_: self._toggle_cavity_exit_controls()
@@ -879,6 +1114,15 @@ class IntegratorGUI(
             values=[opt.name for opt in SimulationType],
         )
         self.sim_type_combo.grid(row=0, column=1, sticky="ew")
+
+        def open_nonlinear_pair():
+            from .nonlinear_pair_gui import open_pair_window
+
+            open_pair_window(self.root)
+
+        ttk.Button(header, text="Nonlinear pair…", command=open_nonlinear_pair).grid(
+            row=0, column=2, padx=(10, 0)
+        )
 
         # Create main horizontal split: left (tabs) and right (config/control panel)
         self._main_horizontal_paned = tk.PanedWindow(

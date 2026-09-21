@@ -29,8 +29,15 @@ compute_vectorized_contributions
     Returns 8 values per call:
 
     1-4. Momentum changes (ΔPx, ΔPy, ΔPz, ΔPt) from retarded E and B fields
-    5-7. Field contributions for position updates (gauge field components)
+    5-7. Canonical vector-potential offsets divided by observer mass,
+         q_i A^i / (m_i c), for mechanical-momentum reconstruction
     8. Scalar potential sum Φ = Σ(q_j / (R_j · k_j)) for energy corrections
+
+Items 5-7 are potential values at the observer event, not time increments.  In
+particular, they must be independent of the integration step ``h``.  The caller
+recovers mechanical spatial momentum using::
+
+    p^i = P^i - m_i * potential_velocity_i
 
 The scalar potential (item 8) is used to compute the correct kinetic momentum::
 
@@ -734,8 +741,13 @@ def compute_vectorized_contributions(
 
     Returns:
         (delta_px, delta_py, delta_pz, delta_pt,
-         delta_field_x, delta_field_y, delta_field_z,
+         potential_velocity_x, potential_velocity_y, potential_velocity_z,
          scalar_potential_sum)
+
+        The three ``potential_velocity`` slots retain their historical tuple
+        positions.  Each equals ``q_i A^i / (m_i c)`` and therefore has no
+        factor of ``h``.  Multiplication by ``m_i`` gives the canonical
+        momentum offset ``q_i A^i / c``.
     """
 
     c = C_MMNS
@@ -966,14 +978,15 @@ def compute_vectorized_contributions(
     )
 
     # Split calculation based on k-factor regime
-    # Initialize momentum and field accumulations
+    # Initialize momentum and canonical-potential accumulations.  The latter
+    # are q_i A^i / (m_i c), not per-step increments.
     delta_px = 0.0
     delta_py = 0.0
     delta_pz = 0.0
     delta_pt = 0.0
-    delta_field_x = 0.0
-    delta_field_y = 0.0
-    delta_field_z = 0.0
+    potential_velocity_x = 0.0
+    potential_velocity_y = 0.0
+    potential_velocity_z = 0.0
     scalar_potential_sum = 0.0
 
     # Process normal k-factor regime (standard calculation)
@@ -1117,18 +1130,25 @@ def compute_vectorized_contributions(
                 f"    delta_pt contrib = {float(np.sum(charge_factor_normal * term_pt_normal)):.6e}"
             )
 
-        # Field and scalar potential for normal regime
-        field_factor_normal = (
-            np.float64(h)
+        # Canonical vector-potential offset divided by observer mass:
+        # q_i A^i / (m_i c).  This is an event-local potential value, so it
+        # must not carry the proper-time step h.
+        potential_factor_normal = (
+            np.float64(charge_i)
             / np.float64(mass_i)
-            * np.float64(charge_i)
             / np.float64(c)
             * charge_ext[normal_k_mask]
             / (R_sep[normal_k_mask] * k_normal)
         )
-        delta_field_x += float(np.sum(field_factor_normal * bx_ext[normal_k_mask]))
-        delta_field_y += float(np.sum(field_factor_normal * by_ext[normal_k_mask]))
-        delta_field_z += float(np.sum(field_factor_normal * bz_ext[normal_k_mask]))
+        potential_velocity_x += float(
+            np.sum(potential_factor_normal * bx_ext[normal_k_mask])
+        )
+        potential_velocity_y += float(
+            np.sum(potential_factor_normal * by_ext[normal_k_mask])
+        )
+        potential_velocity_z += float(
+            np.sum(potential_factor_normal * bz_ext[normal_k_mask])
+        )
         scalar_potential_sum += float(
             np.sum(charge_ext[normal_k_mask] / (R_sep[normal_k_mask] * k_normal))
         )
@@ -1174,18 +1194,24 @@ def compute_vectorized_contributions(
         delta_pz += float(np.sum(term_pz_series))
         delta_pt += float(np.sum(term_pt_series))
 
-        # Field and scalar potential for small k regime (use limiting forms)
-        field_factor_small = (
-            np.float64(h)
+        # Same event-local q_i A^i / (m_i c) potential value in the small-k
+        # regime; unlike the momentum impulse above, it is independent of h.
+        potential_factor_small = (
+            np.float64(charge_i)
             / np.float64(mass_i)
-            * np.float64(charge_i)
             / np.float64(c)
             * charge_ext[small_k_mask]
             / (R_sep[small_k_mask] * k_small)
         )
-        delta_field_x += float(np.sum(field_factor_small * bx_ext[small_k_mask]))
-        delta_field_y += float(np.sum(field_factor_small * by_ext[small_k_mask]))
-        delta_field_z += float(np.sum(field_factor_small * bz_ext[small_k_mask]))
+        potential_velocity_x += float(
+            np.sum(potential_factor_small * bx_ext[small_k_mask])
+        )
+        potential_velocity_y += float(
+            np.sum(potential_factor_small * by_ext[small_k_mask])
+        )
+        potential_velocity_z += float(
+            np.sum(potential_factor_small * bz_ext[small_k_mask])
+        )
         scalar_potential_sum += float(
             np.sum(charge_ext[small_k_mask] / (R_sep[small_k_mask] * k_small))
         )
@@ -1195,9 +1221,9 @@ def compute_vectorized_contributions(
         delta_py,
         delta_pz,
         delta_pt,
-        delta_field_x,
-        delta_field_y,
-        delta_field_z,
+        potential_velocity_x,
+        potential_velocity_y,
+        potential_velocity_z,
         scalar_potential_sum,
     )
 
@@ -1234,9 +1260,9 @@ def _compute_forces_numba_kernel(
     delta_py = 0.0
     delta_pz = 0.0
     delta_pt = 0.0
-    delta_field_x = 0.0
-    delta_field_y = 0.0
-    delta_field_z = 0.0
+    potential_velocity_x = 0.0
+    potential_velocity_y = 0.0
+    potential_velocity_z = 0.0
     scalar_potential = 0.0
 
     c_sq = c * c
@@ -1321,11 +1347,11 @@ def _compute_forces_numba_kernel(
             + v_betas * c
         )
 
-        # Field contributions for position update
-        field_factor = (h / mass_i) * charge_i / c * charge_ext[j]
-        delta_field_x += field_factor * bx_ext[j] / (R * k_factor)
-        delta_field_y += field_factor * by_ext[j] / (R * k_factor)
-        delta_field_z += field_factor * bz_ext[j] / (R * k_factor)
+        # Event-local q_i A^i / (m_i c), independent of the proper-time step h.
+        potential_factor = charge_i / (mass_i * c) * charge_ext[j]
+        potential_velocity_x += potential_factor * bx_ext[j] / (R * k_factor)
+        potential_velocity_y += potential_factor * by_ext[j] / (R * k_factor)
+        potential_velocity_z += potential_factor * bz_ext[j] / (R * k_factor)
 
         # Scalar potential
         scalar_potential += charge_ext[j] / (R * k_factor)
@@ -1335,9 +1361,9 @@ def _compute_forces_numba_kernel(
         delta_py,
         delta_pz,
         delta_pt,
-        delta_field_x,
-        delta_field_y,
-        delta_field_z,
+        potential_velocity_x,
+        potential_velocity_y,
+        potential_velocity_z,
         scalar_potential,
     )
 

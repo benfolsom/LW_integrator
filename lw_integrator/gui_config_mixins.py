@@ -6,14 +6,24 @@ import json
 import math
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
+from core.external_fields import (
+    magnetic_field_native_to_tesla,
+    magnetic_field_tesla_to_native,
+)
 from core.particle_config import DEFAULT_DRIVER_PARAMS, DEFAULT_RIDER_PARAMS
+from core.species import get_species
 from core.types import SimulationType
 from optimization.mode_helpers import SWEEP_OR_OPTIMIZATION_MODES
 
 from .testbed_runner import (
     CORE_PARAM_DEFAULTS,
+    DIPOLE_SOURCE_HISTORY_OPTIONS,
+    DIPOLE_SOURCE_MODEL_OPTIONS,
+    EXACT_RETARDED_BACKEND_OPTIONS,
+    EXACT_RETARDED_UPDATE_OPTIONS,
+    INTRINSIC_SPIN_SELF_REACTION_OPTIONS,
     PARTICLE_PARAM_FIELDS,
     SimulationOptions,
     load_config,
@@ -22,6 +32,34 @@ from .testbed_runner import (
 )
 
 _SWEEP_OR_OPTIMIZATION_KEYS = {"sweep_parameters", "parameter_sweeps"}
+_DIPOLE_SOURCE_MODEL_BY_LABEL = dict(DIPOLE_SOURCE_MODEL_OPTIONS)
+_DIPOLE_SOURCE_LABEL_BY_MODEL = {
+    model: label for label, model in DIPOLE_SOURCE_MODEL_OPTIONS
+}
+_DIPOLE_SOURCE_LABEL_BY_MODEL.update(
+    {
+        "retarded_point": _DIPOLE_SOURCE_LABEL_BY_MODEL["covariant_retarded_point"],
+        "full_retarded_point": _DIPOLE_SOURCE_LABEL_BY_MODEL[
+            "covariant_retarded_point"
+        ],
+    }
+)
+_DIPOLE_SOURCE_HISTORY_BY_LABEL = dict(DIPOLE_SOURCE_HISTORY_OPTIONS)
+_DIPOLE_SOURCE_LABEL_BY_HISTORY = {
+    history: label for label, history in DIPOLE_SOURCE_HISTORY_OPTIONS
+}
+_EXACT_RETARDED_BACKEND_BY_LABEL = dict(EXACT_RETARDED_BACKEND_OPTIONS)
+_EXACT_RETARDED_LABEL_BY_BACKEND = {
+    backend: label for label, backend in EXACT_RETARDED_BACKEND_OPTIONS
+}
+_EXACT_RETARDED_UPDATE_BY_LABEL = dict(EXACT_RETARDED_UPDATE_OPTIONS)
+_EXACT_RETARDED_LABEL_BY_UPDATE = {
+    update: label for label, update in EXACT_RETARDED_UPDATE_OPTIONS
+}
+_INTRINSIC_SPIN_SELF_REACTION_BY_LABEL = dict(INTRINSIC_SPIN_SELF_REACTION_OPTIONS)
+_INTRINSIC_SPIN_SELF_REACTION_LABEL_BY_MODE = {
+    mode: label for label, mode in INTRINSIC_SPIN_SELF_REACTION_OPTIONS
+}
 
 
 def _particle_params_require_manual_config(params: object) -> bool:
@@ -88,6 +126,642 @@ def _looks_like_sweep_or_optimization_config(path: Path) -> bool:
 
 class IntegratorGUIConfigMixin:
     """Translate between GUI state and ``SimulationOptions`` configs."""
+
+    def _apply_magnetic_dipole_options_to_ui(
+        self: Any, options: SimulationOptions
+    ) -> None:
+        """Populate the compact magnetic-dipole controls from run options."""
+        if not hasattr(self, "magnetic_dipole_enabled_var"):
+            return
+
+        self.magnetic_dipole_enabled_var.set(
+            getattr(options, "magnetic_dipole_enabled", False)
+        )
+        self.magnetic_dipole_spin_precession_enabled_var.set(
+            getattr(options, "magnetic_dipole_spin_precession_enabled", True)
+        )
+        self.magnetic_dipole_stern_gerlach_force_enabled_var.set(
+            getattr(
+                options,
+                "magnetic_dipole_stern_gerlach_force_enabled",
+                False,
+            )
+        )
+        # Model selection stays out of the compact GUI controls, but preserve
+        # it when loading and saving diagnostic JSON configurations.
+        self._magnetic_dipole_spin_model = str(
+            getattr(options, "magnetic_dipole_spin_model", "rfs_minimal_2021")
+        )
+        self._magnetic_dipole_stern_gerlach_model = str(
+            getattr(options, "magnetic_dipole_stern_gerlach_model", "rfs_full_g")
+        )
+        source_model = (
+            str(getattr(options, "magnetic_dipole_source_model", "off"))
+            .strip()
+            .lower()
+            .replace("-", "_")
+        )
+        self.magnetic_dipole_source_model_var.set(
+            _DIPOLE_SOURCE_LABEL_BY_MODEL.get(source_model, source_model)
+        )
+        source_history = (
+            str(
+                getattr(
+                    options,
+                    "magnetic_dipole_source_history_model",
+                    "causal_frozen_c1",
+                )
+            )
+            .strip()
+            .lower()
+            .replace("-", "_")
+        )
+        self.magnetic_dipole_source_history_var.set(
+            _DIPOLE_SOURCE_LABEL_BY_HISTORY.get(source_history, source_history)
+        )
+        exact_retarded_backend = (
+            str(
+                getattr(
+                    options,
+                    "magnetic_dipole_exact_retarded_backend",
+                    "python",
+                )
+            )
+            .strip()
+            .lower()
+        )
+        self.magnetic_dipole_exact_retarded_backend_var.set(
+            _EXACT_RETARDED_LABEL_BY_BACKEND.get(
+                exact_retarded_backend, exact_retarded_backend
+            )
+        )
+        exact_retarded_update = (
+            str(
+                getattr(
+                    options,
+                    "magnetic_dipole_exact_retarded_update",
+                    "first_order_endpoint",
+                )
+            )
+            .strip()
+            .lower()
+            .replace("-", "_")
+        )
+        exact_retarded_update = {
+            "second_order": "second_order_start_taylor_endpoint",
+            "second_order_taylor": "second_order_start_taylor_endpoint",
+            "second_order_taylor_endpoint": ("second_order_start_taylor_endpoint"),
+        }.get(exact_retarded_update, exact_retarded_update)
+        self.magnetic_dipole_exact_retarded_update_var.set(
+            _EXACT_RETARDED_LABEL_BY_UPDATE.get(
+                exact_retarded_update, exact_retarded_update
+            )
+        )
+        self_reaction_var = getattr(
+            self, "magnetic_dipole_intrinsic_spin_self_reaction_var", None
+        )
+        if self_reaction_var is not None:
+            self_reaction_var.set(
+                _INTRINSIC_SPIN_SELF_REACTION_LABEL_BY_MODE.get(
+                    str(
+                        getattr(
+                            options,
+                            "magnetic_dipole_intrinsic_spin_self_reaction_mode",
+                            "off",
+                        )
+                    )
+                    .strip()
+                    .lower()
+                    .replace("-", "_"),
+                    "Off",
+                )
+            )
+        self.magnetic_dipole_source_minimum_separation_var.set(
+            _format_gui_float(
+                getattr(
+                    options,
+                    "magnetic_dipole_source_minimum_separation_mm",
+                    2.0e-9,
+                )
+            )
+        )
+        self._magnetic_dipole_source_relative_stencil_step = float(
+            getattr(
+                options,
+                "magnetic_dipole_source_relative_stencil_step",
+                1.0e-3,
+            )
+        )
+        self._magnetic_dipole_source_minimum_stencil_step_mm = float(
+            getattr(
+                options,
+                "magnetic_dipole_source_minimum_stencil_step_mm",
+                1.0e-15,
+            )
+        )
+        self._magnetic_dipole_source_root_tolerance_mm = float(
+            getattr(
+                options,
+                "magnetic_dipole_source_root_tolerance_mm",
+                1.0e-21,
+            )
+        )
+        self._magnetic_dipole_source_max_root_iterations = int(
+            getattr(
+                options,
+                "magnetic_dipole_source_max_root_iterations",
+                96,
+            )
+        )
+        local_width_variables = getattr(
+            self, "magnetic_dipole_local_jet_width_vars", ()
+        )
+        for label, variable in zip(
+            ("narrow", "primary", "wide"), local_width_variables
+        ):
+            value = getattr(
+                options,
+                f"magnetic_dipole_source_local_jet_{label}_half_width_ns",
+                None,
+            )
+            variable.set("" if value is None else _format_gui_float(value))
+        self._magnetic_dipole_source_local_jet_scales = [
+            dict(scale)
+            for scale in getattr(
+                options,
+                "magnetic_dipole_source_local_jet_scales",
+                [],
+            )
+        ]
+        self._magnetic_dipole_source_local_jet_maximum_cross_scale_relative_spread = float(
+            getattr(
+                options,
+                "magnetic_dipole_source_local_jet_maximum_cross_scale_relative_spread",
+                1.0e-3,
+            )
+        )
+        local_boundary_var = getattr(
+            self, "magnetic_dipole_local_jet_assume_inertial_var", None
+        )
+        if local_boundary_var is not None:
+            local_boundary_var.set(
+                getattr(
+                    options,
+                    "magnetic_dipole_source_local_jet_inertial_prehistory",
+                    "untrusted",
+                )
+                == "assumed_inertial"
+            )
+        for name, default in (
+            ("acceleration_degree", 5),
+            ("spin_degree", 5),
+            ("maximum_condition_number", 1.0e5),
+            ("maximum_relative_spread", 1.0e-3),
+            ("acceleration_samples", "interval_mean"),
+            ("window_alignment", "past"),
+            ("window_weighting", "tricube"),
+        ):
+            setattr(
+                self,
+                f"_magnetic_dipole_source_local_jet_{name}",
+                getattr(
+                    options,
+                    f"magnetic_dipole_source_local_jet_{name}",
+                    default,
+                ),
+            )
+
+        rider_species = str(getattr(options, "rider_magnetic_species", "electron"))
+        driver_species = str(getattr(options, "driver_magnetic_species", "proton"))
+        self.rider_magnetic_species_var.set(
+            self._magnetic_species_label_by_key.get(rider_species, rider_species)
+        )
+        self.driver_magnetic_species_var.set(
+            self._magnetic_species_label_by_key.get(driver_species, driver_species)
+        )
+
+        rider_spin = getattr(options, "rider_rest_spin", (0.0, 0.0, 1.0))
+        driver_spin = getattr(options, "driver_rest_spin", (0.0, 0.0, 1.0))
+        for var, value in zip(self.rider_rest_spin_vars, rider_spin):
+            var.set(_format_gui_float(value))
+        for var, value in zip(self.driver_rest_spin_vars, driver_spin):
+            var.set(_format_gui_float(value))
+
+    def _build_magnetic_dipole_options_from_ui(self: Any) -> dict[str, Any]:
+        """Return the magnetic-dipole fields represented by the GUI."""
+
+        enabled = bool(self.magnetic_dipole_enabled_var.get())
+        driver_enabled = enabled and (
+            not hasattr(self, "sim_type_var")
+            or self.sim_type_var.get() == "BUNCH_TO_BUNCH"
+        )
+
+        def selected_species(variable: Any, role: str) -> str:
+            selection = str(variable.get()).strip()
+            species = self._magnetic_species_by_label.get(selection, selection)
+            if species not in self._magnetic_species_label_by_key:
+                raise ValueError(f"Select a known magnetic species for the {role}.")
+            return species
+
+        def spin_vector(
+            variables: Any, role: str, *, validate: bool
+        ) -> tuple[float, float, float]:
+            defaults = (0.0, 0.0, 1.0)
+            values = []
+            for var, axis, default in zip(variables, ("x", "y", "z"), defaults):
+                if validate:
+                    value = _parse_gui_float(var.get(), f"{role} rest spin {axis}")
+                else:
+                    value = _parse_gui_float_lenient(var.get(), default)
+                values.append(value)
+            return (values[0], values[1], values[2])
+
+        source_selection = str(self.magnetic_dipole_source_model_var.get()).strip()
+        source_model = _DIPOLE_SOURCE_MODEL_BY_LABEL.get(source_selection)
+        if source_model is None:
+            normalized_source_model = source_selection.lower().replace("-", "_")
+            source_model = {
+                "retarded_point": "covariant_retarded_point",
+                "full_retarded_point": "covariant_retarded_point",
+            }.get(normalized_source_model, normalized_source_model)
+        if source_model not in _DIPOLE_SOURCE_LABEL_BY_MODEL:
+            raise ValueError(
+                "Select Off or Full retarded point (experimental) for the "
+                "dipole source."
+            )
+        source_history_selection = str(
+            self.magnetic_dipole_source_history_var.get()
+        ).strip()
+        source_history_model = _DIPOLE_SOURCE_HISTORY_BY_LABEL.get(
+            source_history_selection,
+            source_history_selection.lower().replace("-", "_"),
+        )
+        source_history_model = {
+            "c1": "causal_frozen_c1",
+            "frozen_c1": "causal_frozen_c1",
+            "c5": "causal_c5",
+            "local_jet": "causal_local_jet",
+            "causal_local": "causal_local_jet",
+        }.get(source_history_model, source_history_model)
+        if source_history_model not in _DIPOLE_SOURCE_LABEL_BY_HISTORY:
+            raise ValueError(
+                "Select Frozen C1, Causal C5, or Causal local jet for the "
+                "dipole source history."
+            )
+        backend_selection = str(
+            self.magnetic_dipole_exact_retarded_backend_var.get()
+        ).strip()
+        exact_retarded_backend = _EXACT_RETARDED_BACKEND_BY_LABEL.get(
+            backend_selection, backend_selection.strip().lower()
+        )
+        if exact_retarded_backend not in _EXACT_RETARDED_LABEL_BY_BACKEND:
+            raise ValueError(
+                "Select Python reference, Numba roots-exact CPU, or Numba full "
+                "strict CPU, or Metal-certified roots + strict CPU for the "
+                "exact-retarded backend."
+            )
+        update_selection = str(
+            self.magnetic_dipole_exact_retarded_update_var.get()
+        ).strip()
+        exact_retarded_update = _EXACT_RETARDED_UPDATE_BY_LABEL.get(
+            update_selection,
+            update_selection.strip().lower().replace("-", "_"),
+        )
+        if exact_retarded_update not in _EXACT_RETARDED_LABEL_BY_UPDATE:
+            raise ValueError(
+                "Select First-order endpoint or Second-order accepted-start "
+                "Taylor for the exact-retarded update."
+            )
+        self_reaction_var = getattr(
+            self, "magnetic_dipole_intrinsic_spin_self_reaction_var", None
+        )
+        self_reaction_selection = (
+            "Off" if self_reaction_var is None else str(self_reaction_var.get()).strip()
+        )
+        intrinsic_spin_self_reaction_mode = _INTRINSIC_SPIN_SELF_REACTION_BY_LABEL.get(
+            self_reaction_selection,
+            self_reaction_selection.lower().replace("-", "_"),
+        )
+        if (
+            intrinsic_spin_self_reaction_mode
+            not in _INTRINSIC_SPIN_SELF_REACTION_LABEL_BY_MODE
+        ):
+            raise ValueError(
+                "Select Off, Diagnostic only, or Experimental: first-order spin recoil."
+            )
+        if (
+            intrinsic_spin_self_reaction_mode
+            in {"diagnostic", "experimental_linear_spin"}
+            and exact_retarded_update != "second_order_start_taylor_endpoint"
+        ):
+            raise ValueError(
+                "Intrinsic-spin self-reaction diagnostics require the "
+                "Second-order accepted-start Taylor update."
+            )
+        source_minimum_separation = _parse_gui_float(
+            self.magnetic_dipole_source_minimum_separation_var.get(),
+            "Dipole source minimum separation",
+        )
+        if (
+            not math.isfinite(source_minimum_separation)
+            or source_minimum_separation <= 0.0
+        ):
+            raise ValueError(
+                "Dipole source minimum separation must be finite and positive."
+            )
+
+        local_widths: dict[str, float | None] = {}
+        local_width_variables = tuple(
+            getattr(self, "magnetic_dipole_local_jet_width_vars", ())
+        )
+        for index, label in enumerate(("narrow", "primary", "wide")):
+            if index < len(local_width_variables):
+                text = str(local_width_variables[index].get()).strip()
+                if not text:
+                    value = None
+                else:
+                    value = _parse_gui_float(text, f"Local jet {label} half-width")
+                    if not math.isfinite(value) or value <= 0.0:
+                        raise ValueError(
+                            f"Local jet {label} half-width must be finite and "
+                            "positive."
+                        )
+            else:
+                value = getattr(
+                    self,
+                    f"_magnetic_dipole_source_local_jet_{label}_half_width_ns",
+                    None,
+                )
+            local_widths[label] = value
+        local_scales = [
+            dict(scale)
+            for scale in getattr(
+                self,
+                "_magnetic_dipole_source_local_jet_scales",
+                [],
+            )
+        ]
+        entered_width_count = sum(value is not None for value in local_widths.values())
+        if local_scales and entered_width_count == len(local_widths):
+            # Filling all three visible boxes is an explicit GUI replacement
+            # of a named ladder loaded from JSON. Blank boxes preserve it.
+            local_scales = []
+        elif local_scales and entered_width_count:
+            raise ValueError(
+                "Fill all three local jet width boxes to replace the loaded named "
+                "scale ladder, or leave all three blank to preserve it."
+            )
+        if source_history_model == "causal_local_jet" and not local_scales:
+            if any(value is None for value in local_widths.values()):
+                raise ValueError(
+                    "Causal local jet requires narrow, primary, and wide physical "
+                    "half-widths."
+                )
+            narrow = cast(float, local_widths["narrow"])
+            primary = cast(float, local_widths["primary"])
+            wide = cast(float, local_widths["wide"])
+            if not narrow < primary < wide:
+                raise ValueError(
+                    "Local jet half-widths must satisfy narrow < primary < wide."
+                )
+
+        return {
+            "magnetic_dipole_enabled": enabled,
+            "magnetic_dipole_spin_precession_enabled": bool(
+                self.magnetic_dipole_spin_precession_enabled_var.get()
+            ),
+            "magnetic_dipole_stern_gerlach_force_enabled": bool(
+                self.magnetic_dipole_stern_gerlach_force_enabled_var.get()
+            ),
+            "magnetic_dipole_spin_model": getattr(
+                self, "_magnetic_dipole_spin_model", "rfs_minimal_2021"
+            ),
+            "magnetic_dipole_stern_gerlach_model": getattr(
+                self, "_magnetic_dipole_stern_gerlach_model", "rfs_full_g"
+            ),
+            "magnetic_dipole_source_model": source_model,
+            "magnetic_dipole_source_history_model": source_history_model,
+            "magnetic_dipole_exact_retarded_backend": exact_retarded_backend,
+            "magnetic_dipole_exact_retarded_update": exact_retarded_update,
+            "magnetic_dipole_intrinsic_spin_self_reaction_mode": (
+                intrinsic_spin_self_reaction_mode
+            ),
+            "magnetic_dipole_source_minimum_separation_mm": (source_minimum_separation),
+            "magnetic_dipole_source_relative_stencil_step": getattr(
+                self, "_magnetic_dipole_source_relative_stencil_step", 1.0e-3
+            ),
+            "magnetic_dipole_source_minimum_stencil_step_mm": getattr(
+                self,
+                "_magnetic_dipole_source_minimum_stencil_step_mm",
+                1.0e-15,
+            ),
+            "magnetic_dipole_source_root_tolerance_mm": getattr(
+                self, "_magnetic_dipole_source_root_tolerance_mm", 1.0e-21
+            ),
+            "magnetic_dipole_source_max_root_iterations": getattr(
+                self, "_magnetic_dipole_source_max_root_iterations", 96
+            ),
+            "magnetic_dipole_source_local_jet_narrow_half_width_ns": (
+                local_widths["narrow"]
+            ),
+            "magnetic_dipole_source_local_jet_primary_half_width_ns": (
+                local_widths["primary"]
+            ),
+            "magnetic_dipole_source_local_jet_wide_half_width_ns": (
+                local_widths["wide"]
+            ),
+            "magnetic_dipole_source_local_jet_acceleration_degree": getattr(
+                self,
+                "_magnetic_dipole_source_local_jet_acceleration_degree",
+                5,
+            ),
+            "magnetic_dipole_source_local_jet_spin_degree": getattr(
+                self, "_magnetic_dipole_source_local_jet_spin_degree", 5
+            ),
+            "magnetic_dipole_source_local_jet_maximum_condition_number": getattr(
+                self,
+                "_magnetic_dipole_source_local_jet_maximum_condition_number",
+                1.0e5,
+            ),
+            "magnetic_dipole_source_local_jet_maximum_relative_spread": getattr(
+                self,
+                "_magnetic_dipole_source_local_jet_maximum_relative_spread",
+                1.0e-3,
+            ),
+            "magnetic_dipole_source_local_jet_scales": local_scales,
+            "magnetic_dipole_source_local_jet_maximum_cross_scale_relative_spread": getattr(
+                self,
+                "_magnetic_dipole_source_local_jet_maximum_cross_scale_relative_spread",
+                1.0e-3,
+            ),
+            "magnetic_dipole_source_local_jet_acceleration_samples": getattr(
+                self,
+                "_magnetic_dipole_source_local_jet_acceleration_samples",
+                "interval_mean",
+            ),
+            "magnetic_dipole_source_local_jet_window_alignment": getattr(
+                self,
+                "_magnetic_dipole_source_local_jet_window_alignment",
+                "past",
+            ),
+            "magnetic_dipole_source_local_jet_window_weighting": getattr(
+                self,
+                "_magnetic_dipole_source_local_jet_window_weighting",
+                "tricube",
+            ),
+            "magnetic_dipole_source_local_jet_inertial_prehistory": (
+                "assumed_inertial"
+                if getattr(
+                    self,
+                    "magnetic_dipole_local_jet_assume_inertial_var",
+                    None,
+                )
+                is not None
+                and self.magnetic_dipole_local_jet_assume_inertial_var.get()
+                else "untrusted"
+            ),
+            "rider_magnetic_species": selected_species(
+                self.rider_magnetic_species_var, "rider"
+            ),
+            "driver_magnetic_species": selected_species(
+                self.driver_magnetic_species_var, "driver"
+            ),
+            "rider_rest_spin": spin_vector(
+                self.rider_rest_spin_vars, "Rider", validate=enabled
+            ),
+            "driver_rest_spin": spin_vector(
+                self.driver_rest_spin_vars, "Driver", validate=driver_enabled
+            ),
+        }
+
+    def _validate_magnetic_species_particle_matches(
+        self: Any,
+        *,
+        magnetic_options: dict[str, Any],
+        rider_params: dict[str, Any],
+        driver_params: dict[str, Any] | None,
+    ) -> None:
+        """Reject named magnetic presets that disagree with particle q and m."""
+        if not magnetic_options["magnetic_dipole_enabled"]:
+            return
+
+        def validate_role(role: str, params: dict[str, Any], species_key: str) -> None:
+            species = get_species(species_key)
+            if not species.has_supported_magnetic_moment:
+                raise ValueError(
+                    f"The magnetic {role} species '{species.display_name}' has no "
+                    "built-in magnetic-moment preset. The GUI does not expose "
+                    "custom moments; choose a supported preset or use a documented "
+                    "custom CLI/JSON configuration."
+                )
+
+            mass_value = params.get("mass_amu", params.get("m_particle"))
+            charge_sign = params.get("charge_sign")
+            stripped_ions = params.get("stripped_ions")
+            if mass_value is None or charge_sign is None or stripped_ions is None:
+                raise ValueError(
+                    f"Magnetic dipole validation needs {role} particle mass, "
+                    "charge_sign, and stripped_ions values."
+                )
+            try:
+                actual_mass = float(mass_value)
+                actual_charge_e = float(charge_sign) * float(stripped_ions)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"The {role} particle mass and charge values must be numeric "
+                    "when magnetic dipoles are enabled."
+                ) from exc
+
+            mass_matches = math.isclose(
+                actual_mass,
+                species.mass_amu,
+                rel_tol=1.0e-3,
+                abs_tol=1.0e-12,
+            )
+            charge_matches = math.isclose(
+                actual_charge_e,
+                float(species.charge_e),
+                rel_tol=0.0,
+                abs_tol=1.0e-6,
+            )
+            if not mass_matches or not charge_matches:
+                raise ValueError(
+                    f"Magnetic dipole {role} species mismatch: "
+                    f"'{species.display_name}' expects mass "
+                    f"{species.mass_amu:.12g} amu and charge "
+                    f"{species.charge_e:+d} e, but the current {role} particle "
+                    f"values give {actual_mass:.12g} amu and "
+                    f"{actual_charge_e:+.12g} e. Select the matching general "
+                    f"{role} species preset, or make the Custom particle mass "
+                    "and charge match the magnetic preset."
+                )
+
+        validate_role("rider", rider_params, magnetic_options["rider_magnetic_species"])
+        if driver_params is not None:
+            validate_role(
+                "driver",
+                driver_params,
+                magnetic_options["driver_magnetic_species"],
+            )
+
+    def _apply_external_magnetic_options_to_ui(
+        self: Any, options: SimulationOptions
+    ) -> None:
+        """Populate native, tesla, and T/m prescribed magnetic-field controls."""
+        native = getattr(options, "external_magnetic_field_native", (0.0, 0.0, 0.0))
+        for var, value in zip(self.external_magnetic_native_vars, native):
+            var.set(_format_gui_float(value))
+        for var, value in zip(self.external_magnetic_tesla_vars, native):
+            var.set(_format_gui_float(magnetic_field_native_to_tesla(value)))
+
+        gradient = getattr(
+            options,
+            "external_magnetic_field_gradient_t_per_m",
+            ((0.0, 0.0, 0.0),) * 3,
+        )
+        for variable_row, value_row in zip(
+            self.external_magnetic_gradient_vars, gradient
+        ):
+            for var, value in zip(variable_row, value_row):
+                var.set(_format_gui_float(value))
+
+    def _build_external_magnetic_options_from_ui(
+        self: Any, *, enabled: bool
+    ) -> dict[str, Any]:
+        """Return prescribed B in native units and its static gradient in T/m."""
+        strict_parser = _parse_gui_float if enabled else None
+
+        def parse(variable: Any, label: str) -> float:
+            if strict_parser is not None:
+                return strict_parser(variable.get(), label)
+            return _parse_gui_float_lenient(variable.get(), 0.0)
+
+        if self.external_field_input_mode_var.get() == "SI V/m":
+            magnetic_native = tuple(
+                magnetic_field_tesla_to_native(parse(var, f"External B T {axis}"))
+                for var, axis in zip(self.external_magnetic_tesla_vars, ("x", "y", "z"))
+            )
+        else:
+            magnetic_native = tuple(
+                parse(var, f"External B native {axis}")
+                for var, axis in zip(
+                    self.external_magnetic_native_vars, ("x", "y", "z")
+                )
+            )
+
+        gradient = tuple(
+            tuple(
+                parse(var, f"External dB{component}/d{coordinate} T/m")
+                for var, coordinate in zip(variable_row, ("x", "y", "z"))
+            )
+            for variable_row, component in zip(
+                self.external_magnetic_gradient_vars, ("x", "y", "z")
+            )
+        )
+        return {
+            "external_magnetic_field_native": magnetic_native,
+            "external_magnetic_field_gradient_t_per_m": gradient,
+        }
 
     def _apply_macroparticle_smearing_options_to_ui(
         self: Any, options: SimulationOptions
@@ -356,6 +1030,7 @@ class IntegratorGUIConfigMixin:
             getattr(options, "macroparticle_use_momentum_errors", True)
         )
         self._apply_macroparticle_smearing_options_to_ui(options)
+        self._apply_magnetic_dipole_options_to_ui(options)
         if hasattr(self, "pseudo_grid_enabled_var"):
             self.pseudo_grid_enabled_var.set(
                 getattr(options, "pseudo_grid_enabled", False)
@@ -584,21 +1259,21 @@ class IntegratorGUIConfigMixin:
             getattr(options, "external_field_enabled", False)
         )
         electric_si = getattr(options, "external_electric_field_v_per_m", None)
-        self.external_field_input_mode_var.set("SI V/m" if electric_si else "Native")
+        electric_native = getattr(
+            options, "external_electric_field_native", (0.0, 0.0, 0.0)
+        )
+        use_si_inputs = electric_si is not None or not any(electric_native)
+        self.external_field_input_mode_var.set("SI V/m" if use_si_inputs else "Native")
         for var, value in zip(
             self.external_electric_native_vars,
-            getattr(options, "external_electric_field_native", (0.0, 0.0, 0.0)),
+            electric_native,
         ):
             var.set(_format_gui_float(value))
         for var, value in zip(
             self.external_electric_si_vars, electric_si or (0.0, 0.0, 0.0)
         ):
             var.set(_format_gui_float(value))
-        for var, value in zip(
-            self.external_magnetic_native_vars,
-            getattr(options, "external_magnetic_field_native", (0.0, 0.0, 0.0)),
-        ):
-            var.set(_format_gui_float(value))
+        self._apply_external_magnetic_options_to_ui(options)
         for axis in ("x", "y", "z", "t"):
             for bound in ("min", "max"):
                 key = f"{axis}_{bound}"
@@ -672,6 +1347,8 @@ class IntegratorGUIConfigMixin:
         )
         if hasattr(self, "_toggle_macroparticle_smearing_controls"):
             self._toggle_macroparticle_smearing_controls()
+        if hasattr(self, "_toggle_magnetic_dipole_controls"):
+            self._toggle_magnetic_dipole_controls()
         self._toggle_space_charge_controls()
         self._toggle_external_field_controls()
         self._toggle_auto_duration_controls()
@@ -688,6 +1365,53 @@ class IntegratorGUIConfigMixin:
             self.config_dir_var.set(str(options.config_dir))
 
         self.config_name_var.set(options.config_name)
+        self.checkpoint_enabled_var.set(options.checkpoint_enabled)
+        self.checkpoint_directory_var.set(
+            ""
+            if options.checkpoint_directory is None
+            else str(options.checkpoint_directory)
+        )
+        self.checkpoint_resume_from_var.set(
+            ""
+            if options.checkpoint_resume_from is None
+            else str(options.checkpoint_resume_from)
+        )
+        self.checkpoint_interval_steps_var.set(options.checkpoint_interval_steps)
+        self.checkpoint_interval_seconds_var.set(options.checkpoint_interval_seconds)
+        self.adaptive_pair_return_enabled_var.set(options.adaptive_pair_return_enabled)
+        self.adaptive_pair_target_lab_time_ns_var.set(
+            ""
+            if options.adaptive_pair_target_lab_time_ns is None
+            else str(options.adaptive_pair_target_lab_time_ns)
+        )
+        self.adaptive_pair_tolerance_scale_var.set(
+            options.adaptive_pair_tolerance_scale
+        )
+        self.adaptive_pair_minimum_step_factor_var.set(
+            options.adaptive_pair_minimum_step_factor
+        )
+        self.adaptive_pair_maximum_step_factor_var.set(
+            options.adaptive_pair_maximum_step_factor
+        )
+        self.adaptive_pair_public_sample_interval_ns_var.set(
+            ""
+            if options.adaptive_pair_public_sample_interval_ns is None
+            else str(options.adaptive_pair_public_sample_interval_ns)
+        )
+        self.adaptive_pair_shared_time_absolute_tolerance_ns_var.set(
+            options.adaptive_pair_shared_time_absolute_tolerance_ns
+        )
+        self.adaptive_pair_shared_time_relative_tolerance_var.set(
+            options.adaptive_pair_shared_time_relative_tolerance
+        )
+        self.adaptive_pair_maximum_attempts_var.set(
+            options.adaptive_pair_maximum_attempts
+        )
+        self.adaptive_pair_maximum_accepted_slabs_var.set(
+            options.adaptive_pair_maximum_accepted_slabs
+        )
+        if hasattr(self, "_toggle_adaptive_pair_return_controls"):
+            self._toggle_adaptive_pair_return_controls()
 
         default_species_label = self._species_label_by_key.get(
             "custom", next(iter(self._species_by_label))
@@ -706,6 +1430,15 @@ class IntegratorGUIConfigMixin:
             self.driver_param_vars[name].set(driver_value)
         for name in CORE_PARAM_DEFAULTS:
             self.core_param_vars[name].set(options.core_params[name])
+
+        # Loading an enabled adaptive-pair configuration must apply the same
+        # validated prerequisites as clicking the checkbox. The BooleanVar
+        # trace fires earlier, before the general core-parameter loop above,
+        # so repeat the semantic toggle after those values are populated.
+        if options.adaptive_pair_return_enabled and hasattr(
+            self, "_on_adaptive_pair_return_toggle"
+        ):
+            self._on_adaptive_pair_return_toggle()
 
         z_cutoff_val = options.core_params.get("z_cutoff", 0.0)
         self.z_cutoff_enabled_var.set(z_cutoff_val != 0.0)
@@ -825,12 +1558,6 @@ class IntegratorGUIConfigMixin:
                         self.external_electric_si_vars, ("x", "y", "z")
                     )
                 )
-            external_magnetic_native = tuple(
-                _parse_gui_float(var.get(), f"External B native {axis}")
-                for var, axis in zip(
-                    self.external_magnetic_native_vars, ("x", "y", "z")
-                )
-            )
             external_bounds = {
                 f"{axis}_{bound}": _parse_gui_optional_float(
                     self.external_field_window_vars[f"{axis}_{bound}"].get(),
@@ -850,10 +1577,6 @@ class IntegratorGUIConfigMixin:
                     _parse_gui_float_lenient(var.get(), 0.0)
                     for var in self.external_electric_si_vars
                 )
-            external_magnetic_native = tuple(
-                _parse_gui_float_lenient(var.get(), 0.0)
-                for var in self.external_magnetic_native_vars
-            )
             external_bounds = {
                 f"{axis}_{bound}": _parse_gui_optional_float_lenient(
                     self.external_field_window_vars[f"{axis}_{bound}"].get()
@@ -862,9 +1585,21 @@ class IntegratorGUIConfigMixin:
                 for bound in ("min", "max")
             }
 
+        external_magnetic_options = self._build_external_magnetic_options_from_ui(
+            enabled=external_field_enabled
+        )
+        magnetic_dipole_options = self._build_magnetic_dipole_options_from_ui()
+        self._validate_magnetic_species_particle_matches(
+            magnetic_options=magnetic_dipole_options,
+            rider_params=rider_params,
+            driver_params=driver_params,
+        )
         macroparticle_smearing_options = (
             self._build_macroparticle_smearing_options_from_ui()
         )
+
+        checkpoint_resume_text = self.checkpoint_resume_from_var.get().strip()
+        checkpoint_directory_text = self.checkpoint_directory_var.get().strip()
 
         return SimulationOptions(
             simulation_type=sim_type,
@@ -897,6 +1632,58 @@ class IntegratorGUIConfigMixin:
             output_dir=Path(self.output_dir_var.get()),
             config_dir=Path(self.config_dir_var.get()),
             config_name=config_name,
+            checkpoint_enabled=bool(
+                self.checkpoint_enabled_var.get() or checkpoint_resume_text
+            ),
+            checkpoint_directory=(
+                None
+                if checkpoint_resume_text or not checkpoint_directory_text
+                else Path(checkpoint_directory_text)
+            ),
+            checkpoint_resume_from=(
+                Path(checkpoint_resume_text) if checkpoint_resume_text else None
+            ),
+            checkpoint_interval_steps=int(self.checkpoint_interval_steps_var.get()),
+            checkpoint_interval_seconds=float(
+                self.checkpoint_interval_seconds_var.get()
+            ),
+            adaptive_pair_return_enabled=bool(
+                self.adaptive_pair_return_enabled_var.get()
+            ),
+            adaptive_pair_target_lab_time_ns=(
+                _parse_gui_optional_float_lenient(
+                    self.adaptive_pair_target_lab_time_ns_var.get()
+                )
+            ),
+            adaptive_pair_tolerance_scale=float(
+                self.adaptive_pair_tolerance_scale_var.get()
+            ),
+            adaptive_pair_minimum_step_factor=float(
+                self.adaptive_pair_minimum_step_factor_var.get()
+            ),
+            adaptive_pair_maximum_step_factor=float(
+                self.adaptive_pair_maximum_step_factor_var.get()
+            ),
+            adaptive_pair_public_sample_interval_ns=(
+                _parse_gui_optional_float_lenient(
+                    self.adaptive_pair_public_sample_interval_ns_var.get()
+                )
+            ),
+            adaptive_pair_shared_time_absolute_tolerance_ns=float(
+                self.adaptive_pair_shared_time_absolute_tolerance_ns_var.get()
+            ),
+            adaptive_pair_shared_time_relative_tolerance=float(
+                self.adaptive_pair_shared_time_relative_tolerance_var.get()
+            ),
+            adaptive_pair_maximum_attempts=int(
+                self.adaptive_pair_maximum_attempts_var.get()
+            ),
+            adaptive_pair_maximum_accepted_slabs=int(
+                self.adaptive_pair_maximum_accepted_slabs_var.get()
+            ),
+            particle_loss_enabled=(
+                False if self.adaptive_pair_return_enabled_var.get() else True
+            ),
             manual_particle_config_enabled=manual_particle_config_enabled,
             image_subcharge_count=int(self.image_subcharge_var.get()),
             use_image_weighting=bool(self.image_weighting_var.get()),
@@ -911,6 +1698,7 @@ class IntegratorGUIConfigMixin:
                 self.macroparticle_use_momentum_errors_var.get()
             ),
             **macroparticle_smearing_options,
+            **magnetic_dipole_options,
             self_consistency_enabled=bool(self.self_consistency_enabled_var.get()),
             self_consistency_convergence_mode=str(
                 self.self_consistency_convergence_mode_var.get()
@@ -968,7 +1756,10 @@ class IntegratorGUIConfigMixin:
                 self.adaptive_timestep_halt_on_jump_var.get()
             ),
             energy_monitor_debug=False,
-            adaptive_timestep_enabled=bool(self.adaptive_timestep_enabled_var.get()),
+            adaptive_timestep_enabled=bool(
+                self.adaptive_timestep_enabled_var.get()
+                and not self.adaptive_pair_return_enabled_var.get()
+            ),
             adaptive_timestep_threshold=float(
                 self.adaptive_timestep_threshold_var.get()
             ),
@@ -1017,7 +1808,7 @@ class IntegratorGUIConfigMixin:
             external_field_enabled=external_field_enabled,
             external_electric_field_native=external_electric_native,
             external_electric_field_v_per_m=external_electric_si,
-            external_magnetic_field_native=external_magnetic_native,
+            **external_magnetic_options,
             external_field_x_min=external_bounds["x_min"],
             external_field_x_max=external_bounds["x_max"],
             external_field_y_min=external_bounds["y_min"],

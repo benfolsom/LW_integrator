@@ -7,8 +7,12 @@ covariant Liénard–Wiechert formalism to the concrete data structures exposed 
 ``core/trajectory_integrator.py`` and the validation studies under
 ``examples/validation``.
 
-Note that throughout the codebase Gaussian units are used. The unorthodox choice of amu-millimeter-nanosecond
-units is implemented to avoid numerical overflows.
+The main charge integrator uses a native amu--millimetre--nanosecond unit
+system derived from the historical Gaussian-unit formulation.  The production
+RFS kernel and its retarded charge-field gradient now remain in that native
+scaled-Gaussian system.  User-facing J/T moments and T/m gradients cross an
+explicit boundary once; configured native electric and magnetic fields pass
+through unchanged.
 
 
 Retarded fields
@@ -108,6 +112,67 @@ sync.  Proper-time stepping avoids runaway behaviour at high :math:`\gamma`
 while keeping the integration scheme close to the historical reference
 implementation.
 
+Intrinsic magnetic-moment response
+----------------------------------
+
+The experimental magnetic-moment path preserves the charge-canonical momentum
+above.  Under exact ``INERTIAL_PREHISTORY`` evolution, the integrator advances
+the gauge-invariant mechanical Lorentz response and the selected
+Rafelski--Formanek--Steinmetz dipole response together.  Once both provisional
+bunch endpoints are present in the retarded histories, it reconstructs
+
+.. math::
+
+   P^\mu_{n+1}=p^\mu_{n+1}+{q\over c}A^\mu(x_{n+1}).
+
+This explicit endpoint representation is equivalent to the canonical
+equation at the continuum level while avoiding an implicit pair solve for
+:math:`A(x_{n+1})`.  The canonical potential-derivative contraction remains a
+tested convention oracle.  The RFS contribution is only the dipole four-force
+
+.. math::
+
+   \left.\frac{dp^\mu}{d\tau}\right|_{\mathrm{dipole}}
+   ={\mu_{\mathrm{signed}}\over c}G^{\mu\nu}[a]u_\nu,
+   \qquad
+   G^{\mu\nu}[a]=\partial^\mu(F^{*\nu\rho}a_\rho)
+   -\partial^\nu(F^{*\mu\rho}a_\rho),
+
+where :math:`a^\mu=s^\mu/(I\hbar)` is the dimensionless spin four-vector.  In
+native Gaussian units the full Lorentz-plus-dipole equation is
+
+.. math::
+
+   m\dot u^\mu=\left({q\over c}F^{\mu\nu}
+   +{\mu_{\mathrm{signed}}\over c}G^{\mu\nu}[a]\right)u_\nu.
+
+The field includes prescribed fields and observer-charge-independent,
+cross-bunch point-charge Lienard--Wiechert fields.  Every centred
+spacetime-gradient stencil event performs a new light-cone solve, so the
+derivative includes retarded-time variation.  Under
+``INERTIAL_PREHISTORY``, the exact charge provider supplies
+:math:`A^\mu`, :math:`F^{\mu\nu}`, :math:`\partial_\lambda A^\nu`, and
+:math:`\partial_\lambda F^{\mu\nu}` from the same retarded event at each
+stencil point.  Force evaluation uses :math:`F`; accepted canonical output uses
+the potential evaluated at the accepted endpoint.  ``COLD_START`` retains the
+established charge-force path and a separate exact RFS field/gradient sample.
+Adding only the native
+:math:`(\mu/c)G[a]u` term avoids a second Lorentz force and preserves the
+feature-off baseline.  The signed minimal 2021 coefficients advance spin at
+the same time.  Its gradient term uses the full 2018 :math:`G` tensor: this
+matches the compact 2021 form in vacuum and is an explicit extension, rather
+than literally 2021 Eq. (11), in a current region.
+
+This is an experimental covariant response model with strict scope guards, not
+a closed all-orders action theory.  The optional
+``covariant_retarded_point`` provider adds the ordinary non-self field of each
+intrinsic moment.  The existing :math:`qF` and full :math:`G[F]` response then
+produce charge--dipole and dipole--dipole coupling without a second pair-force
+law.  The provider includes outgoing dipole radiation, but not intrinsic
+dipole self-recoil or charge--dipole radiation-interference recoil.  The
+equations, configuration modes, primary references, and current validation
+boundary are given in :doc:`magnetic_dipole_moments`.
+
 Relativistic position updates in coordinate time
 ------------------------------------------------
 
@@ -194,7 +259,15 @@ reported configurations:
 
   .. math::
 
-     \mathbf{F}_{\text{rad}} = \frac{2}{3}\frac{e^{2}}{m c^{3}}\left[\frac{d\gamma}{dt}\,\mathbf{F}_{\text{ext}} - \frac{\gamma^{3}}{c^{2}} (\mathbf{F}_{\text{ext}} \cdot \mathbf{a})\, \mathbf{v}\right].
+     \mathbf{F}_{\text{rad}} = \frac{2}{3}\frac{e^{2}}{m c^{3}}\left[\frac{d}{dt}\left(\gamma\mathbf{F}_{\text{ext}}\right) - \frac{\gamma^{3}}{c^{2}} (\mathbf{F}_{\text{ext}} \cdot \mathbf{a})\, \mathbf{v}\right].
+
+  The complete first term is
+
+  .. math::
+
+     \frac{d}{dt}\left(\gamma\mathbf{F}_{\text{ext}}\right)
+     =\gamma\frac{d\mathbf{F}_{\text{ext}}}{dt}
+     +\frac{d\gamma}{dt}\mathbf{F}_{\text{ext}}.
 
   This mode is opt-in and currently validated only against controlled
   prescribed-field cases.  Longitudinal acceleration should show the expected
@@ -202,6 +275,66 @@ reported configurations:
   synchrotron-style recoil mostly opposite the particle velocity.  Conducting
   boundary cases still require dedicated convergence checks before
   ``medina_lad`` should be treated as physics evidence.
+
+Exact inertial prehistory
+-------------------------
+
+The ``INERTIAL_PREHISTORY`` startup mode constructs a finite synthetic history
+in which each initialized particle coasts inertially before active time zero.
+The maintained implementation uses eight sparse knots.  Uniform motion is
+represented exactly between those knots, so their spacing is independent of
+the much smaller active integration timestep.
+
+The initial duration is conservatively estimated from the maximum cross-bunch
+separation :math:`R_{\max}`, the largest initial speed
+:math:`\beta_{\max}`, and the exact-field stencil scale :math:`\delta`:
+
+.. math::
+
+   T_{\mathrm{prefix}}
+   =2\,{R_{\max}+3\delta\over c(1-\beta_{\max})}.
+
+The factor two is a safety margin; the three stencil widths cover the nested
+dipole derivative.  Before integration, the solver evaluates every initial
+charge and enabled dipole potential/field stencil in both bunch directions.
+If any displaced event lacks a bracketed light-cone root, it doubles the
+duration and repeats the full preflight, for at most eight geometric
+attempts.  A missing root after successful startup is an error rather than
+a request to suppress the force.
+
+At each stencil event, potential, field, and their derivatives are derived
+from the same retarded source event within each provider.  Charge and dipole
+providers use the same explicit worldline history and light-cone convention;
+they do not rely on a frozen retarded state.  Once the preflight succeeds, the
+public time-zero input is interpreted as mechanical momentum and rebased once
+to
+
+.. math::
+
+   P^\mu(0)=p^\mu(0)+{q\over c}
+   \left(A^\mu_{q}(0)+A^\mu_{\mathrm{dip}}(0)\right).
+
+This initialization changes canonical coordinates only; it leaves the stated
+mechanical momentum and velocity unchanged.
+
+The synthetic prefix supplies history only.  It is omitted from normal
+trajectory output, and active time zero remains the first reported event.  It
+also does not invent a pre-simulation force sample for Medina/LAD radiation
+reaction: the force derivative remains unprimed until accepted active-time
+force samples exist.  Thus the mode specifies an inertial incoming state, not
+an assertion that the preceding interacting trajectory has been solved.
+Finite-start studies must move the active starting separation outward and
+demonstrate convergence of the reported encounter observable; varying the
+eight synthetic knot locations alone cannot test the omitted pre-start
+interaction.
+
+``INERTIAL_PREHISTORY`` differs from ``APPROXIMATE_BACK_HISTORY`` because the
+former supplies finite, explicit source events to the exact retarded-time
+solver.  The latter retains the archived analytic extrapolation and remains a
+benchmarking mode.  The exact mode is currently limited to fixed-step
+``BUNCH_TO_BUNCH`` RFS/retarded-dipole runs and cannot be combined with driver
+trains.  ``COLD_START`` remains appropriate when the desired model is a genuine
+turn-on transient.
 
 COLD_START gating mechanism
 ---------------------------

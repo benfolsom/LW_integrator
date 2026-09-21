@@ -23,15 +23,21 @@ import numpy as np
 from core.constants import C_MMNS, ELECTRON_MASS_AMU
 from core.integration_runner import AdaptiveTimestepConfig, retarded_integrator
 from core.self_consistency import SelfConsistencyConfig
+from core.species import SPECIES, resolve_species
 from core.types import (
+    AdaptivePairReturnConfig,
     BeamlineGeometryConfig,
     CavityExitConfig,
+    CheckpointConfig,
     ChronoMatchingMode,
+    DipoleSourceConfig,
     DriverTrainConfig,
     ExternalFieldConfig,
     GammaReconciliationMethod,
     IntegratorConfig,
     MacroparticleSmearingConfig,
+    MagneticDipoleConfig,
+    MagneticDipoleParticleConfig,
     Occluder,
     ParticleLossConfig,
     ParticleState,
@@ -150,6 +156,37 @@ DEFAULT_MACROPARTICLE_SMEARING: Dict[str, Any] = {
     "refresh_policy": "fixed_per_particle",
 }
 
+DEFAULT_MAGNETIC_DIPOLE: Dict[str, Any] = {
+    "enabled": False,
+    "spin_precession_enabled": True,
+    "stern_gerlach_force_enabled": False,
+    "spin_model": "rfs_minimal_2021",
+    "stern_gerlach_model": "rfs_full_g",
+    "exact_retarded_backend": "python",
+    "exact_retarded_update": "first_order_endpoint",
+    "intrinsic_spin_self_reaction_mode": "off",
+    "source": {
+        "model": "off",
+        "history_model": "causal_frozen_c1",
+        "minimum_separation_mm": 2.0e-9,
+        "relative_stencil_step": 1.0e-3,
+        "minimum_stencil_step_mm": 1.0e-15,
+        "root_tolerance_mm": 1.0e-21,
+        "max_root_iterations": 96,
+    },
+    "rider": {
+        "species": "electron",
+        "rest_spin": (0.0, 0.0, 1.0),
+    },
+    "driver": {
+        "species": "proton",
+        "rest_spin": (0.0, 0.0, 1.0),
+    },
+}
+
+MAGNETIC_SPECIES_CHOICES: Tuple[str, ...] = tuple(SPECIES)
+"""Canonical names accepted by the direct magnetic-dipole CLI."""
+
 DEFAULT_DRIVER_TRAIN: Dict[str, Any] = {
     "enabled": False,
     "bunch_count": 1,
@@ -194,6 +231,9 @@ STARTUP_MODE_ALIASES: Mapping[str, StartupMode] = {
     "approximate-back-history": StartupMode.APPROXIMATE_BACK_HISTORY,
     "approximate_back_history": StartupMode.APPROXIMATE_BACK_HISTORY,
     "approximate": StartupMode.APPROXIMATE_BACK_HISTORY,
+    "inertial-prehistory": StartupMode.INERTIAL_PREHISTORY,
+    "inertial_prehistory": StartupMode.INERTIAL_PREHISTORY,
+    "inertial": StartupMode.INERTIAL_PREHISTORY,
 }
 
 REQUIRED_PARTICLE_FIELDS: Iterable[str] = (
@@ -257,8 +297,8 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         dest="testbed_config",
         help=(
             "Path to a testbed/GUI JSON configuration. Runs it unchanged "
-            "through load_config() and run_testbed(); direct-run flags do not "
-            "override it."
+            "through load_config() and run_testbed(); only checkpoint/restart "
+            "flags may override it."
         ),
     )
     parser.add_argument(
@@ -416,6 +456,13 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         nargs=3,
         metavar=("BX", "BY", "BZ"),
         help="Uniform magnetic field vector in native solver units.",
+    )
+    parser.add_argument(
+        "--external-b-field-tesla",
+        type=float,
+        nargs=3,
+        metavar=("BX", "BY", "BZ"),
+        help="Uniform magnetic field vector in tesla, converted to native units.",
     )
     for axis in ("x", "y", "z", "t"):
         parser.add_argument(
@@ -605,11 +652,17 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser.set_defaults(chrono_adaptive_tolerance=None)
     parser.add_argument(
         "--startup-mode",
-        choices=("cold-start", "approximate-back-history"),
+        choices=(
+            "cold-start",
+            "inertial-prehistory",
+            "approximate-back-history",
+        ),
         dest="startup_mode",
         help=(
             "Early-step strategy: 'cold-start' suppresses forces until the "
-            "observer has travelled sufficiently, while "
+            "observer has travelled sufficiently; 'inertial-prehistory' "
+            "supplies a finite synthetic coasting history for exact retarded "
+            "light-cone solves; and "
             "'approximate-back-history' assumes constant source velocity."
         ),
     )
@@ -622,6 +675,227 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
             "Choose off or diagnostic_only for baselines."
         ),
     )
+    parser.add_argument(
+        "--magnetic-dipoles",
+        dest="magnetic_dipole_enabled",
+        action="store_true",
+        help=(
+            "Enable intrinsic magnetic-moment dynamics (RFS by default). "
+            "RR defaults to off unless an RR mode is supplied explicitly."
+        ),
+    )
+    parser.add_argument(
+        "--no-magnetic-dipoles",
+        dest="magnetic_dipole_enabled",
+        action="store_false",
+        help="Disable intrinsic magnetic-moment dynamics explicitly.",
+    )
+    parser.set_defaults(magnetic_dipole_enabled=None)
+    parser.add_argument(
+        "--dipole-source",
+        dest="dipole_source_model",
+        choices=("off", "full-retarded-point"),
+        help=(
+            "Ordinary field sourced by intrinsic moments: off or the full "
+            "retarded point-dipole oracle (experimental). Active only with "
+            "--magnetic-dipoles."
+        ),
+    )
+    parser.add_argument(
+        "--dipole-source-cutoff-mm",
+        "--dipole-source-minimum-separation-mm",
+        dest="dipole_source_minimum_separation_mm",
+        type=float,
+        help=(
+            "Strict minimum observer/source separation in mm for the point "
+            "dipole field. Crossing it aborts the run; it is not softening."
+        ),
+    )
+    parser.add_argument(
+        "--dipole-source-history",
+        dest="dipole_source_history_model",
+        choices=("causal-frozen-c1", "causal-c5", "causal-local-jet"),
+        help=(
+            "Dipole trajectory interpolation: causal-frozen-c1 keeps the "
+            "legacy piecewise-cubic source, causal-c5 uses smooth global "
+            "segments, and causal-local-jet reconstructs derivatives in a "
+            "guarded physical time window. The latter two currently require "
+            "--adaptive-pair-return."
+        ),
+    )
+    for label in ("narrow", "primary", "wide"):
+        parser.add_argument(
+            f"--dipole-local-jet-{label}-half-width-ns",
+            dest=f"dipole_local_jet_{label}_half_width_ns",
+            type=float,
+            help=(
+                f"Physical {label} half-width in ns for causal-local-jet. "
+                "All three widths are required and must increase strictly."
+            ),
+        )
+    parser.add_argument(
+        "--dipole-local-jet-scale",
+        action="append",
+        type=_parse_local_jet_scale,
+        help=(
+            "Named causal-local-jet scale as NAME:NARROW_NS:PRIMARY_NS:WIDE_NS. "
+            "Repeat from shortest to longest; do not combine with the three "
+            "single-scale width options."
+        ),
+    )
+    parser.add_argument(
+        "--dipole-local-jet-acceleration-samples",
+        choices=("exact-start", "interval-mean"),
+        help="Use exact step-start or accepted interval-mean source acceleration.",
+    )
+    parser.add_argument(
+        "--dipole-local-jet-acceleration-degree",
+        type=int,
+        help="Polynomial degree used to reconstruct source acceleration derivatives.",
+    )
+    parser.add_argument(
+        "--dipole-local-jet-spin-degree",
+        type=int,
+        help="Polynomial degree used to reconstruct source spin derivatives.",
+    )
+    parser.add_argument(
+        "--dipole-local-jet-maximum-condition-number",
+        type=float,
+        help="Reject a local fit whose numerical condition number exceeds this value.",
+    )
+    parser.add_argument(
+        "--dipole-local-jet-maximum-relative-spread",
+        type=float,
+        help="Reject a response when the nested physical-width fits differ by more.",
+    )
+    parser.add_argument(
+        "--dipole-local-jet-maximum-cross-scale-relative-spread",
+        type=float,
+        help="Reject a transition when adjacent named-scale responses differ more.",
+    )
+    parser.add_argument(
+        "--dipole-local-jet-window-alignment",
+        choices=("centered", "past"),
+        help="Center the physical fit window or end it at the retarded event.",
+    )
+    parser.add_argument(
+        "--dipole-local-jet-window-weighting",
+        choices=("tricube", "uniform"),
+        help="Weight local samples smoothly or uniformly inside the physical window.",
+    )
+    parser.add_argument(
+        "--dipole-local-jet-inertial-prehistory",
+        choices=("untrusted", "assumed-inertial"),
+        help=(
+            "Whether synthetic constant-velocity prehistory is unavailable as "
+            "acceleration data or is explicitly accepted as the inertial boundary."
+        ),
+    )
+    parser.add_argument(
+        "--exact-retarded-backend",
+        dest="exact_retarded_backend",
+        choices=(
+            "python",
+            "numba_roots_exact_serial",
+            "numba_full_strict_serial",
+            "numba_analytic_charge_response_serial",
+            "numba_analytic_charge_dipole_response_serial",
+            "metal_certified_full_strict",
+        ),
+        help=(
+            "Exact-retarded evaluator shared by charge and intrinsic-dipole "
+            "fields: the Python reference (default), a strict serial Numba "
+            "roots-only/full-Hertz kernel, or the experimental one-root "
+            "analytical charge-only or charge-plus-dipole response kernel. The "
+            "explicit Metal option proposes "
+            "only float32 dipole root brackets; original-float64 certification "
+            "and the strict CPU root/field remain authoritative. Source and "
+            "finite-difference reductions remain deterministic."
+        ),
+    )
+    parser.add_argument(
+        "--exact-retarded-update",
+        dest="exact_retarded_update",
+        choices=(
+            "first_order_endpoint",
+            "second_order_start_taylor_endpoint",
+        ),
+        help=(
+            "Exact-retarded translation update: the established first-order "
+            "endpoint scheme (default), or an experimental second-order "
+            "proper-time Taylor update evaluated entirely at the accepted "
+            "start phase-space event."
+        ),
+    )
+    parser.add_argument(
+        "--intrinsic-spin-self-reaction-mode",
+        choices=("off", "diagnostic", "experimental_linear_spin"),
+        help=(
+            "Intrinsic-spin self-reaction handling: off (default), or retain "
+            "analytical/causal q-mu estimates as checkpointed diagnostics. "
+            "Diagnostic values are never applied as forces. The experimental_linear_spin "
+            "mode applies only the reduced first-order spin recoil, requires checkpointed "
+            "adaptive exact-pair stepping, and omits magnetic-dipole-squared reaction."
+        ),
+    )
+    parser.add_argument(
+        "--rider-magnetic-species",
+        type=_parse_magnetic_species,
+        choices=MAGNETIC_SPECIES_CHOICES,
+        help="Rider magnetic-moment preset (for example electron or neutron).",
+    )
+    parser.add_argument(
+        "--driver-magnetic-species",
+        type=_parse_magnetic_species,
+        choices=MAGNETIC_SPECIES_CHOICES,
+        help="Driver magnetic-moment preset (for example proton or antiproton).",
+    )
+    parser.add_argument(
+        "--rider-spin",
+        type=float,
+        nargs=3,
+        metavar=("X", "Y", "Z"),
+        help="Initial rider rest-frame spin direction; normalized by the solver.",
+    )
+    parser.add_argument(
+        "--driver-spin",
+        type=float,
+        nargs=3,
+        metavar=("X", "Y", "Z"),
+        help="Initial driver rest-frame spin direction; normalized by the solver.",
+    )
+    parser.add_argument(
+        "--stern-gerlach",
+        dest="stern_gerlach_force_enabled",
+        action="store_true",
+        help=(
+            "Enable translational magnetic-gradient coupling using the "
+            "configured model (full RFS G tensor by default)."
+        ),
+    )
+    parser.add_argument(
+        "--no-stern-gerlach",
+        dest="stern_gerlach_force_enabled",
+        action="store_false",
+        help="Disable magnetic-gradient translation explicitly.",
+    )
+    parser.set_defaults(stern_gerlach_force_enabled=None)
+    parser.add_argument(
+        "--spin-precession",
+        dest="spin_precession_enabled",
+        action="store_true",
+        help=(
+            "Enable spin transport using the configured model "
+            "(RFS minimal 2021 by default)."
+        ),
+    )
+    parser.add_argument(
+        "--no-spin-precession",
+        dest="spin_precession_enabled",
+        action="store_false",
+        help="Keep configured spin fixed while retaining other dipole dynamics.",
+    )
+    parser.set_defaults(spin_precession_enabled=None)
     parser.add_argument(
         "--image-subcharge-count",
         type=int,
@@ -962,6 +1236,75 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--checkpoint-dir",
+        type=Path,
+        help="Write atomic accepted-step checkpoint chunks to this directory.",
+    )
+    parser.add_argument(
+        "--checkpoint-every-steps",
+        type=int,
+        default=None,
+        help="Checkpoint after this many newly accepted steps (default: 1000).",
+    )
+    parser.add_argument(
+        "--checkpoint-every-seconds",
+        type=float,
+        default=None,
+        help="Checkpoint after this much wall time (default: 900 seconds).",
+    )
+    parser.add_argument(
+        "--resume-from",
+        type=Path,
+        help="Resume and continue writing an existing checkpoint directory.",
+    )
+    parser.add_argument(
+        "--adaptive-pair-return",
+        action="store_true",
+        help=(
+            "Use the checkpointed shared-lab-time exact 1+1 adaptive mode. "
+            "Requires inertial prehistory, exact RFS/dipole dynamics, disabled "
+            "particle loss, and --checkpoint-dir or --resume-from."
+        ),
+    )
+    parser.add_argument(
+        "--adaptive-pair-target-time-ns",
+        type=float,
+        help="Required final shared lab time in ns for adaptive-pair mode.",
+    )
+    parser.add_argument(
+        "--adaptive-pair-tolerance-scale",
+        type=float,
+        help="Scale all validated exact-pair step-doubling tolerances.",
+    )
+    parser.add_argument(
+        "--adaptive-pair-minimum-step-factor",
+        type=float,
+        help="Minimum adaptive slab as a factor of --time-step (default: 1/64).",
+    )
+    parser.add_argument(
+        "--adaptive-pair-maximum-step-factor",
+        type=float,
+        help="Maximum adaptive slab as a factor of --time-step (default: 64).",
+    )
+    parser.add_argument(
+        "--adaptive-pair-public-sample-interval-ns",
+        type=float,
+        help=(
+            "Sparse public-output cursor interval in ns; accepted source history "
+            "and incremental diagnostics remain complete."
+        ),
+    )
+    parser.add_argument(
+        "--adaptive-pair-shared-time-absolute-tolerance-ns",
+        type=float,
+        help="Absolute shared-endpoint root tolerance in ns (default: 1e-20).",
+    )
+    parser.add_argument(
+        "--adaptive-pair-shared-time-relative-tolerance",
+        type=float,
+        help="Relative shared-endpoint root tolerance (default: 1e-12).",
+    )
+    parser.add_argument(
         "--output",
         type=Path,
         help="Optional path to write a JSON summary report.",
@@ -983,6 +1326,45 @@ def _version_string() -> str:
     from core._version import __version__
 
     return f"lw-integrator {__version__}"
+
+
+def _parse_magnetic_species(value: str) -> str:
+    """Resolve a documented species name or alias to its canonical name."""
+
+    try:
+        return resolve_species(value).name
+    except KeyError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+
+
+def _parse_local_jet_scale(value: str) -> dict[str, object]:
+    """Parse one named physical local-jet scale from the command line."""
+
+    fields = value.split(":")
+    if len(fields) != 4 or not fields[0].strip():
+        raise argparse.ArgumentTypeError(
+            "local jet scale must be NAME:NARROW_NS:PRIMARY_NS:WIDE_NS"
+        )
+    try:
+        widths = tuple(float(item) for item in fields[1:])
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            "local jet scale widths must be numbers"
+        ) from exc
+    if not all(np.isfinite(width) and width > 0.0 for width in widths):
+        raise argparse.ArgumentTypeError(
+            "local jet scale widths must be finite and positive"
+        )
+    if not widths[0] < widths[1] < widths[2]:
+        raise argparse.ArgumentTypeError(
+            "local jet scale widths must satisfy narrow < primary < wide"
+        )
+    return {
+        "name": fields[0].strip(),
+        "narrow_half_width_ns": widths[0],
+        "primary_half_width_ns": widths[1],
+        "wide_half_width_ns": widths[2],
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1103,9 +1485,11 @@ def _json_default(value: Any) -> Any:
     raise TypeError(f"Cannot JSON-serialize {type(value).__name__}")
 
 
-def _build_testbed_report(result: Any, config_path: Path) -> dict[str, Any]:
+def _build_testbed_report(
+    result: Any, config_path: Path, options: Any | None = None
+) -> dict[str, Any]:
     """Return a compact serializable report for a testbed-config run."""
-    return {
+    report = {
         "run_mode": "testbed_config",
         "config_path": str(config_path),
         "duration_s": float(result.duration_s),
@@ -1121,6 +1505,63 @@ def _build_testbed_report(result: Any, config_path: Path) -> dict[str, Any]:
         "energy_ledger_metrics": result.energy_ledger_metrics or {},
         "saved_paths": {name: str(path) for name, path in result.saved_paths.items()},
     }
+    if options is not None:
+        source_report: dict[str, Any] = {
+            "model": str(options.magnetic_dipole_source_model),
+            "history_model": str(options.magnetic_dipole_source_history_model),
+        }
+        if options.magnetic_dipole_source_history_model == "causal_local_jet":
+            source_report["local_jet"] = {
+                "narrow_half_width_ns": (
+                    options.magnetic_dipole_source_local_jet_narrow_half_width_ns
+                ),
+                "primary_half_width_ns": (
+                    options.magnetic_dipole_source_local_jet_primary_half_width_ns
+                ),
+                "wide_half_width_ns": (
+                    options.magnetic_dipole_source_local_jet_wide_half_width_ns
+                ),
+                "acceleration_samples": (
+                    options.magnetic_dipole_source_local_jet_acceleration_samples
+                ),
+                "acceleration_degree": (
+                    options.magnetic_dipole_source_local_jet_acceleration_degree
+                ),
+                "spin_degree": options.magnetic_dipole_source_local_jet_spin_degree,
+                "maximum_condition_number": (
+                    options.magnetic_dipole_source_local_jet_maximum_condition_number
+                ),
+                "maximum_relative_spread": (
+                    options.magnetic_dipole_source_local_jet_maximum_relative_spread
+                ),
+                "scales": [
+                    dict(scale)
+                    for scale in options.magnetic_dipole_source_local_jet_scales
+                ],
+                "maximum_cross_scale_relative_spread": (
+                    options.magnetic_dipole_source_local_jet_maximum_cross_scale_relative_spread
+                ),
+                "window_alignment": (
+                    options.magnetic_dipole_source_local_jet_window_alignment
+                ),
+                "window_weighting": (
+                    options.magnetic_dipole_source_local_jet_window_weighting
+                ),
+                "inertial_prehistory": (
+                    options.magnetic_dipole_source_local_jet_inertial_prehistory
+                ),
+            }
+        report["magnetic_dipole_source"] = source_report
+        report["exact_retarded"] = _exact_retarded_report(
+            str(options.magnetic_dipole_exact_retarded_backend)
+        )
+        report["exact_retarded"]["update"] = str(
+            options.magnetic_dipole_exact_retarded_update
+        )
+        report["exact_retarded"]["intrinsic_spin_self_reaction_mode"] = str(
+            options.magnetic_dipole_intrinsic_spin_self_reaction_mode
+        )
+    return report
 
 
 def _print_testbed_summary(report: Mapping[str, Any]) -> None:
@@ -1139,6 +1580,12 @@ def _print_testbed_summary(report: Mapping[str, Any]) -> None:
             lines.append(f"  {label}: {value}")
     if report.get("halt_reason"):
         lines.append(f"  Halt Reason: {report['halt_reason']}")
+    magnetic_source = report.get("magnetic_dipole_source")
+    if isinstance(magnetic_source, Mapping):
+        lines.append(f"  Magnetic Dipole Source: {magnetic_source.get('model')}")
+    exact_retarded = report.get("exact_retarded")
+    if isinstance(exact_retarded, Mapping):
+        lines.append(f"  Exact Retarded Backend: {exact_retarded.get('backend')}")
     saved_paths = report.get("saved_paths")
     if isinstance(saved_paths, Mapping) and saved_paths:
         lines.append(f"  Saved Artifacts: {len(saved_paths)}")
@@ -1146,7 +1593,7 @@ def _print_testbed_summary(report: Mapping[str, Any]) -> None:
 
 
 def run_testbed_config(args: argparse.Namespace) -> int:
-    """Load and run an unmodified testbed/GUI JSON configuration."""
+    """Load and run a testbed/GUI JSON config with checkpoint overrides."""
     conflicting_options = (
         ("--config", getattr(args, "config", None)),
         ("--sweep-config", getattr(args, "sweep_config", None)),
@@ -1166,13 +1613,53 @@ def run_testbed_config(args: argparse.Namespace) -> int:
         from .testbed_runner import load_config, run_testbed
 
         options = load_config(config_path)
+        if args.resume_from is not None:
+            options.checkpoint_resume_from = args.resume_from
+            options.checkpoint_directory = None
+            options.checkpoint_enabled = True
+        elif args.checkpoint_dir is not None:
+            options.checkpoint_directory = args.checkpoint_dir
+            options.checkpoint_enabled = True
+        if args.checkpoint_every_steps is not None:
+            options.checkpoint_interval_steps = args.checkpoint_every_steps
+        if args.checkpoint_every_seconds is not None:
+            options.checkpoint_interval_seconds = args.checkpoint_every_seconds
+        if args.adaptive_pair_return:
+            options.adaptive_pair_return_enabled = True
+        for argument_name, option_name in (
+            ("adaptive_pair_target_time_ns", "adaptive_pair_target_lab_time_ns"),
+            ("adaptive_pair_tolerance_scale", "adaptive_pair_tolerance_scale"),
+            (
+                "adaptive_pair_minimum_step_factor",
+                "adaptive_pair_minimum_step_factor",
+            ),
+            (
+                "adaptive_pair_maximum_step_factor",
+                "adaptive_pair_maximum_step_factor",
+            ),
+            (
+                "adaptive_pair_public_sample_interval_ns",
+                "adaptive_pair_public_sample_interval_ns",
+            ),
+            (
+                "adaptive_pair_shared_time_absolute_tolerance_ns",
+                "adaptive_pair_shared_time_absolute_tolerance_ns",
+            ),
+            (
+                "adaptive_pair_shared_time_relative_tolerance",
+                "adaptive_pair_shared_time_relative_tolerance",
+            ),
+        ):
+            value = getattr(args, argument_name, None)
+            if value is not None:
+                setattr(options, option_name, value)
         result = run_testbed(options)
     # The runner can surface numerical and I/O failures through varied exception types.
     except Exception as exc:  # noqa: BLE001
         print(f"Error running testbed config {config_path}: {exc}", file=sys.stderr)
         return 2
 
-    report = _build_testbed_report(result, config_path)
+    report = _build_testbed_report(result, config_path, options)
     if args.output is not None:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(
@@ -1193,10 +1680,26 @@ def _merge_simulation_payload(
     result["driver_train"] = dict(DEFAULT_DRIVER_TRAIN)
     result["beamline_geometry"] = dict(DEFAULT_BEAMLINE_GEOMETRY)
     result["macroparticle_smearing"] = dict(DEFAULT_MACROPARTICLE_SMEARING)
+    result["magnetic_dipole"] = {
+        key: value
+        for key, value in DEFAULT_MAGNETIC_DIPOLE.items()
+        if key not in {"source", "rider", "driver"}
+    }
+    result["magnetic_dipole"]["source"] = dict(DEFAULT_MAGNETIC_DIPOLE["source"])
+    result["magnetic_dipole"]["rider"] = dict(DEFAULT_MAGNETIC_DIPOLE["rider"])
+    result["magnetic_dipole"]["driver"] = dict(DEFAULT_MAGNETIC_DIPOLE["driver"])
     result["adaptive_timestep"] = dict(DEFAULT_ADAPTIVE_TIMESTEP)
     for key in DEFAULT_SIMULATION:
         if key in file_payload:
             result[key] = file_payload[key]
+    # These newer nested settings are not members of DEFAULT_SIMULATION.
+    # Preserve file values before applying the explicit CLI overrides below.
+    for key in ("checkpoint", "adaptive_pair_return"):
+        if key in file_payload:
+            value = file_payload[key]
+            if value is not None and not isinstance(value, Mapping):
+                raise SimulationConfigError(f"'{key}' must be an object or null")
+            result[key] = None if value is None else dict(value)
     file_particle_loss = file_payload.get("particle_loss")
     if isinstance(file_particle_loss, Mapping):
         result["particle_loss"].update(file_particle_loss)
@@ -1219,6 +1722,45 @@ def _merge_simulation_payload(
     file_smearing = file_payload.get("macroparticle_smearing")
     if isinstance(file_smearing, Mapping):
         result["macroparticle_smearing"].update(file_smearing)
+    if "magnetic_dipole" in file_payload:
+        file_magnetic_dipole = file_payload["magnetic_dipole"]
+        if not isinstance(file_magnetic_dipole, Mapping):
+            raise SimulationConfigError("'magnetic_dipole' must be an object")
+        for key, value in file_magnetic_dipole.items():
+            if key not in {"source", "rider", "driver"}:
+                result["magnetic_dipole"][key] = value
+        if "source" in file_magnetic_dipole:
+            source_payload = file_magnetic_dipole["source"]
+            if not isinstance(source_payload, Mapping):
+                raise SimulationConfigError(
+                    "'magnetic_dipole.source' must be an object"
+                )
+            result["magnetic_dipole"]["source"].update(source_payload)
+            if "backend" in source_payload:
+                legacy_backend = source_payload["backend"]
+                canonical_backend = file_magnetic_dipole.get("exact_retarded_backend")
+                if (
+                    canonical_backend is not None
+                    and str(canonical_backend).strip().lower()
+                    != str(legacy_backend).strip().lower()
+                ):
+                    raise SimulationConfigError(
+                        "magnetic_dipole.exact_retarded_backend conflicts with "
+                        "legacy magnetic_dipole.source.backend"
+                    )
+                result["magnetic_dipole"]["exact_retarded_backend"] = (
+                    legacy_backend if canonical_backend is None else canonical_backend
+                )
+                result["magnetic_dipole"]["source"].pop("backend", None)
+        for role in ("rider", "driver"):
+            if role not in file_magnetic_dipole:
+                continue
+            role_payload = file_magnetic_dipole[role]
+            if not isinstance(role_payload, Mapping):
+                raise SimulationConfigError(
+                    f"'magnetic_dipole.{role}' must be an object"
+                )
+            result["magnetic_dipole"][role].update(role_payload)
     file_adaptive_timestep = file_payload.get("adaptive_timestep")
     if isinstance(file_adaptive_timestep, Mapping):
         result["adaptive_timestep"].update(file_adaptive_timestep)
@@ -1358,6 +1900,9 @@ def _merge_simulation_payload(
     if getattr(args, "external_b_field_native", None) is not None:
         external_field["magnetic_field_native"] = args.external_b_field_native
         external_field["enabled"] = True
+    if getattr(args, "external_b_field_tesla", None) is not None:
+        external_field["magnetic_field_tesla"] = args.external_b_field_tesla
+        external_field["enabled"] = True
     for axis in ("x", "y", "z", "t"):
         for bound in ("min", "max"):
             arg_name = f"external_field_{axis}_{bound}"
@@ -1374,6 +1919,53 @@ def _merge_simulation_payload(
         result["auto_duration_crossing_steps"] = args.auto_duration_crossing_steps
     if getattr(args, "auto_duration_post_factor", None) is not None:
         result["auto_duration_post_factor"] = args.auto_duration_post_factor
+
+    checkpoint_payload = result.get("checkpoint")
+    checkpoint = (
+        dict(checkpoint_payload) if isinstance(checkpoint_payload, Mapping) else {}
+    )
+    if getattr(args, "resume_from", None) is not None:
+        checkpoint["enabled"] = True
+        checkpoint["resume_from"] = str(args.resume_from)
+        checkpoint["directory"] = None
+    elif getattr(args, "checkpoint_dir", None) is not None:
+        checkpoint["enabled"] = True
+        checkpoint["directory"] = str(args.checkpoint_dir)
+    if getattr(args, "checkpoint_every_steps", None) is not None:
+        checkpoint["interval_steps"] = args.checkpoint_every_steps
+    if getattr(args, "checkpoint_every_seconds", None) is not None:
+        checkpoint["interval_seconds"] = args.checkpoint_every_seconds
+    if checkpoint:
+        result["checkpoint"] = checkpoint
+
+    adaptive_pair_payload = result.get("adaptive_pair_return")
+    adaptive_pair = (
+        dict(adaptive_pair_payload)
+        if isinstance(adaptive_pair_payload, Mapping)
+        else {}
+    )
+    if getattr(args, "adaptive_pair_return", False):
+        adaptive_pair["enabled"] = True
+    adaptive_pair_overrides = {
+        "target_lab_time_ns": getattr(args, "adaptive_pair_target_time_ns", None),
+        "tolerance_scale": getattr(args, "adaptive_pair_tolerance_scale", None),
+        "minimum_step_factor": getattr(args, "adaptive_pair_minimum_step_factor", None),
+        "maximum_step_factor": getattr(args, "adaptive_pair_maximum_step_factor", None),
+        "public_sample_interval_ns": getattr(
+            args, "adaptive_pair_public_sample_interval_ns", None
+        ),
+        "shared_time_absolute_tolerance_ns": getattr(
+            args, "adaptive_pair_shared_time_absolute_tolerance_ns", None
+        ),
+        "shared_time_relative_tolerance": getattr(
+            args, "adaptive_pair_shared_time_relative_tolerance", None
+        ),
+    }
+    for name, value in adaptive_pair_overrides.items():
+        if value is not None:
+            adaptive_pair[name] = value
+    if adaptive_pair:
+        result["adaptive_pair_return"] = adaptive_pair
 
     particle_loss = result["particle_loss"]
     particle_loss_overrides = {
@@ -1511,6 +2103,120 @@ def _merge_simulation_payload(
     if getattr(args, "sc_verbosity", None) is not None:
         result["self_consistency_verbosity"] = args.sc_verbosity
 
+    magnetic_dipole = result["magnetic_dipole"]
+    if getattr(args, "magnetic_dipole_enabled", None) is not None:
+        magnetic_dipole["enabled"] = bool(args.magnetic_dipole_enabled)
+    if getattr(args, "stern_gerlach_force_enabled", None) is not None:
+        magnetic_dipole["stern_gerlach_force_enabled"] = bool(
+            args.stern_gerlach_force_enabled
+        )
+    if getattr(args, "spin_precession_enabled", None) is not None:
+        magnetic_dipole["spin_precession_enabled"] = bool(args.spin_precession_enabled)
+    dipole_source = magnetic_dipole["source"]
+    if getattr(args, "dipole_source_model", None) is not None:
+        dipole_source["model"] = args.dipole_source_model
+    if getattr(args, "dipole_source_history_model", None) is not None:
+        dipole_source["history_model"] = args.dipole_source_history_model
+    local_jet_width_overrides = {
+        label: getattr(args, f"dipole_local_jet_{label}_half_width_ns", None)
+        for label in ("narrow", "primary", "wide")
+    }
+    local_jet_scales = getattr(args, "dipole_local_jet_scale", None)
+    if local_jet_scales is not None and any(
+        value is not None for value in local_jet_width_overrides.values()
+    ):
+        raise SimulationConfigError(
+            "named --dipole-local-jet-scale options cannot be combined with "
+            "single-scale local jet width options"
+        )
+    if local_jet_scales is not None:
+        for label in local_jet_width_overrides:
+            dipole_source.pop(f"local_jet_{label}_half_width_ns", None)
+        dipole_source["local_jet_scales"] = local_jet_scales
+    elif any(value is not None for value in local_jet_width_overrides.values()):
+        dipole_source.pop("local_jet_scales", None)
+        for label, value in local_jet_width_overrides.items():
+            if value is not None:
+                dipole_source[f"local_jet_{label}_half_width_ns"] = value
+    for argument, key in (
+        ("dipole_local_jet_acceleration_samples", "local_jet_acceleration_samples"),
+        ("dipole_local_jet_acceleration_degree", "local_jet_acceleration_degree"),
+        ("dipole_local_jet_spin_degree", "local_jet_spin_degree"),
+        (
+            "dipole_local_jet_maximum_condition_number",
+            "local_jet_maximum_condition_number",
+        ),
+        (
+            "dipole_local_jet_maximum_relative_spread",
+            "local_jet_maximum_relative_spread",
+        ),
+        (
+            "dipole_local_jet_maximum_cross_scale_relative_spread",
+            "local_jet_maximum_cross_scale_relative_spread",
+        ),
+        ("dipole_local_jet_window_alignment", "local_jet_window_alignment"),
+        ("dipole_local_jet_window_weighting", "local_jet_window_weighting"),
+        ("dipole_local_jet_inertial_prehistory", "local_jet_inertial_prehistory"),
+    ):
+        value = getattr(args, argument, None)
+        if value is not None:
+            dipole_source[key] = value
+    if getattr(args, "exact_retarded_backend", None) is not None:
+        magnetic_dipole["exact_retarded_backend"] = args.exact_retarded_backend
+    if getattr(args, "exact_retarded_update", None) is not None:
+        magnetic_dipole["exact_retarded_update"] = args.exact_retarded_update
+    if getattr(args, "intrinsic_spin_self_reaction_mode", None) is not None:
+        magnetic_dipole["intrinsic_spin_self_reaction_mode"] = (
+            args.intrinsic_spin_self_reaction_mode
+        )
+    if getattr(args, "dipole_source_minimum_separation_mm", None) is not None:
+        dipole_source["minimum_separation_mm"] = (
+            args.dipole_source_minimum_separation_mm
+        )
+    for role in ("rider", "driver"):
+        role_payload = magnetic_dipole[role]
+        species = getattr(args, f"{role}_magnetic_species", None)
+        if species is not None:
+            role_payload["species"] = species
+        rest_spin = getattr(args, f"{role}_spin", None)
+        if rest_spin is not None:
+            role_payload["rest_spin"] = rest_spin
+
+    if getattr(args, "driver_from_rider", False):
+        file_magnetic = file_payload.get("magnetic_dipole")
+        file_driver_magnetic = (
+            file_magnetic.get("driver", {})
+            if isinstance(file_magnetic, Mapping)
+            and isinstance(file_magnetic.get("driver"), Mapping)
+            else {}
+        )
+        explicit_driver_keys = set(file_driver_magnetic)
+        if getattr(args, "driver_magnetic_species", None) is not None:
+            explicit_driver_keys.add("species")
+        if getattr(args, "driver_spin", None) is not None:
+            explicit_driver_keys.add("rest_spin")
+        configured_driver = dict(magnetic_dipole["driver"])
+        inherited_driver = dict(magnetic_dipole["rider"])
+        for key in explicit_driver_keys:
+            if key in configured_driver:
+                inherited_driver[key] = configured_driver[key]
+        magnetic_dipole["driver"] = inherited_driver
+
+    radiation_mode_was_explicit = (
+        "radiation_reaction_mode" in file_payload
+        or getattr(args, "radiation_reaction_mode", None) is not None
+    )
+    if (
+        bool(magnetic_dipole.get("enabled"))
+        and str(magnetic_dipole.get("spin_model", "")).strip().lower()
+        == "rfs_minimal_2021"
+        and not radiation_mode_was_explicit
+    ):
+        # Dynamic RR has no validated RFS completion yet. Keep the ordinary
+        # Medina default when dipoles are off, but avoid inheriting an
+        # incompatible RR mode when RFS is enabled without an RR choice.
+        result["radiation_reaction_mode"] = "off"
+
     return result
 
 
@@ -1526,6 +2232,53 @@ def _merge_particle_payload(
     for key, value in overrides.items():
         result[key] = value
     return result
+
+
+def _build_checkpoint_config(payload: Any) -> CheckpointConfig:
+    if payload is None:
+        return CheckpointConfig()
+    if not isinstance(payload, Mapping):
+        raise SimulationConfigError("checkpoint must be a JSON object")
+    try:
+        return CheckpointConfig(
+            enabled=bool(payload.get("enabled", False)),
+            directory=payload.get("directory"),
+            resume_from=payload.get("resume_from"),
+            interval_steps=int(payload.get("interval_steps", 1000)),
+            interval_seconds=float(payload.get("interval_seconds", 900.0)),
+        )
+    except (TypeError, ValueError) as exc:
+        raise SimulationConfigError(f"Invalid checkpoint configuration: {exc}") from exc
+
+
+def _build_adaptive_pair_return_config(payload: Any) -> AdaptivePairReturnConfig:
+    if payload is None:
+        return AdaptivePairReturnConfig()
+    if not isinstance(payload, Mapping):
+        raise SimulationConfigError("adaptive_pair_return must be a JSON object")
+    try:
+        return AdaptivePairReturnConfig(
+            enabled=bool(payload.get("enabled", False)),
+            target_lab_time_ns=payload.get("target_lab_time_ns"),
+            tolerance_scale=float(payload.get("tolerance_scale", 1.0)),
+            minimum_step_factor=float(payload.get("minimum_step_factor", 1.0 / 64.0)),
+            maximum_step_factor=float(payload.get("maximum_step_factor", 64.0)),
+            public_sample_interval_ns=payload.get("public_sample_interval_ns"),
+            shared_time_absolute_tolerance_ns=float(
+                payload.get("shared_time_absolute_tolerance_ns", 1.0e-20)
+            ),
+            shared_time_relative_tolerance=float(
+                payload.get("shared_time_relative_tolerance", 1.0e-12)
+            ),
+            maximum_attempts=int(payload.get("maximum_attempts", 2_000_000)),
+            maximum_accepted_slabs=int(
+                payload.get("maximum_accepted_slabs", 1_000_000)
+            ),
+        )
+    except (TypeError, ValueError) as exc:
+        raise SimulationConfigError(
+            f"Invalid adaptive_pair_return configuration: {exc}"
+        ) from exc
 
 
 def _build_integrator_config(payload: Mapping[str, Any]) -> IntegratorConfig:
@@ -1571,6 +2324,17 @@ def _build_integrator_config(payload: Mapping[str, Any]) -> IntegratorConfig:
     macroparticle_smearing = _build_macroparticle_smearing_config(
         payload.get("macroparticle_smearing")
     )
+    magnetic_dipole = _build_magnetic_dipole_config(payload.get("magnetic_dipole"))
+    checkpoint = _build_checkpoint_config(payload.get("checkpoint"))
+    adaptive_pair_return = _build_adaptive_pair_return_config(
+        payload.get("adaptive_pair_return")
+    )
+    if magnetic_dipole.enabled and pseudo_grid.enabled:
+        raise SimulationConfigError(
+            "Magnetic-dipole dynamics are not compatible with pseudo-grid spin "
+            "reconstruction yet; disable --pseudo-grid or "
+            "--no-magnetic-dipoles for this run."
+        )
 
     return IntegratorConfig(
         steps=int(payload["steps"]),
@@ -1602,7 +2366,127 @@ def _build_integrator_config(payload: Mapping[str, Any]) -> IntegratorConfig:
         cavity_exit=cavity_exit,
         particle_loss=particle_loss,
         beamline_geometry=beamline_geometry,
+        magnetic_dipole=magnetic_dipole,
+        checkpoint=checkpoint,
+        adaptive_pair_return=adaptive_pair_return,
     )
+
+
+def _build_magnetic_dipole_config(payload: Any) -> MagneticDipoleConfig:
+    """Build and validate magnetic-moment settings for a direct run."""
+
+    if payload is None:
+        return MagneticDipoleConfig()
+    if not isinstance(payload, Mapping):
+        raise SimulationConfigError("magnetic_dipole must be a JSON object")
+
+    source_payload = payload.get("source", {})
+    if not isinstance(source_payload, Mapping):
+        raise SimulationConfigError("magnetic_dipole.source must be a JSON object")
+    source_payload = dict(source_payload)
+    legacy_backend = source_payload.pop("backend", None)
+    canonical_backend = payload.get("exact_retarded_backend")
+    if (
+        canonical_backend is not None
+        and legacy_backend is not None
+        and str(canonical_backend).strip().lower()
+        != str(legacy_backend).strip().lower()
+    ):
+        raise SimulationConfigError(
+            "magnetic_dipole.exact_retarded_backend conflicts with legacy "
+            "magnetic_dipole.source.backend"
+        )
+    exact_retarded_backend = (
+        canonical_backend if canonical_backend is not None else legacy_backend
+    )
+    if exact_retarded_backend is None:
+        exact_retarded_backend = "python"
+    try:
+        source_config = DipoleSourceConfig(**source_payload)
+    except (TypeError, ValueError) as exc:
+        raise SimulationConfigError(
+            f"Invalid magnetic_dipole.source configuration: {exc}"
+        ) from exc
+
+    def _particle_config(
+        role: str, default_species: str
+    ) -> MagneticDipoleParticleConfig:
+        role_payload = payload.get(role, {})
+        if not isinstance(role_payload, Mapping):
+            raise SimulationConfigError(f"magnetic_dipole.{role} must be a JSON object")
+
+        raw_species = str(role_payload.get("species", default_species)).strip().lower()
+        species = None
+        if raw_species == "custom":
+            canonical_species = "custom"
+        else:
+            try:
+                species = resolve_species(raw_species)
+            except KeyError as exc:
+                raise SimulationConfigError(str(exc)) from exc
+            canonical_species = species.name
+
+        try:
+            particle_config = MagneticDipoleParticleConfig(
+                species=canonical_species,
+                magnetic_moment_j_per_t=role_payload.get("magnetic_moment_j_per_t"),
+                spin_quantum_number=role_payload.get("spin_quantum_number"),
+                rest_spin=role_payload.get("rest_spin", (0.0, 0.0, 1.0)),
+                polarization=role_payload.get("polarization", 1.0),
+            )
+        except (TypeError, ValueError) as exc:
+            raise SimulationConfigError(
+                f"Invalid magnetic_dipole.{role} configuration: {exc}"
+            ) from exc
+
+        enabled = bool(payload.get("enabled", False))
+        preset_moment = species.magnetic_moment_j_t if species is not None else None
+        resolved_moment = particle_config.magnetic_moment_j_per_t
+        if resolved_moment is None:
+            resolved_moment = preset_moment
+        if enabled and resolved_moment is None:
+            raise SimulationConfigError(
+                f"Magnetic species '{canonical_species}' has no supported moment "
+                "preset; provide magnetic_moment_j_per_t and a documented "
+                "spin_quantum_number in the native JSON configuration."
+            )
+        if (
+            enabled
+            and resolved_moment is not None
+            and abs(float(resolved_moment)) > 0.0
+            and particle_config.spin_quantum_number is None
+            and species is None
+        ):
+            raise SimulationConfigError(
+                f"magnetic_dipole.{role}.spin_quantum_number is required for "
+                "a custom non-zero magnetic moment"
+            )
+        return particle_config
+
+    try:
+        return MagneticDipoleConfig(
+            enabled=payload.get("enabled", False),
+            spin_precession_enabled=payload.get("spin_precession_enabled", True),
+            stern_gerlach_force_enabled=payload.get(
+                "stern_gerlach_force_enabled", False
+            ),
+            spin_model=payload.get("spin_model", "rfs_minimal_2021"),
+            stern_gerlach_model=payload.get("stern_gerlach_model", "rfs_full_g"),
+            exact_retarded_backend=exact_retarded_backend,
+            exact_retarded_update=payload.get(
+                "exact_retarded_update", "first_order_endpoint"
+            ),
+            intrinsic_spin_self_reaction_mode=payload.get(
+                "intrinsic_spin_self_reaction_mode", "off"
+            ),
+            source=source_config,
+            rider=_particle_config("rider", "electron"),
+            driver=_particle_config("driver", "proton"),
+        )
+    except (TypeError, ValueError) as exc:
+        raise SimulationConfigError(
+            f"Invalid magnetic_dipole configuration: {exc}"
+        ) from exc
 
 
 def _parse_simulation_type(value: Any) -> SimulationType:
@@ -1647,7 +2531,8 @@ def _parse_startup_mode(value: Any) -> StartupMode:
         if key in STARTUP_MODE_ALIASES:
             return STARTUP_MODE_ALIASES[key]
         raise SimulationConfigError(
-            f"Unknown startup_mode value: {value!r}. Expected 'cold-start' or 'approximate-back-history'."
+            f"Unknown startup_mode value: {value!r}. Expected 'cold-start', "
+            "'inertial-prehistory', or 'approximate-back-history'."
         )
     raise SimulationConfigError("startup_mode must be a string or StartupMode instance")
 
@@ -2065,6 +2950,31 @@ def _parse_field_vector(
         ) from exc
 
 
+def _parse_field_matrix(
+    payload: Mapping[str, Any],
+    name: str,
+) -> Optional[
+    Tuple[
+        Tuple[float, float, float],
+        Tuple[float, float, float],
+        Tuple[float, float, float],
+    ]
+]:
+    value = payload.get(name)
+    if value is None:
+        return None
+    if not isinstance(value, (list, tuple)) or len(value) != 3:
+        raise SimulationConfigError(f"external_field.{name} must be a 3x3 matrix")
+    if any(not isinstance(row, (list, tuple)) or len(row) != 3 for row in value):
+        raise SimulationConfigError(f"external_field.{name} must be a 3x3 matrix")
+    try:
+        return tuple(tuple(float(component) for component in row) for row in value)  # type: ignore[return-value]
+    except (TypeError, ValueError) as exc:
+        raise SimulationConfigError(
+            f"external_field.{name} must contain numeric values"
+        ) from exc
+
+
 def _build_space_charge_config(
     payload: Mapping[str, Any],
 ) -> Optional[SpaceChargeConfig]:
@@ -2289,11 +3199,22 @@ def _build_external_field_config(payload: Any) -> Optional[ExternalFieldConfig]:
         0.0,
         0.0,
     )
+    magnetic_si = _parse_field_vector(payload, "magnetic_field_tesla")
+    if magnetic_si is not None:
+        from core.external_fields import magnetic_field_tesla_to_native
+
+        magnetic_native = tuple(
+            magnetic_field_tesla_to_native(component) for component in magnetic_si
+        )
+    magnetic_gradient = _parse_field_matrix(
+        payload, "magnetic_field_gradient_t_per_m"
+    ) or ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))
 
     return ExternalFieldConfig(
         enabled=True,
         electric_field_native=electric_native,
         magnetic_field_native=magnetic_native,
+        magnetic_field_gradient_t_per_m=magnetic_gradient,
         x_min=_optional_float_field(payload, "x_min"),
         x_max=_optional_float_field(payload, "x_max"),
         y_min=_optional_float_field(payload, "y_min"),
@@ -2460,6 +3381,9 @@ def run_simulation(request: SimulationRequest) -> tuple:
         particle_loss=request.config.particle_loss,
         macroparticle_smearing=request.config.macroparticle_smearing,
         beamline_geometry=request.config.beamline_geometry,
+        magnetic_dipole=request.config.magnetic_dipole,
+        checkpoint=request.config.checkpoint,
+        adaptive_pair_return=request.config.adaptive_pair_return,
     )
 
 
@@ -2523,6 +3447,12 @@ def print_summary(summary: Mapping[str, Any]) -> None:
             lines.append(
                 f"  {key.replace('_', ' ').title()}: {_format_value(summary[key])}"
             )
+    magnetic_source = summary.get("magnetic_dipole_source")
+    if isinstance(magnetic_source, Mapping):
+        lines.append(f"  Magnetic Dipole Source: {magnetic_source.get('model')}")
+    exact_retarded = summary.get("exact_retarded")
+    if isinstance(exact_retarded, Mapping):
+        lines.append(f"  Exact Retarded Backend: {exact_retarded.get('backend')}")
     print("\n".join(lines))
 
 
@@ -2533,12 +3463,138 @@ def _format_value(value: Any) -> Any:
 
 
 def build_report(
-    trajectory: Trajectory, driver: Optional[Trajectory] = None
+    trajectory: Trajectory,
+    driver: Optional[Trajectory] = None,
+    magnetic_dipole: MagneticDipoleConfig | None = None,
 ) -> Dict[str, Any]:
     """Build the CLI report payload for rider and optional driver trajectories."""
     report = dict(summarise_trajectory(trajectory))
+    if trajectory:
+        adaptive_summary = trajectory[-1].get("_adaptive_pair_return")
+        if isinstance(adaptive_summary, Mapping):
+            # Keep actual accepted-interval counts, restart status and lifetime
+            # recoil work visible; public output-row counts are not step counts.
+            report["adaptive_pair_return"] = dict(adaptive_summary)
     if driver is not None:
         report["driver_summary"] = summarise_trajectory(driver)
+    if magnetic_dipole is not None:
+        source_report: dict[str, Any] = {
+            "model": magnetic_dipole.source.model,
+            "history_model": magnetic_dipole.source.history_model,
+        }
+        if magnetic_dipole.source.history_model == "causal_local_jet":
+            source_report["local_jet"] = {
+                "narrow_half_width_ns": (
+                    magnetic_dipole.source.local_jet_narrow_half_width_ns
+                ),
+                "primary_half_width_ns": (
+                    magnetic_dipole.source.local_jet_primary_half_width_ns
+                ),
+                "wide_half_width_ns": (
+                    magnetic_dipole.source.local_jet_wide_half_width_ns
+                ),
+                "acceleration_samples": (
+                    magnetic_dipole.source.local_jet_acceleration_samples
+                ),
+                "acceleration_degree": (
+                    magnetic_dipole.source.local_jet_acceleration_degree
+                ),
+                "spin_degree": magnetic_dipole.source.local_jet_spin_degree,
+                "maximum_condition_number": (
+                    magnetic_dipole.source.local_jet_maximum_condition_number
+                ),
+                "maximum_relative_spread": (
+                    magnetic_dipole.source.local_jet_maximum_relative_spread
+                ),
+                "scales": [
+                    {
+                        "name": scale.name,
+                        "narrow_half_width_ns": scale.narrow_half_width_ns,
+                        "primary_half_width_ns": scale.primary_half_width_ns,
+                        "wide_half_width_ns": scale.wide_half_width_ns,
+                    }
+                    for scale in magnetic_dipole.source.local_jet_scale_configs
+                ],
+                "maximum_cross_scale_relative_spread": (
+                    magnetic_dipole.source.local_jet_maximum_cross_scale_relative_spread
+                ),
+                "window_alignment": (magnetic_dipole.source.local_jet_window_alignment),
+                "window_weighting": (magnetic_dipole.source.local_jet_window_weighting),
+                "inertial_prehistory": (
+                    magnetic_dipole.source.local_jet_inertial_prehistory
+                ),
+            }
+        report["magnetic_dipole_source"] = source_report
+        report["exact_retarded"] = _exact_retarded_report(
+            magnetic_dipole.exact_retarded_backend
+        )
+        report["exact_retarded"]["update"] = magnetic_dipole.exact_retarded_update
+        report["exact_retarded"][
+            "intrinsic_spin_self_reaction_mode"
+        ] = magnetic_dipole.intrinsic_spin_self_reaction_mode
+    return report
+
+
+def _exact_retarded_report(backend: str) -> dict[str, Any]:
+    """Record the selected evaluator and any certified-Metal fallback counts."""
+
+    report: dict[str, Any] = {"backend": str(backend)}
+    if str(backend) == "metal_certified_full_strict":
+        from core.metal_certified_roots import metal_certified_root_diagnostics
+
+        diagnostics = metal_certified_root_diagnostics()
+        report["metal_certified_roots"] = {
+            "calls": diagnostics.calls,
+            "below_threshold_calls": diagnostics.below_threshold_calls,
+            "dispatches": diagnostics.dispatches,
+            "accepted_proposals": diagnostics.accepted_proposals,
+            "cpu_fallbacks": diagnostics.cpu_fallbacks,
+            "dispatch_failures": diagnostics.dispatch_failures,
+        }
+    if str(backend) in {
+        "numba_analytic_charge_response_serial",
+        "numba_analytic_charge_dipole_response_serial",
+    }:
+        from core.analytic_charge_response_diagnostics import (
+            analytic_charge_response_diagnostics,
+        )
+
+        diagnostics = analytic_charge_response_diagnostics()
+        report["analytic_charge_response"] = {
+            "calls": diagnostics.calls,
+            "analytical_calls": diagnostics.analytical_calls,
+            "fallback_calls": diagnostics.fallback_calls,
+            "fallback_segment_boundary": (diagnostics.fallback_segment_boundary),
+            "fallback_nontimelike_bound": (diagnostics.fallback_nontimelike_bound),
+            "fallback_nonfinite": diagnostics.fallback_nonfinite,
+            "valid_sources": diagnostics.valid_sources,
+            "minimum_segment_margin_ratio": (
+                diagnostics.minimum_segment_margin_ratio
+                if np.isfinite(diagnostics.minimum_segment_margin_ratio)
+                else None
+            ),
+        }
+    if str(backend) == "numba_analytic_charge_dipole_response_serial":
+        from core.analytic_dipole_hertz_diagnostics import (
+            analytic_dipole_hertz_diagnostics,
+        )
+
+        diagnostics = analytic_dipole_hertz_diagnostics()
+        report["analytic_dipole_hertz_response"] = {
+            "calls": diagnostics.calls,
+            "analytical_calls": diagnostics.analytical_calls,
+            "fallback_calls": diagnostics.fallback_calls,
+            "fallback_segment_boundary": diagnostics.fallback_segment_boundary,
+            "fallback_mutable_tail": diagnostics.fallback_mutable_tail,
+            "fallback_loss_wavefront": diagnostics.fallback_loss_wavefront,
+            "fallback_short_history": diagnostics.fallback_short_history,
+            "valid_sources": diagnostics.valid_sources,
+            "minimum_boundary_fraction": (
+                diagnostics.minimum_boundary_fraction
+                if np.isfinite(diagnostics.minimum_boundary_fraction)
+                else None
+            ),
+        }
     return report
 
 
@@ -2637,7 +3693,9 @@ def main(argv: Optional[list[str]] = None) -> int:
         return 2
 
     trajectory, driver, *_soa_out = run_simulation(request)
-    report = build_report(trajectory, driver)
+    request_config = getattr(request, "config", None)
+    magnetic_dipole = getattr(request_config, "magnetic_dipole", None)
+    report = build_report(trajectory, driver, magnetic_dipole)
 
     if args.output is not None:
         args.output.parent.mkdir(parents=True, exist_ok=True)
