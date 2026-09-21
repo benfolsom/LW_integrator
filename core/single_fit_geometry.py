@@ -1,11 +1,18 @@
 """Causal fixed-spacing samples and connected single-fit source motion."""
 
+from __future__ import annotations
+
 from math import factorial
+from typing import TYPE_CHECKING
 import numpy as np
 
+if TYPE_CHECKING:
+    from .full_dipole_history import FullDipoleHistory, FullDipoleSegment
 
-def fixed_spacing_indices(history, knot):
+
+def fixed_spacing_indices(history: FullDipoleHistory, knot: int) -> np.ndarray | None:
     spacing = history.fit_sample_spacing
+    assert spacing is not None and history.inertial_until is not None
     # Repeated timestep addition accumulates rounding in accepted timestamps.
     # Bound clock matching by that arithmetic scale, not a physical fit budget.
     tolerance = (
@@ -42,7 +49,9 @@ def fixed_spacing_indices(history, knot):
     return indices
 
 
-def connected_position(history, left, previous):
+def connected_position(
+    history: FullDipoleHistory, left: int, previous: FullDipoleSegment | None
+) -> np.ndarray:
     knot = left + 1 if history.time[left] == history.inertial_until else left
     selection = history._derivative_indices(knot)
     if selection is None:

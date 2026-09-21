@@ -1,6 +1,7 @@
 """Explicit history selection without rewriting an evolved trajectory."""
 
 import math
+from typing import Any
 import numpy as np
 
 from core.full_dipole_history import FullDipoleHistory
@@ -10,8 +11,13 @@ DEFAULT_DIPOLE_RELATIVE_BUDGET = 1e-10
 
 
 def configure_run_history(
-    payload, method, budget, spacing, step_ns, relative_budget=None
-):
+    payload: dict[str, Any],
+    method: str | None,
+    budget: float | None,
+    spacing: float | None,
+    step_ns: float,
+    relative_budget: float | None = None,
+) -> dict[str, Any]:
     """Default compatible fresh fixed-grid runs; preserve evolved checkpoints."""
     histories = payload.get("histories", [])
     fresh = payload.get("accepted_steps") == 0
@@ -99,7 +105,7 @@ def configure_run_history(
     return result
 
 
-def validate_recording_spacing(payload, step_ns):
+def validate_recording_spacing(payload: dict[str, Any], step_ns: float) -> None:
     """Require each physical fit sample to lie on the recording grid."""
     for history in payload.get("histories", []):
         if history.get("geometry_reconstruction") != "connected_single_fit":
@@ -118,8 +124,13 @@ def validate_recording_spacing(payload, step_ns):
 
 
 def configure_history(
-    payload, method=None, budget=None, spacing=None, *, _budgets=None
-):
+    payload: dict[str, Any],
+    method: str | None = None,
+    budget: float | None = None,
+    spacing: float | None = None,
+    *,
+    _budgets: list[float] | None = None,
+) -> dict[str, Any]:
     """Omitted options preserve checkpoints, including earlier history formats."""
     if method is None and budget is None and spacing is None and _budgets is None:
         return payload

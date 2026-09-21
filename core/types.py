@@ -1103,10 +1103,11 @@ class IntegratorConfig:
         Optional fixed-size particle-loss predicates. Lost particles are marked
         dead, keep their trajectory slots, and stop contributing charge after
         the loss step.
-    adaptive_pair_return:
-        Guarded checkpointable shared-lab-time stepping for one exact rider and
-        one exact driver. This is independent of the legacy adaptive-timestep
-        controller.
+    Notes
+    -----
+    ``adaptive_pair_return`` provides guarded, checkpointable shared-lab-time
+    stepping for one exact rider and one exact driver, independently of the
+    legacy adaptive-timestep controller.
     """
 
     steps: int

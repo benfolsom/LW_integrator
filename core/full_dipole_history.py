@@ -286,7 +286,9 @@ class FullDipoleHistory:
                     "Declared inertial prehistory is not coasting with constant dipole"
                 )
             if self.dipole_reference is not None and (
-                not np.all(self.dipole_high[past] == self.dipole_high[0])
+                self.dipole_high is None
+                or self.dipole_low is None
+                or not np.all(self.dipole_high[past] == self.dipole_high[0])
                 or not np.all(self.dipole_low[past] == self.dipole_low[0])
             ):
                 raise ValueError("Preserved inertial dipole must be constant")
@@ -300,6 +302,7 @@ class FullDipoleHistory:
                 12
                 if (
                     self.geometry_reconstruction == "connected_single_fit"
+                    and self.inertial_until is not None
                     and segment.start >= self.inertial_until
                 )
                 else 10
@@ -308,13 +311,18 @@ class FullDipoleHistory:
                 raise ValueError("Published geometry disagrees with history mode")
             connected = (
                 self.dipole_reconstruction == "connected_direct"
+                and self.inertial_until is not None
                 and segment.start >= self.inertial_until
             )
             if connected != (segment.dipole_change is not None):
                 raise ValueError(
                     "Published dipole representation disagrees with history mode"
                 )
-            if connected and segment.dipole_error > self.dipole_tolerance:
+            if (
+                connected
+                and self.dipole_tolerance is not None
+                and segment.dipole_error > self.dipole_tolerance
+            ):
                 raise ValueError("Published dipole exceeds its endpoint drift budget")
             if (
                 not isinstance(segment, FullDipoleSegment)
@@ -380,7 +388,7 @@ class FullDipoleHistory:
             self.derivative_degree + 1, 4, 4
         )
 
-        def derivative(coefficients, order):
+        def derivative(coefficients: np.ndarray, order: int) -> np.ndarray:
             if offset == 0.0:
                 return coefficients[order] * factorial(order) / scale**order
             return (
@@ -400,9 +408,10 @@ class FullDipoleHistory:
         )
         return position, dipole
 
-    def _derivative_indices(self, knot):
+    def _derivative_indices(self, knot: int) -> np.ndarray | None:
         if (
             self.fit_sample_spacing is not None
+            and self.inertial_until is not None
             and self.time[knot] > self.inertial_until
         ):
             from .single_fit_geometry import fixed_spacing_indices
@@ -417,6 +426,7 @@ class FullDipoleHistory:
             minimum = (
                 int(np.searchsorted(self.time, self.inertial_until))
                 if self.startup_fit == "one_sided"
+                and self.inertial_until is not None
                 and self.time[knot] > self.inertial_until
                 else 0
             )
@@ -424,7 +434,7 @@ class FullDipoleHistory:
         first = self._window_start(knot)
         return np.arange(first, first + 11) if first + 11 <= len(self.time) else None
 
-    def with_time_balanced_sampling(self):
+    def with_time_balanced_sampling(self) -> FullDipoleHistory:
         """Change only unpublished knot derivatives; keep the published past."""
         if self.derivative_sampling == "time_balanced":
             return self
@@ -434,7 +444,7 @@ class FullDipoleHistory:
             sampling_start_knot=6 + len(self.segments) if self.segments else 0,
         )
 
-    def with_connected_dipoles(self, tolerance: float):
+    def with_connected_dipoles(self, tolerance: float) -> FullDipoleHistory:
         """Opt in before any evolved interval is published; never rewrite the past."""
         if self.inertial_until is None or any(
             s.end > self.inertial_until for s in self.segments
@@ -448,7 +458,7 @@ class FullDipoleHistory:
 
     def with_single_fit_geometry(
         self, *, fit_sample_spacing: float, dipole_tolerance: float
-    ):
+    ) -> FullDipoleHistory:
         """Select the coordinated candidate before publishing evolved intervals."""
         if self.inertial_until is None or any(
             s.end > self.inertial_until for s in self.segments
@@ -536,6 +546,7 @@ class FullDipoleHistory:
                 from .preserved_history_map import indexed_segment_map
                 from .preserved_source import rounded_state
 
+                assert self.dipole_high is not None and self.dipole_low is not None
                 selection = np.unique(np.r_[indices_l, indices_r, left, left + 1])
                 mapped_left = int(np.searchsorted(selection, left))
                 reconstruction = indexed_segment_map(
@@ -679,6 +690,7 @@ class FullDipoleHistory:
             payload["format"] = "full-dipole-history-v3"
             payload["startup_fit"] = self.startup_fit
         if self.dipole_reference is not None:
+            assert self.dipole_high is not None and self.dipole_low is not None
             payload.update(
                 format="full-dipole-history-v4",
                 startup_fit=self.startup_fit,
@@ -786,11 +798,15 @@ class FullDipoleHistory:
             np.asarray(payload["dipole"]),
             float(cast(float, payload["speed_limit"])),
             dipole_reconstruction="connected_direct" if connected else "endpoint",
-            dipole_tolerance=payload["dipole_tolerance"] if connected else None,
+            dipole_tolerance=(
+                cast(float, payload["dipole_tolerance"]) if connected else None
+            ),
             geometry_reconstruction=(
                 "connected_single_fit" if single_fit else "endpoint"
             ),
-            fit_sample_spacing=payload["fit_sample_spacing"] if single_fit else None,
+            fit_sample_spacing=(
+                cast(float, payload["fit_sample_spacing"]) if single_fit else None
+            ),
             derivative_degree=cast(int, payload["derivative_degree"]),
             integrate_velocity=cast(bool, payload["integrate_velocity"]),
             position_tolerance=float(cast(float, payload["position_tolerance"])),

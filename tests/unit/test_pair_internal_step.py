@@ -69,17 +69,20 @@ def test_incompatible_method_and_invalid_scale_rejected():
         pair.advance_pair(bad, 0.01 / pair.c)
 
 
-def test_internal_cli_parity_and_settings_preservation(tmp_path):
+@pytest.mark.parametrize("history_method", ["auto", "preserve"])
+def test_internal_cli_parity_and_settings_preservation(tmp_path, history_method):
     from lw_integrator.nonlinear_pair import main, configure_checkpoint
     from core.nonlinear_pair_adaptive import initialize_adaptive
     from tests.unit.test_nonlinear_pair_adaptive import settings
+    from lw_integrator.pair_history_options import configure_run_history
 
     initial = configured()
     source, output = tmp_path / "source.json", tmp_path / "out.json"
     encoded = json.dumps(initial)
     source.write_text(encoded)
     width = 0.01 / pair.c
-    expected, _ = pair.advance_pair(initial, width)
+    prepared = configure_run_history(initial, history_method, None, None, width)
+    expected, _ = pair.advance_pair(prepared, width)
     assert (
         main(
             [
@@ -89,6 +92,8 @@ def test_internal_cli_parity_and_settings_preservation(tmp_path):
                 str(output),
                 "--step-ns",
                 str(width),
+                "--history-method",
+                history_method,
             ]
         )
         == 0

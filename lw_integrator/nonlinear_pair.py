@@ -73,13 +73,13 @@ def capabilities() -> dict[str, Any]:
 
 
 def configure_checkpoint(
-    payload,
-    reaction_mode=None,
-    window_ns=None,
-    derivatives=None,
-    integration_method=None,
-    internal_step_control=None,
-):
+    payload: dict[str, Any],
+    reaction_mode: str | None = None,
+    window_ns: float | None = None,
+    derivatives: str | None = None,
+    integration_method: str | None = None,
+    internal_step_control: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Keep evolved trajectories on their recorded equations and reconstruction."""
     if not isinstance(payload, dict):
         raise ValueError("Checkpoint must be a JSON object")
@@ -149,7 +149,9 @@ def configure_checkpoint(
     return dict(payload, particles=[dict(p, **changes) for p in particles])
 
 
-def failure_recommendation(error, payload):
+def failure_recommendation(
+    error: Exception, payload: dict[str, Any] | None
+) -> str | None:
     if isinstance(error, SourceDipoleError):
         return "Source dipole reconstruction exceeded its absolute endpoint-drift budget (native dipole units). Input and last saved checkpoint are retained. This is not a radiation error bound; inspect the drift before a separately verified budget-only continuation. No clipping or automatic budget increase was applied."
     if isinstance(error, VelocityDomainError):

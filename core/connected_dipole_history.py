@@ -1,13 +1,19 @@
 """Direct dipole derivatives with integrated lower orders and endpoint drift checks."""
 
+from __future__ import annotations
+
 from fractions import Fraction
 from functools import lru_cache
 from math import factorial
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 from .compensated_history import CompensatedHistoryMap
 from .preserved_history_map import _lagrange
+
+if TYPE_CHECKING:
+    from .full_dipole_history import FullDipoleHistory, FullDipoleSegment
 
 
 class SourceDipoleError(ValueError):
@@ -15,7 +21,9 @@ class SourceDipoleError(ValueError):
 
 
 @lru_cache(maxsize=2048)
-def _direct_map(times, start, width):
+def _direct_map(
+    times: tuple[float, ...], start: float, width: float
+) -> CompensatedHistoryMap:
     """Reuse immutable weights when a checkpoint rebuilds the same saved interval."""
     nodes = [(Fraction(t) - Fraction(start)) / Fraction(width) for t in times]
     return CompensatedHistoryMap(
@@ -29,15 +37,21 @@ def _direct_map(times, start, width):
     )
 
 
-def connected_coefficients(history, left, previous):
+def connected_coefficients(
+    history: FullDipoleHistory, left: int, previous: FullDipoleSegment | None
+) -> tuple[np.ndarray, np.ndarray, float]:
     """Return absolute coefficients, small-change coefficients, and endpoint error.
 
     Only coefficients zero through three are adjusted. The represented change
     is relative to the declared startup dipole, not the large absolute tensor.
     """
+    assert history.inertial_until is not None and history.dipole_tolerance is not None
+    assert history.dipole_high is not None and history.dipole_low is not None
     start = int(np.searchsorted(history.time, history.inertial_until))
     knot = left + 1 if left == start else left
     selected = history._derivative_indices(knot)
+    if selected is None:
+        raise ValueError("Connected dipoles require accepted fitting samples")
     width = history.time[left + 1] - history.time[left]
     mapping = _direct_map(tuple(history.time[selected]), history.time[left], width)
     high, low = mapping.apply(

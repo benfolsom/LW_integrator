@@ -1,5 +1,28 @@
 # Finite-spin milestone: integration review
 
+## 21 September continuation
+
+The original interrupted unit run had no recoverable final report. A fresh
+unit run now records `/tmp/lw-merge-unit-20260921.log` and JUnit output at
+`/tmp/lw-merge-unit-20260921.xml` when it finishes. Merge remains pending.
+
+Fixed the internal-step CLI parity regression: its expected result must use
+the selected history setup now that fresh CLI runs default to single-fit.
+The regression now checks both automatic selection and explicit preservation.
+The focused history/internal-step suite passed 42 tests, and the subsequent
+option/CLI suite passed 31 tests.
+
+Added concrete history and CLI type annotations and made validated optional
+history fields explicit to the type checker. The three history modules,
+history-option module, and pair CLI no longer have direct diagnostics in the
+targeted type-check report. Imported modules still produce failures; this is
+not a clean repository-wide type check.
+
+Fixed duplicate generated documentation for the adaptive-pair configuration.
+The complete Sphinx HTML build now passes with warnings treated as errors.
+Report: `/tmp/lw-docs-review-20260921.log`; output:
+`/tmp/lw-full-docs-merge-20260921/`.
+
 ## Outcome
 
 The numerical milestone and interface work are ready for a reviewable commit.
