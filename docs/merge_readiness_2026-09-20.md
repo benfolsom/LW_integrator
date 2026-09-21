@@ -2,6 +2,20 @@
 
 ## 21 September continuation
 
+The broader unit run has now completed: 1,632 passed, five failed, and one
+was deselected. All five failed test cases reproduce on the isolated
+origin/development checkout in the same environment. The additional three
+are retarded-dipole compiled-provider exact-equality checks; their baseline
+report is `/tmp/lw-baseline-dipole-failures.log`. These remain failures,
+but this comparison found no new failing unit tests from the milestone.
+
+The straightforward type cleanup now reduces the repository-wide count from
+2,569 to 2,521 errors (90 files). Taylor-series arithmetic and history sampling
+pass their targeted type check without suppression. Explicit arguments replace
+ambiguous unpacking in the physical error estimator. The affected numerical
+tests passed 25 cases; Ruff and whitespace checks passed. Report:
+`/tmp/lw-mypy-20260921.log`. The repository-wide type gate remains open.
+
 The original interrupted unit run had no recoverable final report. A fresh
 unit run now records `/tmp/lw-merge-unit-20260921.log` and JUnit output at
 `/tmp/lw-merge-unit-20260921.xml` when it finishes. Merge remains pending.

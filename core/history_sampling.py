@@ -5,10 +5,11 @@ samples cannot change it. No state interpolation or extrapolation occurs here.
 """
 
 import numpy as np
+from numpy.typing import ArrayLike
 
 
-def _spread(times, first, last, targets):
-    result = []
+def _spread(times: np.ndarray, first: int, last: int, targets: np.ndarray) -> list[int]:
+    result: list[int] = []
     for i, target in enumerate(targets):
         low = first if not result else result[-1] + 1
         high = last - (len(targets) - i - 1)
@@ -19,7 +20,9 @@ def _spread(times, first, last, targets):
     return result
 
 
-def time_balanced_indices(times, knot, minimum_index=0):
+def time_balanced_indices(
+    times: ArrayLike, knot: int, minimum_index: int = 0
+) -> np.ndarray | None:
     """Eleven samples around a knot, or None until enough future data exists.
 
     The first five neighbours on each side define the target radius. On the

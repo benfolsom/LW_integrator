@@ -24,7 +24,7 @@ class InternalStepSettings:
     mass_exchange: ErrorScale
     maximum_trials: int = 512
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         for key in (
             "position_mm",
             "momentum_native",
@@ -105,8 +105,11 @@ def physical_error_norm(proposed, error, particle, provider, settings):
         dict(dipole_reaction_ledger=[reaction_ledger(value[14:])])
         for value in (proposed, alternative)
     ]
-    diagnostics = _diagnostics(*ledgers, settings)
-    a, b = [StepDoublingState(*state, diag) for state, diag in zip(states, diagnostics)]
+    diagnostics = _diagnostics(ledgers[0], ledgers[1], settings)
+    a, b = [
+        StepDoublingState(state[0], state[1], state[2], diag)
+        for state, diag in zip(states, diagnostics)
+    ]
     return assess_step_doubling(
         a,
         b,
