@@ -3,11 +3,27 @@
 Recent Changes
 ==============
 
-*Last updated: August 2026*
+*Last updated: September 2026*
 
 This page summarizes recent improvements to the LW integrator, including
 optimization features, convergence enhancements, and critical physics
 corrections.
+
+September 2026: finite-spin pair workflow
+-------------------------------------------
+
+The :doc:`finite_spin_pair` guide covers the separate coupled-reaction pair
+solver, CLI and GUI controls, checkpoint restart, and automatic single-fit
+history selection for compatible fresh fixed-recording inputs. Dipole budgets
+now have a documented relative scale, an absolute override, and recorded
+provenance. Internal DOP853 adaptation is supported with fixed recording times;
+arbitrary adaptive recording remains unsupported for this representation.
+
+The completed coarse–fine benchmark reduced late dipole-squared reaction
+disagreement from 5.819e-2 to 1.034e-5 relative to the fine result. This passes
+the campaign's recording-resolution target. It does not establish independent
+conservation or universal validity across relativistic regimes. Existing
+charge-only and bunch solver defaults remain separate.
 
 August 2026 Updates
 -------------------

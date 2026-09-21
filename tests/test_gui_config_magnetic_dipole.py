@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
-import tkinter as tk
 from typing import Any
 
 import pytest
+
+try:
+    import tkinter as tk
+except ModuleNotFoundError:  # pragma: no cover - depends on Python distribution
+    tk = None  # type: ignore[assignment]
 
 from core.external_fields import (
     magnetic_field_native_to_tesla,
@@ -13,10 +17,16 @@ from core.external_fields import (
 )
 from core.particle_config import DEFAULT_DRIVER_PARAMS, DEFAULT_RIDER_PARAMS
 from core.species import get_species, list_species
-from lw_integrator import gui
+
+if tk is not None:
+    from lw_integrator import gui
+    from lw_integrator.gui_controller_mixins import IntegratorGUIControllerMixin
+    from lw_integrator.gui_state_mixins import IntegratorGUIStateMixin
+else:  # pragma: no cover - exercised by minimal headless Python builds
+    gui = None  # type: ignore[assignment]
+    IntegratorGUIControllerMixin = None  # type: ignore[assignment,misc]
+    IntegratorGUIStateMixin = None  # type: ignore[assignment,misc]
 from lw_integrator.gui_config_mixins import IntegratorGUIConfigMixin
-from lw_integrator.gui_controller_mixins import IntegratorGUIControllerMixin
-from lw_integrator.gui_state_mixins import IntegratorGUIStateMixin
 from lw_integrator.testbed_runner import PARTICLE_PARAM_FIELDS, SimulationOptions
 
 
@@ -52,9 +62,13 @@ class _MagneticHarness(IntegratorGUIConfigMixin):
         self.magnetic_dipole_spin_precession_enabled_var = _Var()
         self.magnetic_dipole_stern_gerlach_force_enabled_var = _Var()
         self.magnetic_dipole_source_model_var = _Var()
+        self.magnetic_dipole_source_history_var = _Var()
         self.magnetic_dipole_exact_retarded_backend_var = _Var()
         self.magnetic_dipole_exact_retarded_update_var = _Var()
+        self.magnetic_dipole_intrinsic_spin_self_reaction_var = _Var()
         self.magnetic_dipole_source_minimum_separation_var = _Var()
+        self.magnetic_dipole_local_jet_width_vars = [_Var() for _label in range(3)]
+        self.magnetic_dipole_local_jet_assume_inertial_var = _Var(False)
         self.rider_magnetic_species_var = _Var()
         self.driver_magnetic_species_var = _Var()
         self.rider_rest_spin_vars = [_Var() for _axis in range(3)]
@@ -77,6 +91,28 @@ class _ExternalMagneticHarness(IntegratorGUIConfigMixin):
         ]
 
 
+def test_experimental_spin_recoil_gui_round_trip():
+    source = SimulationOptions.from_dict(
+        {
+            "magnetic_dipole": {
+                "enabled": True,
+                "stern_gerlach_force_enabled": True,
+                "exact_retarded_update": "second_order_start_taylor_endpoint",
+                "intrinsic_spin_self_reaction_mode": "experimental_linear_spin",
+            }
+        }
+    )
+    harness = _MagneticHarness()
+    harness.apply(source)
+    assert harness.magnetic_dipole_intrinsic_spin_self_reaction_var.get() == (
+        "Experimental: first-order spin recoil"
+    )
+    rebuilt = SimulationOptions(**harness.build())
+    assert rebuilt.magnetic_dipole_intrinsic_spin_self_reaction_mode == (
+        "experimental_linear_spin"
+    )
+
+
 def test_current_magnetic_dipole_config_round_trips_through_gui_fields() -> None:
     source = SimulationOptions.from_dict(
         {
@@ -86,8 +122,10 @@ def test_current_magnetic_dipole_config_round_trips_through_gui_fields() -> None
                 "stern_gerlach_force_enabled": True,
                 "exact_retarded_backend": "numba_roots_exact_serial",
                 "exact_retarded_update": ("second_order_start_taylor_endpoint"),
+                "intrinsic_spin_self_reaction_mode": "diagnostic",
                 "source": {
                     "model": "covariant_retarded_point",
+                    "history_model": "causal_c5",
                     "minimum_separation_mm": 7.0e-9,
                     "relative_stencil_step": 2.0e-3,
                     "minimum_stencil_step_mm": 3.0e-15,
@@ -121,22 +159,30 @@ def test_current_magnetic_dipole_config_round_trips_through_gui_fields() -> None
     assert harness.magnetic_dipole_source_model_var.get() == (
         "Full retarded point (experimental)"
     )
+    assert harness.magnetic_dipole_source_history_var.get() == (
+        "Causal C5 (adaptive exact-pair)"
+    )
     assert harness.magnetic_dipole_exact_retarded_backend_var.get() == (
         "Numba roots-exact CPU"
     )
     assert harness.magnetic_dipole_exact_retarded_update_var.get() == (
         "Second-order accepted-start Taylor"
     )
+    assert harness.magnetic_dipole_intrinsic_spin_self_reaction_var.get() == (
+        "Diagnostic only"
+    )
     assert float(harness.magnetic_dipole_source_minimum_separation_var.get()) == (
         pytest.approx(7.0e-9)
     )
     assert rebuilt.magnetic_dipole_source_model == "covariant_retarded_point"
+    assert rebuilt.magnetic_dipole_source_history_model == "causal_c5"
     assert rebuilt.magnetic_dipole_exact_retarded_backend == (
         "numba_roots_exact_serial"
     )
     assert rebuilt.magnetic_dipole_exact_retarded_update == (
         "second_order_start_taylor_endpoint"
     )
+    assert rebuilt.magnetic_dipole_intrinsic_spin_self_reaction_mode == "diagnostic"
     assert rebuilt.magnetic_dipole_source_minimum_separation_mm == pytest.approx(7.0e-9)
     assert rebuilt.magnetic_dipole_source_relative_stencil_step == pytest.approx(2.0e-3)
     assert rebuilt.magnetic_dipole_source_minimum_stencil_step_mm == pytest.approx(
@@ -165,6 +211,83 @@ def test_full_strict_backend_round_trips_through_gui_label() -> None:
     )
     assert rebuilt.magnetic_dipole_exact_retarded_backend == (
         "numba_full_strict_serial"
+    )
+
+
+def test_causal_local_jet_round_trips_explicit_gui_controls() -> None:
+    source = SimulationOptions(
+        magnetic_dipole_source_history_model="causal_local_jet",
+        magnetic_dipole_source_local_jet_narrow_half_width_ns=1.0e-11,
+        magnetic_dipole_source_local_jet_primary_half_width_ns=2.0e-11,
+        magnetic_dipole_source_local_jet_wide_half_width_ns=4.0e-11,
+        magnetic_dipole_source_local_jet_maximum_relative_spread=2.5e-4,
+        magnetic_dipole_source_local_jet_inertial_prehistory="assumed_inertial",
+    )
+    harness = _MagneticHarness()
+
+    harness.apply(source)
+    rebuilt = SimulationOptions(**harness.build())
+
+    assert harness.magnetic_dipole_source_history_var.get() == (
+        "Causal local jet (adaptive exact-pair)"
+    )
+    assert [
+        float(var.get()) for var in harness.magnetic_dipole_local_jet_width_vars
+    ] == (pytest.approx([1.0e-11, 2.0e-11, 4.0e-11]))
+    assert harness.magnetic_dipole_local_jet_assume_inertial_var.get() is True
+    assert rebuilt.magnetic_dipole_source_history_model == "causal_local_jet"
+    assert rebuilt.magnetic_dipole_source_local_jet_narrow_half_width_ns == (
+        pytest.approx(1.0e-11)
+    )
+    assert rebuilt.magnetic_dipole_source_local_jet_primary_half_width_ns == (
+        pytest.approx(2.0e-11)
+    )
+    assert rebuilt.magnetic_dipole_source_local_jet_wide_half_width_ns == (
+        pytest.approx(4.0e-11)
+    )
+    assert rebuilt.magnetic_dipole_source_local_jet_maximum_relative_spread == (
+        pytest.approx(2.5e-4)
+    )
+    assert (
+        rebuilt.magnetic_dipole_source_local_jet_inertial_prehistory
+        == "assumed_inertial"
+    )
+
+
+def test_gui_preserves_loaded_named_local_jet_scale_ladder() -> None:
+    scales = [
+        {
+            "name": "near",
+            "narrow_half_width_ns": 2.0e-9,
+            "primary_half_width_ns": 3.0e-9,
+            "wide_half_width_ns": 5.0e-9,
+        },
+        {
+            "name": "far",
+            "narrow_half_width_ns": 5.0e-9,
+            "primary_half_width_ns": 1.2e-8,
+            "wide_half_width_ns": 1.5e-8,
+        },
+    ]
+    source = SimulationOptions(
+        magnetic_dipole_source_history_model="causal_local_jet",
+        magnetic_dipole_source_local_jet_scales=scales,
+        magnetic_dipole_source_local_jet_maximum_cross_scale_relative_spread=2.5e-4,
+    )
+    harness = _MagneticHarness()
+
+    harness.apply(source)
+    rebuilt = SimulationOptions(**harness.build())
+
+    assert [var.get() for var in harness.magnetic_dipole_local_jet_width_vars] == [
+        "",
+        "",
+        "",
+    ]
+    assert rebuilt.magnetic_dipole_source_local_jet_scales == scales
+    assert (
+        rebuilt.magnetic_dipole_source_local_jet_maximum_cross_scale_relative_spread
+        == pytest.approx(2.5e-4)
     )
 
 
@@ -217,8 +340,10 @@ def test_old_config_defaults_round_trip_with_magnetic_dipoles_off() -> None:
     assert rebuilt.magnetic_dipole_spin_model == "rfs_minimal_2021"
     assert rebuilt.magnetic_dipole_stern_gerlach_model == "rfs_full_g"
     assert rebuilt.magnetic_dipole_source_model == "off"
+    assert rebuilt.magnetic_dipole_source_history_model == "causal_frozen_c1"
     assert rebuilt.magnetic_dipole_exact_retarded_backend == "python"
     assert rebuilt.magnetic_dipole_exact_retarded_update == "first_order_endpoint"
+    assert rebuilt.magnetic_dipole_intrinsic_spin_self_reaction_mode == "off"
     assert rebuilt.magnetic_dipole_source_minimum_separation_mm == pytest.approx(2.0e-9)
     assert rebuilt.rider_magnetic_species == "electron"
     assert rebuilt.driver_magnetic_species == "proton"
@@ -263,6 +388,8 @@ def test_magnetic_species_selector_is_backed_by_core_registry() -> None:
 def test_general_species_preset_synchronizes_magnetic_species(
     role: str, species_key: str
 ) -> None:
+    if IntegratorGUIControllerMixin is None:
+        pytest.skip("Tkinter is unavailable in this Python environment")
     species = get_species(species_key)
     species_by_label = {item.display_name: item.name for item in list_species()}
     magnetic_label_by_key = {item.name: item.display_name for item in list_species()}
@@ -361,6 +488,8 @@ def test_custom_general_particle_values_may_numerically_match_named_magnetic_spe
 
 
 def test_gui_build_rejects_mismatch_and_accepts_matching_custom_values() -> None:
+    if tk is None or gui is None:
+        pytest.skip("Tkinter is unavailable in this Python environment")
     try:
         root = tk.Tk()
     except tk.TclError as exc:
@@ -389,6 +518,8 @@ def test_gui_build_rejects_mismatch_and_accepts_matching_custom_values() -> None
 
 
 def test_gui_labels_present_compact_rfs_controls() -> None:
+    if tk is None or gui is None:
+        pytest.skip("Tkinter is unavailable in this Python environment")
     try:
         root = tk.Tk()
     except tk.TclError as exc:
@@ -406,6 +537,21 @@ def test_gui_labels_present_compact_rfs_controls() -> None:
         assert tuple(app.magnetic_dipole_source_model_combo.cget("values")) == (
             "Off",
             "Full retarded point (experimental)",
+        )
+        assert app.magnetic_dipole_source_history_label.cget("text") == (
+            "Dipole source history:"
+        )
+        assert tuple(app.magnetic_dipole_source_history_combo.cget("values")) == (
+            "Frozen C1 (legacy)",
+            "Causal C5 (adaptive exact-pair)",
+            "Causal local jet (adaptive exact-pair)",
+        )
+        assert app.magnetic_dipole_local_jet_widths_label.cget("text") == (
+            "Local jet N/P/W widths (ns):"
+        )
+        assert len(app.magnetic_dipole_local_jet_width_entries) == 3
+        assert app.magnetic_dipole_local_jet_boundary_check.cget("text") == (
+            "Accept constant-velocity prehistory as an explicit boundary model"
         )
         assert app.magnetic_dipole_exact_retarded_backend_label.cget("text") == (
             "Exact-retarded backend:"
@@ -439,6 +585,8 @@ def test_gui_labels_present_compact_rfs_controls() -> None:
 
 
 def test_magnetic_control_state_tracks_enable_and_bunch_to_bunch_mode() -> None:
+    if IntegratorGUIStateMixin is None:
+        pytest.skip("Tkinter is unavailable in this Python environment")
     common = _Widget()
     rider_combo = _Widget()
     rider_spin = _Widget()
@@ -511,6 +659,8 @@ def test_magnetic_control_state_tracks_enable_and_bunch_to_bunch_mode() -> None:
 
 
 def test_user_enabling_rfs_selects_rr_off() -> None:
+    if IntegratorGUIStateMixin is None:
+        pytest.skip("Tkinter is unavailable in this Python environment")
     harness = type(
         "StateHarness",
         (IntegratorGUIStateMixin,),
@@ -529,6 +679,8 @@ def test_user_enabling_rfs_selects_rr_off() -> None:
 
 
 def test_user_enabling_legacy_dipole_model_keeps_rr_choice() -> None:
+    if IntegratorGUIStateMixin is None:
+        pytest.skip("Tkinter is unavailable in this Python environment")
     harness = type(
         "StateHarness",
         (IntegratorGUIStateMixin,),

@@ -14,19 +14,40 @@ from typing import Any, Callable, Protocol
 
 import numpy as np
 
+from .causal_c5_dipole_provider import (
+    AcceptedPairCausalC5SourceHistory,
+    GrowableAcceptedPairCausalC5SourceHistory,
+    build_accepted_pair_causal_c5_candidate,
+)
+from .causal_local_source_history import (
+    AcceptedPairCausalLocalSourceHistory,
+    build_accepted_pair_causal_local_candidate,
+)
 from .exact_pair_trial import (
     AdvanceRoleTrial,
+    ExactPairSlabTrial,
     ExactPairStepDoublingTrial,
     commit_accepted_exact_pair_step_doubling_trial,
     solve_exact_pair_step_doubling_trial,
 )
+from .growable_causal_local_source_history import (
+    GrowableAcceptedPairCausalLocalSourceHistory,
+)
 from .shared_lab_time import SharedLabTimeError
+from .spin_self_force_reduction_history import (
+    AcceptedPairIntrinsicSpinReductionHistory,
+)
 from .step_doubling import (
     StepControllerConfig,
     StepDoublingTolerances,
     propose_next_step_ns,
 )
-from .types import GrowableTrajectoryBuilder, MagneticDipoleConfig, TrajectoryArrays
+from .types import (
+    GrowableTrajectoryBuilder,
+    MagneticDipoleConfig,
+    ParticleState,
+    TrajectoryArrays,
+)
 
 
 class _AcceptedPairCheckpoint(Protocol):
@@ -39,8 +60,17 @@ class _AcceptedPairCheckpoint(Protocol):
         driver: TrajectoryArrays,
         controller_state: dict[str, Any],
         public_output_state: dict[str, Any],
+        intrinsic_spin_reduction_state: dict[str, object] | None = None,
+        causal_c5_source_history: AcceptedPairCausalC5SourceHistory | None = None,
+        causal_local_source_history: AcceptedPairCausalLocalSourceHistory | None = None,
         complete: bool = False,
     ) -> None: ...
+
+
+IntrinsicSpinReductionCandidate = Callable[
+    [ExactPairStepDoublingTrial, AcceptedPairIntrinsicSpinReductionHistory],
+    AcceptedPairIntrinsicSpinReductionHistory,
+]
 
 
 @dataclass(frozen=True)
@@ -110,6 +140,11 @@ class AdaptivePairAttempt:
     trial: ExactPairStepDoublingTrial
     controller_state: AdaptivePairControllerState
     committed_rows: tuple[int, int] | None
+    intrinsic_spin_reduction_history: (
+        AcceptedPairIntrinsicSpinReductionHistory | None
+    ) = None
+    causal_c5_source_history: AcceptedPairCausalC5SourceHistory | None = None
+    causal_local_source_history: AcceptedPairCausalLocalSourceHistory | None = None
 
     @property
     def accepted(self) -> bool:
@@ -197,6 +232,11 @@ class AdaptivePairRunResult:
     final_time_ns: float
     completed: bool
     attempt_diagnostics: tuple["AdaptivePairAttemptDiagnostics", ...] = ()
+    intrinsic_spin_reduction_history: (
+        AcceptedPairIntrinsicSpinReductionHistory | None
+    ) = None
+    causal_c5_source_history: AcceptedPairCausalC5SourceHistory | None = None
+    causal_local_source_history: AcceptedPairCausalLocalSourceHistory | None = None
 
 
 @dataclass(frozen=True)
@@ -323,6 +363,20 @@ def attempt_exact_pair_adaptive_step(
     spin_interpolation_model: str = "causal_frozen_c1",
     absolute_time_tolerance_ns: float = 1.0e-18,
     relative_time_tolerance: float = 1.0e-12,
+    intrinsic_spin_reduction_history: (
+        AcceptedPairIntrinsicSpinReductionHistory | None
+    ) = None,
+    build_intrinsic_spin_reduction_candidate: (
+        IntrinsicSpinReductionCandidate | None
+    ) = None,
+    causal_c5_source_history: AcceptedPairCausalC5SourceHistory | None = None,
+    growable_causal_c5_source_history: (
+        GrowableAcceptedPairCausalC5SourceHistory | None
+    ) = None,
+    causal_local_source_history: AcceptedPairCausalLocalSourceHistory | None = None,
+    growable_causal_local_source_history: (
+        GrowableAcceptedPairCausalLocalSourceHistory | None
+    ) = None,
 ) -> AdaptivePairAttempt:
     """Try one slab, committing only a healthy accepted two-half path.
 
@@ -331,9 +385,85 @@ def attempt_exact_pair_adaptive_step(
     rather than being hidden by repeated retries.
     """
 
+    if (intrinsic_spin_reduction_history is None) != (
+        build_intrinsic_spin_reduction_candidate is None
+    ):
+        raise ValueError(
+            "intrinsic-spin history and candidate builder must be supplied together"
+        )
+
+    if (
+        causal_c5_source_history is not None
+        and growable_causal_c5_source_history is not None
+    ):
+        raise ValueError(
+            "immutable and growable causal C5 histories cannot both be supplied"
+        )
+    if (
+        causal_local_source_history is not None
+        and growable_causal_local_source_history is not None
+    ):
+        raise ValueError(
+            "immutable and growable causal local histories cannot both be supplied"
+        )
+    if (
+        causal_c5_source_history is not None
+        or growable_causal_c5_source_history is not None
+    ) and (
+        causal_local_source_history is not None
+        or growable_causal_local_source_history is not None
+    ):
+        raise ValueError("causal C5 and causal local histories are mutually exclusive")
+
     accepted_rider = rider_builder.build_current()
     accepted_driver = driver_builder.build_current()
+    current_c5_history = (
+        growable_causal_c5_source_history.build_current()
+        if growable_causal_c5_source_history is not None
+        else causal_c5_source_history
+    )
+    current_local_history = (
+        growable_causal_local_source_history.build_current()
+        if growable_causal_local_source_history is not None
+        else causal_local_source_history
+    )
+
+    def build_midpoint_c5_candidate(
+        midpoint: ExactPairSlabTrial,
+        _accepted: AcceptedPairCausalC5SourceHistory,
+    ) -> AcceptedPairCausalC5SourceHistory:
+        if growable_causal_c5_source_history is None:
+            raise RuntimeError("growable causal C5 source history is unavailable")
+        return growable_causal_c5_source_history.preflight_states(
+            rider_states=(midpoint.pair.rider.state,),
+            driver_states=(midpoint.pair.driver.state,),
+        ).candidate
+
+    def build_midpoint_local_candidate(
+        midpoint: ExactPairSlabTrial,
+        _accepted: AcceptedPairCausalLocalSourceHistory,
+    ) -> AcceptedPairCausalLocalSourceHistory:
+        if growable_causal_local_source_history is None:
+            raise RuntimeError("growable causal local source history is unavailable")
+        return growable_causal_local_source_history.preflight_states(
+            rider_states=(midpoint.pair.rider.state,),
+            driver_states=(midpoint.pair.driver.state,),
+        ).candidate
+
+    def build_endpoint_local_candidate(
+        rider_states: tuple[ParticleState, ...],
+        driver_states: tuple[ParticleState, ...],
+        _accepted: AcceptedPairCausalLocalSourceHistory,
+    ) -> AcceptedPairCausalLocalSourceHistory:
+        if growable_causal_local_source_history is None:
+            raise RuntimeError("growable causal local source history is unavailable")
+        return growable_causal_local_source_history.preflight_states(
+            rider_states=rider_states,
+            driver_states=driver_states,
+        ).candidate
+
     trial = solve_exact_pair_step_doubling_trial(
+        intrinsic_spin_reduction_history=intrinsic_spin_reduction_history,
         accepted_rider_history=accepted_rider,
         accepted_driver_history=accepted_driver,
         advance_rider=advance_rider,
@@ -345,6 +475,29 @@ def attempt_exact_pair_adaptive_step(
         include_dipole_source=include_dipole_source,
         tolerances=tolerances,
         method_order=controller_config.method_order,
+        causal_c5_source_history=(
+            current_c5_history if include_dipole_source else None
+        ),
+        build_causal_c5_midpoint_candidate=(
+            build_midpoint_c5_candidate
+            if include_dipole_source and growable_causal_c5_source_history is not None
+            else None
+        ),
+        causal_local_source_history=(
+            current_local_history if include_dipole_source else None
+        ),
+        build_causal_local_midpoint_candidate=(
+            build_midpoint_local_candidate
+            if include_dipole_source
+            and growable_causal_local_source_history is not None
+            else None
+        ),
+        build_causal_local_endpoint_candidate=(
+            build_endpoint_local_candidate
+            if include_dipole_source
+            and growable_causal_local_source_history is not None
+            else None
+        ),
         spin_interpolation_model=spin_interpolation_model,
         absolute_time_tolerance_ns=absolute_time_tolerance_ns,
         relative_time_tolerance=relative_time_tolerance,
@@ -377,12 +530,97 @@ def attempt_exact_pair_adaptive_step(
     driver_guess = 2.0 * trial.refined.pair.driver.proper_step_ns * scale
 
     committed_rows = None
+    next_intrinsic_spin_history = intrinsic_spin_reduction_history
+    next_causal_c5_history = (
+        growable_causal_c5_source_history.build_current()
+        if growable_causal_c5_source_history is not None
+        else causal_c5_source_history
+    )
+    next_causal_local_history = (
+        growable_causal_local_source_history.build_current()
+        if growable_causal_local_source_history is not None
+        else causal_local_source_history
+    )
     if accepted:
+        if build_intrinsic_spin_reduction_candidate is not None:
+            if intrinsic_spin_reduction_history is None:  # pragma: no cover
+                raise RuntimeError("validated intrinsic-spin history is missing")
+            candidate = build_intrinsic_spin_reduction_candidate(
+                trial,
+                intrinsic_spin_reduction_history,
+            )
+            if not isinstance(candidate, AcceptedPairIntrinsicSpinReductionHistory):
+                raise TypeError(
+                    "intrinsic-spin candidate builder must return accepted pair "
+                    "history"
+                )
+            next_intrinsic_spin_history = candidate
+        growable_c5_transaction = None
+        growable_local_transaction = None
+        if growable_causal_c5_source_history is not None:
+            growable_c5_transaction = (
+                growable_causal_c5_source_history.preflight_states(
+                    rider_states=(
+                        trial.midpoint.pair.rider.state,
+                        trial.refined.pair.rider.state,
+                    ),
+                    driver_states=(
+                        trial.midpoint.pair.driver.state,
+                        trial.refined.pair.driver.state,
+                    ),
+                )
+            )
+            next_causal_c5_history = growable_c5_transaction.candidate
+        elif causal_c5_source_history is not None:
+            next_causal_c5_history = build_accepted_pair_causal_c5_candidate(
+                trial,
+                causal_c5_source_history,
+            )
+        if growable_causal_local_source_history is not None:
+            growable_local_transaction = (
+                growable_causal_local_source_history.preflight_states(
+                    rider_states=(
+                        trial.midpoint.pair.rider.state,
+                        trial.refined.pair.rider.state,
+                    ),
+                    driver_states=(
+                        trial.midpoint.pair.driver.state,
+                        trial.refined.pair.driver.state,
+                    ),
+                )
+            )
+            next_causal_local_history = growable_local_transaction.candidate
+        elif causal_local_source_history is not None:
+            next_causal_local_history = build_accepted_pair_causal_local_candidate(
+                trial,
+                causal_local_source_history,
+            )
+        if growable_c5_transaction is not None and not (
+            growable_causal_c5_source_history.can_commit(growable_c5_transaction)
+        ):
+            raise RuntimeError(
+                "growable causal C5 transaction became stale before pair publication"
+            )
+        if growable_local_transaction is not None and not (
+            growable_causal_local_source_history.can_commit(growable_local_transaction)
+        ):
+            raise RuntimeError(
+                "growable causal local transaction became stale before pair "
+                "publication"
+            )
         committed_rows = commit_accepted_exact_pair_step_doubling_trial(
             trial,
             rider_builder=rider_builder,
             driver_builder=driver_builder,
         )
+        if growable_c5_transaction is not None:
+            next_causal_c5_history = growable_causal_c5_source_history.commit(
+                growable_c5_transaction
+            )
+        if growable_local_transaction is not None:
+            next_causal_local_history = growable_causal_local_source_history.commit(
+                growable_local_transaction
+            )
     next_state = AdaptivePairControllerState(
         current_step_ns=next_step_ns,
         rider_proper_step_guess_ns=rider_guess,
@@ -394,6 +632,9 @@ def attempt_exact_pair_adaptive_step(
         trial=trial,
         controller_state=next_state,
         committed_rows=committed_rows,
+        intrinsic_spin_reduction_history=next_intrinsic_spin_history,
+        causal_c5_source_history=next_causal_c5_history,
+        causal_local_source_history=next_causal_local_history,
     )
 
 
@@ -422,6 +663,20 @@ def run_exact_pair_adaptive_window(
     record_attempt_diagnostics: bool = False,
     cancel_callback: Callable[[], bool] | None = None,
     accepted_progress_callback: Callable[[float, float], None] | None = None,
+    intrinsic_spin_reduction_history: (
+        AcceptedPairIntrinsicSpinReductionHistory | None
+    ) = None,
+    build_intrinsic_spin_reduction_candidate: (
+        IntrinsicSpinReductionCandidate | None
+    ) = None,
+    causal_c5_source_history: AcceptedPairCausalC5SourceHistory | None = None,
+    growable_causal_c5_source_history: (
+        GrowableAcceptedPairCausalC5SourceHistory | None
+    ) = None,
+    causal_local_source_history: AcceptedPairCausalLocalSourceHistory | None = None,
+    growable_causal_local_source_history: (
+        GrowableAcceptedPairCausalLocalSourceHistory | None
+    ) = None,
 ) -> AdaptivePairRunResult:
     """Advance accepted pair history to a bounded shared lab-time target.
 
@@ -463,6 +718,12 @@ def run_exact_pair_adaptive_window(
         raise ValueError("adaptive pair time tolerances must be non-negative")
     if absolute_time_tolerance_ns == 0.0 and relative_time_tolerance == 0.0:
         raise ValueError("at least one adaptive pair time tolerance must be positive")
+    if (intrinsic_spin_reduction_history is None) != (
+        build_intrinsic_spin_reduction_candidate is None
+    ):
+        raise ValueError(
+            "intrinsic-spin history and candidate builder must be supplied together"
+        )
 
     latest_slab_scale_ns = _latest_pair_slab_scale_ns(
         rider_builder,
@@ -508,6 +769,39 @@ def run_exact_pair_adaptive_window(
     rejected_trials = 0
     attempt_diagnostics: list[AdaptivePairAttemptDiagnostics] = []
     state = controller_state
+    reduction_history = intrinsic_spin_reduction_history
+    if (
+        causal_c5_source_history is not None
+        and growable_causal_c5_source_history is not None
+    ):
+        raise ValueError(
+            "immutable and growable causal C5 histories cannot both be supplied"
+        )
+    if (
+        causal_local_source_history is not None
+        and growable_causal_local_source_history is not None
+    ):
+        raise ValueError(
+            "immutable and growable causal local histories cannot both be supplied"
+        )
+    if (
+        causal_c5_source_history is not None
+        or growable_causal_c5_source_history is not None
+    ) and (
+        causal_local_source_history is not None
+        or growable_causal_local_source_history is not None
+    ):
+        raise ValueError("causal C5 and causal local histories are mutually exclusive")
+    c5_history = (
+        growable_causal_c5_source_history.build_current()
+        if growable_causal_c5_source_history is not None
+        else causal_c5_source_history
+    )
+    local_history = (
+        growable_causal_local_source_history.build_current()
+        if growable_causal_local_source_history is not None
+        else causal_local_source_history
+    )
     completed = target_time_ns - current_time <= completion_tolerance
 
     def flush_interrupted_checkpoint() -> None:
@@ -518,6 +812,13 @@ def run_exact_pair_adaptive_window(
             driver=driver_builder.build_current(),
             controller_state=state.to_checkpoint_state(),
             public_output_state=output_state.to_checkpoint_state(),
+            intrinsic_spin_reduction_state=(
+                None
+                if reduction_history is None
+                else reduction_history.to_checkpoint_payload()
+            ),
+            causal_c5_source_history=c5_history,
+            causal_local_source_history=local_history,
             complete=False,
         )
 
@@ -565,12 +866,33 @@ def run_exact_pair_adaptive_window(
                 spin_interpolation_model=spin_interpolation_model,
                 absolute_time_tolerance_ns=absolute_time_tolerance_ns,
                 relative_time_tolerance=relative_time_tolerance,
+                intrinsic_spin_reduction_history=reduction_history,
+                build_intrinsic_spin_reduction_candidate=(
+                    build_intrinsic_spin_reduction_candidate
+                ),
+                causal_c5_source_history=(
+                    None
+                    if growable_causal_c5_source_history is not None
+                    else c5_history
+                ),
+                growable_causal_c5_source_history=(growable_causal_c5_source_history),
+                causal_local_source_history=(
+                    None
+                    if growable_causal_local_source_history is not None
+                    else local_history
+                ),
+                growable_causal_local_source_history=(
+                    growable_causal_local_source_history
+                ),
             )
         except IntegrationCancelled:
             flush_interrupted_checkpoint()
             raise
         attempts += 1
         state = result.controller_state
+        reduction_history = result.intrinsic_spin_reduction_history
+        c5_history = result.causal_c5_source_history
+        local_history = result.causal_local_source_history
         if record_attempt_diagnostics:
             assessment = result.trial.assessment
             attempt_diagnostics.append(
@@ -640,6 +962,13 @@ def run_exact_pair_adaptive_window(
                 driver=driver_builder.build_current(),
                 controller_state=state.to_checkpoint_state(),
                 public_output_state=output_state.to_checkpoint_state(),
+                intrinsic_spin_reduction_state=(
+                    None
+                    if reduction_history is None
+                    else reduction_history.to_checkpoint_payload()
+                ),
+                causal_c5_source_history=c5_history,
+                causal_local_source_history=local_history,
                 complete=completed,
             )
         if accepted_progress_callback is not None:
@@ -654,6 +983,9 @@ def run_exact_pair_adaptive_window(
         final_time_ns=current_time,
         completed=completed,
         attempt_diagnostics=tuple(attempt_diagnostics),
+        intrinsic_spin_reduction_history=reduction_history,
+        causal_c5_source_history=c5_history,
+        causal_local_source_history=local_history,
     )
 
 
@@ -663,6 +995,7 @@ __all__ = [
     "AdaptivePairControllerState",
     "AdaptivePairPublicOutputState",
     "AdaptivePairRunResult",
+    "IntrinsicSpinReductionCandidate",
     "attempt_exact_pair_adaptive_step",
     "run_exact_pair_adaptive_window",
 ]

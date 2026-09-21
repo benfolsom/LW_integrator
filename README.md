@@ -1,5 +1,24 @@
 # LW Integrator
 
+## Finite-spin pair solver — September 2026
+
+The separate two-particle solver supports coupled magnetic self-reaction,
+analytical derivatives, DOP853 integration, and resumable checkpoints. Compatible
+fresh runs now select coordinated single-fit motion and magnetic-moment histories
+automatically. The main GUI opens this workflow through **Nonlinear pair…**.
+These defaults do not change the older charge-only or bunch simulation paths.
+
+The completed coarse–fine benchmark reduced late dipole-squared reaction-impulse
+disagreement from 5.819e-2 to 1.034e-5 relative to the fine result. This establishes
+recording-resolution consistency for that benchmark; independent conservation
+and validity across other physical regimes remain separate checks.
+
+See the [pair solver user guide](docs/source/finite_spin_pair.rst),
+[history method](docs/single_fit_geometry.md), and
+[drift-budget selection](docs/dipole_drift_budget.md). Internal integration may
+adapt while history recording stays fixed. Arbitrary adaptive recording is not
+supported by the new history method.
+
 ## Recent Updates (August 2026)
 
 - **Explicit GUI/testbed CLI route** — `lw-simulate --testbed-config ...` loads and executes saved GUI/testbed configurations through `run_testbed()` without translating their schema, keeping configured 3D particles, beamline geometry, source smearing, self-consistency, and output settings authoritative.

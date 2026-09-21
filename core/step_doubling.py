@@ -126,6 +126,7 @@ def _pair_role_step_doubling_values(
     states: Sequence[ParticleState],
     *,
     role: str,
+    include_spin_feedback: bool = False,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     if not states:
         raise ValueError(f"{role} step-doubling path must contain a state")
@@ -155,7 +156,8 @@ def _pair_role_step_doubling_values(
     else:
         spin = _single_particle_vector(endpoint, spin_names, role=role)
     diagnostics: np.ndarray = np.zeros(
-        len(_PAIR_INCREMENT_DIAGNOSTICS), dtype=np.float64
+        len(_PAIR_INCREMENT_DIAGNOSTICS) + (2 if include_spin_feedback else 0),
+        dtype=np.float64,
     )
     for state in states:
         for index, name in enumerate(_PAIR_INCREMENT_DIAGNOSTICS):
@@ -163,6 +165,16 @@ def _pair_role_step_doubling_values(
             if values.shape != (1,) or not np.all(np.isfinite(values)):
                 raise ValueError(f"{role} {name} must contain one finite increment")
             diagnostics[index] += float(values[0])
+        if include_spin_feedback:
+            from .experimental_spin_reaction import LinearSpinFeedbackRecord
+
+            record = state.get("_linear_spin_feedback_record")
+            if not isinstance(record, LinearSpinFeedbackRecord):
+                raise ValueError(f"{role} experimental path is missing a recoil record")
+            diagnostics[-2] += record.work_native
+            diagnostics[-1] += (
+                record.work_native - record.temporal_impulse_energy_native
+            )
     return position, mechanical_momentum, spin, diagnostics
 
 
@@ -179,8 +191,17 @@ def build_pair_step_doubling_state(
     over both accepted half steps on the refined path.
     """
 
-    rider = _pair_role_step_doubling_values(rider_states, role="rider")
-    driver = _pair_role_step_doubling_values(driver_states, role="driver")
+    include_spin_feedback = any(
+        "_linear_spin_feedback_record" in state
+        for states in (rider_states, driver_states)
+        for state in states
+    )
+    rider = _pair_role_step_doubling_values(
+        rider_states, role="rider", include_spin_feedback=include_spin_feedback
+    )
+    driver = _pair_role_step_doubling_values(
+        driver_states, role="driver", include_spin_feedback=include_spin_feedback
+    )
     return StepDoublingState(
         position_mm=np.stack((rider[0], driver[0])),
         mechanical_momentum_native=np.stack((rider[1], driver[1])),

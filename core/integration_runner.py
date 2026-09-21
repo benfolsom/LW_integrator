@@ -12,7 +12,7 @@ from dataclasses import dataclass, fields, is_dataclass, replace
 from enum import Enum
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Callable, Optional, Tuple, cast
+from typing import Any, Callable, Optional, Sequence, Tuple, cast
 
 import numpy as np
 
@@ -25,7 +25,7 @@ from .equations import (
 )
 from .exact_pair_endpoint import (
     discard_exact_source_endpoint_scratch as _discard_exact_source_endpoint_scratch,
-    evaluate_exact_endpoint_four_potential as _evaluate_exact_endpoint_four_potential,
+    evaluate_exact_endpoint_four_potential as _evaluate_exact_endpoint_four_potential,  # noqa: F401
     finalize_exact_source_canonical_pair_states,
 )
 from .images import generate_conducting_image, generate_switching_image
@@ -63,6 +63,8 @@ from .types import (
     ChronoMatchingMode,
     CavityExitConfig,
     DriverTrainConfig,
+    DipoleSourceConfig,
+    GrowableTrajectoryBuilder,
     IndexedTrajectoryArrays,
     IntegratorConfig,
     MacroparticleSmearingConfig,
@@ -83,7 +85,9 @@ from .types import (
 # knots leave useful room for knot-count invariance tests without tying the
 # prefix spacing to the (much smaller) active integration timestep.
 _INERTIAL_PREHISTORY_KNOT_COUNT = 8
+_INERTIAL_PREHISTORY_C5_MINIMUM_KNOT_COUNT = 16
 _INERTIAL_PREHISTORY_SAFETY_FACTOR = 2.0
+_INERTIAL_PREHISTORY_C5_MAXIMUM_INTERVAL_RATIO = 1.05
 
 
 def _checkpoint_json_value(value: Any) -> Any:
@@ -901,15 +905,42 @@ def _build_inertial_coasting_history(
     duration_ns: float,
     *,
     knot_count: int = _INERTIAL_PREHISTORY_KNOT_COUNT,
+    time_offsets_ns: Sequence[float] | np.ndarray | None = None,
 ) -> Trajectory:
     """Build a sparse constant-velocity history ending at ``active_state``."""
 
     duration = float(duration_ns)
-    knots = int(knot_count)
     if not np.isfinite(duration) or duration <= 0.0:
         raise ValueError("inertial prehistory duration must be finite and positive")
-    if knots < 2:
-        raise ValueError("inertial prehistory requires at least two knots")
+    if time_offsets_ns is None:
+        knots = int(knot_count)
+        if knots < 2:
+            raise ValueError("inertial prehistory requires at least two knots")
+        offsets = np.linspace(-duration, 0.0, knots)
+    else:
+        offsets = np.asarray(time_offsets_ns, dtype=float)
+        if (
+            offsets.ndim != 1
+            or offsets.size < 2
+            or not np.all(np.isfinite(offsets))
+            or np.any(np.diff(offsets) <= 0.0)
+        ):
+            raise ValueError(
+                "inertial prehistory time offsets must be a finite increasing vector"
+            )
+        endpoint_tolerance = 8.0 * np.finfo(float).eps * duration
+        if (
+            not np.isclose(
+                float(offsets[0]),
+                -duration,
+                rtol=0.0,
+                atol=endpoint_tolerance,
+            )
+            or float(offsets[-1]) != 0.0
+        ):
+            raise ValueError(
+                "inertial prehistory offsets must span -duration through zero"
+            )
     for axis in "xyz":
         acceleration = np.asarray(
             active_state.get(f"bdot{axis}", np.zeros_like(active_state["x"])),
@@ -920,7 +951,6 @@ def _build_inertial_coasting_history(
                 "INERTIAL_PREHISTORY requires zero initial bdot; it is a fresh "
                 "constant-velocity boundary model, not a restart extrapolation"
             )
-    offsets = np.linspace(-duration, 0.0, knots)
     history = [
         _coast_state_by_coordinate_time(active_state, float(offset))
         for offset in offsets
@@ -945,6 +975,102 @@ def _build_inertial_coasting_history(
     return history
 
 
+def _causal_c5_inertial_time_offsets_ns(
+    duration_ns: float,
+    initial_step_ns: float,
+    *,
+    maximum_interval_ratio: float = (_INERTIAL_PREHISTORY_C5_MAXIMUM_INTERVAL_RATIO),
+) -> np.ndarray:
+    """Return a sparse prehistory that tapers into adaptive midpoint cadence.
+
+    A uniform 16-knot prehistory is sufficient to expose one frozen C5
+    segment, but its final interval can be much larger than the first accepted
+    midpoint interval.  That abrupt cadence change makes an otherwise smooth
+    fifteen-knot spin fit ill-conditioned.  These offsets retain coarse knots
+    in the remote past and reduce adjacent intervals geometrically toward
+    ``initial_step_ns / 2``, the first step-doubling midpoint cadence.
+    The same transition also protects the charge-worldline reconstruction:
+    a short first curved step must not assign a large inferred acceleration
+    to the end of a very long preceding coasting interval.
+    """
+
+    duration = float(duration_ns)
+    initial_step = float(initial_step_ns)
+    ratio = float(maximum_interval_ratio)
+    if not np.isfinite(duration) or duration <= 0.0:
+        raise ValueError("causal C5 prehistory duration must be finite and positive")
+    if not np.isfinite(initial_step) or initial_step <= 0.0:
+        raise ValueError("causal C5 initial step must be finite and positive")
+    if not np.isfinite(ratio) or ratio <= 1.0:
+        raise ValueError("causal C5 maximum interval ratio must exceed one")
+
+    coarse_interval = duration / float(_INERTIAL_PREHISTORY_C5_MINIMUM_KNOT_COUNT - 1)
+    newest_interval = min(0.5 * initial_step, coarse_interval)
+    reverse_intervals: list[float] = []
+    interval = newest_interval
+    accumulated = 0.0
+    while accumulated < duration:
+        reverse_intervals.append(interval)
+        accumulated += interval
+        interval = min(ratio * interval, coarse_interval)
+
+    scale = duration / accumulated
+    intervals = np.asarray(reverse_intervals[::-1], dtype=float) * scale
+    offsets = np.concatenate(
+        (
+            np.asarray((-duration,), dtype=float),
+            -duration + np.cumsum(intervals),
+        )
+    )
+    offsets[-1] = 0.0
+    if offsets.size < _INERTIAL_PREHISTORY_C5_MINIMUM_KNOT_COUNT:
+        raise RuntimeError("causal C5 prehistory constructed too few knots")
+    if np.any(np.diff(offsets) <= 0.0):
+        raise RuntimeError("causal C5 prehistory offsets lost strict ordering")
+    return offsets
+
+
+def _causal_local_maximum_interval_ns(source: DipoleSourceConfig) -> float:
+    """Largest seed interval that still resolves the narrowest local fit."""
+
+    narrow = (
+        source.local_jet_scale_configs[0].narrow_half_width_ns
+        if source.local_jet_scales
+        else source.local_jet_narrow_half_width_ns
+    )
+    if narrow is None:  # pragma: no cover - DipoleSourceConfig invariant
+        raise ValueError("causal local narrow physical half-width is unavailable")
+    degree = max(
+        int(source.local_jet_acceleration_degree),
+        int(source.local_jet_spin_degree),
+    )
+    return 2.0 * float(narrow) / float(degree + 3)
+
+
+def _causal_local_inertial_time_offsets_ns(
+    duration_ns: float,
+    source: DipoleSourceConfig,
+) -> np.ndarray:
+    """Resolve an explicit inertial boundary model across each local fit window."""
+
+    duration = float(duration_ns)
+    if not np.isfinite(duration) or duration <= 0.0:
+        raise ValueError("causal local prehistory duration must be finite and positive")
+    maximum_interval = _causal_local_maximum_interval_ns(source)
+    count = max(
+        _INERTIAL_PREHISTORY_C5_MINIMUM_KNOT_COUNT,
+        int(np.ceil(duration / maximum_interval)) + 1,
+    )
+    if count > 250_000:
+        raise ValueError(
+            "causal local inertial boundary would require more than 250000 knots; "
+            "increase the physical fit widths or supply resolved physical history"
+        )
+    offsets = np.linspace(-duration, 0.0, count, dtype=float)
+    offsets[-1] = 0.0
+    return offsets
+
+
 def _preflight_inertial_exact_histories(
     rider_history: Trajectory,
     driver_history: Trajectory,
@@ -952,6 +1078,8 @@ def _preflight_inertial_exact_histories(
     magnetic_dipole: MagneticDipoleConfig,
     charge_field_required: bool,
     dipole_field_required: bool,
+    causal_c5_source_history: Any = None,
+    causal_local_source_history: Any = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Preflight exact stencils and return each active state's total ``qA/c``."""
 
@@ -962,17 +1090,58 @@ def _preflight_inertial_exact_histories(
 
     if dipole_field_required:
         from .dipole_source_interactions import (
+            dipole_source_interaction_from_field_native,
             evaluate_retarded_dipole_source_interaction_native,
         )
+
+        if causal_c5_source_history is not None:
+            from .causal_c5_dipole_provider import (
+                evaluate_causal_c5_dipole_source_collection_native,
+            )
+        if causal_local_source_history is not None:
+            from .causal_local_source_jet import (
+                evaluate_configured_causal_local_source_jet_collection_native,
+            )
+
+    if causal_c5_source_history is not None and causal_local_source_history is not None:
+        raise ValueError("causal C5 and causal local histories are mutually exclusive")
 
     source_options = magnetic_dipole.source
     rider_offsets = np.zeros((len(np.asarray(rider_history[-1]["x"])), 4))
     driver_offsets = np.zeros((len(np.asarray(driver_history[-1]["x"])), 4))
-    directions = (
-        (rider_history[-1], driver_history, rider_offsets),
-        (driver_history[-1], rider_history, driver_offsets),
+    exact_dipole_source_history = (
+        causal_c5_source_history
+        if causal_c5_source_history is not None
+        else causal_local_source_history
     )
-    for observer_state, source_history, potential_offsets in directions:
+    directions = (
+        (
+            rider_history[-1],
+            driver_history,
+            rider_offsets,
+            (
+                None
+                if exact_dipole_source_history is None
+                else exact_dipole_source_history.driver
+            ),
+        ),
+        (
+            driver_history[-1],
+            rider_history,
+            driver_offsets,
+            (
+                None
+                if exact_dipole_source_history is None
+                else exact_dipole_source_history.rider
+            ),
+        ),
+    )
+    for (
+        observer_state,
+        source_history,
+        potential_offsets,
+        exact_dipole_source_collection,
+    ) in directions:
         particle_count = len(np.asarray(observer_state.get("x", [])))
         for particle_idx in range(particle_count):
             beta = np.asarray(
@@ -1037,19 +1206,56 @@ def _preflight_inertial_exact_histories(
                     particle_idx
                 ] += charge_interaction.canonical_potential_momentum
             if dipole_field_required:
-                dipole_interaction = evaluate_retarded_dipole_source_interaction_native(
-                    source_history,
-                    event,
-                    four_velocity_mm_ns=four_velocity,
-                    observer_charge_native=observer_charge,
-                    proper_time_step_ns=0.0,
-                    relative_step=float(source_options.relative_stencil_step),
-                    minimum_step_mm=float(source_options.minimum_stencil_step_mm),
-                    minimum_separation_mm=float(source_options.minimum_separation_mm),
-                    root_tolerance_mm=float(source_options.root_tolerance_mm),
-                    max_root_iterations=int(source_options.max_root_iterations),
-                    backend=magnetic_dipole.exact_retarded_backend,
-                )
+                if exact_dipole_source_collection is None:
+                    dipole_interaction = (
+                        evaluate_retarded_dipole_source_interaction_native(
+                            source_history,
+                            event,
+                            four_velocity_mm_ns=four_velocity,
+                            observer_charge_native=observer_charge,
+                            proper_time_step_ns=0.0,
+                            relative_step=float(source_options.relative_stencil_step),
+                            minimum_step_mm=float(
+                                source_options.minimum_stencil_step_mm
+                            ),
+                            minimum_separation_mm=float(
+                                source_options.minimum_separation_mm
+                            ),
+                            root_tolerance_mm=float(source_options.root_tolerance_mm),
+                            max_root_iterations=int(source_options.max_root_iterations),
+                            backend=magnetic_dipole.exact_retarded_backend,
+                        )
+                    )
+                elif causal_c5_source_history is not None:
+                    c5_field = evaluate_causal_c5_dipole_source_collection_native(
+                        exact_dipole_source_collection,
+                        event,
+                        minimum_separation_mm=float(
+                            source_options.minimum_separation_mm
+                        ),
+                        root_tolerance_mm=float(source_options.root_tolerance_mm),
+                        max_root_iterations=int(source_options.max_root_iterations),
+                    )
+                    dipole_interaction = dipole_source_interaction_from_field_native(
+                        c5_field,
+                        four_velocity_mm_ns=four_velocity,
+                        observer_charge_native=observer_charge,
+                        proper_time_step_ns=0.0,
+                    )
+                else:
+                    local_field = (
+                        evaluate_configured_causal_local_source_jet_collection_native(
+                            exact_dipole_source_collection,
+                            event,
+                            source_options=source_options,
+                        )
+                    )
+                    dipole_interaction = dipole_source_interaction_from_field_native(
+                        local_field,
+                        four_velocity_mm_ns=four_velocity,
+                        observer_charge_native=observer_charge,
+                        proper_time_step_ns=0.0,
+                    )
                 potential_offsets[
                     particle_idx
                 ] += dipole_interaction.canonical_potential_momentum
@@ -1156,6 +1362,16 @@ def _slice_trajectory_arrays(
         bdotx=arrays.bdotx[start:stop],
         bdoty=arrays.bdoty[start:stop],
         bdotz=arrays.bdotz[start:stop],
+        source_start_beta_prime_x_per_mm=(
+            arrays.source_start_beta_prime_x_per_mm[start:stop]
+        ),
+        source_start_beta_prime_y_per_mm=(
+            arrays.source_start_beta_prime_y_per_mm[start:stop]
+        ),
+        source_start_beta_prime_z_per_mm=(
+            arrays.source_start_beta_prime_z_per_mm[start:stop]
+        ),
+        source_start_beta_prime_ready=arrays.source_start_beta_prime_ready[start:stop],
         radiation_power=arrays.radiation_power[start:stop],
         radiation_energy=arrays.radiation_energy[start:stop],
         radiation_energy_applied=arrays.radiation_energy_applied[start:stop],
@@ -2760,6 +2976,14 @@ def retarded_integrator(
     magnetic_dipole = magnetic_dipole or MagneticDipoleConfig()
     checkpoint = checkpoint or CheckpointConfig()
     adaptive_pair_return = adaptive_pair_return or AdaptivePairReturnConfig()
+    if (
+        magnetic_dipole.intrinsic_spin_self_reaction_mode == "experimental_linear_spin"
+        and not adaptive_pair_return.enabled
+    ):
+        raise ValueError(
+            "experimental_linear_spin requires checkpointed exact-pair adaptive "
+            "return mode; fixed-step and many-particle feedback are not implemented"
+        )
     if magnetic_dipole.exact_retarded_backend == "metal_certified_full_strict":
         from .metal_certified_roots import reset_metal_certified_root_diagnostics
 
@@ -2794,6 +3018,27 @@ def retarded_integrator(
         magnetic_dipole.enabled and magnetic_dipole.source.active
     )
     exact_magnetic_active = bool(rfs_active or dipole_source_active)
+
+    if (
+        dipole_source_active
+        and magnetic_dipole.source.history_model in {"causal_c5", "causal_local_jet"}
+        and not adaptive_pair_return.enabled
+    ):
+        raise NotImplementedError(
+            f"{magnetic_dipole.source.history_model} dipole-source history currently "
+            "requires exact-pair adaptive return mode; fixed-step publication is "
+            "not yet implemented"
+        )
+    if (
+        dipole_source_active
+        and magnetic_dipole.source.history_model == "causal_local_jet"
+        and magnetic_dipole.source.local_jet_inertial_prehistory != "assumed_inertial"
+    ):
+        raise ValueError(
+            "causal_local_jet exact-pair startup requires the explicit "
+            "local_jet_inertial_prehistory='assumed_inertial' boundary model; "
+            "synthetic rows are otherwise not trusted as acceleration evidence"
+        )
 
     if adaptive_pair_return.enabled:
         if sim_type is not SimulationType.BUNCH_TO_BUNCH:
@@ -3109,13 +3354,61 @@ def retarded_integrator(
             raise ValueError("Cavity-exit cutoff requires init_driver state")
 
     inertial_prehistory_duration_ns: float | None = None
+    causal_c5_enabled = bool(
+        dipole_source_active and magnetic_dipole.source.history_model == "causal_c5"
+    )
+    causal_local_enabled = bool(
+        dipole_source_active
+        and magnetic_dipole.source.history_model == "causal_local_jet"
+    )
+    taper_exact_pair_prehistory = bool(
+        causal_c5_enabled or (adaptive_pair_return.enabled and not causal_local_enabled)
+    )
+    inertial_prehistory_knot_count = _INERTIAL_PREHISTORY_KNOT_COUNT
+    inertial_prehistory_time_offsets_ns: np.ndarray | None = None
+    initial_causal_c5_source_history = None
+    initial_causal_local_source_history = None
     if inertial_prehistory_enabled:
         inertial_prehistory_duration_ns = _estimate_inertial_prehistory_duration_ns(
             init_rider,
             cast(ParticleState, init_driver),
             magnetic_dipole,
         )
-        active_start = _INERTIAL_PREHISTORY_KNOT_COUNT - 1
+        if taper_exact_pair_prehistory:
+            inertial_prehistory_time_offsets_ns = _causal_c5_inertial_time_offsets_ns(
+                inertial_prehistory_duration_ns,
+                h_step,
+            )
+            inertial_prehistory_knot_count = int(
+                inertial_prehistory_time_offsets_ns.size
+            )
+        elif causal_local_enabled:
+            wide = (
+                magnetic_dipole.source.local_jet_scale_configs[-1].wide_half_width_ns
+                if magnetic_dipole.source.local_jet_scales
+                else magnetic_dipole.source.local_jet_wide_half_width_ns
+            )
+            if wide is None:  # pragma: no cover - configuration invariant
+                raise RuntimeError("causal local wide fit window is unavailable")
+            # Interval-mean acceleration is located between trajectory knots,
+            # so the oldest usable acceleration sample is later than the
+            # oldest position/spin knot. Add one fully resolved interval beyond
+            # the physical fit boundary rather than relying on roundoff at an
+            # exactly coincident endpoint.
+            local_fit_history_margin_ns = (
+                2.0 * wide + _causal_local_maximum_interval_ns(magnetic_dipole.source)
+            )
+            inertial_prehistory_duration_ns += local_fit_history_margin_ns
+            inertial_prehistory_time_offsets_ns = (
+                _causal_local_inertial_time_offsets_ns(
+                    inertial_prehistory_duration_ns,
+                    magnetic_dipole.source,
+                )
+            )
+            inertial_prehistory_knot_count = int(
+                inertial_prehistory_time_offsets_ns.size
+            )
+        active_start = inertial_prehistory_knot_count - 1
     else:
         active_start = int(driver_train.prehistory_steps) if driver_train_enabled else 0
     requested_steps = int(steps)
@@ -3201,11 +3494,66 @@ def retarded_integrator(
             rider_seed_history = _build_inertial_coasting_history(
                 init_rider,
                 inertial_prehistory_duration_ns,
+                knot_count=inertial_prehistory_knot_count,
+                time_offsets_ns=inertial_prehistory_time_offsets_ns,
             )
             driver_seed_history = _build_inertial_coasting_history(
                 init_driver,
                 inertial_prehistory_duration_ns,
+                knot_count=inertial_prehistory_knot_count,
+                time_offsets_ns=inertial_prehistory_time_offsets_ns,
             )
+            if causal_c5_enabled:
+                from .causal_c5_dipole_provider import (
+                    AcceptedPairCausalC5SourceHistory,
+                )
+
+                rider_c5_builder = GrowableTrajectoryBuilder(
+                    inertial_prehistory_knot_count,
+                    len(np.asarray(rider_seed_history[-1]["x"])),
+                    magnetic_dipole=True,
+                )
+                driver_c5_builder = GrowableTrajectoryBuilder(
+                    inertial_prehistory_knot_count,
+                    len(np.asarray(driver_seed_history[-1]["x"])),
+                    magnetic_dipole=True,
+                )
+                for seed_state in rider_seed_history:
+                    rider_c5_builder.append_step(seed_state)
+                for seed_state in driver_seed_history:
+                    driver_c5_builder.append_step(seed_state)
+                initial_causal_c5_source_history = (
+                    AcceptedPairCausalC5SourceHistory.from_trajectory_arrays(
+                        rider_c5_builder.build_current(),
+                        driver_c5_builder.build_current(),
+                    )
+                )
+            elif causal_local_enabled:
+                from .causal_local_source_history import (
+                    AcceptedPairCausalLocalSourceHistory,
+                )
+
+                rider_local_builder = GrowableTrajectoryBuilder(
+                    inertial_prehistory_knot_count,
+                    len(np.asarray(rider_seed_history[-1]["x"])),
+                    magnetic_dipole=True,
+                )
+                driver_local_builder = GrowableTrajectoryBuilder(
+                    inertial_prehistory_knot_count,
+                    len(np.asarray(driver_seed_history[-1]["x"])),
+                    magnetic_dipole=True,
+                )
+                for seed_state in rider_seed_history:
+                    rider_local_builder.append_step(seed_state)
+                for seed_state in driver_seed_history:
+                    driver_local_builder.append_step(seed_state)
+                initial_causal_local_source_history = (
+                    AcceptedPairCausalLocalSourceHistory.from_trajectory_arrays(
+                        rider_local_builder.build_current(),
+                        driver_local_builder.build_current(),
+                        assume_inertial_boundary_intervals=True,
+                    )
+                )
             try:
                 rider_potential_momentum, driver_potential_momentum = (
                     _preflight_inertial_exact_histories(
@@ -3214,6 +3562,10 @@ def retarded_integrator(
                         magnetic_dipole=magnetic_dipole,
                         charge_field_required=exact_magnetic_active,
                         dipole_field_required=dipole_source_active,
+                        causal_c5_source_history=(initial_causal_c5_source_history),
+                        causal_local_source_history=(
+                            initial_causal_local_source_history
+                        ),
                     )
                 )
             except RetardedHistoryError:
@@ -3222,7 +3574,41 @@ def retarded_integrator(
                         "INERTIAL_PREHISTORY could not bracket every initial "
                         "exact-field stencil after eight geometric extensions"
                     )
-                inertial_prehistory_duration_ns *= 2.0
+                if causal_local_enabled:
+                    causal_boundary_duration = (
+                        inertial_prehistory_duration_ns - local_fit_history_margin_ns
+                    )
+                    inertial_prehistory_duration_ns = (
+                        2.0 * causal_boundary_duration + local_fit_history_margin_ns
+                    )
+                else:
+                    inertial_prehistory_duration_ns *= 2.0
+                if taper_exact_pair_prehistory:
+                    inertial_prehistory_time_offsets_ns = (
+                        _causal_c5_inertial_time_offsets_ns(
+                            inertial_prehistory_duration_ns,
+                            h_step,
+                        )
+                    )
+                    inertial_prehistory_knot_count = int(
+                        inertial_prehistory_time_offsets_ns.size
+                    )
+                    active_start = inertial_prehistory_knot_count - 1
+                    total_steps = requested_steps + active_start
+                elif causal_local_enabled:
+                    # Preserve the physical fit margin while extending only the
+                    # light-cone boundary reach.
+                    inertial_prehistory_time_offsets_ns = (
+                        _causal_local_inertial_time_offsets_ns(
+                            inertial_prehistory_duration_ns,
+                            magnetic_dipole.source,
+                        )
+                    )
+                    inertial_prehistory_knot_count = int(
+                        inertial_prehistory_time_offsets_ns.size
+                    )
+                    active_start = inertial_prehistory_knot_count - 1
+                    total_steps = requested_steps + active_start
                 continue
             _apply_inertial_canonical_rebase(
                 rider_seed_history[-1],
@@ -3303,6 +3689,8 @@ def retarded_integrator(
             compatibility_payload=cast(dict[str, Any], compatibility_payload),
             progress_callback=progress_callback,
             cancel_callback=cancel_callback,
+            initial_causal_c5_source_history=(initial_causal_c5_source_history),
+            initial_causal_local_source_history=(initial_causal_local_source_history),
         )
 
     trajectory: Trajectory = [{} for _ in range(total_steps)]

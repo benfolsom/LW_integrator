@@ -96,6 +96,77 @@ def test_proper_step_solver_matches_nonlinear_endpoint() -> None:
     assert abs(result.residual_ns) <= 1.0e-14
 
 
+def test_proper_step_solver_resolves_root_near_safeguarded_bracket_edge() -> None:
+    """An accurate first secant avoids the old multi-bisection slowdown."""
+
+    result = solve_proper_step_to_lab_time(
+        lambda h: _time_state(h),
+        role="rider",
+        start_time_ns=0.0,
+        target_time_ns=1.0,
+        initial_proper_step_ns=1.0 + 1.0e-12,
+        absolute_tolerance_ns=1.0e-15,
+        relative_tolerance=0.0,
+    )
+
+    assert abs(result.residual_ns) <= 1.0e-15
+    assert result.evaluations == 2
+
+
+def test_proper_step_preserves_cancellation_from_trial() -> None:
+    from core.integration_runner import IntegrationCancelled
+
+    cancellation = IntegrationCancelled("stop during endpoint evaluation")
+
+    def advance(_step):
+        raise cancellation
+
+    with pytest.raises(IntegrationCancelled) as raised:
+        solve_proper_step_to_lab_time(
+            advance,
+            role="electron",
+            start_time_ns=0.0,
+            target_time_ns=1.0,
+            initial_proper_step_ns=0.5,
+        )
+    assert raised.value is cancellation
+
+
+def test_proper_step_accepts_small_undershoot_without_expanding() -> None:
+    calls = []
+
+    def advance(step):
+        calls.append(step)
+        return _time_state(step - 5e-13)
+
+    endpoint = solve_proper_step_to_lab_time(
+        advance,
+        role="ion",
+        start_time_ns=0.0,
+        target_time_ns=1.0,
+        initial_proper_step_ns=1.0,
+        absolute_tolerance_ns=1e-12,
+        relative_tolerance=0.0,
+        maximum_proper_step_ns=1.0,
+    )
+    assert calls == [1.0]
+    assert abs(endpoint.residual_ns) <= 1e-12
+
+
+def test_nearly_exact_linear_guess_uses_interior_secant() -> None:
+    endpoint = solve_proper_step_to_lab_time(
+        lambda h: _time_state(2 * h),
+        role="electron",
+        start_time_ns=0.0,
+        target_time_ns=1e-9,
+        initial_proper_step_ns=0.5e-9 * (1 + 1e-10),
+        absolute_tolerance_ns=1e-22,
+        relative_tolerance=0.0,
+    )
+    assert abs(endpoint.residual_ns) <= 1e-22
+    assert endpoint.evaluations == 2
+
+
 def test_proper_step_solver_rejects_nonmonotone_bracket() -> None:
     with pytest.raises(SharedLabTimeError, match="not monotone"):
         solve_proper_step_to_lab_time(

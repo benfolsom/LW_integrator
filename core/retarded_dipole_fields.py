@@ -54,7 +54,7 @@ from copy import copy
 from dataclasses import dataclass, field as dataclass_field
 from functools import lru_cache
 from itertools import product
-from typing import Hashable, Sequence, cast
+from typing import Any, Hashable, Sequence, cast
 
 import numpy as np
 
@@ -86,6 +86,7 @@ from .retarded_fields import (
     _HistoryArrays,
     _append_history_arrays,
     _append_prepared_source_history,
+    _clone_prepared_source_history_for_trial,
     _history_matrix_slice,
     _light_cone_residual_mm,
     _PreparedSourceHistory,
@@ -206,8 +207,10 @@ class RetardedDipoleResponseGradientResult:
 
     This is the potential-first production surface for exact endpoint
     recomposition, ordinary mechanical ``q F`` response, and RFS response.  It
-    deliberately omits the gauge-dependent ``partial A`` tensor and never
-    materializes the antisymmetric tensor middlemen.
+    omits the gauge-dependent ``partial A`` tensor by default and never
+    materializes the antisymmetric tensor middlemen. The analytical sparse
+    provider can optionally return ``partial_a`` or its proper-time contraction
+    for canonical-equation consumers; unrequested derivatives remain None.
     """
 
     four_potential: np.ndarray
@@ -219,6 +222,8 @@ class RetardedDipoleResponseGradientResult:
     source_segment_index: np.ndarray
     source_segment_fraction: np.ndarray
     source_jet_residual: np.ndarray
+    four_potential_proper_rate: np.ndarray | None = None
+    partial_a: np.ndarray | None = None
 
 
 @dataclass
@@ -244,6 +249,30 @@ class _PreparedDipoleHistory:
 _DIPOLE_PREPARED_HISTORY_CACHE: AppendAwarePreparedHistoryCache[
     TrajectoryHistory, _PreparedDipoleHistory
 ] = AppendAwarePreparedHistoryCache(max_entries=2)
+
+
+def _clone_prepared_dipole_source_for_trial(
+    source: _PreparedDipoleSource,
+) -> _PreparedDipoleSource:
+    """Detach every prepared buffer that a provisional dipole tail can edit."""
+
+    result = copy(source)
+    result.worldline = _clone_prepared_source_history_for_trial(source.worldline)
+    count = int(source.rest_spin.shape[0])
+    for buffer_name, visible_name in (
+        ("_rest_spin_buffer", "rest_spin"),
+        ("_slope_buffer", "rest_spin_derivative_per_ns"),
+    ):
+        buffer = getattr(source, buffer_name)
+        visible = np.asarray(getattr(source, visible_name))
+        if buffer is None:
+            setattr(result, visible_name, np.array(visible, copy=True))
+            continue
+        detached = np.empty_like(buffer)
+        detached[:count] = buffer[:count]
+        setattr(result, buffer_name, detached)
+        setattr(result, visible_name, detached[:count])
+    return result
 
 
 def _validated_spin_interpolation_model(model: str) -> str:
@@ -737,10 +766,9 @@ def _prepare_dipole_history(
         spin_tail = np.stack(spin_components, axis=-1)
         sources: dict[int, _PreparedDipoleSource] = {}
         for source_index, source in accepted.sources.items():
-            trial_source = copy(source)
-            trial_worldline = copy(source.worldline)
+            trial_source = _clone_prepared_dipole_source_for_trial(source)
+            trial_worldline = trial_source.worldline
             trial_worldline._maximum_capacity = arrays._maximum_capacity
-            trial_source.worldline = trial_worldline
             old_alive_count = int(trial_worldline.time_ns.size)
             _append_prepared_source_history(trial_worldline, arrays, old_stop)
             appended_alive_count = int(trial_worldline.time_ns.size) - old_alive_count
@@ -1277,7 +1305,7 @@ def _evaluate_prepared_hertz_batch_numba_full_strict_serial(
             getattr(event_evaluator, "signatures", ())
         )
         try:
-            arguments = (
+            arguments: tuple[Any, ...] = (
                 worldline.time_ns,
                 worldline.position_mm,
                 worldline.segment_duration_ns,

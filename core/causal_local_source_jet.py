@@ -1,0 +1,1273 @@
+"""Local retarded source jets from accepted acceleration and spin histories.
+
+This module deliberately separates two numerical jobs:
+
+* a cubic Hermite curve, fixed by accepted position and velocity, locates the
+  retarded event; and
+* local least-squares fits evaluate acceleration derivatives and spin-chart
+  derivatives directly at that event.
+
+The fitted derivatives are encoded as a centered Taylor polynomial only as an
+input adapter for the already validated Hertz-jet algebra. They are not joined
+into a global high-continuity worldline. This avoids amplifying small endpoint
+derivative inconsistencies through a degree-eleven Hermite segment.
+
+The route is currently an opt-in provider primitive. Centered fits fail closed
+unless the accepted prefix contains their complete fit window around the
+retarded event. An explicit past-only alignment instead uses a smoothly
+tapered interval ending at the retarded event and is independent of later
+accepted samples. Both routes require exact equations-of-motion start
+acceleration over their complete physical window.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, replace
+import math
+from typing import TYPE_CHECKING, Literal, Sequence, cast
+
+import numpy as np
+
+from .causal_local_source_history import (
+    CausalLocalDipoleSourceCollection,
+    CausalLocalHistoryView,
+    CausalLocalSourceHistoryUnavailableError,
+    spin_to_stereographic,
+)
+from .constants import C_MMNS
+from .dipole_hertz_jet import (
+    DipoleHertzResponseJetResult,
+    polynomial_dipole_hertz_response_jet_native,
+)
+from .rfs import fields_from_tensor_native
+
+if TYPE_CHECKING:
+    from .retarded_fields import ObserverEvent
+    from .types import DipoleSourceConfig
+
+
+@dataclass(frozen=True)
+class LocalSourceJetFitConfig:
+    """Numerical differentiation settings for one local source jet.
+
+    ``half_width_ns`` is half the total window duration for both alignments.
+    A centered window is ``[t_ret - w, t_ret + w]``; a past-only window is
+    ``[t_ret - 2 w, t_ret]``. ``exact_start`` uses explicitly retained
+    equations-of-motion acceleration. ``interval_mean`` reconstructs the
+    total acceleration, including split reaction impulses, from each accepted
+    velocity change and assigns that centered difference to the interval
+    midpoint.
+    """
+
+    half_width_ns: float
+    acceleration_degree: int = 5
+    spin_degree: int = 5
+    acceleration_samples: Literal["exact_start", "interval_mean"] = "exact_start"
+    window_weighting: Literal["tricube", "uniform"] = "tricube"
+    window_alignment: Literal["centered", "past"] = "centered"
+    maximum_condition_number: float = 1.0e5
+
+    def __post_init__(self) -> None:
+        width = float(self.half_width_ns)
+        acceleration_degree = int(self.acceleration_degree)
+        spin_degree = int(self.spin_degree)
+        acceleration_samples = str(self.acceleration_samples)
+        window_weighting = str(self.window_weighting)
+        window_alignment = str(self.window_alignment)
+        maximum_condition = float(self.maximum_condition_number)
+        if not np.isfinite(width) or width <= 0.0:
+            raise ValueError("half_width_ns must be finite and positive")
+        if acceleration_degree < 3:
+            raise ValueError("acceleration_degree must be at least three")
+        if spin_degree < 5:
+            raise ValueError("spin_degree must be at least five")
+        if acceleration_samples not in {"exact_start", "interval_mean"}:
+            raise ValueError(
+                "acceleration_samples must be 'exact_start' or 'interval_mean'"
+            )
+        if window_weighting not in {"tricube", "uniform"}:
+            raise ValueError("window_weighting must be 'tricube' or 'uniform'")
+        if window_alignment not in {"centered", "past"}:
+            raise ValueError("window_alignment must be 'centered' or 'past'")
+        if not np.isfinite(maximum_condition) or maximum_condition <= 1.0:
+            raise ValueError(
+                "maximum_condition_number must be finite and greater than one"
+            )
+        object.__setattr__(self, "half_width_ns", width)
+        object.__setattr__(self, "acceleration_degree", acceleration_degree)
+        object.__setattr__(self, "spin_degree", spin_degree)
+        object.__setattr__(self, "acceleration_samples", acceleration_samples)
+        object.__setattr__(self, "window_weighting", window_weighting)
+        object.__setattr__(self, "window_alignment", window_alignment)
+        object.__setattr__(self, "maximum_condition_number", maximum_condition)
+
+
+@dataclass(frozen=True)
+class LocalSourceJetModelSpreadConfig:
+    """Narrow and wide fits used to test local-model sensitivity."""
+
+    narrow_fit: LocalSourceJetFitConfig
+    wide_fit: LocalSourceJetFitConfig
+    maximum_relative_spread: float = 1.0e-3
+
+    def __post_init__(self) -> None:
+        maximum = float(self.maximum_relative_spread)
+        if not np.isfinite(maximum) or maximum <= 0.0:
+            raise ValueError("maximum_relative_spread must be finite and positive")
+        object.__setattr__(self, "maximum_relative_spread", maximum)
+
+
+@dataclass(frozen=True)
+class LocalSourceJetScaleConfig:
+    """One named narrow/primary/wide physical-window triplet."""
+
+    name: str
+    primary_fit: LocalSourceJetFitConfig
+    model_spread: LocalSourceJetModelSpreadConfig
+
+    def __post_init__(self) -> None:
+        name = str(self.name).strip()
+        if not name:
+            raise ValueError("local source-jet scale name must not be empty")
+        narrow = self.model_spread.narrow_fit
+        primary = self.primary_fit
+        wide = self.model_spread.wide_fit
+        if not narrow.half_width_ns < primary.half_width_ns < wide.half_width_ns:
+            raise ValueError(
+                "local source-jet scale must have narrow < primary < wide "
+                "half-widths"
+            )
+        common_settings = (
+            "acceleration_degree",
+            "spin_degree",
+            "acceleration_samples",
+            "window_weighting",
+            "window_alignment",
+            "maximum_condition_number",
+        )
+        for setting in common_settings:
+            if not (
+                getattr(narrow, setting)
+                == getattr(primary, setting)
+                == getattr(wide, setting)
+            ):
+                raise ValueError(
+                    "all fits in one local source-jet scale must use the same "
+                    f"{setting}"
+                )
+        object.__setattr__(self, "name", name)
+
+
+@dataclass(frozen=True)
+class LocalSourceJetMultiScaleConfig:
+    """Ordered physical scales with a fail-closed overlap comparison.
+
+    Scales are ordered from shortest to longest primary half-width. The
+    shortest ready scale is selected. Except for the longest scale, selection
+    also requires the immediately adjacent longer scale to be valid and for
+    its complete response to agree within
+    ``maximum_cross_scale_relative_spread``. This makes every scale transition
+    an explicit numerical comparison rather than an implicit sample-count
+    rule.
+    """
+
+    scales: tuple[LocalSourceJetScaleConfig, ...]
+    maximum_cross_scale_relative_spread: float = 1.0e-4
+
+    def __post_init__(self) -> None:
+        scales = tuple(self.scales)
+        if len(scales) < 2:
+            raise ValueError("multi-scale local source jets need at least two scales")
+        if len({scale.name for scale in scales}) != len(scales):
+            raise ValueError("multi-scale local source-jet names must be unique")
+        primary_widths = [scale.primary_fit.half_width_ns for scale in scales]
+        if any(
+            right <= left
+            for left, right in zip(primary_widths[:-1], primary_widths[1:])
+        ):
+            raise ValueError(
+                "multi-scale local source jets must be ordered from shortest to "
+                "longest primary half-width"
+            )
+        for shorter, longer in zip(scales[:-1], scales[1:]):
+            if (
+                shorter.model_spread.wide_fit.half_width_ns
+                < longer.model_spread.narrow_fit.half_width_ns
+            ):
+                raise ValueError(
+                    "adjacent local source-jet scales must overlap in physical "
+                    "half-width"
+                )
+        first_fit = scales[0].primary_fit
+        common_settings = (
+            "acceleration_degree",
+            "spin_degree",
+            "acceleration_samples",
+            "window_weighting",
+            "window_alignment",
+            "maximum_condition_number",
+        )
+        for scale in scales[1:]:
+            for setting in common_settings:
+                if getattr(scale.primary_fit, setting) != getattr(first_fit, setting):
+                    raise ValueError(
+                        "all local source-jet scales must use the same " f"{setting}"
+                    )
+        maximum = float(self.maximum_cross_scale_relative_spread)
+        if not np.isfinite(maximum) or maximum <= 0.0:
+            raise ValueError(
+                "maximum_cross_scale_relative_spread must be finite and positive"
+            )
+        object.__setattr__(self, "scales", scales)
+        object.__setattr__(self, "maximum_cross_scale_relative_spread", maximum)
+
+
+@dataclass(frozen=True)
+class LocalSourceJetModelSpread:
+    """Largest pairwise response difference across nested local fits."""
+
+    four_potential: float
+    partial_a: float
+    field_tensor: float
+    partial_f: float
+    directional_partial_f: float | None = None
+
+    def __post_init__(self) -> None:
+        for name in ("four_potential", "partial_a", "field_tensor", "partial_f"):
+            value = float(getattr(self, name))
+            if not np.isfinite(value) or value < 0.0:
+                raise ValueError(f"{name} model spread must be finite and non-negative")
+            object.__setattr__(self, name, value)
+        if self.directional_partial_f is not None:
+            value = float(self.directional_partial_f)
+            if not np.isfinite(value) or value < 0.0:
+                raise ValueError(
+                    "directional model spread must be finite and non-negative"
+                )
+            object.__setattr__(self, "directional_partial_f", value)
+
+    @property
+    def maximum(self) -> float:
+        return max(
+            self.four_potential,
+            self.partial_a,
+            self.field_tensor,
+            self.partial_f,
+            self.directional_partial_f or 0.0,
+        )
+
+
+class CausalLocalSourceJetModelSpreadError(CausalLocalSourceHistoryUnavailableError):
+    """Raised when nested fits do not define a stable local response plateau."""
+
+
+class CausalLocalSourceJetScaleSelectionError(CausalLocalSourceHistoryUnavailableError):
+    """Raised when no scale or no checked transition is numerically available."""
+
+
+@dataclass(frozen=True)
+class LocalSourceJetDiagnostics:
+    """Auditable root and fit information for one source contribution."""
+
+    root_segment_index: int
+    acceleration_samples: Literal["exact_start", "interval_mean"]
+    acceleration_sample_indices: np.ndarray
+    spin_sample_indices: np.ndarray
+    acceleration_condition_number: float
+    spin_condition_number: float
+    light_cone_residual_mm: float
+    model_spread: LocalSourceJetModelSpread | None = None
+    selected_scale_name: str | None = None
+    selected_scale_index: int | None = None
+    comparison_scale_name: str | None = None
+    cross_scale_spread: LocalSourceJetModelSpread | None = None
+    unavailable_scale_names: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if int(self.root_segment_index) < 0:
+            raise ValueError("root_segment_index must be non-negative")
+        if self.acceleration_samples not in {"exact_start", "interval_mean"}:
+            raise ValueError("acceleration_samples has an invalid value")
+        for name in ("acceleration_sample_indices", "spin_sample_indices"):
+            values = np.asarray(getattr(self, name), dtype=np.int64)
+            if values.ndim != 1 or values.size == 0 or np.any(np.diff(values) <= 0):
+                raise ValueError(f"{name} must be a nonempty increasing vector")
+            values = np.array(values, copy=True)
+            values.setflags(write=False)
+            object.__setattr__(self, name, values)
+        for name in (
+            "acceleration_condition_number",
+            "spin_condition_number",
+        ):
+            value = float(getattr(self, name))
+            if not np.isfinite(value) or value <= 0.0:
+                raise ValueError(f"{name} must be finite and positive")
+            object.__setattr__(self, name, value)
+        residual = float(self.light_cone_residual_mm)
+        if not np.isfinite(residual):
+            raise ValueError("light_cone_residual_mm must be finite")
+        object.__setattr__(self, "root_segment_index", int(self.root_segment_index))
+        object.__setattr__(self, "light_cone_residual_mm", residual)
+        if self.model_spread is not None and not isinstance(
+            self.model_spread,
+            LocalSourceJetModelSpread,
+        ):
+            raise TypeError("model_spread must be a LocalSourceJetModelSpread")
+        if (self.selected_scale_name is None) != (self.selected_scale_index is None):
+            raise ValueError(
+                "selected local source-jet scale name and index must appear together"
+            )
+        if self.selected_scale_index is not None and self.selected_scale_index < 0:
+            raise ValueError(
+                "selected local source-jet scale index must be non-negative"
+            )
+        if self.comparison_scale_name is not None and self.cross_scale_spread is None:
+            raise ValueError(
+                "a comparison local source-jet scale requires cross-scale spread"
+            )
+        if self.cross_scale_spread is not None and not isinstance(
+            self.cross_scale_spread,
+            LocalSourceJetModelSpread,
+        ):
+            raise TypeError("cross_scale_spread must be a LocalSourceJetModelSpread")
+        unavailable = tuple(str(name) for name in self.unavailable_scale_names)
+        object.__setattr__(self, "unavailable_scale_names", unavailable)
+
+
+@dataclass(frozen=True)
+class CausalLocalSourceJetEvaluation:
+    """One identity-labelled local source-jet contribution."""
+
+    identity: str
+    response: DipoleHertzResponseJetResult
+    diagnostics: LocalSourceJetDiagnostics
+
+
+@dataclass(frozen=True)
+class CausalLocalSourceJetProviderResult:
+    """Stable-order response sum and individual local-fit diagnostics."""
+
+    four_potential: np.ndarray
+    partial_a: np.ndarray
+    electric_field_native: np.ndarray
+    magnetic_field_native: np.ndarray
+    field_tensor: np.ndarray
+    partial_f: np.ndarray
+    source_results: tuple[CausalLocalSourceJetEvaluation, ...]
+    partial_antisymmetric_response_along_velocity: np.ndarray | None = None
+
+    def __post_init__(self) -> None:
+        shapes = {
+            "four_potential": (4,),
+            "partial_a": (4, 4),
+            "electric_field_native": (3,),
+            "magnetic_field_native": (3,),
+            "field_tensor": (4, 4),
+            "partial_f": (4, 4, 4),
+        }
+        if self.partial_antisymmetric_response_along_velocity is not None:
+            shapes["partial_antisymmetric_response_along_velocity"] = (4, 6)
+        for name, shape in shapes.items():
+            value = np.asarray(getattr(self, name), dtype=np.float64)
+            if value.shape != shape or not np.all(np.isfinite(value)):
+                raise ValueError(f"{name} must be a finite array with shape {shape}")
+            detached = np.array(value, copy=True)
+            detached.setflags(write=False)
+            object.__setattr__(self, name, detached)
+        object.__setattr__(self, "source_results", tuple(self.source_results))
+
+
+def local_source_jet_configs_from_source_options(
+    source: "DipoleSourceConfig",
+) -> tuple[LocalSourceJetFitConfig, LocalSourceJetModelSpreadConfig]:
+    """Translate validated public options into one guarded local fit."""
+
+    if source.history_model != "causal_local_jet":
+        raise ValueError("local source-jet options require causal_local_jet history")
+    widths = (
+        source.local_jet_narrow_half_width_ns,
+        source.local_jet_primary_half_width_ns,
+        source.local_jet_wide_half_width_ns,
+    )
+    if any(value is None for value in widths):  # pragma: no cover - config invariant
+        raise ValueError("local source-jet physical half-widths are unavailable")
+
+    if source.local_jet_scales:
+        raise ValueError("single local source-jet options received a scale ladder")
+    narrow = _local_source_jet_fit_from_source_options(source, widths[0])
+    primary = _local_source_jet_fit_from_source_options(source, widths[1])
+    wide = _local_source_jet_fit_from_source_options(source, widths[2])
+    return primary, LocalSourceJetModelSpreadConfig(
+        narrow_fit=narrow,
+        wide_fit=wide,
+        maximum_relative_spread=source.local_jet_maximum_relative_spread,
+    )
+
+
+def _local_source_jet_fit_from_source_options(
+    source: "DipoleSourceConfig",
+    width: float | None,
+) -> LocalSourceJetFitConfig:
+    if width is None:
+        raise ValueError("local source-jet physical half-width is unavailable")
+    return LocalSourceJetFitConfig(
+        half_width_ns=width,
+        acceleration_degree=source.local_jet_acceleration_degree,
+        spin_degree=source.local_jet_spin_degree,
+        acceleration_samples=cast(
+            Literal["exact_start", "interval_mean"],
+            source.local_jet_acceleration_samples,
+        ),
+        window_weighting=cast(
+            Literal["tricube", "uniform"],
+            source.local_jet_window_weighting,
+        ),
+        window_alignment=cast(
+            Literal["centered", "past"],
+            source.local_jet_window_alignment,
+        ),
+        maximum_condition_number=source.local_jet_maximum_condition_number,
+    )
+
+
+def local_source_jet_multiscale_config_from_source_options(
+    source: "DipoleSourceConfig",
+) -> LocalSourceJetMultiScaleConfig:
+    """Translate a validated public named scale ladder into provider settings."""
+
+    if source.history_model != "causal_local_jet":
+        raise ValueError("local source-jet options require causal_local_jet history")
+    if not source.local_jet_scales:
+        raise ValueError("multi-scale local source-jet options need a scale ladder")
+    scales = []
+    for public_scale in source.local_jet_scale_configs:
+        narrow = _local_source_jet_fit_from_source_options(
+            source,
+            public_scale.narrow_half_width_ns,
+        )
+        primary = _local_source_jet_fit_from_source_options(
+            source,
+            public_scale.primary_half_width_ns,
+        )
+        wide = _local_source_jet_fit_from_source_options(
+            source,
+            public_scale.wide_half_width_ns,
+        )
+        scales.append(
+            LocalSourceJetScaleConfig(
+                name=public_scale.name,
+                primary_fit=primary,
+                model_spread=LocalSourceJetModelSpreadConfig(
+                    narrow_fit=narrow,
+                    wide_fit=wide,
+                    maximum_relative_spread=(source.local_jet_maximum_relative_spread),
+                ),
+            )
+        )
+    return LocalSourceJetMultiScaleConfig(
+        scales=tuple(scales),
+        maximum_cross_scale_relative_spread=(
+            source.local_jet_maximum_cross_scale_relative_spread
+        ),
+    )
+
+
+def _cubic_position_velocity(
+    history: CausalLocalHistoryView,
+    segment_index: int,
+    source_time_ns: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    left = int(segment_index)
+    right = left + 1
+    start = float(history.time_ns[left])
+    duration = float(history.time_ns[right] - start)
+    fraction = (float(source_time_ns) - start) / duration
+    if not 0.0 <= fraction <= 1.0:
+        raise ValueError("source time lies outside the cubic root segment")
+    position_start = np.asarray(history.position_mm[left], dtype=np.float64)
+    position_end = np.asarray(history.position_mm[right], dtype=np.float64)
+    velocity_start = C_MMNS * np.asarray(history.beta[left], dtype=np.float64)
+    velocity_end = C_MMNS * np.asarray(history.beta[right], dtype=np.float64)
+    coefficients = np.asarray(
+        (
+            position_start,
+            duration * velocity_start,
+            3.0 * (position_end - position_start)
+            - duration * (2.0 * velocity_start + velocity_end),
+            2.0 * (position_start - position_end)
+            + duration * (velocity_start + velocity_end),
+        )
+    )
+    position = np.zeros(3, dtype=np.float64)
+    velocity = np.zeros(3, dtype=np.float64)
+    for power, coefficient in enumerate(coefficients):
+        position += coefficient * fraction**power
+        if power:
+            velocity += power * coefficient * fraction ** (power - 1) / duration
+    return position, velocity
+
+
+def _solve_cubic_retarded_root(
+    history: CausalLocalHistoryView,
+    observer_event: "ObserverEvent",
+    *,
+    root_tolerance_mm: float,
+    max_root_iterations: int,
+    minimum_separation_mm: float,
+) -> tuple[int, float, np.ndarray, np.ndarray, float]:
+    observer_time = float(observer_event.time_ns)
+    observer_position = np.asarray(observer_event.position_mm, dtype=np.float64)
+    tolerance = float(root_tolerance_mm)
+    iterations = int(max_root_iterations)
+    minimum_separation = float(minimum_separation_mm)
+    if observer_position.shape != (3,) or not np.all(np.isfinite(observer_position)):
+        raise ValueError("observer position must contain three finite values")
+    if not np.isfinite(observer_time):
+        raise ValueError("observer time must be finite")
+    if not np.isfinite(tolerance) or tolerance <= 0.0:
+        raise ValueError("root_tolerance_mm must be finite and positive")
+    if iterations < 1:
+        raise ValueError("max_root_iterations must be positive")
+    if not np.isfinite(minimum_separation) or minimum_separation <= 0.0:
+        raise ValueError("minimum_separation_mm must be finite and positive")
+    count = int(history.sample_count)
+    if count < 2:
+        raise CausalLocalSourceHistoryUnavailableError(
+            "local source jet needs at least two accepted source knots"
+        )
+
+    def knot_residual(knot: int) -> float:
+        separation = float(
+            np.linalg.norm(observer_position - history.position_mm[knot])
+        )
+        return C_MMNS * (observer_time - float(history.time_ns[knot])) - separation
+
+    if knot_residual(0) < 0.0:
+        raise CausalLocalSourceHistoryUnavailableError(
+            "observer light cone predates the accepted source history"
+        )
+    if knot_residual(count - 1) > 0.0:
+        raise CausalLocalSourceHistoryUnavailableError(
+            "observer light cone reaches the unaccepted source future"
+        )
+    lower = 0
+    upper = count - 1
+    while upper - lower > 1:
+        middle = (lower + upper) // 2
+        if knot_residual(middle) > 0.0:
+            lower = middle
+        else:
+            upper = middle
+    lower_time = float(history.time_ns[lower])
+    upper_time = float(history.time_ns[upper])
+    lower_residual = knot_residual(lower)
+    upper_residual = knot_residual(upper)
+    if abs(lower_residual) <= tolerance:
+        root_time = lower_time
+    elif abs(upper_residual) <= tolerance:
+        root_time = upper_time
+    else:
+        root_time = lower_time - lower_residual * (upper_time - lower_time) / (
+            upper_residual - lower_residual
+        )
+        for _ in range(iterations):
+            source_position, source_velocity = _cubic_position_velocity(
+                history, lower, root_time
+            )
+            displacement = observer_position - source_position
+            separation = float(np.linalg.norm(displacement))
+            if separation <= minimum_separation:
+                raise ValueError("observer is too close to the local-jet source")
+            residual = C_MMNS * (observer_time - root_time) - separation
+            if abs(residual) <= tolerance:
+                break
+            if residual > 0.0:
+                lower_time = root_time
+                lower_residual = residual
+            else:
+                upper_time = root_time
+                upper_residual = residual
+            direction = displacement / separation
+            derivative = -C_MMNS + float(direction @ source_velocity)
+            candidate = root_time - residual / derivative
+            if not lower_time < candidate < upper_time:
+                candidate = 0.5 * (lower_time + upper_time)
+            if candidate == root_time:
+                break
+            root_time = candidate
+    source_position, source_velocity = _cubic_position_velocity(
+        history, lower, root_time
+    )
+    displacement = observer_position - source_position
+    separation = float(np.linalg.norm(displacement))
+    if separation <= minimum_separation:
+        raise ValueError("observer is too close to the local-jet source")
+    residual = C_MMNS * (observer_time - root_time) - separation
+    return lower, root_time, source_position, source_velocity, residual
+
+
+def _local_polynomial_derivatives(
+    *,
+    sample_times_ns: np.ndarray,
+    sample_values: np.ndarray,
+    target_time_ns: float,
+    half_width_ns: float,
+    degree: int,
+    maximum_derivative: int,
+    window_weighting: Literal["tricube", "uniform"],
+    window_alignment: Literal["centered", "past"],
+    maximum_condition_number: float,
+    sample_indices: np.ndarray,
+    label: str,
+) -> tuple[list[np.ndarray], float, np.ndarray]:
+    times = np.asarray(sample_times_ns, dtype=np.float64)
+    values = np.asarray(sample_values, dtype=np.float64)
+    indices = np.asarray(sample_indices, dtype=np.int64)
+    if window_alignment == "centered":
+        window_start = float(target_time_ns) - float(half_width_ns)
+        window_end = float(target_time_ns) + float(half_width_ns)
+    else:
+        window_start = float(target_time_ns) - 2.0 * float(half_width_ns)
+        window_end = float(target_time_ns)
+    if times.size == 0:
+        raise CausalLocalSourceHistoryUnavailableError(
+            f"local {label} fit has no accepted exact samples"
+        )
+    if times[0] > window_start or (
+        window_alignment == "centered" and times[-1] < window_end
+    ):
+        raise CausalLocalSourceHistoryUnavailableError(
+            f"local {label} fit does not have its full physical window in the "
+            "accepted source history"
+        )
+    selected_mask = (times >= window_start) & (times <= window_end)
+    selected_times = times[selected_mask]
+    selected_values = values[selected_mask]
+    selected_indices = indices[selected_mask]
+    if (
+        selected_times.size < degree + 1
+        or selected_times[0] >= target_time_ns
+        or (window_alignment == "centered" and selected_times[-1] <= target_time_ns)
+    ):
+        raise CausalLocalSourceHistoryUnavailableError(
+            f"local {label} fit window does not contain enough accepted samples"
+        )
+    scale = float(np.max(np.abs(selected_times - target_time_ns)))
+    normalized = (selected_times - target_time_ns) / scale
+    design = np.vander(normalized, N=degree + 1, increasing=True)
+    reference = selected_values[int(np.argmin(np.abs(normalized)))]
+    if window_weighting == "tricube":
+        if window_alignment == "centered":
+            window_coordinate = np.abs(
+                (selected_times - float(target_time_ns)) / float(half_width_ns)
+            )
+        else:
+            normalized_window_position = (selected_times - window_start) / (
+                window_end - window_start
+            )
+            window_coordinate = np.abs(2.0 * normalized_window_position - 1.0)
+        weights = np.maximum(0.0, 1.0 - window_coordinate**3) ** 3
+    else:
+        weights = np.ones(selected_times.size, dtype=np.float64)
+    square_root_weight = np.sqrt(weights)
+    weighted_design = design * square_root_weight[:, np.newaxis]
+    value_weight_shape = (selected_times.size,) + (1,) * (selected_values.ndim - 1)
+    weighted_values = (selected_values - reference) * square_root_weight.reshape(
+        value_weight_shape
+    )
+    coefficients, _, rank, _ = np.linalg.lstsq(
+        weighted_design,
+        weighted_values,
+        rcond=None,
+    )
+    condition = float(np.linalg.cond(weighted_design))
+    if rank != degree + 1:
+        raise CausalLocalSourceHistoryUnavailableError(
+            f"local {label} fit is rank deficient"
+        )
+    if condition > maximum_condition_number:
+        raise CausalLocalSourceHistoryUnavailableError(
+            f"local {label} fit exceeds its condition-number limit"
+        )
+    derivatives = []
+    for order in range(maximum_derivative + 1):
+        derivative = coefficients[order] * math.factorial(order) / scale**order
+        if order == 0:
+            derivative = derivative + reference
+        derivatives.append(np.asarray(derivative, dtype=np.float64))
+    return derivatives, condition, selected_indices
+
+
+def _centered_taylor_coefficients(
+    derivatives: Sequence[np.ndarray],
+    *,
+    duration_ns: float,
+) -> np.ndarray:
+    coefficients = np.zeros(
+        (len(derivatives), np.asarray(derivatives[0]).size), dtype=np.float64
+    )
+    for order, derivative in enumerate(derivatives):
+        scaled = (
+            np.asarray(derivative, dtype=np.float64)
+            * duration_ns**order
+            / math.factorial(order)
+        )
+        for power in range(order + 1):
+            coefficients[power] += (
+                scaled * math.comb(order, power) * (-0.5) ** (order - power)
+            )
+    return coefficients
+
+
+def _relative_response_difference(
+    left: DipoleHertzResponseJetResult,
+    right: DipoleHertzResponseJetResult,
+    name: str,
+) -> float:
+    first = np.asarray(getattr(left, name), dtype=np.float64)
+    second = np.asarray(getattr(right, name), dtype=np.float64)
+    scale = max(
+        float(np.linalg.norm(first)),
+        float(np.linalg.norm(second)),
+        np.finfo(np.float64).tiny,
+    )
+    return float(np.linalg.norm(first - second) / scale)
+
+
+def _response_model_spread(
+    responses: Sequence[DipoleHertzResponseJetResult],
+) -> LocalSourceJetModelSpread:
+    if len(responses) < 2:
+        raise ValueError("model spread needs at least two response fits")
+
+    def largest(name: str) -> float:
+        return max(
+            _relative_response_difference(responses[left], responses[right], name)
+            for left in range(len(responses))
+            for right in range(left + 1, len(responses))
+        )
+
+    directional = [
+        response.partial_antisymmetric_response_along_velocity is not None
+        for response in responses
+    ]
+    if any(directional) and not all(directional):
+        raise ValueError("cannot compare mixed directional and ordinary responses")
+    return LocalSourceJetModelSpread(
+        four_potential=largest("four_potential"),
+        partial_a=largest("partial_a"),
+        field_tensor=largest("field_tensor"),
+        partial_f=largest("partial_f"),
+        directional_partial_f=(
+            largest("partial_antisymmetric_response_along_velocity")
+            if all(directional)
+            else None
+        ),
+    )
+
+
+def evaluate_causal_local_source_jet_native(
+    history: CausalLocalHistoryView,
+    observer_event: "ObserverEvent",
+    *,
+    magnetic_moment_native: float,
+    fit: LocalSourceJetFitConfig,
+    observer_four_velocity_mm_ns: Sequence[float] | None = None,
+    model_spread: LocalSourceJetModelSpreadConfig | None = None,
+    root_tolerance_mm: float = 1.0e-21,
+    max_root_iterations: int = 96,
+    minimum_separation_mm: float = 1.0e-15,
+) -> tuple[DipoleHertzResponseJetResult, LocalSourceJetDiagnostics]:
+    """Evaluate one source using a cubic root and a direct local derivative jet."""
+
+    segment, root_time, position, velocity, residual = _solve_cubic_retarded_root(
+        history,
+        observer_event,
+        root_tolerance_mm=root_tolerance_mm,
+        max_root_iterations=max_root_iterations,
+        minimum_separation_mm=minimum_separation_mm,
+    )
+    source_intervals = np.arange(history.interval_count, dtype=np.int64)
+    if fit.acceleration_samples == "exact_start":
+        ready = np.asarray(history.interval_start_acceleration_ready, dtype=bool)
+        acceleration_times = np.asarray(
+            history.time_ns[: history.interval_count],
+            dtype=np.float64,
+        )
+        accelerations = C_MMNS**2 * np.asarray(
+            history.interval_start_beta_prime_per_mm,
+            dtype=np.float64,
+        )
+    else:
+        interval_duration = np.diff(np.asarray(history.time_ns, dtype=np.float64))
+        acceleration_times = 0.5 * (
+            np.asarray(history.time_ns[:-1], dtype=np.float64)
+            + np.asarray(history.time_ns[1:], dtype=np.float64)
+        )
+        accelerations = (
+            C_MMNS
+            * np.diff(
+                np.asarray(history.beta, dtype=np.float64),
+                axis=0,
+            )
+            / interval_duration[:, np.newaxis]
+        )
+        ready = np.array(
+            history.interval_mean_acceleration_ready,
+            dtype=bool,
+            copy=True,
+        )
+        causally_available = np.ones(history.interval_count, dtype=bool)
+        if fit.window_alignment == "past":
+            # A centered interval difference needs both endpoints. Do not use
+            # a difference whose right endpoint is later than the retarded
+            # event in the explicitly one-sided reconstruction.
+            causally_available &= (
+                np.asarray(history.time_ns[1:], dtype=np.float64) <= root_time
+            )
+    if fit.window_alignment == "centered":
+        acceleration_window_start = root_time - fit.half_width_ns
+        acceleration_window_end = root_time + fit.half_width_ns
+    else:
+        acceleration_window_start = root_time - 2.0 * fit.half_width_ns
+        acceleration_window_end = root_time
+    required_acceleration = (acceleration_times >= acceleration_window_start) & (
+        acceleration_times <= acceleration_window_end
+    )
+    if np.any(required_acceleration & ~ready):
+        sample_label = fit.acceleration_samples.replace("_", "-")
+        raise CausalLocalSourceHistoryUnavailableError(
+            f"local acceleration fit has an unavailable trusted {sample_label} "
+            "sample inside its physical window"
+        )
+    if fit.acceleration_samples == "interval_mean":
+        ready &= causally_available
+    acceleration_intervals = source_intervals[ready]
+    acceleration_derivatives, acceleration_condition, acceleration_indices = (
+        _local_polynomial_derivatives(
+            sample_times_ns=acceleration_times[acceleration_intervals],
+            sample_values=accelerations[acceleration_intervals],
+            target_time_ns=root_time,
+            half_width_ns=fit.half_width_ns,
+            degree=fit.acceleration_degree,
+            maximum_derivative=3,
+            window_weighting=fit.window_weighting,
+            window_alignment=fit.window_alignment,
+            maximum_condition_number=fit.maximum_condition_number,
+            sample_indices=acceleration_intervals,
+            label="acceleration",
+        )
+    )
+    spin_chart = spin_to_stereographic(
+        np.asarray(history.rest_spin, dtype=np.float64),
+        np.asarray(history.stereographic_frame, dtype=np.float64),
+    )
+    spin_indices = np.arange(history.sample_count, dtype=np.int64)
+    spin_derivatives, spin_condition, selected_spin_indices = (
+        _local_polynomial_derivatives(
+            sample_times_ns=history.time_ns,
+            sample_values=spin_chart,
+            target_time_ns=root_time,
+            half_width_ns=fit.half_width_ns,
+            degree=fit.spin_degree,
+            maximum_derivative=5,
+            window_weighting=fit.window_weighting,
+            window_alignment=fit.window_alignment,
+            maximum_condition_number=fit.maximum_condition_number,
+            sample_indices=spin_indices,
+            label="spin",
+        )
+    )
+    position_derivatives = [position, velocity, *acceleration_derivatives]
+    adapter_duration = 2.0 * fit.half_width_ns
+    response = polynomial_dipole_hertz_response_jet_native(
+        observer_time_ns=float(observer_event.time_ns),
+        observer_position_mm=observer_event.position_mm,
+        magnetic_moment_native=float(magnetic_moment_native),
+        segment_start_time_ns=root_time - 0.5 * adapter_duration,
+        segment_duration_ns=adapter_duration,
+        position_coefficients_mm=_centered_taylor_coefficients(
+            position_derivatives,
+            duration_ns=adapter_duration,
+        ),
+        rest_spin_coefficients=None,
+        rest_spin_stereographic_coefficients=_centered_taylor_coefficients(
+            spin_derivatives,
+            duration_ns=adapter_duration,
+        ),
+        rest_spin_stereographic_frame=history.stereographic_frame,
+        preserved_rest_spin_magnitude=None,
+        retarded_time_ns=root_time,
+        observer_four_velocity_mm_ns=observer_four_velocity_mm_ns,
+    )
+    measured_spread = None
+    if model_spread is not None:
+        if not (
+            model_spread.narrow_fit.window_alignment
+            == fit.window_alignment
+            == model_spread.wide_fit.window_alignment
+        ):
+            raise ValueError(
+                "nested model-spread fits must use the same window alignment"
+            )
+        if not (
+            model_spread.narrow_fit.acceleration_samples
+            == fit.acceleration_samples
+            == model_spread.wide_fit.acceleration_samples
+        ):
+            raise ValueError(
+                "nested model-spread fits must use the same acceleration samples"
+            )
+        if not (
+            model_spread.narrow_fit.half_width_ns
+            < fit.half_width_ns
+            < model_spread.wide_fit.half_width_ns
+        ):
+            raise ValueError(
+                "model-spread fits must have narrow < primary < wide half-widths"
+            )
+        comparison_responses = [response]
+        for comparison_fit in (model_spread.narrow_fit, model_spread.wide_fit):
+            comparison_response, _ = evaluate_causal_local_source_jet_native(
+                history,
+                observer_event,
+                magnetic_moment_native=magnetic_moment_native,
+                fit=comparison_fit,
+                observer_four_velocity_mm_ns=observer_four_velocity_mm_ns,
+                root_tolerance_mm=root_tolerance_mm,
+                max_root_iterations=max_root_iterations,
+                minimum_separation_mm=minimum_separation_mm,
+            )
+            comparison_responses.append(comparison_response)
+        measured_spread = _response_model_spread(comparison_responses)
+        if measured_spread.maximum > model_spread.maximum_relative_spread:
+            raise CausalLocalSourceJetModelSpreadError(
+                "local source-jet nested fits exceed their response-spread limit: "
+                f"{measured_spread.maximum:.6e} > "
+                f"{model_spread.maximum_relative_spread:.6e}"
+            )
+    return response, LocalSourceJetDiagnostics(
+        root_segment_index=segment,
+        acceleration_samples=fit.acceleration_samples,
+        acceleration_sample_indices=acceleration_indices,
+        spin_sample_indices=selected_spin_indices,
+        acceleration_condition_number=acceleration_condition,
+        spin_condition_number=spin_condition,
+        light_cone_residual_mm=residual,
+        model_spread=measured_spread,
+    )
+
+
+def evaluate_causal_local_source_jet_multiscale_native(
+    history: CausalLocalHistoryView,
+    observer_event: "ObserverEvent",
+    *,
+    magnetic_moment_native: float,
+    scales: LocalSourceJetMultiScaleConfig,
+    observer_four_velocity_mm_ns: Sequence[float] | None = None,
+    root_tolerance_mm: float = 1.0e-21,
+    max_root_iterations: int = 96,
+    minimum_separation_mm: float = 1.0e-15,
+) -> tuple[DipoleHertzResponseJetResult, LocalSourceJetDiagnostics]:
+    """Select the shortest ready physical scale with a checked overlap.
+
+    Candidate failures caused by missing history, poor conditioning, or lack
+    of an internal response plateau do not silently disable the guard. They
+    move initial selection to a longer declared scale. Once a non-longest
+    candidate succeeds, the immediately adjacent longer scale must also
+    succeed and agree with it; a failed rung may not be skipped.
+    """
+
+    failures: list[tuple[str, str]] = []
+    selected: (
+        tuple[
+            int,
+            LocalSourceJetScaleConfig,
+            DipoleHertzResponseJetResult,
+            LocalSourceJetDiagnostics,
+        ]
+        | None
+    ) = None
+    for index, scale in enumerate(scales.scales):
+        try:
+            response, diagnostics = evaluate_causal_local_source_jet_native(
+                history,
+                observer_event,
+                magnetic_moment_native=magnetic_moment_native,
+                fit=scale.primary_fit,
+                observer_four_velocity_mm_ns=observer_four_velocity_mm_ns,
+                model_spread=scale.model_spread,
+                root_tolerance_mm=root_tolerance_mm,
+                max_root_iterations=max_root_iterations,
+                minimum_separation_mm=minimum_separation_mm,
+            )
+        except CausalLocalSourceHistoryUnavailableError as exc:
+            failures.append((scale.name, str(exc)))
+            continue
+        selected = (index, scale, response, diagnostics)
+        break
+
+    if selected is None:
+        detail = "; ".join(f"{name}: {reason}" for name, reason in failures)
+        raise CausalLocalSourceJetScaleSelectionError(
+            "no declared local source-jet physical scale is available"
+            + (f": {detail}" if detail else "")
+        )
+
+    selected_index, selected_scale, selected_response, selected_diagnostics = selected
+    comparison_name = None
+    cross_scale_spread = None
+    if selected_index != len(scales.scales) - 1:
+        comparison_scale = scales.scales[selected_index + 1]
+        try:
+            comparison_response, _ = evaluate_causal_local_source_jet_native(
+                history,
+                observer_event,
+                magnetic_moment_native=magnetic_moment_native,
+                fit=comparison_scale.primary_fit,
+                observer_four_velocity_mm_ns=observer_four_velocity_mm_ns,
+                model_spread=comparison_scale.model_spread,
+                root_tolerance_mm=root_tolerance_mm,
+                max_root_iterations=max_root_iterations,
+                minimum_separation_mm=minimum_separation_mm,
+            )
+        except CausalLocalSourceHistoryUnavailableError as exc:
+            failures.append((comparison_scale.name, str(exc)))
+            detail = "; ".join(f"{name}: {reason}" for name, reason in failures)
+            raise CausalLocalSourceJetScaleSelectionError(
+                f"selected local source-jet scale {selected_scale.name!r} has no "
+                "valid adjacent longer overlap comparison"
+                + (f": {detail}" if detail else "")
+            ) from exc
+        comparison_name = comparison_scale.name
+        cross_scale_spread = _response_model_spread(
+            (selected_response, comparison_response)
+        )
+        if cross_scale_spread.maximum > scales.maximum_cross_scale_relative_spread:
+            raise CausalLocalSourceJetScaleSelectionError(
+                "adjacent local source-jet scales do not agree: "
+                f"{selected_scale.name!r} versus {comparison_scale.name!r}, "
+                f"{cross_scale_spread.maximum:.6e} > "
+                f"{scales.maximum_cross_scale_relative_spread:.6e}"
+            )
+
+    return selected_response, replace(
+        selected_diagnostics,
+        selected_scale_name=selected_scale.name,
+        selected_scale_index=selected_index,
+        comparison_scale_name=comparison_name,
+        cross_scale_spread=cross_scale_spread,
+        unavailable_scale_names=tuple(name for name, _ in failures),
+    )
+
+
+def _directional_gradient_accumulator(
+    observer_four_velocity_mm_ns: Sequence[float] | None,
+) -> np.ndarray | None:
+    """Validate even empty/excluded collections before constructing their zero sum."""
+    if observer_four_velocity_mm_ns is None:
+        return None
+    velocity = np.asarray(observer_four_velocity_mm_ns, dtype=float)
+    if velocity.shape != (4,) or not np.all(np.isfinite(velocity)):
+        raise ValueError("observer_four_velocity_mm_ns must contain four finite values")
+    return np.zeros((4, 6), dtype=np.float64)
+
+
+def evaluate_causal_local_source_jet_collection_native(
+    collection: CausalLocalDipoleSourceCollection,
+    observer_event: "ObserverEvent",
+    *,
+    fit: LocalSourceJetFitConfig,
+    observer_four_velocity_mm_ns: Sequence[float] | None = None,
+    model_spread: LocalSourceJetModelSpreadConfig | None = None,
+    excluded_source_identities: Sequence[str] = (),
+    root_tolerance_mm: float = 1.0e-21,
+    max_root_iterations: int = 96,
+    minimum_separation_mm: float = 1.0e-15,
+) -> CausalLocalSourceJetProviderResult:
+    """Evaluate and sum local source jets in declared source order."""
+
+    excluded = set(str(identity) for identity in excluded_source_identities)
+    source_results: list[CausalLocalSourceJetEvaluation] = []
+    potential = np.zeros(4, dtype=np.float64)
+    partial_a = np.zeros((4, 4), dtype=np.float64)
+    field = np.zeros((4, 4), dtype=np.float64)
+    partial_f = np.zeros((4, 4, 4), dtype=np.float64)
+    directional_gradient = _directional_gradient_accumulator(
+        observer_four_velocity_mm_ns
+    )
+    for source in collection.sources:
+        if source.identity in excluded:
+            continue
+        try:
+            response, diagnostics = evaluate_causal_local_source_jet_native(
+                source.history,
+                observer_event,
+                magnetic_moment_native=source.magnetic_moment_native,
+                fit=fit,
+                observer_four_velocity_mm_ns=observer_four_velocity_mm_ns,
+                model_spread=model_spread,
+                root_tolerance_mm=root_tolerance_mm,
+                max_root_iterations=max_root_iterations,
+                minimum_separation_mm=minimum_separation_mm,
+            )
+        except CausalLocalSourceHistoryUnavailableError as exc:
+            raise CausalLocalSourceHistoryUnavailableError(
+                f"source identity {source.identity!r}: {exc}"
+            ) from exc
+        except ValueError as exc:
+            raise ValueError(f"source identity {source.identity!r}: {exc}") from exc
+        potential += response.four_potential
+        partial_a += response.partial_a
+        field += response.field_tensor
+        partial_f += response.partial_f
+        if directional_gradient is not None:
+            directional_gradient += (
+                response.partial_antisymmetric_response_along_velocity
+            )
+        source_results.append(
+            CausalLocalSourceJetEvaluation(
+                identity=source.identity,
+                response=response,
+                diagnostics=diagnostics,
+            )
+        )
+    electric, magnetic = fields_from_tensor_native(field)
+    return CausalLocalSourceJetProviderResult(
+        four_potential=potential,
+        partial_a=partial_a,
+        electric_field_native=electric,
+        magnetic_field_native=magnetic,
+        field_tensor=field,
+        partial_f=partial_f,
+        source_results=tuple(source_results),
+        partial_antisymmetric_response_along_velocity=directional_gradient,
+    )
+
+
+def evaluate_causal_local_source_jet_collection_multiscale_native(
+    collection: CausalLocalDipoleSourceCollection,
+    observer_event: "ObserverEvent",
+    *,
+    scales: LocalSourceJetMultiScaleConfig,
+    observer_four_velocity_mm_ns: Sequence[float] | None = None,
+    excluded_source_identities: Sequence[str] = (),
+    root_tolerance_mm: float = 1.0e-21,
+    max_root_iterations: int = 96,
+    minimum_separation_mm: float = 1.0e-15,
+) -> CausalLocalSourceJetProviderResult:
+    """Evaluate multi-scale source jets and sum them in declared source order."""
+
+    excluded = set(str(identity) for identity in excluded_source_identities)
+    source_results: list[CausalLocalSourceJetEvaluation] = []
+    potential = np.zeros(4, dtype=np.float64)
+    partial_a = np.zeros((4, 4), dtype=np.float64)
+    field = np.zeros((4, 4), dtype=np.float64)
+    partial_f = np.zeros((4, 4, 4), dtype=np.float64)
+    directional_gradient = _directional_gradient_accumulator(
+        observer_four_velocity_mm_ns
+    )
+    for source in collection.sources:
+        if source.identity in excluded:
+            continue
+        try:
+            response, diagnostics = evaluate_causal_local_source_jet_multiscale_native(
+                source.history,
+                observer_event,
+                magnetic_moment_native=source.magnetic_moment_native,
+                scales=scales,
+                observer_four_velocity_mm_ns=observer_four_velocity_mm_ns,
+                root_tolerance_mm=root_tolerance_mm,
+                max_root_iterations=max_root_iterations,
+                minimum_separation_mm=minimum_separation_mm,
+            )
+        except CausalLocalSourceHistoryUnavailableError as exc:
+            raise CausalLocalSourceHistoryUnavailableError(
+                f"source identity {source.identity!r}: {exc}"
+            ) from exc
+        except ValueError as exc:
+            raise ValueError(f"source identity {source.identity!r}: {exc}") from exc
+        potential += response.four_potential
+        partial_a += response.partial_a
+        field += response.field_tensor
+        partial_f += response.partial_f
+        if directional_gradient is not None:
+            directional_gradient += (
+                response.partial_antisymmetric_response_along_velocity
+            )
+        source_results.append(
+            CausalLocalSourceJetEvaluation(
+                identity=source.identity,
+                response=response,
+                diagnostics=diagnostics,
+            )
+        )
+    electric, magnetic = fields_from_tensor_native(field)
+    return CausalLocalSourceJetProviderResult(
+        four_potential=potential,
+        partial_a=partial_a,
+        electric_field_native=electric,
+        magnetic_field_native=magnetic,
+        field_tensor=field,
+        partial_f=partial_f,
+        source_results=tuple(source_results),
+        partial_antisymmetric_response_along_velocity=directional_gradient,
+    )
+
+
+def evaluate_configured_causal_local_source_jet_collection_native(
+    collection: CausalLocalDipoleSourceCollection,
+    observer_event: "ObserverEvent",
+    *,
+    source_options: "DipoleSourceConfig",
+    observer_four_velocity_mm_ns: Sequence[float] | None = None,
+    excluded_source_identities: Sequence[str] = (),
+) -> CausalLocalSourceJetProviderResult:
+    """Evaluate the explicitly configured single fit or named scale ladder."""
+
+    if source_options.local_jet_scales:
+        return evaluate_causal_local_source_jet_collection_multiscale_native(
+            collection,
+            observer_event,
+            scales=local_source_jet_multiscale_config_from_source_options(
+                source_options
+            ),
+            excluded_source_identities=excluded_source_identities,
+            observer_four_velocity_mm_ns=observer_four_velocity_mm_ns,
+            root_tolerance_mm=source_options.root_tolerance_mm,
+            max_root_iterations=source_options.max_root_iterations,
+            minimum_separation_mm=source_options.minimum_separation_mm,
+        )
+    fit, spread = local_source_jet_configs_from_source_options(source_options)
+    return evaluate_causal_local_source_jet_collection_native(
+        collection,
+        observer_event,
+        fit=fit,
+        model_spread=spread,
+        excluded_source_identities=excluded_source_identities,
+        observer_four_velocity_mm_ns=observer_four_velocity_mm_ns,
+        root_tolerance_mm=source_options.root_tolerance_mm,
+        max_root_iterations=source_options.max_root_iterations,
+        minimum_separation_mm=source_options.minimum_separation_mm,
+    )
+
+
+__all__ = [
+    "CausalLocalSourceJetModelSpreadError",
+    "CausalLocalSourceJetScaleSelectionError",
+    "CausalLocalSourceJetEvaluation",
+    "CausalLocalSourceJetProviderResult",
+    "LocalSourceJetDiagnostics",
+    "LocalSourceJetFitConfig",
+    "LocalSourceJetModelSpread",
+    "LocalSourceJetModelSpreadConfig",
+    "LocalSourceJetMultiScaleConfig",
+    "LocalSourceJetScaleConfig",
+    "evaluate_causal_local_source_jet_collection_native",
+    "evaluate_causal_local_source_jet_collection_multiscale_native",
+    "evaluate_causal_local_source_jet_multiscale_native",
+    "evaluate_configured_causal_local_source_jet_collection_native",
+    "evaluate_causal_local_source_jet_native",
+    "local_source_jet_configs_from_source_options",
+    "local_source_jet_multiscale_config_from_source_options",
+]

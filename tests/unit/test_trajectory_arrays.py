@@ -313,6 +313,9 @@ class TestMissingOptionalFields:
         assert trajectory.spin_x.shape == (100, 200)
         assert not trajectory.spin_x.flags.writeable
         assert np.shares_memory(trajectory.spin_x, trajectory.spin_x.base)
+        assert not trajectory.source_start_beta_prime_x_per_mm.flags.writeable
+        assert not trajectory.source_start_beta_prime_ready.flags.writeable
+        assert not np.any(trajectory.source_start_beta_prime_ready)
 
     def test_magnetic_sidecars_allocate_lazily_when_spin_state_is_present(self):
         builder = TrajectoryBuilder(2, 1)
@@ -320,6 +323,11 @@ class TestMissingOptionalFields:
         state["spin_x"] = np.array([0.25])
         state["spin_y"] = np.array([0.5])
         state["spin_z"] = np.array([0.75])
+        state["source_start_beta_prime_x_per_mm"] = np.array([1.0e-4])
+        state["source_start_beta_prime_y_per_mm"] = np.array([-2.0e-4])
+        state["source_start_beta_prime_z_per_mm"] = np.array([3.0e-4])
+        state["source_start_beta_prime_ready"] = np.array([True])
+        state["magnetic_dipole_active"] = np.array([1.0])
 
         builder.set_step(0, state)
         trajectory = builder.build()
@@ -328,6 +336,15 @@ class TestMissingOptionalFields:
         np.testing.assert_array_equal(trajectory.spin_x[0], (0.25,))
         np.testing.assert_array_equal(trajectory.spin_y[0], (0.5,))
         np.testing.assert_array_equal(trajectory.spin_z[0], (0.75,))
+        assert trajectory.source_start_beta_prime_ready.dtype == bool
+        np.testing.assert_array_equal(
+            trajectory.source_start_beta_prime_x_per_mm[0],
+            (1.0e-4,),
+        )
+        np.testing.assert_array_equal(
+            trajectory.state_at(0)["source_start_beta_prime_ready"],
+            (True,),
+        )
 
     def test_origin_defaults_to_zero(self):
         traj, _ = _build_trajectory(include_optional=False)

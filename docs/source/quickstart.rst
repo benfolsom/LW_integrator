@@ -181,6 +181,10 @@ simulation, and confirm that the regression tooling works on your machine.
    ordinary exact-source Lorentz translation into the experimental
    accepted-start second-order Taylor update; ``first_order_endpoint`` remains
    the default.  Backend and update choices are independent.
+   ``--intrinsic-spin-self-reaction-mode diagnostic`` adds a checkpointed
+   analytical/causal estimate of the linear-spin self-force to that
+   second-order adaptive path.  It is a measurement only: the estimate is not
+   applied to momentum or spin.  ``off`` remains the default.
    Neutral
    particles and prescribed gradients are best configured in a saved JSON.
    See :doc:`magnetic_dipole_moments` for the numerical contract, all hard

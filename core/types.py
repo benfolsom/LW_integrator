@@ -12,7 +12,7 @@ import copy
 from dataclasses import dataclass, field, fields
 from enum import Enum, IntEnum, auto
 from itertools import count
-from typing import Dict, List, Sequence, cast
+from typing import Dict, List, Mapping, Sequence, cast
 
 import numpy as np
 
@@ -535,6 +535,59 @@ class MagneticDipoleParticleConfig:
             raise ValueError("polarization must be in [0, 1]")
 
 
+@dataclass(frozen=True)
+class DipoleLocalJetScaleConfig:
+    """One named public narrow/primary/wide local-jet scale."""
+
+    name: str
+    narrow_half_width_ns: float
+    primary_half_width_ns: float
+    wide_half_width_ns: float
+
+    def __post_init__(self) -> None:
+        name = str(self.name).strip()
+        widths = tuple(
+            float(value)
+            for value in (
+                self.narrow_half_width_ns,
+                self.primary_half_width_ns,
+                self.wide_half_width_ns,
+            )
+        )
+        if not name:
+            raise ValueError("local jet scale name must not be empty")
+        if not all(np.isfinite(value) and value > 0.0 for value in widths):
+            raise ValueError("local jet scale half-widths must be finite and positive")
+        if not widths[0] < widths[1] < widths[2]:
+            raise ValueError(
+                "local jet scale half-widths must satisfy narrow < primary < wide"
+            )
+        object.__setattr__(self, "name", name)
+        object.__setattr__(self, "narrow_half_width_ns", widths[0])
+        object.__setattr__(self, "primary_half_width_ns", widths[1])
+        object.__setattr__(self, "wide_half_width_ns", widths[2])
+
+    @classmethod
+    def from_mapping(cls, value: Mapping[str, object]) -> "DipoleLocalJetScaleConfig":
+        """Normalize one JSON-compatible named scale."""
+
+        required = (
+            "name",
+            "narrow_half_width_ns",
+            "primary_half_width_ns",
+            "wide_half_width_ns",
+        )
+        missing = tuple(name for name in required if name not in value)
+        if missing:
+            raise ValueError("local jet scale is missing: " + ", ".join(missing))
+        return cls(
+            name=str(value["name"]),
+            narrow_half_width_ns=float(cast(float, value["narrow_half_width_ns"])),
+            primary_half_width_ns=float(cast(float, value["primary_half_width_ns"])),
+            wide_half_width_ns=float(cast(float, value["wide_half_width_ns"])),
+        )
+
+
 @dataclass
 class DipoleSourceConfig:
     """Ordinary Maxwell field sourced by an intrinsic magnetic moment.
@@ -552,11 +605,25 @@ class DipoleSourceConfig:
     """
 
     model: str = "off"
+    history_model: str = "causal_frozen_c1"
     minimum_separation_mm: float = 2.0e-9
     relative_stencil_step: float = 1.0e-3
     minimum_stencil_step_mm: float = 1.0e-15
     root_tolerance_mm: float = 1.0e-21
     max_root_iterations: int = 96
+    local_jet_primary_half_width_ns: float | None = None
+    local_jet_narrow_half_width_ns: float | None = None
+    local_jet_wide_half_width_ns: float | None = None
+    local_jet_acceleration_degree: int = 5
+    local_jet_spin_degree: int = 5
+    local_jet_maximum_condition_number: float = 1.0e5
+    local_jet_maximum_relative_spread: float = 1.0e-3
+    local_jet_scales: Sequence[DipoleLocalJetScaleConfig | Mapping[str, object]] = ()
+    local_jet_maximum_cross_scale_relative_spread: float = 1.0e-3
+    local_jet_acceleration_samples: str = "interval_mean"
+    local_jet_window_alignment: str = "past"
+    local_jet_window_weighting: str = "tricube"
+    local_jet_inertial_prehistory: str = "untrusted"
 
     def __post_init__(self) -> None:
         self.model = str(self.model).strip().lower().replace("-", "_")
@@ -570,6 +637,27 @@ class DipoleSourceConfig:
         if self.model not in {"off", "covariant_retarded_point"}:
             raise ValueError(
                 "dipole source model must be one of: off, " "covariant_retarded_point"
+            )
+        self.history_model = str(self.history_model).strip().lower().replace("-", "_")
+        history_aliases = {
+            "c1": "causal_frozen_c1",
+            "frozen_c1": "causal_frozen_c1",
+            "c5": "causal_c5",
+            "local_jet": "causal_local_jet",
+            "causal_local": "causal_local_jet",
+        }
+        self.history_model = history_aliases.get(
+            self.history_model,
+            self.history_model,
+        )
+        if self.history_model not in {
+            "causal_frozen_c1",
+            "causal_c5",
+            "causal_local_jet",
+        }:
+            raise ValueError(
+                "dipole source history_model must be one of: "
+                "causal_frozen_c1, causal_c5, causal_local_jet"
             )
         for name in (
             "minimum_separation_mm",
@@ -586,12 +674,147 @@ class DipoleSourceConfig:
         self.max_root_iterations = int(self.max_root_iterations)
         if self.max_root_iterations <= 0:
             raise ValueError("dipole source max_root_iterations must be positive")
+        width_names = (
+            "local_jet_narrow_half_width_ns",
+            "local_jet_primary_half_width_ns",
+            "local_jet_wide_half_width_ns",
+        )
+        widths: list[float | None] = []
+        for name in width_names:
+            raw = getattr(self, name)
+            width = None if raw is None else float(raw)
+            if width is not None and (not np.isfinite(width) or width <= 0.0):
+                raise ValueError(f"dipole source {name} must be finite and positive")
+            setattr(self, name, width)
+            widths.append(width)
+        normalized_scale_list: list[DipoleLocalJetScaleConfig] = []
+        for scale_value in self.local_jet_scales:
+            if isinstance(scale_value, DipoleLocalJetScaleConfig):
+                normalized_scale_list.append(scale_value)
+            elif isinstance(scale_value, Mapping):
+                normalized_scale_list.append(
+                    DipoleLocalJetScaleConfig.from_mapping(scale_value)
+                )
+            else:
+                raise ValueError("each local jet scale must be a named mapping")
+        normalized_scales = tuple(normalized_scale_list)
+        if normalized_scales:
+            if len(normalized_scales) < 2:
+                raise ValueError("multi-scale local jet requires at least two scales")
+            if any(value is not None for value in widths):
+                raise ValueError(
+                    "single-scale local jet half-widths and local_jet_scales are "
+                    "mutually exclusive"
+                )
+            if len({scale.name for scale in normalized_scales}) != len(
+                normalized_scales
+            ):
+                raise ValueError("local jet scale names must be unique")
+            for shorter, longer in zip(normalized_scales[:-1], normalized_scales[1:]):
+                if longer.primary_half_width_ns <= shorter.primary_half_width_ns:
+                    raise ValueError(
+                        "local jet scales must be ordered from shortest to longest "
+                        "primary half-width"
+                    )
+                if shorter.wide_half_width_ns < longer.narrow_half_width_ns:
+                    raise ValueError(
+                        "adjacent local jet scales must overlap in physical "
+                        "half-width"
+                    )
+        self.local_jet_scales = normalized_scales
+        if self.history_model == "causal_local_jet":
+            if not normalized_scales and any(value is None for value in widths):
+                raise ValueError(
+                    "causal_local_jet requires either local_jet_scales or narrow, "
+                    "primary, and wide physical half-widths"
+                )
+            if not normalized_scales:
+                narrow, primary, wide = cast(tuple[float, float, float], tuple(widths))
+                if not narrow < primary < wide:
+                    raise ValueError(
+                        "causal_local_jet half-widths must satisfy "
+                        "narrow < primary < wide"
+                    )
+        self.local_jet_acceleration_degree = int(self.local_jet_acceleration_degree)
+        self.local_jet_spin_degree = int(self.local_jet_spin_degree)
+        if self.local_jet_acceleration_degree < 3:
+            raise ValueError("local jet acceleration degree must be at least three")
+        if self.local_jet_spin_degree < 5:
+            raise ValueError("local jet spin degree must be at least five")
+        self.local_jet_maximum_condition_number = float(
+            self.local_jet_maximum_condition_number
+        )
+        if (
+            not np.isfinite(self.local_jet_maximum_condition_number)
+            or self.local_jet_maximum_condition_number <= 1.0
+        ):
+            raise ValueError(
+                "local jet maximum condition number must be finite and greater than "
+                "one"
+            )
+        self.local_jet_maximum_relative_spread = float(
+            self.local_jet_maximum_relative_spread
+        )
+        if (
+            not np.isfinite(self.local_jet_maximum_relative_spread)
+            or self.local_jet_maximum_relative_spread <= 0.0
+        ):
+            raise ValueError(
+                "local jet maximum relative spread must be finite and positive"
+            )
+        self.local_jet_maximum_cross_scale_relative_spread = float(
+            self.local_jet_maximum_cross_scale_relative_spread
+        )
+        if (
+            not np.isfinite(self.local_jet_maximum_cross_scale_relative_spread)
+            or self.local_jet_maximum_cross_scale_relative_spread <= 0.0
+        ):
+            raise ValueError(
+                "local jet maximum cross-scale relative spread must be finite and "
+                "positive"
+            )
+        self.local_jet_acceleration_samples = (
+            str(self.local_jet_acceleration_samples).strip().lower().replace("-", "_")
+        )
+        if self.local_jet_acceleration_samples not in {
+            "exact_start",
+            "interval_mean",
+        }:
+            raise ValueError(
+                "local jet acceleration samples must be exact_start or interval_mean"
+            )
+        self.local_jet_window_alignment = (
+            str(self.local_jet_window_alignment).strip().lower().replace("-", "_")
+        )
+        if self.local_jet_window_alignment not in {"centered", "past"}:
+            raise ValueError("local jet window alignment must be centered or past")
+        self.local_jet_window_weighting = (
+            str(self.local_jet_window_weighting).strip().lower().replace("-", "_")
+        )
+        if self.local_jet_window_weighting not in {"tricube", "uniform"}:
+            raise ValueError("local jet window weighting must be tricube or uniform")
+        self.local_jet_inertial_prehistory = (
+            str(self.local_jet_inertial_prehistory).strip().lower().replace("-", "_")
+        )
+        if self.local_jet_inertial_prehistory not in {
+            "untrusted",
+            "assumed_inertial",
+        }:
+            raise ValueError(
+                "local jet inertial prehistory must be untrusted or assumed_inertial"
+            )
 
     @property
     def active(self) -> bool:
         """Whether an intrinsic-dipole Maxwell source model is selected."""
 
         return self.model != "off"
+
+    @property
+    def local_jet_scale_configs(self) -> tuple[DipoleLocalJetScaleConfig, ...]:
+        """Return the normalized immutable scale ladder."""
+
+        return cast(tuple[DipoleLocalJetScaleConfig, ...], self.local_jet_scales)
 
 
 @dataclass
@@ -612,6 +835,7 @@ class MagneticDipoleConfig:
     stern_gerlach_model: str = "rfs_full_g"
     exact_retarded_backend: str = "python"
     exact_retarded_update: str = "first_order_endpoint"
+    intrinsic_spin_self_reaction_mode: str = "off"
     source: DipoleSourceConfig = field(default_factory=DipoleSourceConfig)
     rider: MagneticDipoleParticleConfig = field(
         default_factory=lambda: MagneticDipoleParticleConfig(species="electron")
@@ -629,6 +853,12 @@ class MagneticDipoleConfig:
         self.exact_retarded_backend = str(self.exact_retarded_backend).strip().lower()
         self.exact_retarded_update = (
             str(self.exact_retarded_update).strip().lower().replace("-", "_")
+        )
+        self.intrinsic_spin_self_reaction_mode = (
+            str(self.intrinsic_spin_self_reaction_mode)
+            .strip()
+            .lower()
+            .replace("-", "_")
         )
         update_aliases = {
             "first_order": "first_order_endpoint",
@@ -684,6 +914,34 @@ class MagneticDipoleConfig:
             raise ValueError(
                 "magnetic-dipole exact_retarded_update must be one of: "
                 "first_order_endpoint, second_order_start_taylor_endpoint"
+            )
+        if self.intrinsic_spin_self_reaction_mode not in {
+            "off",
+            "diagnostic",
+            "experimental_linear_spin",
+        }:
+            raise ValueError(
+                "magnetic-dipole intrinsic_spin_self_reaction_mode must be one "
+                "of: off, diagnostic, experimental_linear_spin"
+            )
+        if (
+            self.intrinsic_spin_self_reaction_mode
+            in {"diagnostic", "experimental_linear_spin"}
+            and self.exact_retarded_update != "second_order_start_taylor_endpoint"
+        ):
+            raise ValueError(
+                "intrinsic-spin self-reaction evaluation requires "
+                "second_order_start_taylor_endpoint"
+            )
+        if self.intrinsic_spin_self_reaction_mode == "experimental_linear_spin" and (
+            not self.enabled
+            or self.spin_model != "rfs_minimal_2021"
+            or not self.spin_precession_enabled
+            or not self.stern_gerlach_force_enabled
+        ):
+            raise ValueError(
+                "experimental_linear_spin requires enabled RFS spin precession "
+                "and Stern-Gerlach force"
             )
         if isinstance(self.source, dict):
             self.source = DipoleSourceConfig(**self.source)
@@ -845,10 +1103,11 @@ class IntegratorConfig:
         Optional fixed-size particle-loss predicates. Lost particles are marked
         dead, keep their trajectory slots, and stop contributing charge after
         the loss step.
-    adaptive_pair_return:
-        Guarded checkpointable shared-lab-time stepping for one exact rider and
-        one exact driver. This is independent of the legacy adaptive-timestep
-        controller.
+    Notes
+    -----
+    ``adaptive_pair_return`` provides guarded, checkpointable shared-lab-time
+    stepping for one exact rider and one exact driver, independently of the
+    legacy adaptive-timestep controller.
     """
 
     steps: int
@@ -1098,6 +1357,10 @@ class TrajectoryArrays:
     bdotx: np.ndarray
     bdoty: np.ndarray
     bdotz: np.ndarray
+    source_start_beta_prime_x_per_mm: np.ndarray
+    source_start_beta_prime_y_per_mm: np.ndarray
+    source_start_beta_prime_z_per_mm: np.ndarray
+    source_start_beta_prime_ready: np.ndarray
     radiation_power: np.ndarray
     radiation_energy: np.ndarray
     radiation_energy_applied: np.ndarray
@@ -1314,6 +1577,18 @@ class TrajectoryArrays:
                     "local_magnetic_field_x_t": self.local_magnetic_field_x_t[step],
                     "local_magnetic_field_y_t": self.local_magnetic_field_y_t[step],
                     "local_magnetic_field_z_t": self.local_magnetic_field_z_t[step],
+                    "source_start_beta_prime_x_per_mm": (
+                        self.source_start_beta_prime_x_per_mm[step]
+                    ),
+                    "source_start_beta_prime_y_per_mm": (
+                        self.source_start_beta_prime_y_per_mm[step]
+                    ),
+                    "source_start_beta_prime_z_per_mm": (
+                        self.source_start_beta_prime_z_per_mm[step]
+                    ),
+                    "source_start_beta_prime_ready": (
+                        self.source_start_beta_prime_ready[step]
+                    ),
                     "magnetic_moment_j_per_t": self.magnetic_moment_j_per_t,
                     "magnetic_moment_native": self.magnetic_moment_native,
                     "spin_quantum_number": self.spin_quantum_number,
@@ -1585,6 +1860,18 @@ class IndexedTrajectoryArrays:
                     "local_magnetic_field_z_t": self.row(
                         "local_magnetic_field_z_t", step
                     ),
+                    "source_start_beta_prime_x_per_mm": self.row(
+                        "source_start_beta_prime_x_per_mm", step
+                    ),
+                    "source_start_beta_prime_y_per_mm": self.row(
+                        "source_start_beta_prime_y_per_mm", step
+                    ),
+                    "source_start_beta_prime_z_per_mm": self.row(
+                        "source_start_beta_prime_z_per_mm", step
+                    ),
+                    "source_start_beta_prime_ready": self.row(
+                        "source_start_beta_prime_ready", step
+                    ),
                     "magnetic_moment_j_per_t": self.constant("magnetic_moment_j_per_t"),
                     "magnetic_moment_native": self.constant("magnetic_moment_native"),
                     "spin_quantum_number": self.constant("spin_quantum_number"),
@@ -1638,6 +1925,11 @@ class TrajectoryBuilder:
         "beta_avg_z",
         "beta_samples",
     )
+    _SOURCE_START_FLOAT_FIELDS: tuple = (
+        "source_start_beta_prime_x_per_mm",
+        "source_start_beta_prime_y_per_mm",
+        "source_start_beta_prime_z_per_mm",
+    )
     _MAGNETIC_KINEMATIC_FIELDS: tuple = (
         "spin_x",
         "spin_y",
@@ -1645,7 +1937,8 @@ class TrajectoryBuilder:
         "local_magnetic_field_x_t",
         "local_magnetic_field_y_t",
         "local_magnetic_field_z_t",
-    )
+    ) + _SOURCE_START_FLOAT_FIELDS
+    _MAGNETIC_BOOL_FIELDS: tuple = ("source_start_beta_prime_ready",)
     _MEDINA_FLOAT_FIELDS: tuple = (
         "radiation_reaction_work",
         "medina_cross_field_energy",
@@ -1701,6 +1994,15 @@ class TrajectoryBuilder:
                     np.array(0.0, dtype=np.float64), (n_steps, n_particles)
                 )
             self._arrays[field_name] = magnetic_array
+        for field_name in self._MAGNETIC_BOOL_FIELDS:
+            if self._magnetic_arrays_allocated:
+                magnetic_bool_array = np.zeros((n_steps, n_particles), dtype=bool)
+            else:
+                magnetic_bool_array = np.broadcast_to(
+                    np.array(False, dtype=bool),
+                    (n_steps, n_particles),
+                )
+            self._arrays[field_name] = magnetic_bool_array
         for field_name in self._MEDINA_FLOAT_FIELDS:
             default = (
                 np.nan if field_name == "medina_external_force_sample_time" else 0.0
@@ -1741,11 +2043,13 @@ class TrajectoryBuilder:
         old_capacity = self._n_steps
         always_allocated = set(self._KINEMATIC_FIELDS) | {"dead"}
         magnetic_fields = set(self._MAGNETIC_KINEMATIC_FIELDS)
+        magnetic_bool_fields = set(self._MAGNETIC_BOOL_FIELDS)
         medina_float_fields = set(self._MEDINA_FLOAT_FIELDS)
         medina_bool_fields = set(self._MEDINA_BOOL_FIELDS)
         for field_name in (
             always_allocated
             | magnetic_fields
+            | magnetic_bool_fields
             | medina_float_fields
             | medina_bool_fields
         ):
@@ -1753,6 +2057,14 @@ class TrajectoryBuilder:
             if field_name in magnetic_fields and not self._magnetic_arrays_allocated:
                 replacement = np.broadcast_to(
                     np.array(0.0, dtype=np.float64),
+                    (new_capacity, self._n_particles),
+                )
+            elif (
+                field_name in magnetic_bool_fields
+                and not self._magnetic_arrays_allocated
+            ):
+                replacement = np.broadcast_to(
+                    np.array(False, dtype=bool),
                     (new_capacity, self._n_particles),
                 )
             elif (
@@ -1802,12 +2114,17 @@ class TrajectoryBuilder:
         if step < self._published_stop:
             self._storage_state.rewrite_epoch += 1
 
+        magnetic_fields = self._MAGNETIC_KINEMATIC_FIELDS + self._MAGNETIC_BOOL_FIELDS
         if not self._magnetic_arrays_allocated and any(
-            field_name in state for field_name in self._MAGNETIC_KINEMATIC_FIELDS
+            field_name in state for field_name in magnetic_fields
         ):
             for field_name in self._MAGNETIC_KINEMATIC_FIELDS:
                 self._arrays[field_name] = np.zeros(
                     (self._n_steps, self._n_particles), dtype=np.float64
+                )
+            for field_name in self._MAGNETIC_BOOL_FIELDS:
+                self._arrays[field_name] = np.zeros(
+                    (self._n_steps, self._n_particles), dtype=bool
                 )
             self._magnetic_arrays_allocated = True
             # Replacing one family of backing arrays changes the storage seen
@@ -1840,9 +2157,7 @@ class TrajectoryBuilder:
             self._storage_state.rewrite_epoch += 1
             self._storage_state.array_revision += 1
 
-        for field_name in (
-            self._KINEMATIC_FIELDS + self._MAGNETIC_KINEMATIC_FIELDS + medina_fields
-        ):
+        for field_name in self._KINEMATIC_FIELDS + magnetic_fields + medina_fields:
             if field_name in state:
                 self._arrays[field_name][step] = state[field_name]
             # else leave as zero (already pre-allocated)
@@ -1929,11 +2244,18 @@ class TrajectoryBuilder:
             raise ValueError("checkpoint rows must be restored contiguously")
 
         magnetic_fields = set(self._MAGNETIC_KINEMATIC_FIELDS)
+        magnetic_bool_fields = set(self._MAGNETIC_BOOL_FIELDS)
         medina_fields = set(self._MEDINA_FLOAT_FIELDS + self._MEDINA_BOOL_FIELDS)
-        if not self._magnetic_arrays_allocated and magnetic_fields & row_arrays.keys():
+        if not self._magnetic_arrays_allocated and (
+            (magnetic_fields | magnetic_bool_fields) & row_arrays.keys()
+        ):
             for field_name in self._MAGNETIC_KINEMATIC_FIELDS:
                 self._arrays[field_name] = np.zeros(
                     (self._n_steps, self._n_particles), dtype=np.float64
+                )
+            for field_name in self._MAGNETIC_BOOL_FIELDS:
+                self._arrays[field_name] = np.zeros(
+                    (self._n_steps, self._n_particles), dtype=bool
                 )
             self._magnetic_arrays_allocated = True
             self._storage_state.array_revision += 1
@@ -1955,16 +2277,23 @@ class TrajectoryBuilder:
         expected_row_fields = set(
             self._KINEMATIC_FIELDS
             + self._MAGNETIC_KINEMATIC_FIELDS
+            + self._MAGNETIC_BOOL_FIELDS
             + self._MEDINA_FLOAT_FIELDS
             + self._MEDINA_BOOL_FIELDS
             + ("dead",)
         )
-        missing = expected_row_fields - row_arrays.keys()
+        # Fixed-step checkpoint schema 1 predates the exact-pair source-start
+        # acceleration sidecars. Those fields have a safe all-zero/unready
+        # default because fixed-step causal-C5 use is not supported.
+        optional_source_start_fields = set(
+            self._SOURCE_START_FLOAT_FIELDS + self._MAGNETIC_BOOL_FIELDS
+        )
+        missing = expected_row_fields - optional_source_start_fields - row_arrays.keys()
         if missing:
             raise ValueError(
                 "checkpoint row block is missing fields: " + ", ".join(sorted(missing))
             )
-        for field_name in expected_row_fields:
+        for field_name in expected_row_fields & row_arrays.keys():
             values = np.asarray(row_arrays[field_name])
             target = self._arrays[field_name][start:stop]
             if values.shape != target.shape:
@@ -2054,6 +2383,18 @@ class TrajectoryBuilder:
             bdotx=self._arrays["bdotx"][:s],
             bdoty=self._arrays["bdoty"][:s],
             bdotz=self._arrays["bdotz"][:s],
+            source_start_beta_prime_x_per_mm=self._arrays[
+                "source_start_beta_prime_x_per_mm"
+            ][:s],
+            source_start_beta_prime_y_per_mm=self._arrays[
+                "source_start_beta_prime_y_per_mm"
+            ][:s],
+            source_start_beta_prime_z_per_mm=self._arrays[
+                "source_start_beta_prime_z_per_mm"
+            ][:s],
+            source_start_beta_prime_ready=self._arrays["source_start_beta_prime_ready"][
+                :s
+            ],
             radiation_power=self._arrays["radiation_power"][:s],
             radiation_energy=self._arrays["radiation_energy"][:s],
             radiation_energy_applied=self._arrays["radiation_energy_applied"][:s],
@@ -2132,6 +2473,16 @@ class TrajectoryBuilder:
             bdotx=self._arrays["bdotx"],
             bdoty=self._arrays["bdoty"],
             bdotz=self._arrays["bdotz"],
+            source_start_beta_prime_x_per_mm=self._arrays[
+                "source_start_beta_prime_x_per_mm"
+            ],
+            source_start_beta_prime_y_per_mm=self._arrays[
+                "source_start_beta_prime_y_per_mm"
+            ],
+            source_start_beta_prime_z_per_mm=self._arrays[
+                "source_start_beta_prime_z_per_mm"
+            ],
+            source_start_beta_prime_ready=self._arrays["source_start_beta_prime_ready"],
             radiation_power=self._arrays["radiation_power"],
             radiation_energy=self._arrays["radiation_energy"],
             radiation_energy_applied=self._arrays["radiation_energy_applied"],
@@ -2422,6 +2773,7 @@ __all__ = [
     "Occluder",
     "BeamlineGeometryConfig",
     "DipoleSourceConfig",
+    "DipoleLocalJetScaleConfig",
     "MagneticDipoleConfig",
     "MagneticDipoleParticleConfig",
 ]

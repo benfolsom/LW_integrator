@@ -23,7 +23,7 @@ of scope for this layer.
 from __future__ import annotations
 
 from copy import copy
-from dataclasses import dataclass, field as dataclass_field
+from dataclasses import dataclass, field as dataclass_field, replace
 from math import comb
 from typing import Sequence, cast
 
@@ -37,6 +37,7 @@ from .prepared_history_cache import (
     history_storage_capacity,
 )
 from .rfs import electromagnetic_field_tensor_native
+from .source_kinematics import reconstruct_instantaneous_beta_prime_per_mm
 from .types import (
     IndexedTrajectoryArrays,
     Trajectory,
@@ -52,6 +53,15 @@ _DEFAULT_ROOT_TOLERANCE_MM = 1.0e-21
 _DEFAULT_MAX_ROOT_ITERATIONS = 96
 _DEFAULT_GRADIENT_RELATIVE_STEP = 1.0e-4
 _DEFAULT_GRADIENT_MINIMUM_STEP_MM = 1.0e-15
+_SOURCE_ACCELERATION_SEMANTICS = {"instantaneous", "preceding_interval"}
+
+
+def _validated_source_acceleration_semantics(value: str) -> str:
+    selected = str(value).strip().lower()
+    if selected not in _SOURCE_ACCELERATION_SEMANTICS:
+        allowed = ", ".join(sorted(_SOURCE_ACCELERATION_SEMANTICS))
+        raise ValueError(f"source_acceleration_semantics must be one of: {allowed}")
+    return selected
 
 
 class RetardedHistoryError(ValueError):
@@ -94,6 +104,24 @@ class RetardedChargeFieldResult:
     four_potential: np.ndarray = dataclass_field(
         default_factory=lambda: np.zeros(4, dtype=float)
     )
+
+
+@dataclass(frozen=True)
+class RetardedMutualChargeFieldMatrix:
+    """Per-observer, per-source fields with optional matching-index omission.
+
+    The first index selects the observer event and the second selects the
+    source worldline. Same-grid callers normally omit matching indices;
+    distinct-grid callers can retain every source--observer pair.
+    """
+
+    electric_field_native: np.ndarray
+    magnetic_field_native: np.ndarray
+    four_potential: np.ndarray
+    retarded_time_ns: np.ndarray
+    light_cone_residual_mm: np.ndarray
+    separation_mm: np.ndarray
+    valid_sources: np.ndarray
 
 
 @dataclass(frozen=True)
@@ -140,6 +168,9 @@ class RetardedChargeResponseGradientResult:
     fallback_used: bool
     fallback_reason: str | None
     fallback_stencil_step_mm: float | None
+    partial_antisymmetric_response_along_velocity: np.ndarray | None = None
+    directional_unavailable_reason: str | None = None
+    directional_jet_residual: np.ndarray | None = None
 
 
 @dataclass
@@ -174,8 +205,10 @@ class _PreparedSourceHistory:
     segment_duration_ns: np.ndarray
     position_coefficients_mm: np.ndarray
     ended_by_loss: bool
+    source_acceleration_semantics: str = "preceding_interval"
     _duration_buffer: np.ndarray | None = dataclass_field(default=None, repr=False)
     _coefficient_buffer: np.ndarray | None = dataclass_field(default=None, repr=False)
+    _beta_prime_buffer: np.ndarray | None = dataclass_field(default=None, repr=False)
     _maximum_capacity: int | None = dataclass_field(default=None, repr=False)
     _metal_timelike_count: int = dataclass_field(default=0, repr=False)
     _metal_timelike_proof: bool = dataclass_field(default=True, repr=False)
@@ -187,6 +220,7 @@ class _PreparedHistory:
 
     arrays: _HistoryArrays
     sources: dict[int, _PreparedSourceHistory]
+    source_acceleration_semantics: str = "preceding_interval"
 
 
 _CHARGE_PREPARED_HISTORY_CACHE: AppendAwarePreparedHistoryCache[
@@ -564,22 +598,74 @@ def _append_history_array_tail(
     return extended, old_stop
 
 
+def _clone_prepared_source_history_for_trial(
+    source: _PreparedSourceHistory,
+) -> _PreparedSourceHistory:
+    """Detach buffers that a provisional tail is allowed to rewrite.
+
+    Appending a knot changes the reconstructed acceleration at the former
+    right boundary, so :func:`_append_prepared_source_history` intentionally
+    rewrites the last prepared coefficients.  A normal accepted append owns
+    those buffers.  A trial overlay does not: its shallow object copy would
+    otherwise mutate the accepted cache through the shared NumPy storage.
+    """
+
+    result = copy(source)
+    buffer_specs = (
+        (
+            "_duration_buffer",
+            "segment_duration_ns",
+            int(source.segment_duration_ns.size),
+        ),
+        (
+            "_coefficient_buffer",
+            "position_coefficients_mm",
+            int(source.position_coefficients_mm.shape[0]),
+        ),
+        (
+            "_beta_prime_buffer",
+            "beta_prime_per_mm",
+            int(source.beta_prime_per_mm.shape[0]),
+        ),
+    )
+    for buffer_name, visible_name, visible_stop in buffer_specs:
+        buffer = getattr(source, buffer_name)
+        visible = np.asarray(getattr(source, visible_name))
+        if buffer is None:
+            setattr(result, visible_name, np.array(visible, copy=True))
+            continue
+        detached = np.empty_like(buffer)
+        detached[:visible_stop] = buffer[:visible_stop]
+        setattr(result, buffer_name, detached)
+        setattr(result, visible_name, detached[:visible_stop])
+    return result
+
+
 def _prepare_trial_history(
     history: TrialTrajectoryHistory,
     excluded_source_indices: Sequence[int],
+    source_acceleration_semantics: str,
 ) -> _PreparedHistory:
     """Extend cached accepted charge history without publishing trial knots."""
 
-    accepted = _prepare_history(history.base, excluded_source_indices)
+    accepted = _prepare_history(
+        history.base,
+        excluded_source_indices,
+        source_acceleration_semantics=source_acceleration_semantics,
+    )
     tail_arrays = _extract_history(list(history.tail))
     arrays, old_stop = _append_history_array_tail(accepted.arrays, tail_arrays)
     sources: dict[int, _PreparedSourceHistory] = {}
     for source_index, source in accepted.sources.items():
-        trial_source = copy(source)
+        trial_source = _clone_prepared_source_history_for_trial(source)
         trial_source._maximum_capacity = arrays._maximum_capacity
         _append_prepared_source_history(trial_source, arrays, old_stop)
         sources[source_index] = trial_source
-    return _PreparedHistory(arrays=arrays, sources=sources)
+    return _PreparedHistory(
+        arrays=arrays,
+        sources=sources,
+        source_acceleration_semantics=source_acceleration_semantics,
+    )
 
 
 def _quintic_worldline_sample(
@@ -635,7 +721,7 @@ def _quintic_position_coefficients_mm(
     betas: np.ndarray,
     beta_primes: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Return segment durations and quintic worldline coefficients."""
+    """Return quintic coefficients from instantaneous endpoint derivatives."""
 
     durations = np.diff(times)
     if np.any(durations <= 0.0):
@@ -680,6 +766,7 @@ def _prepare_source_history(
     source_index: int,
     *,
     reserve_capacity: int | None = None,
+    source_acceleration_semantics: str = "preceding_interval",
 ) -> _PreparedSourceHistory:
     """Validate and prepare one source's alive interpolation segments."""
 
@@ -687,7 +774,14 @@ def _prepare_source_history(
     times = history.time_ns[:alive_stop, source_index]
     positions = history.position_mm[:alive_stop, source_index]
     betas = history.beta[:alive_stop, source_index]
-    beta_primes = history.beta_prime_per_mm[:alive_stop, source_index]
+    acceleration_semantics = _validated_source_acceleration_semantics(
+        source_acceleration_semantics
+    )
+    beta_primes = (
+        history.beta_prime_per_mm[:alive_stop, source_index]
+        if acceleration_semantics == "instantaneous"
+        else reconstruct_instantaneous_beta_prime_per_mm(times, betas)
+    )
     durations, coefficients = _quintic_position_coefficients_mm(
         times,
         positions,
@@ -703,6 +797,7 @@ def _prepare_source_history(
         segment_duration_ns=durations,
         position_coefficients_mm=coefficients,
         ended_by_loss=alive_stop != history.time_ns.shape[0],
+        source_acceleration_semantics=acceleration_semantics,
         _maximum_capacity=history._maximum_capacity,
     )
     if reserve_capacity is None:
@@ -712,13 +807,16 @@ def _prepare_source_history(
     segment_capacity = max(0, knot_capacity - 1)
     duration_buffer = np.empty(segment_capacity, dtype=float)
     coefficient_buffer = np.empty((segment_capacity, 6, 3), dtype=float)
+    beta_prime_buffer = np.empty((knot_capacity, 3), dtype=float)
     segment_stop = int(durations.size)
     duration_buffer[:segment_stop] = durations
     coefficient_buffer[:segment_stop] = coefficients
+    beta_prime_buffer[:alive_stop] = beta_primes
     prepared.segment_duration_ns = duration_buffer[:segment_stop]
     prepared.position_coefficients_mm = coefficient_buffer[:segment_stop]
     prepared._duration_buffer = duration_buffer
     prepared._coefficient_buffer = coefficient_buffer
+    prepared._beta_prime_buffer = beta_prime_buffer
     return prepared
 
 
@@ -752,12 +850,54 @@ def _append_prepared_source_history(
         return previous
 
     old_alive_stop = int(previous.time_ns.size)
-    coefficient_start = max(0, old_alive_stop - 1)
+    if previous.source_acceleration_semantics == "instantaneous":
+        derivative_update_start = old_alive_stop
+        updated_beta_primes = history.beta_prime_per_mm[
+            old_alive_stop:new_alive_stop, source_index
+        ]
+        coefficient_start = max(0, old_alive_stop - 1)
+    else:
+        # Appending one knot changes the former right-boundary acceleration
+        # from a one-sided estimate to an interior centered estimate. Rebuild
+        # the segment on either side of that knot; earlier segments are stable.
+        derivative_update_start = 0 if old_alive_stop < 3 else old_alive_stop - 1
+        derivative_context_start = max(0, derivative_update_start - 1)
+        local_beta_primes = reconstruct_instantaneous_beta_prime_per_mm(
+            history.time_ns[derivative_context_start:new_alive_stop, source_index],
+            history.beta[derivative_context_start:new_alive_stop, source_index],
+        )
+        updated_beta_primes = local_beta_primes[
+            derivative_update_start - derivative_context_start :
+        ]
+        coefficient_start = max(0, old_alive_stop - 2)
+    required_knot_capacity = new_alive_stop
+    current_knot_capacity = (
+        0
+        if previous._beta_prime_buffer is None
+        else int(previous._beta_prime_buffer.shape[0])
+    )
+    if (
+        previous._beta_prime_buffer is None
+        or required_knot_capacity > current_knot_capacity
+    ):
+        knot_capacity = max(required_knot_capacity, max(8, 2 * current_knot_capacity))
+        if previous._maximum_capacity is not None:
+            knot_capacity = min(knot_capacity, previous._maximum_capacity)
+        beta_prime_buffer = np.empty((knot_capacity, 3), dtype=float)
+        beta_prime_buffer[:old_alive_stop] = previous.beta_prime_per_mm
+        previous._beta_prime_buffer = beta_prime_buffer
+    assert previous._beta_prime_buffer is not None
+    if new_alive_stop > previous._beta_prime_buffer.shape[0]:
+        raise ValueError("prepared source append exceeded beta-prime capacity")
+    previous._beta_prime_buffer[derivative_update_start:new_alive_stop] = (
+        updated_beta_primes
+    )
+
     new_durations, new_coefficients = _quintic_position_coefficients_mm(
         history.time_ns[coefficient_start:new_alive_stop, source_index],
         history.position_mm[coefficient_start:new_alive_stop, source_index],
         history.beta[coefficient_start:new_alive_stop, source_index],
-        history.beta_prime_per_mm[coefficient_start:new_alive_stop, source_index],
+        previous._beta_prime_buffer[coefficient_start:new_alive_stop],
     )
     required_segment_capacity = max(0, new_alive_stop - 1)
     current_segment_capacity = (
@@ -784,7 +924,7 @@ def _append_prepared_source_history(
         coefficient_buffer[:old_segment_stop] = previous.position_coefficients_mm
         previous._duration_buffer = duration_buffer
         previous._coefficient_buffer = coefficient_buffer
-    segment_start = max(0, old_alive_stop - 1)
+    segment_start = coefficient_start
     segment_stop = max(0, new_alive_stop - 1)
     assert previous._duration_buffer is not None
     assert previous._coefficient_buffer is not None
@@ -795,9 +935,7 @@ def _append_prepared_source_history(
     previous.time_ns = history.time_ns[:new_alive_stop, source_index]
     previous.position_mm = history.position_mm[:new_alive_stop, source_index]
     previous.beta = history.beta[:new_alive_stop, source_index]
-    previous.beta_prime_per_mm = history.beta_prime_per_mm[
-        :new_alive_stop, source_index
-    ]
+    previous.beta_prime_per_mm = previous._beta_prime_buffer[:new_alive_stop]
     previous.segment_duration_ns = previous._duration_buffer[:segment_stop]
     previous.position_coefficients_mm = previous._coefficient_buffer[:segment_stop]
     previous.ended_by_loss = ended_by_loss
@@ -810,6 +948,7 @@ def _prepare_history_uncached(
     *,
     reserve_capacity: int | None = None,
     maximum_capacity: int | None = None,
+    source_acceleration_semantics: str = "preceding_interval",
 ) -> _PreparedHistory:
     """Extract once and prepare only sources that can contribute a field."""
 
@@ -826,12 +965,17 @@ def _prepare_history_uncached(
             arrays,
             source_index,
             reserve_capacity=reserve_capacity,
+            source_acceleration_semantics=source_acceleration_semantics,
         )
         for source_index in range(arrays.n_sources)
         if source_index not in excluded
         and abs(arrays.charge_native[source_index]) != 0.0
     }
-    return _PreparedHistory(arrays=arrays, sources=sources)
+    return _PreparedHistory(
+        arrays=arrays,
+        sources=sources,
+        source_acceleration_semantics=source_acceleration_semantics,
+    )
 
 
 def _append_prepared_history(
@@ -852,6 +996,7 @@ def _append_prepared_history(
             excluded_source_indices,
             reserve_capacity=history_prepared_buffer_capacity(history),
             maximum_capacity=history_storage_capacity(history),
+            source_acceleration_semantics=previous.source_acceleration_semantics,
         )
     for source in previous.sources.values():
         _append_prepared_source_history(source, arrays, old_stop)
@@ -861,20 +1006,30 @@ def _append_prepared_history(
 def _prepare_history(
     history: TrajectoryHistory,
     excluded_source_indices: Sequence[int],
+    *,
+    source_acceleration_semantics: str = "preceding_interval",
 ) -> _PreparedHistory:
     """Prepare charged histories, extending a safe builder-backed cache."""
 
+    acceleration_semantics = _validated_source_acceleration_semantics(
+        source_acceleration_semantics
+    )
     if isinstance(history, TrialTrajectoryHistory):
-        return _prepare_trial_history(history, excluded_source_indices)
+        return _prepare_trial_history(
+            history,
+            excluded_source_indices,
+            acceleration_semantics,
+        )
     excluded = tuple(sorted({int(index) for index in excluded_source_indices}))
     return _CHARGE_PREPARED_HISTORY_CACHE.prepare(
         history,
-        variant=("charge", excluded),
+        variant=("charge", excluded, acceleration_semantics),
         prepare_full=lambda current: _prepare_history_uncached(
             current,
             excluded,
             reserve_capacity=history_prepared_buffer_capacity(current),
             maximum_capacity=history_storage_capacity(current),
+            source_acceleration_semantics=acceleration_semantics,
         ),
         append=lambda previous, current, old_stop: _append_prepared_history(
             previous,
@@ -1679,8 +1834,79 @@ def _analytical_segment_margin_ratio(
         return 0.0, "retarded_root_is_on_segment_boundary"
     ratio = coordinate_margin / maximum_root_shift
     if not np.isfinite(ratio) or ratio <= 1.0:
+        # A knot separating exactly identical stationary polynomials is not a
+        # physical derivative boundary. Switching to finite differences there
+        # introduces a small force jump that higher recoil derivatives amplify.
+        # Keep roots numerically indistinguishable from an actual knot on the
+        # old route: the optional directional kernel requires a strict interior.
+        clock_roundoff = (
+            32.0
+            * np.finfo(float).eps
+            * C_MMNS
+            * max(
+                abs(root),
+                abs(segment_start),
+                abs(segment_end),
+                segment_end - segment_start,
+            )
+        )
+        if coordinate_margin > clock_roundoff:
+            stationary_ratio = _stationary_span_margin_ratio(
+                source, segment_index, root, float(observer_stencil_step_mm)
+            )
+            if stationary_ratio is not None and stationary_ratio > 1.0:
+                return stationary_ratio, None
         return float(ratio), "retarded_root_near_segment_boundary"
     return float(ratio), None
+
+
+def _stationary_span_margin_ratio(
+    source: _PreparedSourceHistory,
+    segment_index: int,
+    root_time_ns: float,
+    observer_stencil_step_mm: float,
+) -> float | None:
+    """Certify a stencil inside exactly identical, stationary polynomials.
+
+    This is an exact coefficient test, not a small-acceleration tolerance.
+    Extend only as far as the requested stencil needs. At rest the retarded
+    time changes by at most the observer displacement divided by c. A moving,
+    curved, discontinuous or unavailable neighbouring segment ends the proof.
+    """
+    coefficients = source.position_coefficients_mm
+    index = int(segment_index)
+    position = coefficients[index, 0]
+
+    def identical_stationary(candidate: int) -> bool:
+        values = coefficients[candidate]
+        return bool(
+            np.all(np.isfinite(values))
+            and not np.any(values[1:] != 0.0)
+            and np.array_equal(values[0], position)
+        )
+
+    if not identical_stationary(index):
+        return None
+    left, right = index, index + 1
+    step = float(observer_stencil_step_mm)
+    while C_MMNS * (root_time_ns - float(source.time_ns[left])) <= step and left > 0:
+        if not identical_stationary(left - 1):
+            break
+        left -= 1
+    while C_MMNS * (
+        float(source.time_ns[right]) - root_time_ns
+    ) <= step and right < len(coefficients):
+        if not identical_stationary(right):
+            break
+        right += 1
+    return float(
+        C_MMNS
+        * min(
+            root_time_ns - float(source.time_ns[left]),
+            float(source.time_ns[right]) - root_time_ns,
+        )
+        / step
+    )
 
 
 def _response_gradient_from_maintained_stencil(
@@ -1698,6 +1924,7 @@ def _response_gradient_from_maintained_stencil(
     kappa: np.ndarray,
     segment_index: np.ndarray,
     minimum_segment_margin_ratio: float,
+    source_acceleration_semantics: str,
 ) -> RetardedChargeResponseGradientResult:
     from .antisymmetric_response_rfs import (
         pack_antisymmetric_response_native,
@@ -1714,6 +1941,7 @@ def _response_gradient_from_maintained_stencil(
         root_tolerance_mm=root_tolerance_mm,
         max_root_iterations=max_root_iterations,
         backend=backend,
+        source_acceleration_semantics=source_acceleration_semantics,
     )
     return RetardedChargeResponseGradientResult(
         four_potential=fallback.field.four_potential,
@@ -1748,6 +1976,8 @@ def evaluate_retarded_charge_response_gradient_native(
     root_tolerance_mm: float = _DEFAULT_ROOT_TOLERANCE_MM,
     max_root_iterations: int = _DEFAULT_MAX_ROOT_ITERATIONS,
     fallback_backend: str = "numba_full_strict_serial",
+    source_acceleration_semantics: str = "preceding_interval",
+    observer_four_velocity_mm_ns: Sequence[float] | None = None,
 ) -> RetardedChargeResponseGradientResult:
     """Evaluate one-root analytical charge response coefficients.
 
@@ -1755,9 +1985,19 @@ def evaluate_retarded_charge_response_gradient_native(
     falls back to the centered-stencil provider only when a rigorous segment
     speed/margin bound cannot prove that the analytical derivative stays on
     the same smooth quintic segment.
+    An optional observer four-velocity requests the directional rate of the
+    gradient from these same roots and prepared coefficients. If the ordinary
+    response falls back, that rate is explicitly unavailable, never zero-filled.
     """
 
     require_exact_retarded_backend("numba_analytic_charge_response_serial")
+    observer_velocity = None
+    if observer_four_velocity_mm_ns is not None:
+        observer_velocity = np.asarray(observer_four_velocity_mm_ns, dtype=float)
+        if observer_velocity.shape != (4,) or not np.all(
+            np.isfinite(observer_velocity)
+        ):
+            raise ValueError("observer_four_velocity_mm_ns needs four finite values")
     from .charge_response_jet_numba import (
         _STATUS_CHARGE_SINGULAR_KAPPA,
         _STATUS_CHARGE_SUPERLUMINAL_SOURCE,
@@ -1786,7 +2026,14 @@ def evaluate_retarded_charge_response_gradient_native(
     tolerance, iterations = _validated_root_options(
         root_tolerance_mm, max_root_iterations
     )
-    prepared = _prepare_history(history, excluded_source_indices)
+    acceleration_semantics = _validated_source_acceleration_semantics(
+        source_acceleration_semantics
+    )
+    prepared = _prepare_history(
+        history,
+        excluded_source_indices,
+        source_acceleration_semantics=acceleration_semantics,
+    )
     arrays = prepared.arrays
     potential_total = np.zeros(4, dtype=float)
     partial_a_total = np.zeros((4, 4), dtype=float)
@@ -1906,7 +2153,7 @@ def evaluate_retarded_charge_response_gradient_native(
         fallback_reason=fallback_reason,
     )
     if fallback_reason is not None:
-        return _response_gradient_from_maintained_stencil(
+        fallback = _response_gradient_from_maintained_stencil(
             history,
             observer_event,
             excluded_source_indices=excluded_source_indices,
@@ -1920,7 +2167,44 @@ def evaluate_retarded_charge_response_gradient_native(
             kappa=kappa,
             segment_index=segment_index,
             minimum_segment_margin_ratio=minimum_margin_ratio,
+            source_acceleration_semantics=acceleration_semantics,
         )
+        if observer_velocity is not None:
+            fallback = replace(
+                fallback,
+                directional_unavailable_reason="ordinary charge response used fallback: "
+                + fallback_reason,
+            )
+        return fallback
+    directional_rate = None
+    directional_residual = None
+    if observer_velocity is not None:
+        from .retarded_potential_directional_jet import (
+            quintic_charge_response_directional_gradient_native,
+        )
+
+        directional_rate = np.zeros((4, 6), dtype=float)
+        directional_residual = np.full(arrays.n_sources, np.nan, dtype=float)
+        for source_index, source in prepared.sources.items():
+            if not valid_sources[source_index]:
+                continue
+            segment = int(segment_index[source_index])
+            result = quintic_charge_response_directional_gradient_native(
+                observer_time_ns=float(observer_event.time_ns),
+                observer_position_mm=observer_event.position_mm,
+                charge_native=float(arrays.charge_native[source_index]),
+                segment_start_time_ns=float(source.time_ns[segment]),
+                segment_duration_ns=float(source.segment_duration_ns[segment]),
+                position_coefficients_mm=source.position_coefficients_mm[segment],
+                retarded_time_ns=float(retarded_time_ns[source_index]),
+                four_velocity_mm_ns=observer_velocity,
+            )
+            directional_rate += result.partial_antisymmetric_response_along_velocity
+            directional_residual[source_index] = result.light_cone_jet_residual
+        if not np.all(np.isfinite(directional_rate)):
+            raise ValueError("summed directional charge response must be finite")
+        directional_rate.setflags(write=False)
+        directional_residual.setflags(write=False)
     return RetardedChargeResponseGradientResult(
         four_potential=potential_total,
         partial_a=partial_a_total,
@@ -1936,6 +2220,8 @@ def evaluate_retarded_charge_response_gradient_native(
         fallback_used=False,
         fallback_reason=None,
         fallback_stencil_step_mm=None,
+        partial_antisymmetric_response_along_velocity=directional_rate,
+        directional_jet_residual=directional_residual,
     )
 
 
@@ -1948,14 +2234,24 @@ def evaluate_retarded_charge_field_native(
     root_tolerance_mm: float = _DEFAULT_ROOT_TOLERANCE_MM,
     max_root_iterations: int = _DEFAULT_MAX_ROOT_ITERATIONS,
     backend: str = "python",
+    source_acceleration_semantics: str = "preceding_interval",
 ) -> RetardedChargeFieldResult:
-    """Evaluate the summed native Gaussian charge field at one event."""
+    """Evaluate the summed native Gaussian charge field at one event.
+
+    Production trajectory ``bdot`` samples describe the preceding interval,
+    which is the default. Analytic histories may explicitly select
+    ``instantaneous`` when their supplied ``bdot`` is an exact knot derivative.
+    """
 
     selected_backend = require_exact_retarded_backend(backend)
     tolerance, iterations = _validated_root_options(
         root_tolerance_mm, max_root_iterations
     )
-    prepared = _prepare_history(history, excluded_source_indices)
+    prepared = _prepare_history(
+        history,
+        excluded_source_indices,
+        source_acceleration_semantics=source_acceleration_semantics,
+    )
     return _evaluate_prepared_charge_batch(
         prepared,
         (observer_event,),
@@ -1964,6 +2260,247 @@ def evaluate_retarded_charge_field_native(
         root_tolerance_mm=tolerance,
         max_root_iterations=iterations,
     )[0]
+
+
+def evaluate_retarded_mutual_charge_field_matrix_native(
+    history: TrajectoryHistory,
+    observer_events: Sequence[ObserverEvent],
+    *,
+    require_complete_history: bool = True,
+    root_tolerance_mm: float = _DEFAULT_ROOT_TOLERANCE_MM,
+    max_root_iterations: int = _DEFAULT_MAX_ROOT_ITERATIONS,
+    backend: str = "python",
+    exclude_matching_indices: bool = True,
+    source_acceleration_semantics: str = "preceding_interval",
+) -> RetardedMutualChargeFieldMatrix:
+    """Evaluate each non-diagonal source-to-observer field separately.
+
+    By default event ``i`` excludes source ``i``. Set
+    ``exclude_matching_indices=False`` for distinct source and observer
+    quadrature grids; every pair is then retained. Keeping the pair matrix
+    permits retarded and advanced contributions to be combined before a
+    potentially ill-conditioned global reduction.
+
+    The Python backend is the transparent reference. The strict serial Numba
+    backend compiles each source's roots and fields for all observer events,
+    while retaining the same source/event layout and Python-side validation.
+    """
+
+    selected_backend = require_exact_retarded_backend(backend)
+    if selected_backend not in {"python", "numba_full_strict_serial"}:
+        raise ValueError(
+            "mutual charge field matrices support only 'python' and "
+            "'numba_full_strict_serial' backends"
+        )
+    tolerance, iterations = _validated_root_options(
+        root_tolerance_mm, max_root_iterations
+    )
+    acceleration_semantics = _validated_source_acceleration_semantics(
+        source_acceleration_semantics
+    )
+    prepared = _prepare_history(
+        history,
+        (),
+        source_acceleration_semantics=acceleration_semantics,
+    )
+    events = tuple(observer_events)
+    arrays = prepared.arrays
+    exclude_diagonal = bool(exclude_matching_indices)
+    if exclude_diagonal and len(events) != arrays.n_sources:
+        raise ValueError(
+            "matching-index exclusion requires one observer event per source"
+        )
+
+    event_count = len(events)
+    electric = np.zeros((event_count, arrays.n_sources, 3), dtype=float)
+    magnetic = np.zeros_like(electric)
+    potential = np.zeros((event_count, arrays.n_sources, 4), dtype=float)
+    retarded_time = np.full((event_count, arrays.n_sources), np.nan)
+    residual = np.full_like(retarded_time, np.nan)
+    separation = np.full_like(retarded_time, np.nan)
+    valid = np.zeros_like(retarded_time, dtype=bool)
+    missing: list[list[int]] = [[] for _ in events]
+
+    if selected_backend == "numba_full_strict_serial":
+        from .exact_retarded_numba import (
+            NUMBA_COMPILATION_ERRORS,
+            _STATUS_CHARGE_SINGULAR_KAPPA,
+            _STATUS_CHARGE_SUPERLUMINAL_SOURCE,
+            _STATUS_CHARGE_ZERO_SEPARATION,
+            _STATUS_MISSING_HISTORY,
+            _STATUS_TERMINATED_SOURCE,
+            _STATUS_VALID,
+            evaluate_charge_source_events_full_strict_serial,
+        )
+
+        event_time_ns, event_position_mm = _charge_batch_event_arrays(events)
+        for source_index, source in prepared.sources.items():
+            compiling_initial_signature = not bool(
+                getattr(
+                    evaluate_charge_source_events_full_strict_serial,
+                    "signatures",
+                    (),
+                )
+            )
+            try:
+                batch = evaluate_charge_source_events_full_strict_serial(
+                    source.time_ns,
+                    source.position_mm,
+                    source.segment_duration_ns,
+                    source.position_coefficients_mm,
+                    float(arrays.charge_native[source_index]),
+                    bool(source.ended_by_loss),
+                    event_time_ns,
+                    event_position_mm,
+                    float(tolerance),
+                    int(iterations),
+                )
+            except NUMBA_COMPILATION_ERRORS as exc:
+                if compiling_initial_signature:
+                    from .exact_retarded_backend import (
+                        ExactRetardedBackendUnavailableError,
+                    )
+
+                    raise ExactRetardedBackendUnavailableError(
+                        "mutual charge backend 'numba_full_strict_serial' failed "
+                        "during initial JIT compilation; select backend 'python' "
+                        "or inspect the chained Numba error"
+                    ) from exc
+                raise
+
+            for event_index in range(len(events)):
+                if exclude_diagonal and event_index == source_index:
+                    continue
+                status = int(batch[0][event_index])
+                if status == _STATUS_TERMINATED_SOURCE:
+                    continue
+                if status == _STATUS_MISSING_HISTORY:
+                    missing[event_index].append(source_index)
+                    continue
+                if status == _STATUS_CHARGE_ZERO_SEPARATION:
+                    raise ValueError(
+                        "a non-diagonal observer coincides with a point-charge source"
+                    )
+                if status == _STATUS_CHARGE_SUPERLUMINAL_SOURCE:
+                    raise ValueError("source beta magnitude must be less than one")
+                if status == _STATUS_CHARGE_SINGULAR_KAPPA:
+                    raise ValueError(
+                        "retarded field is singular because 1 - n.beta is too small"
+                    )
+                if status != _STATUS_VALID:
+                    raise RuntimeError(f"unknown strict charge event status {status}")
+                electric[event_index, source_index] = batch[1][event_index]
+                magnetic[event_index, source_index] = batch[2][event_index]
+                potential[event_index, source_index] = batch[3][event_index]
+                retarded_time[event_index, source_index] = batch[4][event_index]
+                residual[event_index, source_index] = batch[5][event_index]
+                separation[event_index, source_index] = batch[6][event_index]
+                valid[event_index, source_index] = batch[7][event_index]
+    else:
+        for source_index, source in prepared.sources.items():
+            charge = float(arrays.charge_native[source_index])
+            for event_index, event in enumerate(events):
+                if exclude_diagonal and event_index == source_index:
+                    continue
+                observer_time = float(event.time_ns)
+                observer_position = np.asarray(event.position_mm, dtype=float)
+                sample = _solve_retarded_sample(
+                    source,
+                    observer_time_ns=observer_time,
+                    observer_position_mm=observer_position,
+                    root_tolerance_mm=tolerance,
+                    max_root_iterations=iterations,
+                )
+                if sample is None:
+                    if _source_terminated_before_light_cone(
+                        source,
+                        observer_time_ns=observer_time,
+                        observer_position_mm=observer_position,
+                    ):
+                        continue
+                    missing[event_index].append(source_index)
+                    continue
+                source_to_observer = observer_position - sample.position_mm
+                source_electric, source_magnetic = lienard_wiechert_charge_field_native(
+                    charge_native=charge,
+                    separation_vector_mm=source_to_observer,
+                    source_beta=sample.beta,
+                    source_beta_prime_per_mm=sample.beta_prime_per_mm,
+                )
+                source_potential = lienard_wiechert_charge_potential_native(
+                    charge_native=charge,
+                    separation_vector_mm=source_to_observer,
+                    source_beta=sample.beta,
+                )
+                electric[event_index, source_index] = source_electric
+                magnetic[event_index, source_index] = source_magnetic
+                potential[event_index, source_index] = source_potential
+                retarded_time[event_index, source_index] = sample.time_ns
+                residual[event_index, source_index] = sample.residual_mm
+                separation[event_index, source_index] = sample.separation_mm
+                valid[event_index, source_index] = True
+
+    if require_complete_history:
+        failed = {index: values for index, values in enumerate(missing) if values}
+        if failed:
+            raise RetardedHistoryError(
+                "source history does not bracket mutual observer light cones: "
+                f"{failed}"
+            )
+
+    return RetardedMutualChargeFieldMatrix(
+        electric_field_native=electric,
+        magnetic_field_native=magnetic,
+        four_potential=potential,
+        retarded_time_ns=retarded_time,
+        light_cone_residual_mm=residual,
+        separation_mm=separation,
+        valid_sources=valid,
+    )
+
+
+def evaluate_retarded_mutual_charge_fields_native(
+    history: TrajectoryHistory,
+    observer_events: Sequence[ObserverEvent],
+    *,
+    require_complete_history: bool = True,
+    root_tolerance_mm: float = _DEFAULT_ROOT_TOLERANCE_MM,
+    max_root_iterations: int = _DEFAULT_MAX_ROOT_ITERATIONS,
+    source_acceleration_semantics: str = "preceding_interval",
+) -> tuple[RetardedChargeFieldResult, ...]:
+    """Sum mutual source fields while preserving reference reduction order."""
+
+    matrix = evaluate_retarded_mutual_charge_field_matrix_native(
+        history,
+        observer_events,
+        require_complete_history=require_complete_history,
+        root_tolerance_mm=root_tolerance_mm,
+        max_root_iterations=max_root_iterations,
+        source_acceleration_semantics=source_acceleration_semantics,
+    )
+    source_count = matrix.valid_sources.shape[1]
+    electric = np.zeros((source_count, 3))
+    magnetic = np.zeros_like(electric)
+    potential = np.zeros((source_count, 4))
+    for source_index in range(source_count):
+        electric += matrix.electric_field_native[:, source_index]
+        magnetic += matrix.magnetic_field_native[:, source_index]
+        potential += matrix.four_potential[:, source_index]
+    return tuple(
+        RetardedChargeFieldResult(
+            electric_field_native=electric[index],
+            magnetic_field_native=magnetic[index],
+            field_tensor=electromagnetic_field_tensor_native(
+                electric[index], magnetic[index]
+            ),
+            retarded_time_ns=matrix.retarded_time_ns[index],
+            light_cone_residual_mm=matrix.light_cone_residual_mm[index],
+            separation_mm=matrix.separation_mm[index],
+            valid_sources=matrix.valid_sources[index],
+            four_potential=potential[index],
+        )
+        for index in range(source_count)
+    )
 
 
 def evaluate_retarded_charge_field_gradient_native(
@@ -1977,6 +2514,7 @@ def evaluate_retarded_charge_field_gradient_native(
     root_tolerance_mm: float = _DEFAULT_ROOT_TOLERANCE_MM,
     max_root_iterations: int = _DEFAULT_MAX_ROOT_ITERATIONS,
     backend: str = "python",
+    source_acceleration_semantics: str = "preceding_interval",
 ) -> RetardedChargeFieldGradientResult:
     """Evaluate F and its complete centered spacetime derivative.
 
@@ -2013,6 +2551,7 @@ def evaluate_retarded_charge_field_gradient_native(
             minimum_step_mm=minimum,
             root_tolerance_mm=tolerance,
             max_root_iterations=iterations,
+            source_acceleration_semantics=source_acceleration_semantics,
         )
         packed = response.antisymmetric_response
         field_tensor = materialize_antisymmetric_response_native(packed)
@@ -2042,7 +2581,11 @@ def evaluate_retarded_charge_field_gradient_native(
             ),
             partial_a=response.partial_a,
         )
-    prepared = _prepare_history(history, excluded_source_indices)
+    prepared = _prepare_history(
+        history,
+        excluded_source_indices,
+        source_acceleration_semantics=source_acceleration_semantics,
+    )
     center = _evaluate_prepared_charge_field_native(
         prepared,
         observer_event,
@@ -2118,8 +2661,11 @@ __all__ = [
     "RetardedChargeFieldResult",
     "RetardedChargeResponseGradientResult",
     "RetardedHistoryError",
+    "RetardedMutualChargeFieldMatrix",
     "evaluate_retarded_charge_field_gradient_native",
     "evaluate_retarded_charge_field_native",
+    "evaluate_retarded_mutual_charge_field_matrix_native",
+    "evaluate_retarded_mutual_charge_fields_native",
     "evaluate_retarded_charge_response_gradient_native",
     "lienard_wiechert_charge_field_native",
     "lienard_wiechert_charge_potential_native",

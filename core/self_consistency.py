@@ -335,6 +335,7 @@ def self_consistent_step(
     beamline_geometry: Optional[Any] = None,
     magnetic_dipole: Optional[Any] = None,
     exact_source_history: Optional[Any] = None,
+    exact_dipole_source_collection: Optional[Any] = None,
     exact_source_spin_interpolation_model: str = "centered_c1",
 ) -> ParticleState:
     """Execute a single integration step, optionally with self-consistency.
@@ -380,6 +381,10 @@ def self_consistent_step(
         Optional immutable source-history view used only by exact retarded field
         providers. Legacy chronology and startup gating continue to use
         ``trajectory_ext`` and ``traj_ext_soa``.
+    exact_dipole_source_collection : Optional[Any]
+        Optional independent causal-$C^5$ history for the dipole Maxwell
+        source. The ordinary charge provider still receives
+        ``exact_source_history``.
     exact_source_spin_interpolation_model : str
         Spin interpolation contract for the exact source-history view. Trial
         overlays use ``"causal_frozen_c1"`` so appending a trial endpoint cannot
@@ -504,6 +509,12 @@ def self_consistent_step(
             {"exact_source_history": exact_source_history}
             if exact_source_history is not None
             and ("exact_source_history" in _sig_params or _accepts_var_kwargs)
+            else {}
+        ),
+        **(
+            {"exact_dipole_source_collection": exact_dipole_source_collection}
+            if exact_dipole_source_collection is not None
+            and ("exact_dipole_source_collection" in _sig_params or _accepts_var_kwargs)
             else {}
         ),
         **(

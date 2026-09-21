@@ -109,6 +109,55 @@ def _prepared_single_source_arrays(
     return retarded_fields._prepare_source_history(arrays, 0)
 
 
+def test_prepared_charge_history_reconstructs_endpoint_acceleration_from_beta() -> None:
+    times_ns = np.asarray((-0.004, -0.001, 0.002, 0.006), dtype=float)
+    coordinate_mm = C_MMNS * times_ns
+    beta = np.zeros((times_ns.size, 3), dtype=float)
+    beta[:, 0] = 0.2 + 2.0e-5 * coordinate_mm + 3.0e-8 * coordinate_mm**2
+    deliberately_mistimed_bdot = np.full_like(beta, 9.0e-3)
+    expected_x = 2.0e-5 + 6.0e-8 * coordinate_mm
+
+    prepared = _prepared_single_source_arrays(
+        times_ns=times_ns,
+        position_mm=np.zeros_like(beta),
+        beta=beta,
+        beta_prime_per_mm=deliberately_mistimed_bdot,
+    )
+
+    np.testing.assert_allclose(
+        prepared.beta_prime_per_mm[:, 0],
+        expected_x,
+        rtol=2.0e-12,
+        atol=3.0e-17,
+    )
+    np.testing.assert_array_equal(prepared.beta_prime_per_mm[:, 1:], 0.0)
+
+
+def test_prepared_analytic_history_can_declare_instantaneous_acceleration() -> None:
+    times_ns = np.asarray((-0.004, -0.001, 0.002, 0.006), dtype=float)
+    beta = np.zeros((times_ns.size, 3), dtype=float)
+    supplied_endpoint_derivative = np.full_like(beta, 9.0e-3)
+    arrays = retarded_fields._extract_history(
+        _source_history(
+            times_ns=times_ns,
+            position_mm=np.zeros_like(beta),
+            beta=beta,
+            beta_prime_per_mm=supplied_endpoint_derivative,
+        )
+    )
+
+    prepared = retarded_fields._prepare_source_history(
+        arrays,
+        0,
+        source_acceleration_semantics="instantaneous",
+    )
+
+    np.testing.assert_array_equal(
+        prepared.beta_prime_per_mm,
+        supplied_endpoint_derivative,
+    )
+
+
 def _reference_full_scan_knot_bracket(
     source: retarded_fields._PreparedSourceHistory,
     *,

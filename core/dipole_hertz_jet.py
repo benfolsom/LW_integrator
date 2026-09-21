@@ -18,7 +18,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from itertools import permutations, product
 from math import factorial
-from typing import TYPE_CHECKING, Hashable, Iterable, Sequence, cast
+from typing import TYPE_CHECKING, Callable, Hashable, Iterable, Sequence, cast
 
 import numpy as np
 
@@ -26,9 +26,12 @@ from .constants import C_MMNS
 from .rfs import fields_from_tensor_native
 
 if TYPE_CHECKING:
+    from .causal_c5_source_history import CausalC5SourceHistory
     from .retarded_dipole_fields import (
         RetardedDipoleFieldGradientResult,
         RetardedDipoleResponseGradientResult,
+        RetardedDipoleHertzResult,
+        RetardedDipoleRootResult,
     )
     from .retarded_fields import ObserverEvent, TrajectoryHistory
 
@@ -67,6 +70,38 @@ def _splits(
 _PRODUCT_SPLITS = tuple(_splits(alpha) for alpha in _MULTIINDICES)
 
 
+def _python_multiply(left: np.ndarray, right: np.ndarray) -> np.ndarray:
+    result = np.empty(len(_MULTIINDICES), dtype=float)
+    for index, splits in enumerate(_PRODUCT_SPLITS):
+        total = 0.0
+        for left_index, right_index in splits:
+            total += left[left_index] * right[right_index]
+        result[index] = total
+    return result
+
+
+def _python_reciprocal(value: np.ndarray) -> np.ndarray:
+    result = np.zeros(len(_MULTIINDICES), dtype=float)
+    result[0] = 1.0 / value[0]
+    for index in range(1, len(_MULTIINDICES)):
+        total = 0.0
+        for left_index, right_index in _PRODUCT_SPLITS[index]:
+            if left_index:
+                total += value[left_index] * result[right_index]
+        result[index] = -total / value[0]
+    return result
+
+
+# Reuse the existing strict-float64 arithmetic, with identical coefficient
+# ordering and summation order. No derivative or sparse-output map changes.
+try:
+    from .dipole_hertz_jet_numba import _multiply as _multiply_coefficients
+    from .dipole_hertz_jet_numba import _reciprocal as _reciprocal_coefficients
+except ImportError:  # Numba remains optional for the analytical reference API.
+    _multiply_coefficients = _python_multiply
+    _reciprocal_coefficients = _python_reciprocal
+
+
 def _levi_civita_upper() -> np.ndarray:
     tensor = np.zeros((4, 4, 4, 4), dtype=float)
     for permutation in permutations(range(4)):
@@ -100,11 +135,13 @@ class DipoleHertzResponseJetResult:
     retarded_coordinate_third_derivative: np.ndarray
     light_cone_jet_residual: float
     segment_fraction: float
+    partial_antisymmetric_response_along_velocity: np.ndarray | None = None
+    directional_light_cone_jet_residual: float | None = None
 
 
 @dataclass(frozen=True)
 class DipoleHertzSparseResponseJetResult:
-    """The 34 production response values from one smooth source segment."""
+    """34 response values with optional potential derivatives from one segment."""
 
     four_potential: np.ndarray
     antisymmetric_response: np.ndarray
@@ -112,6 +149,8 @@ class DipoleHertzSparseResponseJetResult:
     retarded_time_ns: float
     light_cone_jet_residual: float
     segment_fraction: float
+    four_potential_proper_rate: np.ndarray | None = None
+    partial_a: np.ndarray | None = None
 
 
 @dataclass(frozen=True)
@@ -129,6 +168,12 @@ class DipoleHertzJetProviderResult:
 @dataclass(frozen=True)
 class _Jet3:
     coefficients: np.ndarray
+    # Forward derivative along one independent observer displacement. Keeping
+    # this separate leaves every ordinary third-order operation unchanged.
+    tangent: np.ndarray | None = None
+
+    _product = staticmethod(_python_multiply)
+    _inverse = staticmethod(_python_reciprocal)
 
     @classmethod
     def constant(cls, value: float) -> "_Jet3":
@@ -152,7 +197,14 @@ class _Jet3:
     def with_value(self, value: float) -> "_Jet3":
         coefficients = self.coefficients.copy()
         coefficients[0] = float(value)
-        return _Jet3(coefficients)
+        # Fix only the base root residual. Its directional derivative is part
+        # of the implicit light-cone solve and must NOT be cleared.
+        return type(self)(coefficients, self.tangent)
+
+    def directional_derivative(self, *indices: int) -> float:
+        if self.tangent is None:
+            return 0.0
+        return type(self)(self.tangent).derivative(*indices)
 
     def derivative(self, *indices: int) -> float:
         if len(indices) > _ORDER:
@@ -168,29 +220,41 @@ class _Jet3:
         return float(scale * coefficient)
 
     def __add__(self, other: object) -> "_Jet3":
-        return _Jet3(self.coefficients + _as_jet(other).coefficients)
+        right = _as_jet(other)
+        tangent = self.tangent
+        if right.tangent is not None:
+            tangent = right.tangent if tangent is None else tangent + right.tangent
+        return type(self)(self.coefficients + right.coefficients, tangent)
 
     def __radd__(self, other: object) -> "_Jet3":
         return self + other
 
     def __neg__(self) -> "_Jet3":
-        return _Jet3(-self.coefficients)
+        return type(self)(
+            -self.coefficients, None if self.tangent is None else -self.tangent
+        )
 
     def __sub__(self, other: object) -> "_Jet3":
         return self + (-_as_jet(other))
 
     def __rsub__(self, other: object) -> "_Jet3":
-        return _as_jet(other) - self
+        left = _as_jet(other)
+        return type(self)(left.coefficients, left.tangent) - self
 
     def __mul__(self, other: object) -> "_Jet3":
         right = _as_jet(other)
-        coefficients = np.empty(len(_MULTIINDICES), dtype=float)
-        for result_index, splits in enumerate(_PRODUCT_SPLITS):
-            total = 0.0
-            for left_index, right_index in splits:
-                total += self.coefficients[left_index] * right.coefficients[right_index]
-            coefficients[result_index] = total
-        return _Jet3(coefficients)
+        coefficients = self._product(self.coefficients, right.coefficients)
+        tangent = None
+        if self.tangent is not None:
+            tangent = (
+                type(self)(self.tangent) * type(self)(right.coefficients)
+            ).coefficients
+        if right.tangent is not None:
+            term = (
+                type(self)(self.coefficients) * type(self)(right.tangent)
+            ).coefficients
+            tangent = term if tangent is None else tangent + term
+        return type(self)(coefficients, tangent)
 
     def __rmul__(self, other: object) -> "_Jet3":
         return self * other
@@ -198,34 +262,42 @@ class _Jet3:
     def reciprocal(self) -> "_Jet3":
         if self.value == 0.0:
             raise ZeroDivisionError("cannot invert a zero Taylor jet")
-        coefficients = np.zeros(len(_MULTIINDICES), dtype=float)
-        coefficients[0] = 1.0 / self.value
-        for result_index in range(1, len(_MULTIINDICES)):
-            total = 0.0
-            # Remove beta=0.  The remaining complement always has lower degree,
-            # so its reciprocal coefficient is already available.
-            for left_index, right_index in _PRODUCT_SPLITS[result_index]:
-                if left_index == 0:
-                    continue
-                total += self.coefficients[left_index] * coefficients[right_index]
-            coefficients[result_index] = -total / self.value
-        return _Jet3(coefficients)
+        coefficients = self._inverse(self.coefficients)
+        tangent = None
+        if self.tangent is not None:
+            inverse = type(self)(coefficients)
+            tangent = (-(inverse * inverse) * type(self)(self.tangent)).coefficients
+        return type(self)(coefficients, tangent)
 
     def __truediv__(self, other: object) -> "_Jet3":
-        return self * _as_jet(other).reciprocal()
+        right = _as_jet(other)
+        return self * type(self)(right.coefficients, right.tangent).reciprocal()
 
     def __rtruediv__(self, other: object) -> "_Jet3":
-        return _as_jet(other) / self
+        left = _as_jet(other)
+        return type(self)(left.coefficients, left.tangent) / self
 
     def sqrt(self) -> "_Jet3":
         if self.value <= 0.0:
             raise ValueError("Taylor-jet square root requires a positive value")
-        root = _Jet3.constant(float(np.sqrt(self.value)))
+        root = type(self).constant(float(np.sqrt(self.value)))
         # Newton doubles the correct Taylor order on every iteration.  Three
         # iterations are sufficient through degree three from a constant seed.
         for _ in range(3):
             root = 0.5 * (root + self / root)
         return root
+
+
+class _CompiledJet3(_Jet3):
+    """Same algebra, accelerated only where explicitly selected by a provider."""
+
+    @staticmethod
+    def _product(left: np.ndarray, right: np.ndarray) -> np.ndarray:
+        return _multiply_coefficients(left, right)
+
+    @staticmethod
+    def _inverse(value: np.ndarray) -> np.ndarray:
+        return _reciprocal_coefficients(value)
 
 
 def _as_jet(value: object) -> _Jet3:
@@ -235,14 +307,15 @@ def _as_jet(value: object) -> _Jet3:
 
 
 def _polynomial(coefficients: Iterable[float], argument: _Jet3) -> _Jet3:
-    result = _Jet3.constant(0.0)
+    result = type(argument).constant(0.0)
     for coefficient in reversed(tuple(float(value) for value in coefficients)):
         result = result * argument + coefficient
     return result
 
 
 def _dot(left: Sequence[_Jet3], right: Sequence[_Jet3]) -> _Jet3:
-    return sum((a * b for a, b in zip(left, right)), _Jet3.constant(0.0))
+    kind = type(left[0]) if len(left) else _Jet3
+    return sum((a * b for a, b in zip(left, right)), kind.constant(0.0))
 
 
 def _norm(vector: Sequence[_Jet3]) -> _Jet3:
@@ -287,7 +360,7 @@ def _hodge_dual(jet_tensor: np.ndarray) -> np.ndarray:
     return result
 
 
-def quintic_dipole_hertz_response_jet_native(
+def polynomial_dipole_hertz_response_jet_native(
     *,
     observer_time_ns: float,
     observer_position_mm: Sequence[float],
@@ -295,15 +368,25 @@ def quintic_dipole_hertz_response_jet_native(
     segment_start_time_ns: float,
     segment_duration_ns: float,
     position_coefficients_mm: np.ndarray,
-    rest_spin_start: Sequence[float],
-    rest_spin_end: Sequence[float],
-    rest_spin_start_derivative_per_ns: Sequence[float],
-    rest_spin_end_derivative_per_ns: Sequence[float],
+    rest_spin_coefficients: np.ndarray | None,
+    rest_spin_stereographic_coefficients: np.ndarray | None = None,
+    rest_spin_stereographic_frame: np.ndarray | None = None,
     preserved_rest_spin_magnitude: float | None,
     retarded_time_ns: float,
     jet_newton_iterations: int = 4,
+    observer_four_velocity_mm_ns: Sequence[float] | None = None,
 ) -> DipoleHertzResponseJetResult:
-    """Differentiate one retarded point-dipole source inside one segment."""
+    """Differentiate one smooth polynomial worldline/spin source segment.
+
+    This pure-Python routine is a validation oracle.  It accepts arbitrary
+    polynomial degrees so studies can compare the production interpolation
+    against smoother causal-history candidates without changing production
+    dispatch. An optional observer four-velocity seeds a forward derivative
+    of the same polynomial response. The returned 4-by-6 array is
+    ``u^k partial_k partial_l F_p`` in pair order 01,02,03,12,13,23.
+    This differentiates the selected polynomial, not the process of fitting
+    a different polynomial at a displaced event. No extra root is solved.
+    """
 
     observer_time = float(observer_time_ns)
     observer_position = np.asarray(observer_position_mm, dtype=float)
@@ -311,13 +394,32 @@ def quintic_dipole_hertz_response_jet_native(
     start_time = float(segment_start_time_ns)
     duration = float(segment_duration_ns)
     position_coefficients = np.asarray(position_coefficients_mm, dtype=float)
-    spin_start = np.asarray(rest_spin_start, dtype=float)
-    spin_end = np.asarray(rest_spin_end, dtype=float)
-    spin_start_slope = np.asarray(rest_spin_start_derivative_per_ns, dtype=float)
-    spin_end_slope = np.asarray(rest_spin_end_derivative_per_ns, dtype=float)
+    spin_coefficients = (
+        None
+        if rest_spin_coefficients is None
+        else np.asarray(rest_spin_coefficients, dtype=float)
+    )
+    stereographic_coefficients = (
+        None
+        if rest_spin_stereographic_coefficients is None
+        else np.asarray(rest_spin_stereographic_coefficients, dtype=float)
+    )
+    stereographic_frame = (
+        None
+        if rest_spin_stereographic_frame is None
+        else np.asarray(rest_spin_stereographic_frame, dtype=float)
+    )
     root_time = float(retarded_time_ns)
     iterations = int(jet_newton_iterations)
-    vectors = (spin_start, spin_end, spin_start_slope, spin_end_slope)
+    observer_velocity = (
+        None
+        if observer_four_velocity_mm_ns is None
+        else np.asarray(observer_four_velocity_mm_ns, dtype=float)
+    )
+    if observer_velocity is not None and (
+        observer_velocity.shape != (4,) or not np.all(np.isfinite(observer_velocity))
+    ):
+        raise ValueError("observer_four_velocity_mm_ns must contain four finite values")
     if not np.isfinite(observer_time):
         raise ValueError("observer_time_ns must be finite")
     if observer_position.shape != (3,) or not np.all(np.isfinite(observer_position)):
@@ -326,16 +428,62 @@ def quintic_dipole_hertz_response_jet_native(
         raise ValueError("magnetic_moment_native must be finite")
     if not np.isfinite(start_time) or not np.isfinite(duration) or duration <= 0.0:
         raise ValueError("the segment start and positive duration must be finite")
-    if position_coefficients.shape != (6, 3) or not np.all(
-        np.isfinite(position_coefficients)
-    ):
-        raise ValueError("position_coefficients_mm must have finite shape (6, 3)")
-    if any(
-        vector.shape != (3,) or not np.all(np.isfinite(vector)) for vector in vectors
+    if (
+        position_coefficients.ndim != 2
+        or position_coefficients.shape[0] < 2
+        or position_coefficients.shape[1] != 3
+        or not np.all(np.isfinite(position_coefficients))
     ):
         raise ValueError(
-            "source spin values and slopes must contain three finite values"
+            "position_coefficients_mm must have finite shape (degree+1, 3)"
         )
+    if (spin_coefficients is None) == (stereographic_coefficients is None):
+        raise ValueError(
+            "provide exactly one of rest_spin_coefficients or "
+            "rest_spin_stereographic_coefficients"
+        )
+    if spin_coefficients is not None:
+        if (
+            spin_coefficients.ndim != 2
+            or spin_coefficients.shape[0] < 1
+            or spin_coefficients.shape[1] != 3
+            or not np.all(np.isfinite(spin_coefficients))
+        ):
+            raise ValueError(
+                "rest_spin_coefficients must have finite shape (degree+1, 3)"
+            )
+        if stereographic_frame is not None:
+            raise ValueError(
+                "rest_spin_stereographic_frame requires stereographic coefficients"
+            )
+    else:
+        if (
+            stereographic_coefficients is None
+            or stereographic_coefficients.ndim != 2
+            or stereographic_coefficients.shape[0] < 1
+            or stereographic_coefficients.shape[1] != 2
+            or not np.all(np.isfinite(stereographic_coefficients))
+        ):
+            raise ValueError(
+                "rest_spin_stereographic_coefficients must have finite shape "
+                "(degree+1, 2)"
+            )
+        if (
+            stereographic_frame is None
+            or stereographic_frame.shape != (3, 3)
+            or not np.all(np.isfinite(stereographic_frame))
+            or not np.allclose(
+                stereographic_frame.T @ stereographic_frame,
+                np.eye(3),
+                rtol=1.0e-12,
+                atol=1.0e-12,
+            )
+            or np.linalg.det(stereographic_frame) <= 0.0
+        ):
+            raise ValueError(
+                "rest_spin_stereographic_frame must be a finite right-handed "
+                "orthonormal (3, 3) matrix"
+            )
     if preserved_rest_spin_magnitude is not None and (
         not np.isfinite(preserved_rest_spin_magnitude)
         or preserved_rest_spin_magnitude < 0.0
@@ -360,16 +508,14 @@ def quintic_dipole_hertz_response_jet_native(
             for index in range(3)
         ),
     )
+    if observer_velocity is not None:
+        observer_coordinates = tuple(
+            _Jet3(coordinate.coefficients, _Jet3.constant(speed).coefficients)
+            for coordinate, speed in zip(observer_coordinates, observer_velocity)
+        )
     root_coordinate = _Jet3.constant(C_MMNS * root_time)
     start_coordinate = C_MMNS * start_time
     duration_coordinate = C_MMNS * duration
-    spin_coefficients = _spin_coefficients(
-        spin_start,
-        spin_end,
-        spin_start_slope,
-        spin_end_slope,
-        duration,
-    )
 
     def source_state(
         source_coordinate: _Jet3,
@@ -385,29 +531,57 @@ def quintic_dipole_hertz_response_jet_native(
                     order
                     * position_coefficients[order, component]
                     / duration_coordinate
-                    for order in range(1, 6)
+                    for order in range(1, position_coefficients.shape[0])
                 ),
                 normalized_time,
             )
             for component in range(3)
         ]
-        source_spin = [
-            _polynomial(spin_coefficients[:, component], normalized_time)
-            for component in range(3)
-        ]
-        target = preserved_rest_spin_magnitude
-        if target is not None:
-            if target == 0.0:
-                source_spin = [_Jet3.constant(0.0) for _ in range(3)]
-            else:
-                magnitude = _norm(source_spin)
-                if magnitude.value <= 1.0e-15:
-                    raise ValueError(
-                        "constant-magnitude source-spin interpolation crossed zero"
-                    )
-                source_spin = [
-                    component * (target / magnitude) for component in source_spin
-                ]
+        if spin_coefficients is not None:
+            source_spin = [
+                _polynomial(spin_coefficients[:, component], normalized_time)
+                for component in range(3)
+            ]
+            target = preserved_rest_spin_magnitude
+            if target is not None:
+                if target == 0.0:
+                    source_spin = [_Jet3.constant(0.0) for _ in range(3)]
+                else:
+                    magnitude = _norm(source_spin)
+                    if magnitude.value <= 1.0e-15:
+                        raise ValueError(
+                            "constant-magnitude source-spin interpolation crossed zero"
+                        )
+                    source_spin = [
+                        component * (target / magnitude) for component in source_spin
+                    ]
+        else:
+            assert stereographic_coefficients is not None
+            assert stereographic_frame is not None
+            chart = [
+                _polynomial(stereographic_coefficients[:, component], normalized_time)
+                for component in range(2)
+            ]
+            radius_squared = chart[0] * chart[0] + chart[1] * chart[1]
+            denominator = 1.0 + radius_squared
+            local_spin = (
+                2.0 * chart[0] / denominator,
+                2.0 * chart[1] / denominator,
+                (1.0 - radius_squared) / denominator,
+            )
+            target = (
+                1.0
+                if preserved_rest_spin_magnitude is None
+                else preserved_rest_spin_magnitude
+            )
+            source_spin = [
+                target
+                * sum(
+                    stereographic_frame[component, basis] * local_spin[basis]
+                    for basis in range(3)
+                )
+                for component in range(3)
+            ]
         return source_position, source_beta, source_spin
 
     light_cone = _Jet3.constant(0.0)
@@ -498,6 +672,30 @@ def quintic_dipole_hertz_response_jet_native(
     electric, magnetic = fields_from_tensor_native(field_tensor)
     light_cone = observer_coordinates[0] - root_coordinate - separation
     residual = max(abs(value) for value in light_cone.coefficients)
+    directional_gradient = None
+    directional_residual = None
+    if observer_velocity is not None:
+        pairs = ((0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3))
+        directional_gradient = np.empty((4, 6), dtype=float)
+        for derivative_index in range(4):
+            for pair_index, (mu, nu) in enumerate(pairs):
+                first = sum(
+                    hertz[nu, rho].directional_derivative(derivative_index, mu, rho)
+                    for rho in range(4)
+                )
+                second = sum(
+                    hertz[mu, rho].directional_derivative(derivative_index, nu, rho)
+                    for rho in range(4)
+                )
+                directional_gradient[derivative_index, pair_index] = (
+                    _METRIC_SIGNS[mu] * first - _METRIC_SIGNS[nu] * second
+                )
+        assert light_cone.tangent is not None
+        directional_residual = float(np.max(np.abs(light_cone.tangent)))
+        if not np.all(np.isfinite(directional_gradient)) or not np.isfinite(
+            directional_residual
+        ):
+            raise ValueError("directional dipole response must be finite")
     return DipoleHertzResponseJetResult(
         hertz_tensor=hertz_value,
         four_potential=four_potential,
@@ -530,6 +728,94 @@ def quintic_dipole_hertz_response_jet_native(
         ),
         light_cone_jet_residual=float(residual),
         segment_fraction=float(fraction),
+        partial_antisymmetric_response_along_velocity=directional_gradient,
+        directional_light_cone_jet_residual=directional_residual,
+    )
+
+
+def quintic_dipole_hertz_response_jet_native(
+    *,
+    observer_time_ns: float,
+    observer_position_mm: Sequence[float],
+    magnetic_moment_native: float,
+    segment_start_time_ns: float,
+    segment_duration_ns: float,
+    position_coefficients_mm: np.ndarray,
+    rest_spin_start: Sequence[float],
+    rest_spin_end: Sequence[float],
+    rest_spin_start_derivative_per_ns: Sequence[float],
+    rest_spin_end_derivative_per_ns: Sequence[float],
+    preserved_rest_spin_magnitude: float | None,
+    retarded_time_ns: float,
+    jet_newton_iterations: int = 4,
+) -> DipoleHertzResponseJetResult:
+    """Preserve the production quintic-worldline/cubic-spin oracle surface."""
+
+    observer_time = float(observer_time_ns)
+    observer_position = np.asarray(observer_position_mm, dtype=float)
+    moment = float(magnetic_moment_native)
+    start_time = float(segment_start_time_ns)
+    duration = float(segment_duration_ns)
+    position_coefficients = np.asarray(position_coefficients_mm, dtype=float)
+    spin_start = np.asarray(rest_spin_start, dtype=float)
+    spin_end = np.asarray(rest_spin_end, dtype=float)
+    spin_start_slope = np.asarray(rest_spin_start_derivative_per_ns, dtype=float)
+    spin_end_slope = np.asarray(rest_spin_end_derivative_per_ns, dtype=float)
+    root_time = float(retarded_time_ns)
+    iterations = int(jet_newton_iterations)
+    vectors = (spin_start, spin_end, spin_start_slope, spin_end_slope)
+    if not np.isfinite(observer_time):
+        raise ValueError("observer_time_ns must be finite")
+    if observer_position.shape != (3,) or not np.all(np.isfinite(observer_position)):
+        raise ValueError("observer_position_mm must contain three finite values")
+    if not np.isfinite(moment):
+        raise ValueError("magnetic_moment_native must be finite")
+    if not np.isfinite(start_time) or not np.isfinite(duration) or duration <= 0.0:
+        raise ValueError("the segment start and positive duration must be finite")
+    if position_coefficients.shape != (6, 3) or not np.all(
+        np.isfinite(position_coefficients)
+    ):
+        raise ValueError("position_coefficients_mm must have finite shape (6, 3)")
+    if any(
+        vector.shape != (3,) or not np.all(np.isfinite(vector)) for vector in vectors
+    ):
+        raise ValueError(
+            "source spin values and slopes must contain three finite values"
+        )
+    if preserved_rest_spin_magnitude is not None and (
+        not np.isfinite(preserved_rest_spin_magnitude)
+        or preserved_rest_spin_magnitude < 0.0
+    ):
+        raise ValueError(
+            "preserved_rest_spin_magnitude must be finite and non-negative"
+        )
+    if not np.isfinite(root_time):
+        raise ValueError("retarded_time_ns must be finite")
+    fraction = (root_time - start_time) / duration
+    if not 0.0 < fraction < 1.0:
+        raise ValueError(
+            "retarded_time_ns must lie strictly inside the selected smooth segment"
+        )
+    if iterations < 3:
+        raise ValueError("jet_newton_iterations must be at least three")
+    spin_coefficients = _spin_coefficients(
+        spin_start,
+        spin_end,
+        spin_start_slope,
+        spin_end_slope,
+        duration,
+    )
+    return polynomial_dipole_hertz_response_jet_native(
+        observer_time_ns=observer_time,
+        observer_position_mm=observer_position,
+        magnetic_moment_native=moment,
+        segment_start_time_ns=start_time,
+        segment_duration_ns=duration,
+        position_coefficients_mm=position_coefficients,
+        rest_spin_coefficients=spin_coefficients,
+        preserved_rest_spin_magnitude=preserved_rest_spin_magnitude,
+        retarded_time_ns=root_time,
+        jet_newton_iterations=iterations,
     )
 
 
@@ -659,11 +945,14 @@ def quintic_dipole_hertz_sparse_response_numba_native(
     rest_spin_end_derivative_per_ns: Sequence[float],
     preserved_rest_spin_magnitude: float | None,
     retarded_time_ns: float,
+    observer_four_velocity_mm_ns: Sequence[float] | None = None,
+    include_partial_a: bool = False,
 ) -> DipoleHertzSparseResponseJetResult:
     """Return only the compact potential/response surface through strict Numba."""
 
     from .dipole_hertz_jet_numba import (
         quintic_dipole_hertz_sparse_response_strict_serial,
+        quintic_dipole_hertz_sparse_potential_rate_strict_serial,
     )
 
     observer_position = np.asarray(observer_position_mm, dtype=float)
@@ -706,20 +995,47 @@ def quintic_dipole_hertz_sparse_response_numba_native(
         spin_end_slope,
         duration,
     )
-    status, potential, packed_field, packed_partial_f, residual = (
-        quintic_dipole_hertz_sparse_response_strict_serial(
-            float(observer_time_ns),
-            observer_position,
-            float(magnetic_moment_native),
-            start_time,
-            duration,
-            position_coefficients,
-            spin_coefficients,
-            preserve_magnitude,
-            preserved_magnitude,
-            root_time,
-        )
+    arguments = (
+        float(observer_time_ns),
+        observer_position,
+        float(magnetic_moment_native),
+        start_time,
+        duration,
+        position_coefficients,
+        spin_coefficients,
+        preserve_magnitude,
+        preserved_magnitude,
+        root_time,
     )
+    potential_rate = None
+    partial_a = None
+    if observer_four_velocity_mm_ns is None and not include_partial_a:
+        status, potential, packed_field, packed_partial_f, residual = (
+            quintic_dipole_hertz_sparse_response_strict_serial(*arguments)
+        )
+    else:
+        velocity = (
+            np.zeros(4)
+            if observer_four_velocity_mm_ns is None
+            else np.asarray(observer_four_velocity_mm_ns, dtype=float)
+        )
+        if velocity.shape != (4,) or not np.isfinite(velocity).all():
+            raise ValueError("observer_four_velocity_mm_ns needs four finite values")
+        (
+            status,
+            potential,
+            packed_field,
+            packed_partial_f,
+            residual,
+            potential_rate,
+            partial_a,
+        ) = quintic_dipole_hertz_sparse_potential_rate_strict_serial(
+            *arguments, velocity
+        )
+        if observer_four_velocity_mm_ns is None:
+            potential_rate = None
+        if not include_partial_a:
+            partial_a = None
     if status == 1:
         raise ValueError("constant-magnitude source-spin interpolation crossed zero")
     if status == 2:
@@ -737,6 +1053,8 @@ def quintic_dipole_hertz_sparse_response_numba_native(
         retarded_time_ns=root_time,
         light_cone_jet_residual=float(residual),
         segment_fraction=float(fraction),
+        four_potential_proper_rate=potential_rate,
+        partial_a=partial_a,
     )
 
 
@@ -759,6 +1077,8 @@ def evaluate_retarded_dipole_field_gradient_hertz_jet_native(
     response_kernel: str = "python",
     fallback_backend: str = "numba_full_strict_serial",
     spin_interpolation_model: str = "centered_c1",
+    observer_four_velocity_mm_ns: Sequence[float] | None = None,
+    include_partial_a: bool = False,
 ) -> DipoleHertzJetProviderResult:
     """Evaluate the analytical response, falling back at nonsmooth knots.
 
@@ -769,6 +1089,11 @@ def evaluate_retarded_dipole_field_gradient_hertz_jet_native(
     back: appending the next source knot changes its former endpoint slope.
     Frozen interior events use one scalar retarded root per source and the exact
     local polynomial jet above.
+
+    The sparse kernel supports optional ``include_partial_a`` and
+    ``observer_four_velocity_mm_ns`` for canonical consumers. The latter
+    returns u.partial_A, not the derivative of the field gradient. Their
+    boundary fallback is contracted from the existing full reference response.
     """
 
     # Local imports keep this validation oracle independent from the production
@@ -781,6 +1106,17 @@ def evaluate_retarded_dipole_field_gradient_hertz_jet_native(
         evaluate_retarded_dipole_field_gradient_native,
     )
 
+    velocity = None
+    if observer_four_velocity_mm_ns is not None:
+        velocity = np.asarray(observer_four_velocity_mm_ns, dtype=float)
+        if velocity.shape != (4,) or not np.isfinite(velocity).all():
+            raise ValueError("observer_four_velocity_mm_ns needs four finite values")
+        if response_kernel != "numba_sparse_strict_serial":
+            raise ValueError(
+                "Potential-rate option requires the sparse response kernel"
+            )
+    if include_partial_a and response_kernel != "numba_sparse_strict_serial":
+        raise ValueError("Opt-in partial_A requires the sparse response kernel")
     boundary_guard = float(boundary_guard_fraction)
     if not np.isfinite(boundary_guard) or boundary_guard < 0.0 or boundary_guard >= 0.5:
         raise ValueError("boundary_guard_fraction must be finite in [0, 0.5)")
@@ -800,6 +1136,7 @@ def evaluate_retarded_dipole_field_gradient_hertz_jet_native(
         excluded_source_identities=excluded_source_identities,
         spin_interpolation_model=spin_interpolation_model,
     )
+    center: RetardedDipoleRootResult | RetardedDipoleHertzResult
     if response_kernel == "numba_sparse_strict_serial":
         center = _evaluate_prepared_dipole_roots_numba_exact_serial(
             prepared,
@@ -858,6 +1195,10 @@ def evaluate_retarded_dipole_field_gradient_hertz_jet_native(
 
             response = RetardedDipoleResponseGradientResult(
                 four_potential=full_response.four_potential,
+                four_potential_proper_rate=(
+                    None if velocity is None else velocity @ full_response.partial_a
+                ),
+                partial_a=(full_response.partial_a if include_partial_a else None),
                 antisymmetric_response=pack_antisymmetric_response_native(
                     full_response.field_tensor
                 ),
@@ -955,12 +1296,20 @@ def evaluate_retarded_dipole_field_gradient_hertz_jet_native(
                 "retarded root is inside the nonsmooth segment-boundary guard "
                 f"for source {source.identity!r}: fraction={fraction:.17g}"
             )
+        evaluator: Callable[
+            ..., DipoleHertzResponseJetResult | DipoleHertzSparseResponseJetResult
+        ]
         if response_kernel == "python":
             evaluator = quintic_dipole_hertz_response_jet_native
         elif response_kernel == "numba_strict_serial":
             evaluator = quintic_dipole_hertz_response_jet_numba_native
         else:
             evaluator = quintic_dipole_hertz_sparse_response_numba_native
+        extra_arguments = {}
+        if response_kernel == "numba_sparse_strict_serial":
+            extra_arguments["observer_four_velocity_mm_ns"] = velocity
+            extra_arguments["include_partial_a"] = include_partial_a
+        result: DipoleHertzResponseJetResult | DipoleHertzSparseResponseJetResult
         result = evaluator(
             observer_time_ns=float(observer_event.time_ns),
             observer_position_mm=observer_event.position_mm,
@@ -980,6 +1329,7 @@ def evaluate_retarded_dipole_field_gradient_hertz_jet_native(
             ],
             preserved_rest_spin_magnitude=source.preserved_rest_spin_magnitude,
             retarded_time_ns=root_time,
+            **extra_arguments,
         )
         jet_residual[source_array_index] = result.light_cone_jet_residual
         source_results.append(result)
@@ -990,16 +1340,29 @@ def evaluate_retarded_dipole_field_gradient_hertz_jet_native(
 
         packed_field = np.zeros(6, dtype=float)
         packed_partial_f = np.zeros((4, 6), dtype=float)
+        potential_rate = None if velocity is None else np.zeros(4, dtype=float)
+        partial_a = np.zeros((4, 4), dtype=float) if include_partial_a else None
         for result in source_results:
             assert isinstance(result, DipoleHertzSparseResponseJetResult)
             four_potential += result.four_potential
             packed_field += result.antisymmetric_response
             packed_partial_f += result.partial_antisymmetric_response
+            if potential_rate is not None:
+                assert result.four_potential_proper_rate is not None
+                potential_rate += result.four_potential_proper_rate
+            if partial_a is not None:
+                assert result.partial_a is not None
+                partial_a += result.partial_a
+        response: (
+            RetardedDipoleFieldGradientResult | RetardedDipoleResponseGradientResult
+        )
         response = RetardedDipoleResponseGradientResult(
             four_potential=four_potential,
+            four_potential_proper_rate=potential_rate,
+            partial_a=partial_a,
             antisymmetric_response=packed_field,
             partial_antisymmetric_response=packed_partial_f,
-            root=center,
+            root=cast("RetardedDipoleRootResult", center),
             used_analytic_response=True,
             fallback_reason=None,
             source_segment_index=segment_index.copy(),
@@ -1024,7 +1387,7 @@ def evaluate_retarded_dipole_field_gradient_hertz_jet_native(
             magnetic_field_native=magnetic,
             field_tensor=field_tensor,
             partial_f=partial_f,
-            hertz=center,
+            hertz=cast("RetardedDipoleHertzResult", center),
             stencil_step_mm=0.0,
             stencil_offsets=np.zeros((1, 4), dtype=int),
             stencil_retarded_time_ns=center.retarded_time_ns[np.newaxis, :],
@@ -1056,11 +1419,55 @@ def evaluate_retarded_dipole_field_gradient_hertz_jet_native(
     )
 
 
+def evaluate_causal_c5_dipole_hertz_response_native(
+    history: "CausalC5SourceHistory",
+    observer_event: "ObserverEvent",
+    *,
+    magnetic_moment_native: float,
+    root_tolerance_mm: float = 1.0e-21,
+    max_root_iterations: int = 96,
+    minimum_separation_mm: float = 1.0e-15,
+) -> DipoleHertzResponseJetResult:
+    """Evaluate one source from its causally frozen $C^5$ history.
+
+    This is an isolated provider adapter, not production dispatch.  It refuses
+    an observer light cone outside the ready segment range, solves the root on
+    the frozen degree-eleven worldline, and feeds the matching stereographic
+    spin polynomial into the generic Hertz jet.
+    """
+
+    root = history.solve_retarded_root(
+        observer_time_ns=float(observer_event.time_ns),
+        observer_position_mm=observer_event.position_mm,
+        root_tolerance_mm=root_tolerance_mm,
+        max_root_iterations=max_root_iterations,
+        minimum_separation_mm=minimum_separation_mm,
+    )
+    segment = root.segment
+    return polynomial_dipole_hertz_response_jet_native(
+        observer_time_ns=float(observer_event.time_ns),
+        observer_position_mm=observer_event.position_mm,
+        magnetic_moment_native=magnetic_moment_native,
+        segment_start_time_ns=segment.start_time_ns,
+        segment_duration_ns=segment.duration_ns,
+        position_coefficients_mm=segment.position_coefficients_mm,
+        rest_spin_coefficients=None,
+        rest_spin_stereographic_coefficients=(
+            segment.rest_spin_stereographic_coefficients
+        ),
+        rest_spin_stereographic_frame=segment.stereographic_frame,
+        preserved_rest_spin_magnitude=None,
+        retarded_time_ns=root.retarded_time_ns,
+    )
+
+
 __all__ = [
     "DipoleHertzJetProviderResult",
     "DipoleHertzResponseJetResult",
     "DipoleHertzSparseResponseJetResult",
+    "evaluate_causal_c5_dipole_hertz_response_native",
     "evaluate_retarded_dipole_field_gradient_hertz_jet_native",
+    "polynomial_dipole_hertz_response_jet_native",
     "quintic_dipole_hertz_response_jet_native",
     "quintic_dipole_hertz_response_jet_numba_native",
     "quintic_dipole_hertz_sparse_response_numba_native",

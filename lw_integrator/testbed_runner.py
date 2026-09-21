@@ -79,6 +79,12 @@ DIPOLE_SOURCE_MODEL_OPTIONS: Tuple[Tuple[str, str], ...] = (
     ("Full retarded point (experimental)", "covariant_retarded_point"),
 )
 
+DIPOLE_SOURCE_HISTORY_OPTIONS: Tuple[Tuple[str, str], ...] = (
+    ("Frozen C1 (legacy)", "causal_frozen_c1"),
+    ("Causal C5 (adaptive exact-pair)", "causal_c5"),
+    ("Causal local jet (adaptive exact-pair)", "causal_local_jet"),
+)
+
 EXACT_RETARDED_BACKEND_OPTIONS: Tuple[Tuple[str, str], ...] = (
     ("Python reference", "python"),
     ("Numba roots-exact CPU", "numba_roots_exact_serial"),
@@ -97,6 +103,12 @@ EXACT_RETARDED_UPDATE_OPTIONS: Tuple[Tuple[str, str], ...] = (
         "Second-order accepted-start Taylor",
         "second_order_start_taylor_endpoint",
     ),
+)
+
+INTRINSIC_SPIN_SELF_REACTION_OPTIONS: Tuple[Tuple[str, str], ...] = (
+    ("Off", "off"),
+    ("Diagnostic only", "diagnostic"),
+    ("Experimental: first-order spin recoil", "experimental_linear_spin"),
 )
 
 PARAM_LABELS: Dict[str, str] = {
@@ -446,12 +458,29 @@ class SimulationOptions:
     magnetic_dipole_stern_gerlach_model: str = "rfs_full_g"
     magnetic_dipole_exact_retarded_backend: str = "python"
     magnetic_dipole_exact_retarded_update: str = "first_order_endpoint"
+    magnetic_dipole_intrinsic_spin_self_reaction_mode: str = "off"
     magnetic_dipole_source_model: str = "off"
+    magnetic_dipole_source_history_model: str = "causal_frozen_c1"
     magnetic_dipole_source_minimum_separation_mm: float = 2.0e-9
     magnetic_dipole_source_relative_stencil_step: float = 1.0e-3
     magnetic_dipole_source_minimum_stencil_step_mm: float = 1.0e-15
     magnetic_dipole_source_root_tolerance_mm: float = 1.0e-21
     magnetic_dipole_source_max_root_iterations: int = 96
+    magnetic_dipole_source_local_jet_primary_half_width_ns: Optional[float] = None
+    magnetic_dipole_source_local_jet_narrow_half_width_ns: Optional[float] = None
+    magnetic_dipole_source_local_jet_wide_half_width_ns: Optional[float] = None
+    magnetic_dipole_source_local_jet_acceleration_degree: int = 5
+    magnetic_dipole_source_local_jet_spin_degree: int = 5
+    magnetic_dipole_source_local_jet_maximum_condition_number: float = 1.0e5
+    magnetic_dipole_source_local_jet_maximum_relative_spread: float = 1.0e-3
+    magnetic_dipole_source_local_jet_scales: list[dict[str, object]] = field(
+        default_factory=list
+    )
+    magnetic_dipole_source_local_jet_maximum_cross_scale_relative_spread: float = 1.0e-3
+    magnetic_dipole_source_local_jet_acceleration_samples: str = "interval_mean"
+    magnetic_dipole_source_local_jet_window_alignment: str = "past"
+    magnetic_dipole_source_local_jet_window_weighting: str = "tricube"
+    magnetic_dipole_source_local_jet_inertial_prehistory: str = "untrusted"
     rider_magnetic_species: str = "electron"
     rider_magnetic_moment_j_per_t: Optional[float] = None
     rider_spin_quantum_number: Optional[float] = None
@@ -777,8 +806,12 @@ class SimulationOptions:
                 "stern_gerlach_model": (self.magnetic_dipole_stern_gerlach_model),
                 "exact_retarded_backend": (self.magnetic_dipole_exact_retarded_backend),
                 "exact_retarded_update": (self.magnetic_dipole_exact_retarded_update),
+                "intrinsic_spin_self_reaction_mode": (
+                    self.magnetic_dipole_intrinsic_spin_self_reaction_mode
+                ),
                 "source": {
                     "model": self.magnetic_dipole_source_model,
+                    "history_model": self.magnetic_dipole_source_history_model,
                     "minimum_separation_mm": (
                         self.magnetic_dipole_source_minimum_separation_mm
                     ),
@@ -793,6 +826,46 @@ class SimulationOptions:
                     ),
                     "max_root_iterations": (
                         self.magnetic_dipole_source_max_root_iterations
+                    ),
+                    "local_jet_primary_half_width_ns": (
+                        self.magnetic_dipole_source_local_jet_primary_half_width_ns
+                    ),
+                    "local_jet_narrow_half_width_ns": (
+                        self.magnetic_dipole_source_local_jet_narrow_half_width_ns
+                    ),
+                    "local_jet_wide_half_width_ns": (
+                        self.magnetic_dipole_source_local_jet_wide_half_width_ns
+                    ),
+                    "local_jet_acceleration_degree": (
+                        self.magnetic_dipole_source_local_jet_acceleration_degree
+                    ),
+                    "local_jet_spin_degree": (
+                        self.magnetic_dipole_source_local_jet_spin_degree
+                    ),
+                    "local_jet_maximum_condition_number": (
+                        self.magnetic_dipole_source_local_jet_maximum_condition_number
+                    ),
+                    "local_jet_maximum_relative_spread": (
+                        self.magnetic_dipole_source_local_jet_maximum_relative_spread
+                    ),
+                    "local_jet_scales": [
+                        dict(scale)
+                        for scale in self.magnetic_dipole_source_local_jet_scales
+                    ],
+                    "local_jet_maximum_cross_scale_relative_spread": (
+                        self.magnetic_dipole_source_local_jet_maximum_cross_scale_relative_spread
+                    ),
+                    "local_jet_acceleration_samples": (
+                        self.magnetic_dipole_source_local_jet_acceleration_samples
+                    ),
+                    "local_jet_window_alignment": (
+                        self.magnetic_dipole_source_local_jet_window_alignment
+                    ),
+                    "local_jet_window_weighting": (
+                        self.magnetic_dipole_source_local_jet_window_weighting
+                    ),
+                    "local_jet_inertial_prehistory": (
+                        self.magnetic_dipole_source_local_jet_inertial_prehistory
                     ),
                 },
                 "rider": {
@@ -1004,6 +1077,33 @@ class SimulationOptions:
                 return float(value)  # type: ignore[arg-type]
             except (TypeError, ValueError):
                 return None
+
+        def _magnetic_source_optional_float(name: str) -> Optional[float]:
+            value = _magnetic_source_value(name, None)
+            if value in (None, ""):
+                return None
+            try:
+                return float(value)  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                return None
+
+        def _magnetic_source_scales() -> list[dict[str, object]]:
+            value = _magnetic_source_value("local_jet_scales", [])
+            if value is None:
+                return []
+            if not isinstance(value, list):
+                raise ValueError(
+                    "magnetic_dipole.source.local_jet_scales must be a list"
+                )
+            scales = []
+            for item in value:
+                if not isinstance(item, dict):
+                    raise ValueError(
+                        "each magnetic_dipole.source.local_jet_scales item must "
+                        "be an object"
+                    )
+                scales.append(dict(item))
+            return scales
 
         def _magnetic_spin(
             role: str,
@@ -1616,7 +1716,13 @@ class SimulationOptions:
             magnetic_dipole_exact_retarded_update=str(
                 _magnetic_value("exact_retarded_update", "first_order_endpoint")
             ),
+            magnetic_dipole_intrinsic_spin_self_reaction_mode=str(
+                _magnetic_value("intrinsic_spin_self_reaction_mode", "off")
+            ),
             magnetic_dipole_source_model=str(_magnetic_source_value("model", "off")),
+            magnetic_dipole_source_history_model=str(
+                _magnetic_source_value("history_model", "causal_frozen_c1")
+            ),
             magnetic_dipole_source_minimum_separation_mm=float(
                 _magnetic_source_value("minimum_separation_mm", 2.0e-9)
             ),
@@ -1631,6 +1737,48 @@ class SimulationOptions:
             ),
             magnetic_dipole_source_max_root_iterations=int(
                 _magnetic_source_value("max_root_iterations", 96)
+            ),
+            magnetic_dipole_source_local_jet_primary_half_width_ns=(
+                _magnetic_source_optional_float("local_jet_primary_half_width_ns")
+            ),
+            magnetic_dipole_source_local_jet_narrow_half_width_ns=(
+                _magnetic_source_optional_float("local_jet_narrow_half_width_ns")
+            ),
+            magnetic_dipole_source_local_jet_wide_half_width_ns=(
+                _magnetic_source_optional_float("local_jet_wide_half_width_ns")
+            ),
+            magnetic_dipole_source_local_jet_acceleration_degree=int(
+                _magnetic_source_value("local_jet_acceleration_degree", 5)
+            ),
+            magnetic_dipole_source_local_jet_spin_degree=int(
+                _magnetic_source_value("local_jet_spin_degree", 5)
+            ),
+            magnetic_dipole_source_local_jet_maximum_condition_number=float(
+                _magnetic_source_value("local_jet_maximum_condition_number", 1.0e5)
+            ),
+            magnetic_dipole_source_local_jet_maximum_relative_spread=float(
+                _magnetic_source_value("local_jet_maximum_relative_spread", 1.0e-3)
+            ),
+            magnetic_dipole_source_local_jet_scales=_magnetic_source_scales(),
+            magnetic_dipole_source_local_jet_maximum_cross_scale_relative_spread=float(
+                _magnetic_source_value(
+                    "local_jet_maximum_cross_scale_relative_spread",
+                    1.0e-3,
+                )
+            ),
+            magnetic_dipole_source_local_jet_acceleration_samples=str(
+                _magnetic_source_value(
+                    "local_jet_acceleration_samples", "interval_mean"
+                )
+            ),
+            magnetic_dipole_source_local_jet_window_alignment=str(
+                _magnetic_source_value("local_jet_window_alignment", "past")
+            ),
+            magnetic_dipole_source_local_jet_window_weighting=str(
+                _magnetic_source_value("local_jet_window_weighting", "tricube")
+            ),
+            magnetic_dipole_source_local_jet_inertial_prehistory=str(
+                _magnetic_source_value("local_jet_inertial_prehistory", "untrusted")
             ),
             rider_magnetic_species=str(
                 _magnetic_particle_value("rider", "species", "electron")
@@ -2966,8 +3114,12 @@ def build_magnetic_dipole_config(options: SimulationOptions) -> object:
         stern_gerlach_model=options.magnetic_dipole_stern_gerlach_model,
         exact_retarded_backend=options.magnetic_dipole_exact_retarded_backend,
         exact_retarded_update=options.magnetic_dipole_exact_retarded_update,
+        intrinsic_spin_self_reaction_mode=(
+            options.magnetic_dipole_intrinsic_spin_self_reaction_mode
+        ),
         source=DipoleSourceConfig(
             model=options.magnetic_dipole_source_model,
+            history_model=options.magnetic_dipole_source_history_model,
             minimum_separation_mm=(
                 options.magnetic_dipole_source_minimum_separation_mm
             ),
@@ -2979,6 +3131,43 @@ def build_magnetic_dipole_config(options: SimulationOptions) -> object:
             ),
             root_tolerance_mm=options.magnetic_dipole_source_root_tolerance_mm,
             max_root_iterations=(options.magnetic_dipole_source_max_root_iterations),
+            local_jet_primary_half_width_ns=(
+                options.magnetic_dipole_source_local_jet_primary_half_width_ns
+            ),
+            local_jet_narrow_half_width_ns=(
+                options.magnetic_dipole_source_local_jet_narrow_half_width_ns
+            ),
+            local_jet_wide_half_width_ns=(
+                options.magnetic_dipole_source_local_jet_wide_half_width_ns
+            ),
+            local_jet_acceleration_degree=(
+                options.magnetic_dipole_source_local_jet_acceleration_degree
+            ),
+            local_jet_spin_degree=(
+                options.magnetic_dipole_source_local_jet_spin_degree
+            ),
+            local_jet_maximum_condition_number=(
+                options.magnetic_dipole_source_local_jet_maximum_condition_number
+            ),
+            local_jet_maximum_relative_spread=(
+                options.magnetic_dipole_source_local_jet_maximum_relative_spread
+            ),
+            local_jet_scales=(options.magnetic_dipole_source_local_jet_scales),
+            local_jet_maximum_cross_scale_relative_spread=(
+                options.magnetic_dipole_source_local_jet_maximum_cross_scale_relative_spread
+            ),
+            local_jet_acceleration_samples=(
+                options.magnetic_dipole_source_local_jet_acceleration_samples
+            ),
+            local_jet_window_alignment=(
+                options.magnetic_dipole_source_local_jet_window_alignment
+            ),
+            local_jet_window_weighting=(
+                options.magnetic_dipole_source_local_jet_window_weighting
+            ),
+            local_jet_inertial_prehistory=(
+                options.magnetic_dipole_source_local_jet_inertial_prehistory
+            ),
         ),
         rider=MagneticDipoleParticleConfig(
             species=options.rider_magnetic_species,
@@ -3194,9 +3383,41 @@ def run_testbed(
         f"  Adaptive timestep: {options.adaptive_timestep_enabled} (threshold={options.adaptive_timestep_threshold * 100:.0f}%, reduction={options.adaptive_timestep_reduction_factor}x)"
     )
     _log(f"  Radiation reaction: {options.radiation_reaction_mode}")
-    _log(f"  Magnetic dipole source: {options.magnetic_dipole_source_model}")
+    _log(
+        "  Magnetic dipole source: "
+        f"{options.magnetic_dipole_source_model} "
+        f"(history={options.magnetic_dipole_source_history_model})"
+    )
+    if options.magnetic_dipole_source_history_model == "causal_local_jet":
+        if options.magnetic_dipole_source_local_jet_scales:
+            _log(
+                "    Local jet named physical scales: "
+                f"{options.magnetic_dipole_source_local_jet_scales}"
+            )
+        else:
+            _log(
+                "    Local jet widths (narrow/primary/wide ns): "
+                f"{options.magnetic_dipole_source_local_jet_narrow_half_width_ns}/"
+                f"{options.magnetic_dipole_source_local_jet_primary_half_width_ns}/"
+                f"{options.magnetic_dipole_source_local_jet_wide_half_width_ns}"
+            )
+        _log(
+            "    Local jet reconstruction: "
+            f"acceleration={options.magnetic_dipole_source_local_jet_acceleration_samples}, "
+            f"alignment={options.magnetic_dipole_source_local_jet_window_alignment}, "
+            f"weighting={options.magnetic_dipole_source_local_jet_window_weighting}, "
+            f"spread limit={options.magnetic_dipole_source_local_jet_maximum_relative_spread:g}, "
+            "cross-scale limit="
+            f"{options.magnetic_dipole_source_local_jet_maximum_cross_scale_relative_spread:g}, "
+            "boundary="
+            f"{options.magnetic_dipole_source_local_jet_inertial_prehistory}"
+        )
     _log(f"  Exact-retarded backend: {options.magnetic_dipole_exact_retarded_backend}")
     _log(f"  Exact-retarded update: {options.magnetic_dipole_exact_retarded_update}")
+    _log(
+        "  Intrinsic-spin self-reaction: "
+        f"{options.magnetic_dipole_intrinsic_spin_self_reaction_mode}"
+    )
     if checkpoint_config.enabled:
         _log(
             "  Checkpoint: "
@@ -5102,6 +5323,9 @@ def run_testbed(
             rider_payload["particle_tracks"] = _build_all_particle_tracks(
                 rider_states, interval=interval
             )
+            # Match live energy plots; raw canonical Pt cannot determine mass.
+            if rest_energies.get("rider") is not None:
+                rider_payload["rest_energy_mev"] = float(rest_energies["rider"])
             core_payload: Dict[str, object] = {"rider": rider_payload}
             if (
                 driver_allowed
@@ -5124,6 +5348,8 @@ def run_testbed(
                 driver_payload["particle_tracks"] = _build_all_particle_tracks(
                     driver_states, interval=interval
                 )
+                if rest_energies.get("driver") is not None:
+                    driver_payload["rest_energy_mev"] = float(rest_energies["driver"])
                 core_payload["driver"] = driver_payload
 
             traj_data: Dict[str, object] = {
@@ -5320,6 +5546,8 @@ __all__ = [
     "RADIATION_REACTION_MODE_CHOICES",
     "EXACT_RETARDED_BACKEND_OPTIONS",
     "EXACT_RETARDED_UPDATE_OPTIONS",
+    "INTRINSIC_SPIN_SELF_REACTION_OPTIONS",
+    "DIPOLE_SOURCE_HISTORY_OPTIONS",
     "DIPOLE_SOURCE_MODEL_OPTIONS",
     "SimulationOptions",
     "InitialSummary",

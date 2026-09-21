@@ -46,6 +46,8 @@ If you are new to the project, start with the **Overview** and **Quick start** p
    theory
    magnetic_dipole_moments
    radiation_reaction_plan
+   radiation_flux_oracle
+   spin_self_force_oracle
    self_consistency
    adaptive_timestep
    recent_changes
@@ -56,6 +58,7 @@ If you are new to the project, start with the **Overview** and **Quick start** p
 
    validation
    checkpoints
+   finite_spin_pair
    multirate_return
    rfs_m5_optimization
    metal_gpu_kernel_study

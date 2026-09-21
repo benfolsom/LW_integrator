@@ -193,6 +193,70 @@ def _partial_magnetic_potential_covariant(
     )
 
 
+def antisymmetric_response_moment_force_derivative_native(
+    *,
+    four_velocity_mm_ns: Sequence[float],
+    four_acceleration_mm_ns2: Sequence[float],
+    spin_four_vector: Sequence[float],
+    spin_four_vector_derivative_per_ns: Sequence[float],
+    partial_antisymmetric_response: Sequence[Sequence[float]],
+    partial_antisymmetric_response_along_velocity: Sequence[Sequence[float]],
+    magnetic_moment_native: float,
+) -> np.ndarray:
+    """Differentiate the existing moment force along observer proper time.
+
+    The moment force is ``(mu/c) G[partial F, s] u_lower``. Its derivative
+    contains three terms: change of the source response along the observer
+    worldline, change of the normalized spin four-vector, and acceleration
+    of the observer. The caller supplies the physical total acceleration and
+    spin derivative appropriate to its selected model; neither is inferred
+    from preceding-interval averages here.
+
+    Both response inputs have shape (4, 6). The second is the contraction
+    ``u^k partial_k partial_l F_p``, NOT the complete second field derivative.
+    Coordinates are (ct,x,y,z), so this contraction has proper-time units
+    without another factor of c. No E/B three-fields or full higher-order
+    response tensor are constructed. The magnetic moment is constant.
+
+    This is the first-derivative subset of the independent potential-based
+    ``potential_directional_rfs_reduction_jet_native`` reference. It is not
+    magnetic self-reaction and does not by itself enable a new time update.
+    """
+    velocity = np.asarray(four_velocity_mm_ns, dtype=float)
+    acceleration = np.asarray(four_acceleration_mm_ns2, dtype=float)
+    spin = np.asarray(spin_four_vector, dtype=float)
+    spin_rate = np.asarray(spin_four_vector_derivative_per_ns, dtype=float)
+    gradient = np.asarray(partial_antisymmetric_response, dtype=float)
+    gradient_rate = np.asarray(
+        partial_antisymmetric_response_along_velocity, dtype=float
+    )
+    if any(v.shape != (4,) for v in (velocity, acceleration, spin, spin_rate)):
+        raise ValueError("velocity, acceleration, spin and spin rate need shape (4,)")
+    if gradient.shape != (4, 6) or gradient_rate.shape != (4, 6):
+        raise ValueError("response gradient and its directional rate need shape (4, 6)")
+    if not all(
+        np.all(np.isfinite(v))
+        for v in (velocity, acceleration, spin, spin_rate, gradient, gradient_rate)
+    ):
+        raise ValueError("moment-force derivative inputs must be finite")
+    moment = float(magnetic_moment_native)
+    if not np.isfinite(moment):
+        raise ValueError("magnetic_moment_native must be finite")
+
+    partial_b = _partial_magnetic_potential_covariant(gradient, spin)
+    partial_b_rate = _partial_magnetic_potential_covariant(gradient_rate, spin)
+    partial_b_rate += _partial_magnetic_potential_covariant(gradient, spin_rate)
+    return (
+        moment
+        / C_MMNS
+        * _SIGNS
+        * (
+            (partial_b_rate - partial_b_rate.T) @ velocity
+            + (partial_b - partial_b.T) @ acceleration
+        )
+    )
+
+
 def antisymmetric_response_rfs_native(
     *,
     four_velocity_mm_ns: Sequence[float],
