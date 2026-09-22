@@ -214,9 +214,19 @@ def main(argv: list[str] | None = None, *, _multiparticle: bool = False) -> int:
             help="Experimental reaction-off RK4 subset: selected particles use RK4, remaining particles use midpoint; all remain retarded sources",
         )
         parser.add_argument(
+            "--pseudogrid-rk3-active-count",
+            type=int,
+            help="Experimental reaction-off RK4 subset: selected particles use RK4, remaining particles use third-order RK; all remain retarded sources",
+        )
+        parser.add_argument(
             "--pseudogrid-selection-spacing-ns",
             type=float,
-            help="Fixed physical time between active-subset reselections; required for midpoint mode and must align with --step-ns",
+            help="Fixed physical time between active-subset reselections; required for reduced modes and must align with --step-ns",
+        )
+        parser.add_argument(
+            "--pseudogrid-constraint-budget-relative",
+            type=float,
+            help="Experimental passive-step limit on normalized mass and spin constraints; default 1e-6, with same-step RK4 fallback",
         )
     parser.add_argument("--capabilities", action="store_true")
     parser.add_argument(
@@ -313,19 +323,37 @@ def main(argv: list[str] | None = None, *, _multiparticle: bool = False) -> int:
         parser.error("--max-step-halvings must be between 0 and 10")
     if _multiparticle and args.max_step_halvings:
         parser.error("Many-particle runs currently require fixed recording intervals")
-    if (
-        _multiparticle
-        and args.pseudogrid_midpoint_active_count is not None
-        and args.pseudogrid_selection_spacing_ns is None
-    ):
-        parser.error("Midpoint mode requires --pseudogrid-selection-spacing-ns")
+    if _multiparticle:
+        selected_modes = sum(
+            value is not None
+            for value in (
+                args.pseudogrid_reference_active_count,
+                args.pseudogrid_midpoint_active_count,
+                args.pseudogrid_rk3_active_count,
+            )
+        )
+        if selected_modes > 1:
+            parser.error("Choose only one pseudogrid active-count mode")
+        if (
+            args.pseudogrid_midpoint_active_count is not None
+            or args.pseudogrid_rk3_active_count is not None
+        ) and args.pseudogrid_selection_spacing_ns is None:
+            parser.error("Reduced mode requires --pseudogrid-selection-spacing-ns")
     if (
         _multiparticle
         and args.pseudogrid_selection_spacing_ns is not None
         and args.pseudogrid_midpoint_active_count is None
+        and args.pseudogrid_rk3_active_count is None
         and args.pseudogrid_reference_active_count is None
     ):
         parser.error("Pseudogrid selection spacing requires an active-count option")
+    if (
+        _multiparticle
+        and args.pseudogrid_constraint_budget_relative is not None
+        and args.pseudogrid_midpoint_active_count is None
+        and args.pseudogrid_rk3_active_count is None
+    ):
+        parser.error("Pseudogrid constraint budget requires reduced active count")
     if args.checkpoint.resolve() == args.output.resolve():
         parser.error("Use a distinct output path so the input checkpoint is preserved")
     if args.output.exists() and not args.overwrite_output:
@@ -365,12 +393,36 @@ def main(argv: list[str] | None = None, *, _multiparticle: bool = False) -> int:
                 args.pseudogrid_selection_spacing_ns,
             )
         if _multiparticle and args.pseudogrid_midpoint_active_count is not None:
-            from core.momentum_center_particles import configure_pseudogrid_midpoint
+            from core.momentum_center_particles import (
+                DEFAULT_PASSIVE_CONSTRAINT_BUDGET_RELATIVE,
+                configure_pseudogrid_midpoint,
+            )
 
             payload = configure_pseudogrid_midpoint(
                 payload,
                 args.pseudogrid_midpoint_active_count,
                 args.pseudogrid_selection_spacing_ns,
+                constraint_budget_relative=(
+                    DEFAULT_PASSIVE_CONSTRAINT_BUDGET_RELATIVE
+                    if args.pseudogrid_constraint_budget_relative is None
+                    else args.pseudogrid_constraint_budget_relative
+                ),
+            )
+        if _multiparticle and args.pseudogrid_rk3_active_count is not None:
+            from core.momentum_center_particles import (
+                DEFAULT_PASSIVE_CONSTRAINT_BUDGET_RELATIVE,
+                configure_pseudogrid_rk3,
+            )
+
+            payload = configure_pseudogrid_rk3(
+                payload,
+                args.pseudogrid_rk3_active_count,
+                args.pseudogrid_selection_spacing_ns,
+                constraint_budget_relative=(
+                    DEFAULT_PASSIVE_CONSTRAINT_BUDGET_RELATIVE
+                    if args.pseudogrid_constraint_budget_relative is None
+                    else args.pseudogrid_constraint_budget_relative
+                ),
             )
         if "dipole_budget_policy" in payload:
             print(
@@ -404,31 +456,35 @@ def main(argv: list[str] | None = None, *, _multiparticle: bool = False) -> int:
             write_checkpoint(args.output, candidate)
             payload = candidate
             completed += count
-            print(
-                json.dumps(
-                    dict(
-                        completed_steps=completed,
-                        accepted_substeps_in_batch=len(records),
-                        time_ns=records[-1]["time_ns"],
-                        checkpoint=str(args.output),
-                        maximum_momentum_frame_beta_squared=max(
-                            (
-                                d["length_time"]["momentum_rest_frame_beta_squared"]
-                                for d in records[-1].get("particles", [])
-                            ),
-                            default=None,
-                        ),
-                        internal_steps=[
-                            {
-                                key: value
-                                for key, value in d["internal_step_control"].items()
-                                if key != "reports"
-                            }
-                            for d in records[-1].get("particles", [])
-                            if "internal_step_control" in d
-                        ],
-                    )
+            progress = dict(
+                completed_steps=completed,
+                accepted_substeps_in_batch=len(records),
+                time_ns=records[-1]["time_ns"],
+                checkpoint=str(args.output),
+                maximum_momentum_frame_beta_squared=max(
+                    (
+                        d["length_time"]["momentum_rest_frame_beta_squared"]
+                        for d in records[-1].get("particles", [])
+                    ),
+                    default=None,
                 ),
+                internal_steps=[
+                    {
+                        key: value
+                        for key, value in d["internal_step_control"].items()
+                        if key != "reports"
+                    }
+                    for d in records[-1].get("particles", [])
+                    if "internal_step_control" in d
+                ],
+            )
+            if _multiparticle:
+                for key in ("pseudogrid_reduced", "pseudogrid_reference"):
+                    if key in records[-1]:
+                        progress["pseudogrid_update"] = records[-1][key]
+                        break
+            print(
+                json.dumps(progress),
                 flush=True,
             )
     except KeyboardInterrupt:

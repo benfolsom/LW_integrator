@@ -5,10 +5,12 @@ Started 2026-09-21, after the v0.9.0 pair-solver release.
 Current status, 2026-09-22: exact many-particle stepping and a weak
 three-particle reaction-on grid comparison are complete. An experimental
 reaction-off reduced-motion CLI mode is available, with a fixed physical
-active-selection interval. It is not a production magnetic pseudogrid:
-constraint drift, larger systems, preserved histories, reaction-on reduced
-updates, bunch input, and GUI launch remain open. The chronological results
-and measurements are in the final section below.
+active-selection interval and a same-step RK4 safety fallback. Third-order
+passive updates are the leading candidate: bounded tests keep constraints
+close to the exact solver, but larger systems, preserved histories,
+reaction-on reduced updates, bunch input, and GUI launch remain open. This is
+not yet a production magnetic pseudogrid. The chronological results and
+measurements are in the final section below.
 
 ## Objective
 
@@ -353,3 +355,75 @@ integration order remains worthwhile with preserved single-fit histories and
 reaction enabled. Only then consider reducing the source evaluations or
 promoting the mode beyond experimental CLI use. Ordinary bunch input and GUI
 launch remain separate integration tasks.
+
+## Guarded passive updates and third-order candidate
+
+The experimental reduced mode now checks dimensionless mass and spin-orthogonality
+residuals after each passive candidate step. The initial checkpointed limit is
+$10^{-6}$ for each, measured against the particle's own mass, momentum, and spin
+scales in the simulation frame. This is a **provisional numerical guard**, not
+a universal physical-accuracy tolerance. If a candidate fails, its particle is
+recomputed with RK4 against the same frozen source histories, before any
+history is published. A reduced candidate that reaches an invalid velocity
+state is handled the same way; a failure in a stage shared with RK4 still stops
+the step. Fallbacks and accepted reduced updates are counted per
+particle in the checkpoint and reported per step. If even RK4 exceeds the
+limit, the whole step fails without publishing a partial checkpoint. Existing
+experimental reduced checkpoints without this policy keep their previous
+unguarded behavior on resume; new reduced configurations record the policy.
+
+The [guarded midpoint three-particle run](evidence/multiparticle_2026-09-22/midpoint_guarded_three_coarse.json)
+recomputed 11 of 100 passive updates and retained about a $1.27\times$ speedup.
+The [irregular four-particle run](evidence/multiparticle_2026-09-22/midpoint_guarded_four_coarse.json)
+recomputed 12 of 100, retained about a $1.18\times$ speedup, and reduced its
+constraint residuals. Its final trajectory, however, was slightly *farther*
+from all-RK4 than the unguarded midpoint result. A constraint guard therefore
+cannot be used as a substitute for a trajectory-accuracy test.
+
+A third-order Runge–Kutta passive candidate is available as
+`--pseudogrid-rk3-active-count N`, with the same physical selection clock and
+guard. In the weak three- and four-particle coarse comparisons, it needed no
+fallback, kept mass and spin constraints close to all-RK4, and was about
+$1.16\times$ and $1.11\times$ faster, respectively. The
+[three-particle](evidence/multiparticle_2026-09-22/rk3_guarded_three_coarse.json)
+and [four-particle](evidence/multiparticle_2026-09-22/rk3_guarded_four_coarse.json)
+results are archived with their [fine](evidence/multiparticle_2026-09-22/rk3_guarded_three_fine.json)
+[counterparts](evidence/multiparticle_2026-09-22/rk3_guarded_four_fine.json).
+Doubling charge and spin in both layouts still gave close agreement. In the
+bounded four-particle counter-propagating case at $0.8c$, with doubled charge
+and spin, the discrepancy in outgoing transverse *kinetic* momentum relative
+to the exact result fell from $5.55\times10^{-7}$ to $1.06\times10^{-8}$ when
+the recording step was halved. The selected particle subsets and physical
+selection times matched on both grids. See the [coarse](evidence/multiparticle_2026-09-22/rk3_guarded_four_counter08_scale2.json)
+and [fine](evidence/multiparticle_2026-09-22/rk3_guarded_four_counter08_scale2_fine.json)
+evidence. This is a specific post-arrival relativistic check, not a general
+high-$\beta$ validation.
+
+A fivefold charge-and-spin scale was also attempted, but the **all-RK4 exact
+control** stopped on its existing source-position reconstruction guard:
+integrated-position error $1.166058\times10^{-8}\,\mathrm{mm}$ exceeded the
+$10^{-8}\,\mathrm{mm}$ configured limit. That is not evidence of an RK3 failure,
+and this setup needs its own history-accuracy investigation before comparison.
+
+An eight-particle ring with two RK4-active and six RK3-passive particles also
+completed after source signals from evolved motion arrived. Its radius was
+$0.08\,\mathrm{mm}$, so adjacent particles were farther apart than the
+$0.05\,\mathrm{mm}$ startup-history window; the initial $0.06\,\mathrm{mm}$
+radius would have required unavailable source history in the very first step.
+The [coarse](evidence/multiparticle_2026-09-22/rk3_guarded_eight_ring_coarse.json)
+and [fine](evidence/multiparticle_2026-09-22/rk3_guarded_eight_ring_fine.json)
+comparisons used identical physical selection times and needed no RK4 fallback.
+Their final transverse kinetic-momentum discrepancies relative to all-RK4
+were $4.29\times10^{-9}$ and $5.20\times10^{-10}$, respectively, a reduction by
+about $8.24$ on halving the recording step. Each run was timed once and gave
+about a $1.17\times$ speedup; that figure is indicative, not a stable
+large-system performance estimate.
+
+The next production gate is to test the third-order candidate with more
+varied geometries, preserved single-fit histories, and reaction-on dynamics. The
+current code deliberately rejects the latter two rather than silently using
+an incompatible history or reaction policy. Source evaluation is still
+all-to-all, so this motion-only optimization cannot by itself solve
+thousand-particle scaling. The full RK4 solver remains the general default;
+RK3 is the leading opt-in reduced-motion candidate, and midpoint remains a
+useful lower-cost comparison rather than the recommended path.

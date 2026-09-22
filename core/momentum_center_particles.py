@@ -14,6 +14,8 @@ from .momentum_center_pair import (
     _initialize_particles,
 )
 
+DEFAULT_PASSIVE_CONSTRAINT_BUDGET_RELATIVE = 1e-6
+
 
 def initialize_particles(particles, states, histories, **options):
     """Prepare two or more particles using the pair solver's physical options."""
@@ -67,8 +69,14 @@ def configure_pseudogrid_reference(payload, active_count, selection_spacing_ns=N
     return result
 
 
-def configure_pseudogrid_midpoint(payload, active_count, selection_spacing_ns):
-    """Use RK4 for selected particles and midpoint for the remaining ones.
+def _configure_reduced(
+    payload,
+    active_count,
+    selection_spacing_ns,
+    constraint_budget_relative,
+    mode,
+):
+    """Use RK4 for selected particles and a lower-order passive update.
 
     Every particle remains a distinct retarded source; the passive accepted
     motion and moment are approximate. This is an opt-in reduced-motion
@@ -89,17 +97,59 @@ def configure_pseudogrid_midpoint(payload, active_count, selection_spacing_ns):
         or any(p.get("reaction_mode") != "off" for p in payload["particles"])
     ):
         raise ValueError(
-            "Reduced midpoint requires reaction-off, unpreserved RK4 without internal steps"
+            "Reduced passive updates require reaction-off, unpreserved RK4 without internal steps"
         )
+    if (
+        not np.isscalar(constraint_budget_relative)
+        or isinstance(constraint_budget_relative, (bool, str))
+        or not np.isfinite(constraint_budget_relative)
+        or constraint_budget_relative <= 0
+    ):
+        raise ValueError("Positive finite relative constraint budget required")
     result = copy.deepcopy(payload)
     result["pseudogrid_reduced"] = dict(
-        mode="passive_midpoint",
+        mode=mode,
         active_count=active_count,
         last_active_step=[-1] * count,
         activation_count=[0] * count,
+        constraint_budget_relative=float(constraint_budget_relative),
+        fallback_count=[0] * count,
+        reduced_accepted_count=[0] * count,
         **_physical_schedule(payload, selection_spacing_ns),
     )
     return result
+
+
+def configure_pseudogrid_midpoint(
+    payload,
+    active_count,
+    selection_spacing_ns,
+    constraint_budget_relative=DEFAULT_PASSIVE_CONSTRAINT_BUDGET_RELATIVE,
+):
+    """Configure second-order passive motion with a recorded RK4 safety fallback."""
+    return _configure_reduced(
+        payload,
+        active_count,
+        selection_spacing_ns,
+        constraint_budget_relative,
+        "passive_midpoint",
+    )
+
+
+def configure_pseudogrid_rk3(
+    payload,
+    active_count,
+    selection_spacing_ns,
+    constraint_budget_relative=DEFAULT_PASSIVE_CONSTRAINT_BUDGET_RELATIVE,
+):
+    """Configure third-order passive motion with a recorded RK4 safety fallback."""
+    return _configure_reduced(
+        payload,
+        active_count,
+        selection_spacing_ns,
+        constraint_budget_relative,
+        "passive_rk3",
+    )
 
 
 def _validate_model(payload):
@@ -121,16 +171,27 @@ def _schedule(config, states, step, mode):
         "selection_count",
         "active_indices",
     }
+    guard_keys = {
+        "constraint_budget_relative",
+        "fallback_count",
+        "reduced_accepted_count",
+    }
     clocked = isinstance(config, dict) and clock_keys <= set(config)
+    guarded = isinstance(config, dict) and guard_keys <= set(config)
     if (
         not isinstance(config, dict)
-        or set(config) != (base_keys | clock_keys if clocked else base_keys)
+        or set(config)
+        != (
+            base_keys
+            | (clock_keys if clocked else set())
+            | (guard_keys if guarded else set())
+        )
         or config["mode"] != mode
         or type(config["active_count"]) is not int
         or not 1
         <= config["active_count"]
         <= (count if mode == "exact_reference" else count - 1)
-        or (mode == "passive_midpoint" and not clocked)
+        or (mode in ("passive_midpoint", "passive_rk3") and not clocked)
     ):
         raise ValueError("Invalid pseudogrid schedule configuration")
     if type(step) is not int or step < 0:
@@ -152,6 +213,24 @@ def _schedule(config, states, step, mode):
     states = np.asarray(states, dtype=float)
     if states.shape != (count, 14) or not np.isfinite(states).all():
         raise ValueError("Invalid many-particle states")
+    if guarded:
+        budget = config["constraint_budget_relative"]
+        if (
+            not np.isscalar(budget)
+            or isinstance(budget, (bool, str))
+            or not np.isfinite(budget)
+            or budget <= 0
+            or any(
+                not isinstance(config[key], list)
+                or len(config[key]) != count
+                or any(
+                    type(value) is not int or not 0 <= value <= step
+                    for value in config[key]
+                )
+                for key in ("fallback_count", "reduced_accepted_count")
+            )
+        ):
+            raise ValueError("Invalid passive constraint policy")
     if clocked:
         spacing = config["selection_spacing_ns"]
         origin = config["selection_origin_ns"]
@@ -211,8 +290,19 @@ def advance_particles(payload, width_ns, steps=1):
     if type(steps) is not int or steps < 1:
         raise ValueError("Positive integer step count required")
     field = "pseudogrid_reference" if reference else "pseudogrid_reduced"
-    mode = "exact_reference" if reference else "passive_midpoint"
     config = payload[field]
+    mode = (
+        "exact_reference"
+        if reference
+        else (config.get("mode") if isinstance(config, dict) else None)
+    )
+    if mode not in ("exact_reference", "passive_midpoint", "passive_rk3"):
+        raise ValueError("Unknown pseudogrid schedule mode")
+    budget = (
+        config.get("constraint_budget_relative")
+        if reduced and isinstance(config, dict)
+        else None
+    )
     if isinstance(config, dict) and "selection_spacing_ns" in config:
         if (
             not np.isscalar(config["selection_spacing_ns"])
@@ -245,16 +335,39 @@ def advance_particles(payload, width_ns, steps=1):
         )
 
     current, records = _advance_particles(
-        payload, width_ns, steps, passive_selector=select
+        payload,
+        width_ns,
+        steps,
+        passive_selector=select,
+        passive_constraint_budget_relative=budget,
+        passive_method="rk3" if mode == "passive_rk3" else "midpoint",
     )
-    current[field] = config
     for record, (active, updated) in zip(records, selections):
+        fallback_indices = [
+            i
+            for i, diagnostic in enumerate(record["particles"])
+            if diagnostic.get("passive_reduced", {}).get("fallback_to_rk4", False)
+        ]
+        if budget is not None:
+            for i in fallback_indices:
+                config["fallback_count"][i] += 1
+            for i, diagnostic in enumerate(record["particles"]):
+                if "passive_reduced" in diagnostic and i not in fallback_indices:
+                    config["reduced_accepted_count"][i] += 1
         record[field] = dict(
             selected_indices=active,
             selection_updated=updated,
-            exact_particle_count=len(active) if reduced else len(current["particles"]),
+            fallback_indices=fallback_indices,
+            exact_particle_count=(
+                (len(active) + len(fallback_indices))
+                if reduced
+                else len(current["particles"])
+            ),
             approximate_particle_count=(
-                (len(current["particles"]) - len(active)) if reduced else 0
+                (len(current["particles"]) - len(active) - len(fallback_indices))
+                if reduced
+                else 0
             ),
         )
+    current[field] = config
     return current, records

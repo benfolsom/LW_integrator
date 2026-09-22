@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Add a checkpointed, normalized mass/spin constraint guard for experimental
+  passive updates. A failing passive candidate is recomputed with RK4 before
+  publication; an RK4 failure rejects the whole step. Record per-particle
+  fallback counts and preserve old unguarded experimental checkpoints.
+- Add an opt-in third-order passive-motion candidate. Short post-arrival
+  three-, four-, and eight-particle cases, including counter-propagating $0.8c$
+  motion, tracked all-RK4 much more closely than midpoint while retaining
+  modest speedups. Preserved histories, reaction-on reduced updates, and large-scale
+  performance remain open; the full solver stays the general default.
 - Complete the weak three-particle reaction-on recording-grid comparison, with
   all predeclared checks passing. Archive the sector-by-sector result and keep
   general conservation and strong-spin validity open.

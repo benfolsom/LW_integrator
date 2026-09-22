@@ -22,6 +22,7 @@ from core.momentum_center_particles import (
     advance_particles,
     configure_pseudogrid_midpoint,
     configure_pseudogrid_reference,
+    configure_pseudogrid_rk3,
     initialize_particles,
 )
 from lw_integrator.pair_history_options import configure_run_history
@@ -36,6 +37,9 @@ def fixture(
     startup_ct_mm=1.0,
     past_ct_mm=4.0,
     angles=None,
+    charge_scale=1.0,
+    spin_scale=1.0,
+    beta_z=0.0,
 ):
     particles, states, histories = [], [], []
     time = np.linspace(-past_ct_mm, 0, 41) / c
@@ -50,18 +54,29 @@ def fixture(
     for index in range(count):
         angle = index * 2 * np.pi / count if angles is None else angles[index]
         position = np.array([radius_mm * np.cos(angle), radius_mm * np.sin(angle), 0])
+        particle_beta_z = beta_z[index] if isinstance(beta_z, (list, tuple)) else beta_z
         particle = MomentumCenterParticle(
-            0.003 * c, 1, reaction_mode=reaction, reaction_derivative_method="analytic"
+            0.003 * c * charge_scale,
+            1,
+            reaction_mode=reaction,
+            reaction_derivative_method="analytic",
         )
         state = initial_state_native(
-            np.r_[0, position], [1, 0, 0, 0], c * np.array([0, 0, 0.01]), particle, zero
+            np.r_[0, position],
+            [1, 0, 0, particle_beta_z],
+            c * np.array([0, 0, 0.01 * spin_scale]),
+            particle,
+            zero,
         )
         _, diagnostic = dynamics_native(state, particle, zero)
+        past_positions = np.broadcast_to(position, (len(time), 3)).copy()
+        past_positions[:, 2] += particle_beta_z * c * time
+        past_velocities = np.broadcast_to([0, 0, particle_beta_z * c], (len(time), 3))
         histories.append(
             FullDipoleHistory(
                 time,
-                np.broadcast_to(position, (len(time), 3)),
-                np.zeros((len(time), 3)),
+                past_positions,
+                past_velocities,
                 np.broadcast_to(diagnostic["proper_dipole_native"], (len(time), 4, 4)),
                 c,
                 position_tolerance=1e-8,
@@ -314,6 +329,8 @@ def test_reduced_midpoint_rejects_unsupported_physics_and_bad_checkpoint():
     initial = initialize_particles(particles, states, histories, **options)
     with pytest.raises(ValueError, match="Reduced active count"):
         configure_pseudogrid_midpoint(initial, 3, 0.01 / c)
+    with pytest.raises(ValueError, match="relative constraint budget"):
+        configure_pseudogrid_midpoint(initial, 1, 0.01 / c, -1)
     preserved_particles, preserved_states, preserved_histories, preserved_options = (
         fixture(preserved=True, method="dop853")
     )
@@ -336,6 +353,10 @@ def test_reduced_midpoint_rejects_unsupported_physics_and_bad_checkpoint():
     with pytest.raises(ValueError, match="schedule counters"):
         advance_particles(reduced, 0.01 / c)
     assert reduced == original
+    invalid_guard = configure_pseudogrid_midpoint(initial, 1, 0.01 / c)
+    invalid_guard["pseudogrid_reduced"]["fallback_count"][0] = -1
+    with pytest.raises(ValueError, match="passive constraint policy"):
+        advance_particles(invalid_guard, 0.01 / c)
 
 
 def test_reduced_selection_clock_holds_subset_and_restarts():
@@ -425,7 +446,175 @@ def test_reduced_midpoint_matches_short_postarrival_reference():
     )
 
 
-def test_reduced_midpoint_cli_checkpoint_and_resume(tmp_path):
+def test_guarded_midpoint_fallback_is_recorded_and_restart_safe():
+    particles, states, histories, options = fixture(
+        radius_mm=0.06, startup_ct_mm=0.05, past_ct_mm=0.4
+    )
+    initial = initialize_particles(particles, states, histories, **options)
+    guarded = configure_pseudogrid_midpoint(initial, 1, 0.005 / c)
+    whole, records = advance_particles(guarded, 0.005 / c, 50)
+    first, _ = advance_particles(guarded, 0.005 / c, 25)
+    resumed, _ = advance_particles(json.loads(json.dumps(first)), 0.005 / c, 25)
+    assert whole == resumed
+    fallbacks = sum(
+        len(record["pseudogrid_reduced"]["fallback_indices"]) for record in records
+    )
+    assert fallbacks > 0
+    assert sum(whole["pseudogrid_reduced"]["fallback_count"]) == fallbacks
+    assert sum(whole["pseudogrid_reduced"]["reduced_accepted_count"]) + fallbacks == 100
+    assert (
+        max(
+            data["passive_reduced"]["accepted_mass_relative"]
+            for record in records
+            for data in record["particles"]
+            if "passive_reduced" in data
+        )
+        <= guarded["pseudogrid_reduced"]["constraint_budget_relative"]
+    )
+
+
+def test_guarded_rk3_recovers_from_invalid_candidate_stage(monkeypatch):
+    import core.momentum_center_pair as pair_module
+    from core.momentum_center_particles import _schedule
+
+    particles, states, histories, options = fixture()
+    initial = initialize_particles(particles, states, histories, **options)
+    guarded = configure_pseudogrid_rk3(initial, 1, 0.01 / c)
+    _, active, _ = _schedule(
+        guarded["pseudogrid_reduced"], initial["states"], 0, "passive_rk3"
+    )
+    passive_index = next(i for i in range(len(particles)) if i not in active)
+    original = pair_module.dynamics_native
+    positions = np.asarray(initial["states"])[:, 1:4]
+    failed = False
+
+    def candidate_fails_once(state, particle, provider):
+        nonlocal failed
+        index = int(np.argmin(np.linalg.norm(positions - state[1:4], axis=1)))
+        if index == passive_index and state[0] > 0.009 / c and not failed:
+            failed = True
+            raise pair_module.model.VelocityDomainError("invalid reduced stage")
+        return original(state, particle, provider)
+
+    monkeypatch.setattr(pair_module, "dynamics_native", candidate_fails_once)
+    result, records = advance_particles(guarded, 0.01 / c)
+    assert records[0]["pseudogrid_reduced"]["fallback_indices"] == [passive_index]
+    assert result["pseudogrid_reduced"]["fallback_count"][passive_index] == 1
+    assert (
+        records[0]["particles"][passive_index]["passive_reduced"][
+            "candidate_mass_relative"
+        ]
+        is None
+    )
+
+
+def test_reduced_rk3_short_postarrival_matches_exact_reference():
+    particles, states, histories, options = fixture(
+        radius_mm=0.06, startup_ct_mm=0.05, past_ct_mm=0.4
+    )
+    initial = initialize_particles(particles, states, histories, **options)
+    exact, _ = advance_particles(
+        configure_pseudogrid_reference(initial, 1, 0.005 / c), 0.005 / c, 25
+    )
+    reduced, records = advance_particles(
+        configure_pseudogrid_rk3(initial, 1, 0.005 / c), 0.005 / c, 25
+    )
+    assert any(
+        sample["evolved_count"] > 0
+        for record in records
+        for sample in record["source_sampling"]
+    )
+    a, b = np.asarray(exact["states"]), np.asarray(reduced["states"])
+    assert np.linalg.norm(a[:, 1:4] - b[:, 1:4]) < 1e-9
+    assert np.linalg.norm(a[:, 5:8] - b[:, 5:8]) < 1e-7
+    assert sum(reduced["pseudogrid_reduced"]["fallback_count"]) == 0
+
+
+def test_reduced_rk3_counterpropagating_postarrival():
+    particles, states, histories, options = fixture(
+        radius_mm=0.06,
+        startup_ct_mm=0.05,
+        past_ct_mm=0.4,
+        beta_z=(0.8, -0.8, 0.8),
+    )
+    initial = initialize_particles(particles, states, histories, **options)
+    _, exact_records = advance_particles(
+        configure_pseudogrid_reference(initial, 1, 0.005 / c), 0.005 / c, 50
+    )
+    reduced, reduced_records = advance_particles(
+        configure_pseudogrid_rk3(initial, 1, 0.005 / c), 0.005 / c, 50
+    )
+    assert any(
+        sample["evolved_count"] > 0
+        for record in reduced_records
+        for sample in record["source_sampling"]
+    )
+    exact_transverse = np.asarray(
+        [d["kinetic_momentum_native"][1:3] for d in exact_records[-1]["particles"]]
+    )
+    reduced_transverse = np.asarray(
+        [d["kinetic_momentum_native"][1:3] for d in reduced_records[-1]["particles"]]
+    )
+    assert (
+        np.linalg.norm(exact_transverse - reduced_transverse)
+        / np.linalg.norm(exact_transverse)
+        < 1e-6
+    )
+    assert sum(reduced["pseudogrid_reduced"]["fallback_count"]) == 0
+
+
+def test_eight_particle_rk3_keeps_distinct_postarrival_sources():
+    particles, states, histories, options = fixture(
+        count=8, radius_mm=0.08, startup_ct_mm=0.05, past_ct_mm=0.4
+    )
+    initial = initialize_particles(particles, states, histories, **options)
+    reduced, records = advance_particles(
+        configure_pseudogrid_rk3(initial, 2, 0.005 / c), 0.005 / c, 20
+    )
+    assert any(
+        sample["evolved_count"] > 0
+        for record in records
+        for sample in record["source_sampling"]
+    )
+    assert len(records[-1]["source_sampling"]) == 8
+    assert sum(reduced["pseudogrid_reduced"]["fallback_count"]) == 0
+    assert sum(reduced["pseudogrid_reduced"]["reduced_accepted_count"]) == 120
+
+
+def test_guard_rejects_unachievable_budget_without_mutation():
+    particles, states, histories, options = fixture(
+        radius_mm=0.06, startup_ct_mm=0.05, past_ct_mm=0.4
+    )
+    initial = initialize_particles(particles, states, histories, **options)
+    guarded = configure_pseudogrid_midpoint(
+        initial, 1, 0.005 / c, constraint_budget_relative=1e-14
+    )
+    original = copy.deepcopy(guarded)
+    with pytest.raises(ValueError, match="RK4 fallback could not satisfy"):
+        advance_particles(guarded, 0.005 / c, 25)
+    assert guarded == original
+
+
+def test_existing_unguarded_reduced_checkpoint_keeps_its_policy():
+    particles, states, histories, options = fixture()
+    initial = initialize_particles(particles, states, histories, **options)
+    legacy = configure_pseudogrid_midpoint(initial, 1, 0.01 / c)
+    for key in (
+        "constraint_budget_relative",
+        "fallback_count",
+        "reduced_accepted_count",
+    ):
+        del legacy["pseudogrid_reduced"][key]
+    result, records = advance_particles(legacy, 0.01 / c, 2)
+    assert "constraint_budget_relative" not in result["pseudogrid_reduced"]
+    assert all("passive_reduced" not in d for r in records for d in r["particles"])
+
+
+@pytest.mark.parametrize(
+    "active_flag",
+    ("--pseudogrid-midpoint-active-count", "--pseudogrid-rk3-active-count"),
+)
+def test_reduced_cli_checkpoint_and_resume(tmp_path, active_flag):
     from lw_integrator.nonlinear_particles import main
 
     particles, states, histories, options = fixture()
@@ -445,10 +634,12 @@ def test_reduced_midpoint_cli_checkpoint_and_resume(tmp_path):
                 str(0.01 / c),
                 "--history-method",
                 "preserve",
-                "--pseudogrid-midpoint-active-count",
+                active_flag,
                 "1",
                 "--pseudogrid-selection-spacing-ns",
                 str(0.01 / c),
+                "--pseudogrid-constraint-budget-relative",
+                "1e-5",
             ]
         )
         == 0
@@ -471,4 +662,10 @@ def test_reduced_midpoint_cli_checkpoint_and_resume(tmp_path):
     result = json.loads(second.read_text())
     assert result["accepted_steps"] == 2
     assert sum(result["pseudogrid_reduced"]["activation_count"]) == 2
+    assert result["pseudogrid_reduced"]["constraint_budget_relative"] == 1e-5
+    assert result["pseudogrid_reduced"]["mode"] == (
+        "passive_midpoint"
+        if active_flag == "--pseudogrid-midpoint-active-count"
+        else "passive_rk3"
+    )
     assert json.loads(source.read_text()) == initial

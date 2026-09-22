@@ -791,14 +791,31 @@ def advance_pair(
     return _advance_particles(payload, width_ns, steps)
 
 
+def _relative_constraint_residuals(state, particle, diagnostic):
+    """Dimensionless accepted-state checks in the simulation frame."""
+    data = diagnostic["length_time"]
+    momentum = np.asarray(data["kinetic_momentum"])
+    spin = model.unpack(np.asarray(state[8:]) / c)
+    mass_scale = max(particle.mass_amu**2, data["kinetic_mass"] ** 2)
+    spin_scale = max(
+        np.linalg.norm(spin) * np.linalg.norm(momentum), np.finfo(float).tiny
+    )
+    return (
+        abs(float(data["mass_constraint"])) / mass_scale,
+        float(np.linalg.norm(data["spin_constraint"])) / spin_scale,
+    )
+
+
 def _advance_particles(
     payload: dict[str, Any],
     width_ns: float,
     steps: int = 1,
     *,
     passive_selector: Callable[[np.ndarray, int], frozenset[int]] | None = None,
+    passive_constraint_budget_relative: float | None = None,
+    passive_method: str = "midpoint",
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    """Fixed lab-time RK4 or DOP853, with optional passive midpoint updates.
+    """Fixed lab-time RK4 or DOP853, with optional lower-order passive updates.
 
     Failure returns no partial checkpoint and never mutates the input. A smaller
     step does not necessarily repair insufficient published source history.
@@ -811,6 +828,16 @@ def _advance_particles(
     ):
         raise ValueError("Positive finite step width and integer step count required")
     particles, states, histories = _restore(payload)
+    if passive_method not in ("midpoint", "rk3"):
+        raise ValueError("Passive method must be midpoint or rk3")
+    if passive_constraint_budget_relative is not None and (
+        not np.isscalar(passive_constraint_budget_relative)
+        or isinstance(passive_constraint_budget_relative, (bool, str))
+        or not np.isfinite(passive_constraint_budget_relative)
+        or passive_constraint_budget_relative <= 0
+        or passive_selector is None
+    ):
+        raise ValueError("Positive passive constraint budget and selector required")
     source_components = _source_components(payload, states, histories)
     if source_components is not None:
         source_reference, source_high, source_low = (
@@ -917,7 +944,7 @@ def _advance_particles(
                 or any(p.reaction_mode != "off" for p in particles)
             ):
                 raise ValueError(
-                    "Passive midpoint requires reaction-off, unpreserved RK4 without internal steps"
+                    "Passive reduced updates require reaction-off, unpreserved RK4 without internal steps"
                 )
         providers = _providers(payload, particles, histories)
         trials, diagnostics, candidate_histories = [], [], []
@@ -926,11 +953,18 @@ def _advance_particles(
             zip(states, particles, providers, histories)
         ):
             stage_diagnostics = []
+            passive = selected_passive is not None and i in selected_passive
+            forced_fallback = False
 
             def rhs(value: np.ndarray) -> np.ndarray:
                 rate, data = dynamics_native(value, particle, provider)
                 stage_diagnostics.append(data["length_time"])
                 return rate
+
+            def rk4_from_first_two() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+                k3 = rhs(state + width_ns * k2 / 2)
+                k4 = rhs(state + width_ns * k3)
+                return state + width_ns * (k1 + 2 * k2 + 2 * k3 + k4) / 6, k3, k4
 
             weights, divisor = (1, 2, 2, 1), 6
             integrated_reaction, internal_statistics = None, None
@@ -959,16 +993,24 @@ def _advance_particles(
                     source_reference[i], source_high[i], source_low[i], width_ns, rhs
                 )
                 divisor = 1
-            elif selected_passive is not None and i in selected_passive:
+            elif passive:
                 k1 = rhs(state)
                 k2 = rhs(state + width_ns * k1 / 2)
-                trial = state + width_ns * k2
+                if passive_method == "rk3":
+                    try:
+                        k3_reduced = rhs(state + width_ns * (2 * k2 - k1))
+                        trial = state + width_ns * (k1 + 4 * k2 + k3_reduced) / 6
+                    except model.VelocityDomainError:
+                        if passive_constraint_budget_relative is None:
+                            raise
+                        forced_fallback = True
+                        trial, k3, k4 = rk4_from_first_two()
+                else:
+                    trial = state + width_ns * k2
             else:
                 k1 = rhs(state)
                 k2 = rhs(state + width_ns * k1 / 2)
-                k3 = rhs(state + width_ns * k2 / 2)
-                k4 = rhs(state + width_ns * k3)
-                trial = state + width_ns * (k1 + 2 * k2 + 2 * k3 + k4) / 6
+                trial, k3, k4 = rk4_from_first_two()
             if source_components is not None:
                 from .preserved_source import rk_increment, rounded_state
 
@@ -983,7 +1025,55 @@ def _advance_particles(
                     source_reference[i], source_high[i], source_low[i]
                 )
             trial[0] = endpoint
-            rate, diagnostic = dynamics_native(trial, particle, provider)
+            try:
+                rate, diagnostic = dynamics_native(trial, particle, provider)
+            except model.VelocityDomainError:
+                if (
+                    not passive
+                    or passive_constraint_budget_relative is None
+                    or forced_fallback
+                ):
+                    raise
+                forced_fallback = True
+                trial, k3, k4 = rk4_from_first_two()
+                trial[0] = endpoint
+                rate, diagnostic = dynamics_native(trial, particle, provider)
+            if passive and passive_constraint_budget_relative is not None:
+                if forced_fallback:
+                    candidate_mass, candidate_spin = None, None
+                else:
+                    candidate_mass, candidate_spin = _relative_constraint_residuals(
+                        trial, particle, diagnostic
+                    )
+                fallback = forced_fallback or (
+                    max(candidate_mass, candidate_spin)
+                    > passive_constraint_budget_relative
+                )
+                if fallback and not forced_fallback:
+                    # The first two reduced stages are exactly the first two
+                    # RK4 stages. Recompute only the missing RK4 stages against
+                    # the same frozen source histories, before publication.
+                    trial, k3, k4 = rk4_from_first_two()
+                    trial[0] = endpoint
+                    rate, diagnostic = dynamics_native(trial, particle, provider)
+                accepted_mass, accepted_spin = _relative_constraint_residuals(
+                    trial, particle, diagnostic
+                )
+                if (
+                    max(accepted_mass, accepted_spin)
+                    > passive_constraint_budget_relative
+                ):
+                    raise ValueError(
+                        "RK4 fallback could not satisfy the passive constraint budget"
+                    )
+                diagnostic["passive_reduced"] = dict(
+                    method=passive_method,
+                    fallback_to_rk4=fallback,
+                    candidate_mass_relative=candidate_mass,
+                    candidate_spin_relative=candidate_spin,
+                    accepted_mass_relative=accepted_mass,
+                    accepted_spin_relative=accepted_spin,
+                )
             parts = None
             dipole = diagnostic["proper_dipole_native"]
             if source_components is not None:
