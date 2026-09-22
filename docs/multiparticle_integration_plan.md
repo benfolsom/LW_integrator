@@ -241,3 +241,39 @@ The earlier running-status notes above describe the sequence of investigation.
 Next: expose the checkpointed startup selection through the CLI, test fresh
 selection and unchanged restart behavior, and run the separate reaction-on
 comparison. Reduced pseudogrid and default promotion remain open.
+
+## CLI integration and reaction-on continuation
+
+Committed the multiparticle engine, constrained-startup implementation, and
+completed reaction-off evidence as `05ca6dc` on `feature/multiparticle-full-spin`.
+No push or merge was performed.
+
+The subsequent CLI work exposes `--startup-dipole-fit constrained` for both
+the pair and many-particle runners. Omission preserves the existing policy.
+Changing it requires zero accepted steps and histories ending at the declared
+inertial boundary. Resume accepts the same policy but rejects changes. The
+benchmark now uses this shared configuration function instead of its own
+conversion. **56 focused tests passed** in 3.80 seconds, including policy
+selection, input preservation, refusal to change evolved data, CLI selection,
+and separate reaction-sector comparison.
+
+Fresh reaction-on coarse/fine runs use `full_dipole_coupled`, constrained startup,
+250/500 recording steps, the same 0.01/c-ns physical fitting spacing, and the
+original drift budgets. Evidence goes to `reaction-coarse` and `reaction-fine`
+in the existing Mac evidence directory. These are independent fresh starts,
+not reaction-mode changes to the completed reaction-off trajectories.
+
+Before launch, the comparison was extended to total and charge-squared,
+charge–dipole, and dipole-squared applied impulses and torques. Each contribution
+uses its own fine-result norm and a 1e-2 relative comparison target; if the fine
+norm is exactly zero, only an exactly zero difference passes. This avoids
+hiding a small contribution behind a larger total. The test is numerical
+recording-resolution agreement, not a closed conservation proof.
+
+Both detached reaction jobs were verified running, with 11 accepted steps each
+at the initial status check. A detached watcher will write
+`reaction-comparison.json` in the evidence directory after both stop. It reports
+incomplete or failed analysis explicitly rather than treating early stops as
+success. The final focused test rerun passed all 56 tests in 3.30 seconds, and
+the documentation build passed with warnings treated as errors. No reaction-on
+result or reduced-pseudogrid validation is claimed yet.

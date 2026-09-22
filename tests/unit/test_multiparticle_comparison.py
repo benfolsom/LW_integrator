@@ -1,6 +1,7 @@
 """Reject misleading comparisons and check the spatial-momentum denominator."""
 
 import json
+import copy
 
 import pytest
 
@@ -77,6 +78,29 @@ def test_different_initial_conditions_rejected(tmp_path):
 
 def test_identical_results_pass(tmp_path):
     assert compare(*outputs(tmp_path))["passed"]
+
+
+def test_reaction_sector_failure_cannot_hide_in_total(tmp_path):
+    coarse, fine = outputs(tmp_path)
+    ledger = dict(
+        applied_impulse_native=[1, 0, 0, 0],
+        applied_torque_native=[0] * 6,
+        sectors={
+            sector: dict(impulse_native=[1, 0, 0, 0], torque_native=[0] * 6)
+            for sector in ("q_squared", "qD", "D_squared")
+        },
+    )
+    for path in (coarse, fine):
+        change(path, "summary.json", reaction="full_dipole_coupled")
+        change(path, "checkpoint.json", dipole_reaction_ledger=[ledger])
+    assert compare(coarse, fine)["passed"]
+    bad = copy.deepcopy(ledger)
+    bad["sectors"]["D_squared"]["impulse_native"][0] = 1.1
+    change(coarse, "checkpoint.json", dipole_reaction_ledger=[bad])
+    report = compare(coarse, fine)
+    assert report["checks"]["total_impulse_native"]
+    assert not report["checks"]["D_squared_impulse_native"]
+    assert not report["passed"]
 
 
 def test_partial_history_matches_times_and_does_not_claim_completion(tmp_path):

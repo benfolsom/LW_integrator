@@ -3,6 +3,7 @@
 from dataclasses import replace
 from fractions import Fraction
 import json
+import copy
 from math import comb, factorial
 
 import numpy as np
@@ -175,3 +176,60 @@ def test_many_particle_cli_preserves_prepared_candidate(tmp_path):
     )
     assert continued["dipole_budget_policy"] == payload["dipole_budget_policy"]
     assert json.loads(original.read_text()) == payload
+
+
+def test_startup_selection_is_fresh_only_and_does_not_mutate():
+    from core.constants import C_MMNS as c
+    from core.momentum_center_particles import initialize_particles, advance_particles
+    from lw_integrator.pair_history_options import (
+        configure_run_history,
+        configure_startup_dipole_fit,
+    )
+    from tests.unit.test_momentum_center_particles import fixture as particle_fixture
+
+    particles, states, histories, options = particle_fixture(
+        preserved=True, method="dop853"
+    )
+    payload = initialize_particles(particles, states, histories, **options)
+    payload = configure_run_history(payload, "auto", None, None, 0.01 / c)
+    original = copy.deepcopy(payload)
+    selected = configure_startup_dipole_fit(payload, "constrained")
+    assert payload == original
+    assert all(h["format"] == "full-dipole-history-v8" for h in selected["histories"])
+    assert configure_startup_dipole_fit(selected) is selected
+    evolved, _ = advance_particles(selected, 0.01 / c)
+    assert configure_startup_dipole_fit(evolved, "constrained") is evolved
+    with pytest.raises(ValueError, match="Resume preserves"):
+        configure_startup_dipole_fit(evolved, "interpolate")
+    assert configure_startup_dipole_fit(selected, "interpolate") == original
+
+
+def test_cli_can_select_candidate_from_fresh_v7(tmp_path):
+    from core.constants import C_MMNS as c
+    from core.momentum_center_particles import initialize_particles
+    from lw_integrator.nonlinear_particles import main
+    from tests.unit.test_momentum_center_particles import fixture as particle_fixture
+
+    particles, states, histories, options = particle_fixture(
+        preserved=True, method="dop853"
+    )
+    payload = initialize_particles(particles, states, histories, **options)
+    source, output = tmp_path / "input.json", tmp_path / "output.json"
+    source.write_text(json.dumps(payload))
+    assert (
+        main(
+            [
+                "--checkpoint",
+                str(source),
+                "--output",
+                str(output),
+                "--step-ns",
+                str(0.01 / c),
+                "--startup-dipole-fit",
+                "constrained",
+            ]
+        )
+        == 0
+    )
+    result = json.loads(output.read_text())
+    assert all(h["startup_dipole_fit"] == "constrained" for h in result["histories"])

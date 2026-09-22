@@ -58,14 +58,52 @@ def compare(coarse_dir, fine_dir):
         and momentum["relative"] <= 1e-4,
         spin=spin["relative"] is not None and spin["relative"] <= 1e-6,
     )
+    reaction = {}
+    if summaries[0]["reaction"] != "off":
+        ledgers = [p["dipole_reaction_ledger"] for p in checkpoints]
+        if any(len(rows) != len(states[0]) for rows in ledgers):
+            raise ValueError("Reaction ledger particle count disagrees")
+        for sector in ("total", "q_squared", "qD", "D_squared"):
+            for quantity, size in (("impulse_native", 4), ("torque_native", 6)):
+                values = [
+                    np.asarray(
+                        [
+                            (
+                                row["applied_" + quantity]
+                                if sector == "total"
+                                else row["sectors"][sector][quantity]
+                            )
+                            for row in rows
+                        ],
+                        dtype=float,
+                    )
+                    for rows in ledgers
+                ]
+                if any(
+                    v.shape != (len(states[0]), size) or not np.isfinite(v).all()
+                    for v in values
+                ):
+                    raise ValueError("Invalid reaction ledger components")
+                key = sector + "_" + quantity
+                difference = relative_difference(*values)
+                reaction[key] = difference
+                checks[key] = (
+                    difference["absolute"] == 0
+                    if difference["fine_norm"] == 0
+                    else difference["relative"] <= 1e-2
+                )
     return dict(
         position_mm=position,
         kinetic_spatial_momentum_native=momentum,
         spin_native=spin,
+        reaction=reaction,
         checks=checks,
         passed=all(checks.values()),
         thresholds=dict(
-            position_absolute_mm=1e-8, momentum_relative=1e-4, spin_relative=1e-6
+            position_absolute_mm=1e-8,
+            momentum_relative=1e-4,
+            spin_relative=1e-6,
+            reaction_relative=1e-2,
         ),
         postarrival_steps=[s["postarrival_steps"] for s in summaries],
         note="Relative errors use the corresponding fine norm. Momentum excludes the rest-energy component. Passing is a recording-resolution check, not conservation or radiation-accuracy closure.",

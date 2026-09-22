@@ -68,8 +68,12 @@ A constrained-startup candidate is available to prepared histories as
 ``startup_dipole_fit="constrained"`` (history format v8). It incorporates the
 known initial moment and its first three derivatives into the first fitting
 window. Existing checkpoints retain their recorded reconstruction; this is not
-yet a new default or an exposed GUI option. The many-particle verification plan
-records the ongoing live comparison. Drift budgets remain unchanged.
+yet a new default or an exposed GUI option. Select it with
+``--startup-dipole-fit constrained`` on fresh inertial-boundary input, after
+selecting single-fit history. Omission preserves the checkpoint policy; an
+evolved run cannot switch policies. Both pair and many-particle CLIs support
+the option. The reaction-off three-particle comparison completed successfully;
+the separate reaction-on comparison remains open. Drift budgets remain unchanged.
 
 Choosing a moment drift budget
 -------------------------------

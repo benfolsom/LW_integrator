@@ -10,6 +10,37 @@ HISTORY_METHODS = ("endpoint", "connected_direct", "connected_single_fit")
 DEFAULT_DIPOLE_RELATIVE_BUDGET = 1e-10
 
 
+def configure_startup_dipole_fit(payload, method=None):
+    """Select fresh startup fitting without rewriting any evolved history."""
+    from dataclasses import replace
+
+    if method is None:
+        return payload
+    if method not in ("interpolate", "constrained"):
+        raise ValueError("Unknown startup dipole fitting policy")
+    recorded = payload["histories"]
+    if all(h.get("startup_dipole_fit", "interpolate") == method for h in recorded):
+        return payload
+    if payload.get("accepted_steps") != 0 or any(
+        h.get("inertial_until") is None or h["time"][-1] != h["inertial_until"]
+        for h in recorded
+    ):
+        raise ValueError(
+            "Resume preserves startup fitting; changes require fresh inertial-boundary data"
+        )
+    histories = [
+        replace(
+            FullDipoleHistory.from_checkpoint_payload(h),
+            segments=(),
+            startup_dipole_fit=method,
+        )
+        .completed()
+        .to_checkpoint_payload()
+        for h in recorded
+    ]
+    return dict(payload, histories=histories)
+
+
 def configure_run_history(
     payload: dict[str, Any],
     method: str | None,

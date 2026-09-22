@@ -19,6 +19,7 @@ from core.connected_dipole_history import SourceDipoleError
 from .pair_history_options import (
     HISTORY_METHODS,
     configure_run_history,
+    configure_startup_dipole_fit,
     validate_recording_spacing,
 )
 
@@ -35,6 +36,12 @@ def capabilities() -> dict[str, Any]:
         supported_integration_methods=["rk4", "dop853"],
         supported_history_methods=list(HISTORY_METHODS),
         default_fresh_history="connected_single_fit for compatible fixed recording grids",
+        startup_dipole_fit={
+            "choices": ["interpolate", "constrained"],
+            "default": "preserve checkpoint policy",
+            "selection": "Explicit --startup-dipole-fit; changes require fresh inertial-boundary data",
+            "validation": "Constrained fitting passed the three-particle reaction-off recording comparison; reaction-on comparison remains open",
+        },
         history_selection="Auto selects single-fit on compatible fresh data; missing budgets use 1e-10 of each initial tensor norm. Spacing defaults to the recording interval and is checkpointed. Resume preserves settings.",
         internal_step_control={
             "method": "preserved DOP853 with explicit physical error scales",
@@ -210,6 +217,11 @@ def main(argv: list[str] | None = None, *, _multiparticle: bool = False) -> int:
     )
     parser.add_argument("--steps", type=int, default=1)
     parser.add_argument(
+        "--startup-dipole-fit",
+        choices=("interpolate", "constrained"),
+        help="Fresh single-fit histories: fit the known inertial startup conditions directly with constrained. Omitted preserves the recorded policy; evolved runs cannot change it",
+    )
+    parser.add_argument(
         "--history-method",
         choices=("auto", "preserve", *HISTORY_METHODS),
         help="Default auto selects single-fit on compatible fresh data; resume preserves settings. Use preserve or an explicit method to override fresh selection",
@@ -320,6 +332,7 @@ def main(argv: list[str] | None = None, *, _multiparticle: bool = False) -> int:
             args.step_ns,
             args.dipole_drift_relative,
         )
+        payload = configure_startup_dipole_fit(payload, args.startup_dipole_fit)
         if _multiparticle and args.pseudogrid_reference_active_count is not None:
             from core.momentum_center_particles import configure_pseudogrid_reference
 

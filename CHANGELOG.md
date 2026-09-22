@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Expose `--startup-dipole-fit` in the pair and many-particle CLIs with fresh-only
+  policy changes and unchanged checkpoint resumes. The constrained option passed
+  the complete three-particle reaction-off comparison; reaction-on validation
+  remains separate. Compare individual reaction impulses and torques as well
+  as total trajectories in the validation harness.
+
 - Add a checkpointed constrained-startup magnetic-history candidate (history
   format v8). It fits the known inertial boundary conditions directly instead of
   correcting them after interpolation; existing histories and defaults remain

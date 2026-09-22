@@ -6,7 +6,6 @@ many-source check; full_dipole_coupled is a separate radiation check.
 """
 
 import argparse
-from dataclasses import replace
 import json
 from pathlib import Path
 import time
@@ -14,10 +13,12 @@ import time
 import numpy as np
 
 from core.constants import C_MMNS as c
-from core.full_dipole_history import FullDipoleHistory
 from core.momentum_center_particles import advance_particles, initialize_particles
 from lw_integrator.nonlinear_pair import write_checkpoint
-from lw_integrator.pair_history_options import configure_run_history
+from lw_integrator.pair_history_options import (
+    configure_run_history,
+    configure_startup_dipole_fit,
+)
 from tests.unit.test_momentum_center_particles import fixture
 
 
@@ -47,17 +48,7 @@ def main():
     payload = configure_run_history(
         payload, "auto", None, args.fit_spacing_ct_mm / c, width
     )
-    if args.startup_dipole_fit == "constrained":
-        payload["histories"] = [
-            replace(
-                FullDipoleHistory.from_checkpoint_payload(h),
-                segments=(),
-                startup_dipole_fit="constrained",
-            )
-            .completed()
-            .to_checkpoint_payload()
-            for h in payload["histories"]
-        ]
+    payload = configure_startup_dipole_fit(payload, args.startup_dipole_fit)
     write_checkpoint(args.output / "initial.json", payload)
     write_checkpoint(args.output / "checkpoint.json", payload)
     start = time.monotonic()
