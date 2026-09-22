@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+- Add a checkpointed constrained-startup magnetic-history candidate (history
+  format v8). It fits the known inertial boundary conditions directly instead of
+  correcting them after interpolation; existing histories and defaults remain
+  unchanged pending live many-particle verification. Preserve drift guards.
+
+- Begin many-particle full-spin integration with self-excluded source sums,
+  shared history publication, per-particle reaction records, preserved increments,
+  and a prepared-checkpoint CLI. Preserve the existing pair interface.
+- Connect the existing pseudogrid subset selector in exact reference mode with
+  checkpointed scheduling. Every particle still receives an exact update; this
+  is not reduced pseudogrid support or a performance improvement. See the
+  [integration plan](docs/multiparticle_integration_plan.md).
+
 ## v0.9.0 — 2026-09-21 — finite-spin pair milestone
 
 Release validation: 1,632 unit tests passed; five failures also reproduced on

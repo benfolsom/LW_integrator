@@ -189,11 +189,21 @@ def write_checkpoint(path: Path, payload: dict[str, Any]) -> None:
             temporary.unlink()
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
+def main(argv: list[str] | None = None, *, _multiparticle: bool = False) -> int:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Many-particle full-spin checkpoint runner" if _multiparticle else __doc__
+        )
+    )
+    if _multiparticle:
+        parser.add_argument(
+            "--pseudogrid-reference-active-count",
+            type=int,
+            help="Record subset selections while still solving every particle exactly; no reduced updates or speedup",
+        )
     parser.add_argument("--capabilities", action="store_true")
     parser.add_argument(
-        "--checkpoint", type=Path, help="Input whole-pair JSON checkpoint"
+        "--checkpoint", type=Path, help="Input complete JSON checkpoint"
     )
     parser.add_argument(
         "--output", type=Path, help="New output checkpoint; input is never overwritten"
@@ -261,7 +271,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
     if args.capabilities:
-        print(json.dumps(capabilities(), indent=2))
+        if _multiparticle:
+            from .nonlinear_particles import capabilities as selected_capabilities
+        else:
+            selected_capabilities = capabilities
+        print(json.dumps(selected_capabilities(), indent=2))
         return 0
     if args.checkpoint is None or args.output is None or args.step_ns is None:
         parser.error("--checkpoint, --output and --step-ns are required")
@@ -275,6 +289,8 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--reaction-window-ns must be finite and positive")
     if not 0 <= args.max_step_halvings <= 10:
         parser.error("--max-step-halvings must be between 0 and 10")
+    if _multiparticle and args.max_step_halvings:
+        parser.error("Many-particle runs currently require fixed recording intervals")
     if args.checkpoint.resolve() == args.output.resolve():
         parser.error("Use a distinct output path so the input checkpoint is preserved")
     if args.output.exists() and not args.overwrite_output:
@@ -304,6 +320,12 @@ def main(argv: list[str] | None = None) -> int:
             args.step_ns,
             args.dipole_drift_relative,
         )
+        if _multiparticle and args.pseudogrid_reference_active_count is not None:
+            from core.momentum_center_particles import configure_pseudogrid_reference
+
+            payload = configure_pseudogrid_reference(
+                payload, args.pseudogrid_reference_active_count
+            )
         if "dipole_budget_policy" in payload:
             print(
                 json.dumps({"dipole_budget_policy": payload["dipole_budget_policy"]}),
@@ -327,7 +349,12 @@ def main(argv: list[str] | None = None) -> int:
                     )
                     records.extend(each)
             else:
-                candidate, records = advance_pair(payload, args.step_ns, count)
+                if _multiparticle:
+                    from core.momentum_center_particles import advance_particles
+
+                    candidate, records = advance_particles(payload, args.step_ns, count)
+                else:
+                    candidate, records = advance_pair(payload, args.step_ns, count)
             write_checkpoint(args.output, candidate)
             payload = candidate
             completed += count

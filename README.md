@@ -1,5 +1,10 @@
 # LW Integrator
 
+Many-particle full-spin and pseudogrid integration is underway; see the
+[implementation plan](docs/multiparticle_integration_plan.md) for scope,
+validation steps, and the distinction between exact reference scheduling and
+reduced particle updates.
+
 ## Finite-spin pair solver — September 2026
 
 The separate two-particle solver supports coupled magnetic self-reaction,

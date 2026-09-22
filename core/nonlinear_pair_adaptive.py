@@ -11,7 +11,7 @@ from dataclasses import asdict, dataclass
 import numpy as np
 
 from . import momentum_center as model
-from .momentum_center_pair import advance_pair, _restore
+from .momentum_center_pair import MODEL, advance_pair, _restore
 from .step_doubling import (
     ErrorScale,
     StepControllerConfig,
@@ -93,6 +93,8 @@ def initialize_adaptive(payload, settings, next_interval_ns):
         raise ValueError(
             "Use the native checkpoint runner for internal error control; stacking both adaptive controllers is not supported"
         )
+    if payload.get("model") != MODEL:
+        raise ValueError("Adaptive pair recording requires a two-particle checkpoint")
     _restore(payload)
     if any(
         p["reaction_mode"] not in ("off", "full_dipole_coupled", "full_dipole_rr")

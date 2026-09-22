@@ -1,0 +1,26 @@
+{
+  "comparison": "matched accepted history samples, including incomplete runs",
+  "particle_sample_count": 27,
+  "time_range_ns": [
+    0.0035024229995805965,
+    0.003769274275739118
+  ],
+  "differences": {
+    "position": {
+      "absolute": 4.375527427503777e-22,
+      "fine_norm": 3.1177050876218524,
+      "relative": 1.4034449393163661e-22
+    },
+    "velocity": {
+      "absolute": 8.148960578234641e-18,
+      "fine_norm": 0.013284086403693005,
+      "relative": 6.13437787936189e-16
+    },
+    "dipole_change": {
+      "absolute": 2.5057088638594464e-21,
+      "fine_norm": 5.63596107930105e-07,
+      "relative": 4.445930035006903e-15
+    }
+  },
+  "note": "No completion or radiation-accuracy pass is implied. Velocity is not canonical or kinetic momentum. Dipole differences use preserved changes, not the large initial moment."
+}

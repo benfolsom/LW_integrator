@@ -6,6 +6,18 @@ and dipole interactions. The working full-spin radiation-reaction option is
 ``full_dipole_coupled``, with analytical derivatives. Its defaults do not alter
 the older charge-only, bunch, or parameter-sweep solvers.
 
+Many-particle integration
+-------------------------
+
+The separate ``python -m lw_integrator.nonlinear_particles`` command accepts
+prepared many-particle checkpoints. It shares the pair numerical engine and sums
+all non-self sources before evaluating each particle's nonlinear response.
+It does not yet accept ordinary bunch configurations or use the pair GUI.
+Its optional pseudogrid reference schedule records subset selections while
+still solving every particle; reduced passive updates are not implemented.
+The repository's ``docs/multiparticle_integration_plan.md`` records the remaining
+integration and validation steps. The pair interface below remains unchanged.
+
 Start and resume
 ----------------
 
@@ -51,6 +63,13 @@ DOP853 can adapt its internal integration steps between fixed recording times.
 The separate adaptive recording controller and step-halving recovery are
 rejected for single-fit histories. History checkpoint v7 records the method,
 spacing, accepted samples, and absolute drift budgets.
+
+A constrained-startup candidate is available to prepared histories as
+``startup_dipole_fit="constrained"`` (history format v8). It incorporates the
+known initial moment and its first three derivatives into the first fitting
+window. Existing checkpoints retain their recorded reconstruction; this is not
+yet a new default or an exposed GUI option. The many-particle verification plan
+records the ongoing live comparison. Drift budgets remain unchanged.
 
 Choosing a moment drift budget
 -------------------------------

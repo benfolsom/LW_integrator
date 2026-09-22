@@ -38,7 +38,7 @@ def configure_run_history(
             raise ValueError(
                 "Resume preserves the recorded absolute dipole budgets; omit the relative allowance"
             )
-    compatible = len(histories) == 2 and all(
+    compatible = len(histories) >= 2 and all(
         h.get("dipole_reference") is not None
         and h.get("inertial_until") is not None
         and h.get("startup_fit") == "one_sided"
@@ -99,7 +99,8 @@ def configure_run_history(
         result = dict(
             result,
             dipole_budget_policy=dict(
-                kind="explicit_absolute", absolute_budgets_native=[budget] * 2
+                kind="explicit_absolute",
+                absolute_budgets_native=[budget] * len(histories),
             ),
         )
     return result
@@ -147,8 +148,8 @@ def configure_history(
             "Dipole drift budget must be finite and positive in native dipole units"
         )
     histories = payload["histories"]
-    if len(histories) != 2:
-        raise ValueError("Two source histories required")
+    if len(histories) < 2:
+        raise ValueError("At least two source histories required")
     selected = []
     for index, recorded in enumerate(histories):
         current = recorded.get("dipole_reconstruction", "endpoint")
