@@ -792,9 +792,13 @@ def advance_pair(
 
 
 def _advance_particles(
-    payload: dict[str, Any], width_ns: float, steps: int = 1
+    payload: dict[str, Any],
+    width_ns: float,
+    steps: int = 1,
+    *,
+    passive_selector: Callable[[np.ndarray, int], frozenset[int]] | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    """Fixed lab-time RK4 or DOP853, with matched reaction quadrature.
+    """Fixed lab-time RK4 or DOP853, with optional passive midpoint updates.
 
     Failure returns no partial checkpoint and never mutates the input. A smaller
     step does not necessarily repair insufficient published source history.
@@ -894,7 +898,27 @@ def _advance_particles(
                 or not np.isfinite(sector["torque_native"]).all()
             ):
                 raise ValueError("Invalid dipole reaction sector ledger")
-    for _ in range(steps):
+    for step_index in range(steps):
+        selected_passive = (
+            passive_selector(states.copy(), payload["accepted_steps"] + step_index)
+            if passive_selector is not None
+            else None
+        )
+        if selected_passive is not None:
+            if not isinstance(selected_passive, frozenset) or any(
+                type(i) is not int or not 0 <= i < len(particles)
+                for i in selected_passive
+            ):
+                raise ValueError("Passive indices must identify valid particle indices")
+            if selected_passive and (
+                payload.get("integration_method", "rk4") != "rk4"
+                or source_components is not None
+                or "internal_step_control" in payload
+                or any(p.reaction_mode != "off" for p in particles)
+            ):
+                raise ValueError(
+                    "Passive midpoint requires reaction-off, unpreserved RK4 without internal steps"
+                )
         providers = _providers(payload, particles, histories)
         trials, diagnostics, candidate_histories = [], [], []
         endpoint = states[0, 0] + width_ns
@@ -935,6 +959,10 @@ def _advance_particles(
                     source_reference[i], source_high[i], source_low[i], width_ns, rhs
                 )
                 divisor = 1
+            elif selected_passive is not None and i in selected_passive:
+                k1 = rhs(state)
+                k2 = rhs(state + width_ns * k1 / 2)
+                trial = state + width_ns * k2
             else:
                 k1 = rhs(state)
                 k2 = rhs(state + width_ns * k1 / 2)

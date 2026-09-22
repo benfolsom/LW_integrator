@@ -2,11 +2,20 @@
 
 ## Unreleased
 
+- Complete the weak three-particle reaction-on recording-grid comparison, with
+  all predeclared checks passing. Archive the sector-by-sector result and keep
+  general conservation and strong-spin validity open.
+- Add an opt-in many-particle reduced-motion CLI mode: active RK4 steps,
+  passive midpoint steps, checkpointed physical-time subset scheduling, and individual
+  retarded histories for every particle. Restrict it to reaction-off,
+  unpreserved RK4 while accuracy policy remains experimental. A short
+  post-arrival check found roughly $1.2\times$–$1.3\times$ speedups over scheduled exact RK4,
+  alongside larger constraint residuals; it is not yet a production default.
 - Expose `--startup-dipole-fit` in the pair and many-particle CLIs with fresh-only
   policy changes and unchanged checkpoint resumes. The constrained option passed
-  the complete three-particle reaction-off comparison; reaction-on validation
-  remains separate. Compare individual reaction impulses and torques as well
-  as total trajectories in the validation harness.
+  the complete three-particle reaction-off and reaction-on comparisons. The
+  validation harness compares individual reaction impulses and torques as well
+  as total trajectories.
 
 - Add a checkpointed constrained-startup magnetic-history candidate (history
   format v8). It fits the known inertial boundary conditions directly instead of

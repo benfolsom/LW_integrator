@@ -208,6 +208,16 @@ def main(argv: list[str] | None = None, *, _multiparticle: bool = False) -> int:
             type=int,
             help="Record subset selections while still solving every particle exactly; no reduced updates or speedup",
         )
+        parser.add_argument(
+            "--pseudogrid-midpoint-active-count",
+            type=int,
+            help="Experimental reaction-off RK4 subset: selected particles use RK4, remaining particles use midpoint; all remain retarded sources",
+        )
+        parser.add_argument(
+            "--pseudogrid-selection-spacing-ns",
+            type=float,
+            help="Fixed physical time between active-subset reselections; required for midpoint mode and must align with --step-ns",
+        )
     parser.add_argument("--capabilities", action="store_true")
     parser.add_argument(
         "--checkpoint", type=Path, help="Input complete JSON checkpoint"
@@ -303,6 +313,19 @@ def main(argv: list[str] | None = None, *, _multiparticle: bool = False) -> int:
         parser.error("--max-step-halvings must be between 0 and 10")
     if _multiparticle and args.max_step_halvings:
         parser.error("Many-particle runs currently require fixed recording intervals")
+    if (
+        _multiparticle
+        and args.pseudogrid_midpoint_active_count is not None
+        and args.pseudogrid_selection_spacing_ns is None
+    ):
+        parser.error("Midpoint mode requires --pseudogrid-selection-spacing-ns")
+    if (
+        _multiparticle
+        and args.pseudogrid_selection_spacing_ns is not None
+        and args.pseudogrid_midpoint_active_count is None
+        and args.pseudogrid_reference_active_count is None
+    ):
+        parser.error("Pseudogrid selection spacing requires an active-count option")
     if args.checkpoint.resolve() == args.output.resolve():
         parser.error("Use a distinct output path so the input checkpoint is preserved")
     if args.output.exists() and not args.overwrite_output:
@@ -337,7 +360,17 @@ def main(argv: list[str] | None = None, *, _multiparticle: bool = False) -> int:
             from core.momentum_center_particles import configure_pseudogrid_reference
 
             payload = configure_pseudogrid_reference(
-                payload, args.pseudogrid_reference_active_count
+                payload,
+                args.pseudogrid_reference_active_count,
+                args.pseudogrid_selection_spacing_ns,
+            )
+        if _multiparticle and args.pseudogrid_midpoint_active_count is not None:
+            from core.momentum_center_particles import configure_pseudogrid_midpoint
+
+            payload = configure_pseudogrid_midpoint(
+                payload,
+                args.pseudogrid_midpoint_active_count,
+                args.pseudogrid_selection_spacing_ns,
             )
         if "dipole_budget_policy" in payload:
             print(

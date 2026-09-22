@@ -2,6 +2,14 @@
 
 Started 2026-09-21, after the v0.9.0 pair-solver release.
 
+Current status, 2026-09-22: exact many-particle stepping and a weak
+three-particle reaction-on grid comparison are complete. An experimental
+reaction-off reduced-motion CLI mode is available, with a fixed physical
+active-selection interval. It is not a production magnetic pseudogrid:
+constraint drift, larger systems, preserved histories, reaction-on reduced
+updates, bunch input, and GUI launch remain open. The chronological results
+and measurements are in the final section below.
+
 ## Objective
 
 Bring the full-spin motion and radiation-reaction calculations into practical
@@ -45,11 +53,11 @@ regression reference. A merged pair solver was not completion of this work.
 - Do not infer many-particle radiation accuracy from source superposition tests.
 - First tests are bounded regression cases, not long campaigns.
 
-## Current implementation
+## Initial implementation record
 
 The initial API is `core.momentum_center_particles`: `initialize_particles`,
 `advance_particles`, and `configure_pseudogrid_reference`. Checkpoint list order
-is persistent particle identity. There is no particle insertion, removal,
+is persistent particle identity. There was no particle insertion, removal,
 macroparticle weighting, or reduced passive update in this first implementation.
 The numerical engine is shared with the pair solver, including local reaction
 and history reconstruction. Validation results are recorded as work proceeds.
@@ -275,5 +283,71 @@ at the initial status check. A detached watcher will write
 `reaction-comparison.json` in the evidence directory after both stop. It reports
 incomplete or failed analysis explicitly rather than treating early stops as
 success. The final focused test rerun passed all 56 tests in 3.30 seconds, and
-the documentation build passed with warnings treated as errors. No reaction-on
-result or reduced-pseudogrid validation is claimed yet.
+the documentation build passed with warnings treated as errors. The results
+below supersede the earlier pending-run status.
+
+## Completed reaction-on comparison and first reduced-motion experiment
+
+The two `full_dipole_coupled` three-particle runs completed 250 and 500
+recording steps, with 147 and 293 steps after signals from evolved motion
+arrived. The archived [comparison](evidence/multiparticle_2026-09-22/reaction_comparison.json)
+passed every predeclared position, spatial kinetic-momentum, spin, and
+reaction-sector recording-resolution check. The largest relative sector
+difference was $1.64\times10^{-5}$ for the dipole-squared impulse, relative to
+the fine-run norm of that *same* small sector. This validates agreement between
+two recording grids for this weak, symmetric case. It does not establish
+conservation, strong-spin validity, or radiation accuracy in general.
+
+An opt-in **reduced-motion** mode now uses the existing subset selector. The
+selected particles take fourth-order Runge–Kutta steps (RK4); other particles
+take cheaper, second-order midpoint steps. Every particle still has its own
+accepted position and magnetic-moment history and remains an individual
+retarded source. A checkpointed physical selection interval keeps the active
+rotation at the same times when the recording grid is refined; restoring a
+run reproduces the schedule. This is *not* the older bunch pseudogrid's weighted
+source representation or passive-neighbor reconstruction.
+
+The first implementation deliberately accepts only reaction-off, unpreserved
+RK4 checkpoints without internal adaptive steps. Enable it on a prepared
+many-particle checkpoint using `--pseudogrid-midpoint-active-count N` and
+`--pseudogrid-selection-spacing-ns T`, where $T$ must be an integer multiple
+of the recording step. The
+existing `--pseudogrid-reference-active-count N` remains exact and is the
+comparison control; it accepts the same physical selection interval for fair
+comparisons. Neither mode changes the pair solver. Unsupported
+reaction or preserved-source settings fail explicitly; there is no silent
+fallback to a different model.
+
+The reproducible [short comparison](evidence/multiparticle_2026-09-22/midpoint_comparison.json)
+uses three particles, one active particle per step, and 50 steps, of which
+30 are after evolved-source signals arrive. The schedules matched exactly.
+Midpoint was about $1.3\times$ faster than *scheduled exact* RK4 in two timed
+repeats. Final differences were $9.61\times10^{-9}\,\mathrm{mm}$ in position,
+$3.88\times10^{-5}$ relative in spatial canonical momentum, and
+$2.55\times10^{-8}$ relative in stored spin. However, the maximum mass and
+spin constraint residuals were approximately 100 times larger than in the
+exact run. A separate [irregular four-particle comparison](evidence/multiparticle_2026-09-22/midpoint_four_particle_comparison.json)
+had 38 post-arrival steps, matching selections, about a $1.2\times$ speedup, and
+the same pattern of larger residuals. These residuals measure how well the
+numerical state preserves the model's required mass relation and the condition
+that spin is orthogonal to kinetic momentum. They are not yet acceptable
+production error bounds. Both speed measurements are small-case results; the
+source evaluation remains all-to-all, so large-particle scaling is unproven.
+
+With the same physical selection interval held fixed, halving the recording
+step reduced the three-particle position, momentum, and spin differences
+against the exact control by factors of approximately 3.7, 3.1, and 4.0.
+The [fine three-particle result](evidence/multiparticle_2026-09-22/midpoint_three_particle_fine_comparison.json)
+and [fine four-particle result](evidence/multiparticle_2026-09-22/midpoint_four_particle_fine_comparison.json)
+also show smaller constraint residuals, though still substantially above exact
+RK4. A first attempted grid comparison rotated the active set once per step,
+which changed the physical approximation when the step was halved. Those
+numbers were discarded; the fixed physical selection clock is necessary for
+a meaningful refinement comparison.
+
+Next: establish a physical constraint/error policy for passive updates, test
+larger and less symmetric configurations, and determine whether the lower
+integration order remains worthwhile with preserved single-fit histories and
+reaction enabled. Only then consider reducing the source evaluations or
+promoting the mode beyond experimental CLI use. Ordinary bunch input and GUI
+launch remain separate integration tasks.

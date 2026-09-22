@@ -20,15 +20,25 @@ from core.momentum_center_pair import (
 )
 from core.momentum_center_particles import (
     advance_particles,
+    configure_pseudogrid_midpoint,
     configure_pseudogrid_reference,
     initialize_particles,
 )
 from lw_integrator.pair_history_options import configure_run_history
 
 
-def fixture(count=3, reaction="off", preserved=False, method="rk4"):
+def fixture(
+    count=3,
+    reaction="off",
+    preserved=False,
+    method="rk4",
+    radius_mm=0.6,
+    startup_ct_mm=1.0,
+    past_ct_mm=4.0,
+    angles=None,
+):
     particles, states, histories = [], [], []
-    time = np.linspace(-4, 0, 41) / c
+    time = np.linspace(-past_ct_mm, 0, 41) / c
 
     def zero(time, position):
         return np.zeros(4), np.zeros((4, 4)), np.zeros((4, 4)), np.zeros((4, 4, 4))
@@ -38,8 +48,8 @@ def fixture(count=3, reaction="off", preserved=False, method="rk4"):
     )
 
     for index in range(count):
-        angle = index * 2 * np.pi / count
-        position = np.array([0.6 * np.cos(angle), 0.6 * np.sin(angle), 0])
+        angle = index * 2 * np.pi / count if angles is None else angles[index]
+        position = np.array([radius_mm * np.cos(angle), radius_mm * np.sin(angle), 0])
         particle = MomentumCenterParticle(
             0.003 * c, 1, reaction_mode=reaction, reaction_derivative_method="analytic"
         )
@@ -62,7 +72,7 @@ def fixture(count=3, reaction="off", preserved=False, method="rk4"):
         particles.append(particle)
         states.append(state)
     options = dict(
-        startup_duration_ns=1 / c,
+        startup_duration_ns=startup_ct_mm / c,
         startup_smoothness=7,
         inertial_prehistory=True,
         preserve_source_increments=preserved,
@@ -276,3 +286,164 @@ def test_bad_reference_checkpoint_is_rejected_without_mutation():
     with pytest.raises(ValueError, match="schedule counters"):
         advance_particles(initial, 0.01 / c)
     assert initial == original
+
+
+def test_reduced_midpoint_schedule_restarts_and_keeps_causal_sources():
+    particles, states, histories, options = fixture()
+    initial = initialize_particles(particles, states, histories, **options)
+    reduced = configure_pseudogrid_midpoint(initial, 1, 0.01 / c)
+    original = copy.deepcopy(reduced)
+    whole, records = advance_particles(reduced, 0.01 / c, 3)
+    first, _ = advance_particles(reduced, 0.01 / c)
+    second, _ = advance_particles(json.loads(json.dumps(first)), 0.01 / c, 2)
+    assert whole == second
+    assert reduced == original
+    assert len({r["pseudogrid_reduced"]["selected_indices"][0] for r in records}) == 3
+    assert all(
+        r["pseudogrid_reduced"]["approximate_particle_count"] == 2 for r in records
+    )
+    assert all(row["evolved_count"] == 0 for row in records[0]["source_sampling"])
+    assert all(len(h["time"]) == len(histories[0].time) + 3 for h in whole["histories"])
+    assert all(row[0] == whole["states"][0][0] for row in whole["states"])
+    exact, _ = advance_particles(initial, 0.01 / c, 3)
+    assert not np.array_equal(whole["states"], exact["states"])
+
+
+def test_reduced_midpoint_rejects_unsupported_physics_and_bad_checkpoint():
+    particles, states, histories, options = fixture()
+    initial = initialize_particles(particles, states, histories, **options)
+    with pytest.raises(ValueError, match="Reduced active count"):
+        configure_pseudogrid_midpoint(initial, 3, 0.01 / c)
+    preserved_particles, preserved_states, preserved_histories, preserved_options = (
+        fixture(preserved=True, method="dop853")
+    )
+    preserved = initialize_particles(
+        preserved_particles, preserved_states, preserved_histories, **preserved_options
+    )
+    with pytest.raises(ValueError, match="reaction-off, unpreserved RK4"):
+        configure_pseudogrid_midpoint(preserved, 1, 0.01 / c)
+    reacting_particles, reacting_states, reacting_histories, reacting_options = fixture(
+        reaction="full_dipole_coupled"
+    )
+    reacting = initialize_particles(
+        reacting_particles, reacting_states, reacting_histories, **reacting_options
+    )
+    with pytest.raises(ValueError, match="reaction-off, unpreserved RK4"):
+        configure_pseudogrid_midpoint(reacting, 1, 0.01 / c)
+    reduced = configure_pseudogrid_midpoint(initial, 1, 0.01 / c)
+    reduced["pseudogrid_reduced"]["activation_count"][0] = -1
+    original = copy.deepcopy(reduced)
+    with pytest.raises(ValueError, match="schedule counters"):
+        advance_particles(reduced, 0.01 / c)
+    assert reduced == original
+
+
+def test_reduced_selection_clock_holds_subset_and_restarts():
+    particles, states, histories, options = fixture()
+    initial = initialize_particles(particles, states, histories, **options)
+    scheduled = configure_pseudogrid_midpoint(initial, 1, 0.02 / c)
+    whole, records = advance_particles(scheduled, 0.01 / c, 3)
+    first, _ = advance_particles(scheduled, 0.01 / c)
+    restarted, _ = advance_particles(json.loads(json.dumps(first)), 0.01 / c, 2)
+    assert whole == restarted
+    assert (
+        records[0]["pseudogrid_reduced"]["selected_indices"]
+        == records[1]["pseudogrid_reduced"]["selected_indices"]
+    )
+    assert whole["pseudogrid_reduced"]["selection_count"] == 2
+    assert sum(whole["pseudogrid_reduced"]["activation_count"]) == 2
+    with pytest.raises(ValueError, match="align with recording clock"):
+        advance_particles(scheduled, 0.012 / c)
+    with pytest.raises(ValueError, match="selection spacing"):
+        configure_pseudogrid_midpoint(initial, 1, None)
+
+
+def test_reduced_midpoint_matches_short_postarrival_reference():
+    particles, states, histories, options = fixture(
+        radius_mm=0.06, startup_ct_mm=0.05, past_ct_mm=0.4
+    )
+    initial = initialize_particles(particles, states, histories, **options)
+    exact, _ = advance_particles(
+        configure_pseudogrid_reference(initial, 1, 0.005 / c), 0.005 / c, 25
+    )
+    reduced, records = advance_particles(
+        configure_pseudogrid_midpoint(initial, 1, 0.005 / c), 0.005 / c, 25
+    )
+    assert any(
+        sample["evolved_count"] > 0
+        for record in records
+        for sample in record["source_sampling"]
+    )
+    exact_states = np.asarray(exact["states"])
+    reduced_states = np.asarray(reduced["states"])
+    assert np.linalg.norm(exact_states[:, 1:4] - reduced_states[:, 1:4]) < 1e-6
+    assert (
+        np.linalg.norm(exact_states[:, 5:8] - reduced_states[:, 5:8])
+        / np.linalg.norm(exact_states[:, 5:8])
+        < 1e-4
+    )
+    assert (
+        max(
+            np.linalg.norm(data["length_time"]["spin_constraint"])
+            for record in records
+            for data in record["particles"]
+        )
+        < 1e-8
+    )
+    assert (
+        max(
+            abs(data["length_time"]["mass_constraint"])
+            for record in records
+            for data in record["particles"]
+        )
+        < 1e-5
+    )
+
+
+def test_reduced_midpoint_cli_checkpoint_and_resume(tmp_path):
+    from lw_integrator.nonlinear_particles import main
+
+    particles, states, histories, options = fixture()
+    initial = initialize_particles(particles, states, histories, **options)
+    source, first, second = [
+        tmp_path / name for name in ("input.json", "first.json", "second.json")
+    ]
+    source.write_text(json.dumps(initial))
+    assert (
+        main(
+            [
+                "--checkpoint",
+                str(source),
+                "--output",
+                str(first),
+                "--step-ns",
+                str(0.01 / c),
+                "--history-method",
+                "preserve",
+                "--pseudogrid-midpoint-active-count",
+                "1",
+                "--pseudogrid-selection-spacing-ns",
+                str(0.01 / c),
+            ]
+        )
+        == 0
+    )
+    assert (
+        main(
+            [
+                "--checkpoint",
+                str(first),
+                "--output",
+                str(second),
+                "--step-ns",
+                str(0.01 / c),
+                "--history-method",
+                "preserve",
+            ]
+        )
+        == 0
+    )
+    result = json.loads(second.read_text())
+    assert result["accepted_steps"] == 2
+    assert sum(result["pseudogrid_reduced"]["activation_count"]) == 2
+    assert json.loads(source.read_text()) == initial

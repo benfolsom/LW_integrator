@@ -1,0 +1,51 @@
+{
+  "case": "weak three_symmetric, reaction off, unpreserved RK4",
+  "particle_count": 3,
+  "active_count": 1,
+  "selection_spacing_ns": 1.6678204759907602e-05,
+  "schedules_match": true,
+  "steps": 50,
+  "step_ns": 1.6678204759907602e-05,
+  "end_ct_mm": 0.25,
+  "elapsed_seconds": {
+    "exact_reference": [
+      3.0883090830175206,
+      3.0213769170222804
+    ],
+    "passive_midpoint": [
+      2.2697667499887757,
+      2.2793870409950614
+    ]
+  },
+  "speedup_vs_scheduled_exact": 1.3430379100721654,
+  "comparison": {
+    "position_mm": {
+      "absolute": 9.60717068554858e-09,
+      "exact_norm": 0.10398812541511225,
+      "relative": 9.238718985651031e-08
+    },
+    "canonical_spatial_momentum_native": {
+      "absolute": 6.7154405272424025e-06,
+      "exact_norm": 0.17325087999358665,
+      "relative": 3.87613646031177e-05
+    },
+    "spin_native": {
+      "absolute": 1.3229005676317753e-07,
+      "exact_norm": 5.192558269007754,
+      "relative": 2.5476855513160535e-08
+    }
+  },
+  "maximum_spin_constraint": {
+    "exact_reference": 9.514893729309845e-12,
+    "passive_midpoint": 9.654502765297834e-10
+  },
+  "maximum_mass_constraint": {
+    "exact_reference": 2.3046860867414654e-08,
+    "passive_midpoint": 2.3378422486181115e-06
+  },
+  "postarrival_steps": {
+    "exact_reference": 30,
+    "passive_midpoint": 30
+  },
+  "note": "The schedule equality is checked explicitly. All particles remain individually stored causal sources. Speed is measured against the scheduled exact control, not unscheduled batch RK4."
+}
