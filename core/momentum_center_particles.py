@@ -181,7 +181,7 @@ def _schedule(config, states, step, mode):
         if states[0, 0] + tolerance < origin:
             raise ValueError("Pseudogrid selection origin is after the accepted state")
         if states[0, 0] + tolerance < next_time:
-            return config, stored
+            return config, stored, False
     active = select_active_indices(
         {axis: states[:, index + 1] for index, axis in enumerate(("x", "y", "z"))},
         np.arange(count),
@@ -196,7 +196,7 @@ def _schedule(config, states, step, mode):
     if clocked:
         config["selection_count"] += 1
         config["active_indices"] = active.tolist()
-    return config, active.tolist()
+    return config, active.tolist(), True
 
 
 def advance_particles(payload, width_ns, steps=1):
@@ -238,8 +238,8 @@ def advance_particles(payload, width_ns, steps=1):
 
     def select(states, step):
         nonlocal config
-        config, active = _schedule(config, states, step, mode)
-        selections.append(active)
+        config, active, updated = _schedule(config, states, step, mode)
+        selections.append((active, updated))
         return (
             frozenset(set(range(len(states))) - set(active)) if reduced else frozenset()
         )
@@ -248,9 +248,10 @@ def advance_particles(payload, width_ns, steps=1):
         payload, width_ns, steps, passive_selector=select
     )
     current[field] = config
-    for record, active in zip(records, selections):
+    for record, (active, updated) in zip(records, selections):
         record[field] = dict(
             selected_indices=active,
+            selection_updated=updated,
             exact_particle_count=len(active) if reduced else len(current["particles"]),
             approximate_particle_count=(
                 (len(current["particles"]) - len(active)) if reduced else 0

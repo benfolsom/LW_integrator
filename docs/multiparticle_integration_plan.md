@@ -337,6 +337,8 @@ source evaluation remains all-to-all, so large-particle scaling is unproven.
 With the same physical selection interval held fixed, halving the recording
 step reduced the three-particle position, momentum, and spin differences
 against the exact control by factors of approximately 3.7, 3.1, and 4.0.
+The archived selection traces show the same 50 particle subsets at identical
+physical selection times on both grids in each case.
 The [fine three-particle result](evidence/multiparticle_2026-09-22/midpoint_three_particle_fine_comparison.json)
 and [fine four-particle result](evidence/multiparticle_2026-09-22/midpoint_four_particle_fine_comparison.json)
 also show smaller constraint residuals, though still substantially above exact

@@ -85,8 +85,18 @@ def main():
     schedules_match = all(
         left["pseudogrid_reference"]["selected_indices"]
         == right["pseudogrid_reduced"]["selected_indices"]
+        and left["pseudogrid_reference"]["selection_updated"]
+        == right["pseudogrid_reduced"]["selection_updated"]
         for left, right in zip(exact_records, reduced_records)
     )
+    selection_trace = [
+        dict(
+            time_ns=record["time_ns"] - width,
+            selected_indices=record["pseudogrid_reduced"]["selected_indices"],
+        )
+        for record in reduced_records
+        if record["pseudogrid_reduced"]["selection_updated"]
+    ]
     a, b = np.asarray(exact["states"]), np.asarray(reduced["states"])
     comparison = {}
     for key, indices in (
@@ -106,6 +116,7 @@ def main():
         particle_count=count,
         active_count=active_count,
         selection_spacing_ns=selection_spacing_ns,
+        selection_trace=selection_trace,
         schedules_match=schedules_match,
         steps=steps,
         step_ns=width,
@@ -136,7 +147,12 @@ def main():
         ),
     )
     args.output.write_text(json.dumps(evidence, indent=2) + "\n")
-    print(json.dumps(evidence, indent=2))
+    print(
+        json.dumps(
+            {key: value for key, value in evidence.items() if key != "selection_trace"},
+            indent=2,
+        )
+    )
 
 
 if __name__ == "__main__":

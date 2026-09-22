@@ -350,12 +350,37 @@ def test_reduced_selection_clock_holds_subset_and_restarts():
         records[0]["pseudogrid_reduced"]["selected_indices"]
         == records[1]["pseudogrid_reduced"]["selected_indices"]
     )
+    assert [r["pseudogrid_reduced"]["selection_updated"] for r in records] == [
+        True,
+        False,
+        True,
+    ]
     assert whole["pseudogrid_reduced"]["selection_count"] == 2
     assert sum(whole["pseudogrid_reduced"]["activation_count"]) == 2
     with pytest.raises(ValueError, match="align with recording clock"):
         advance_particles(scheduled, 0.012 / c)
     with pytest.raises(ValueError, match="selection spacing"):
         configure_pseudogrid_midpoint(initial, 1, None)
+
+
+def test_reduced_selection_clock_matches_across_recording_grids():
+    particles, states, histories, options = fixture()
+    initial = initialize_particles(particles, states, histories, **options)
+    scheduled = configure_pseudogrid_midpoint(initial, 1, 0.02 / c)
+    _, coarse = advance_particles(scheduled, 0.01 / c, 4)
+    _, fine = advance_particles(scheduled, 0.005 / c, 8)
+
+    def selections(records, width):
+        return [
+            (
+                record["time_ns"] - width,
+                record["pseudogrid_reduced"]["selected_indices"],
+            )
+            for record in records
+            if record["pseudogrid_reduced"]["selection_updated"]
+        ]
+
+    assert selections(coarse, 0.01 / c) == selections(fine, 0.005 / c)
 
 
 def test_reduced_midpoint_matches_short_postarrival_reference():
