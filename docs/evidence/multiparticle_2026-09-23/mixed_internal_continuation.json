@@ -1,0 +1,117 @@
+{
+  "source_checkpoint": "/Users/benjaminfolsom/compute/mixed-reaction-20260923-GvDakv/coarse/checkpoint.json",
+  "steps": 3,
+  "step_ns": 0.000033356409519815205,
+  "comparisons": {
+    "spin_native": {
+      "absolute": 1.2200041654375041e-32,
+      "reference_norm": 5.19255769427989,
+      "relative": 2.3495245258063436e-33
+    },
+    "external_action_mass_exchange": {
+      "absolute": 5.3925176739890145e-28,
+      "reference_norm": 3.5822881354768123e-25,
+      "relative": 0.0015053277318998394
+    },
+    "position_mm": {
+      "absolute": 1.287663892823403e-35,
+      "relative": 1.2389935097680567e-35,
+      "reference_norm": 1.0392821937093581
+    },
+    "kinetic_spatial_momentum_native": {
+      "absolute": 2.8331277211087898e-31,
+      "relative": 1.8616297942752718e-29,
+      "reference_norm": 0.015218534478879674
+    },
+    "total_impulse_native": {
+      "absolute": 4.903514830487356e-27,
+      "relative": 3.746573738325035e-14,
+      "reference_norm": 1.3087997655905073e-13
+    },
+    "total_torque_native": {
+      "absolute": 4.8913702616764626e-29,
+      "relative": 3.7373061893162776e-14,
+      "reference_norm": 1.3087956977298976e-15
+    },
+    "q_squared_impulse_native": {
+      "absolute": 4.8898830855019956e-27,
+      "relative": 3.736158274316214e-14,
+      "reference_norm": 1.3087997687670055e-13
+    },
+    "q_squared_torque_native": {
+      "absolute": 0,
+      "relative": null,
+      "reference_norm": 0
+    },
+    "qD_impulse_native": {
+      "absolute": 2.80015626509061e-32,
+      "relative": 3.633748073250558e-10,
+      "reference_norm": 7.705972479775513e-23
+    },
+    "qD_torque_native": {
+      "absolute": 4.901981486554201e-29,
+      "relative": 3.7454021702898956e-14,
+      "reference_norm": 1.3087997666682575e-15
+    },
+    "D_squared_impulse_native": {
+      "absolute": 3.747676682903375e-33,
+      "relative": 1.0265878287245504e-11,
+      "reference_norm": 3.6506147628494196e-22
+    },
+    "D_squared_torque_native": {
+      "absolute": 6.128764542724553e-34,
+      "relative": 1.8877714001471958e-16,
+      "reference_norm": 3.246560755315327e-18
+    }
+  },
+  "statistics": {
+    "rk4": {
+      "elapsed_seconds": 30.16597854200154,
+      "evolved_samples": 1062,
+      "accepted_internal_steps": 9,
+      "rejected_internal_trials": 0,
+      "evaluations": 117,
+      "methods": [
+        "rk4",
+        "rk4",
+        "rk4",
+        "rk4",
+        "rk4",
+        "rk4",
+        "rk4",
+        "rk4",
+        "rk4"
+      ]
+    },
+    "mixed": {
+      "elapsed_seconds": 25.79970358400169,
+      "evolved_samples": 918,
+      "accepted_internal_steps": 9,
+      "rejected_internal_trials": 0,
+      "evaluations": 99,
+      "methods": [
+        "rk3",
+        "rk4",
+        "rk3",
+        "rk3",
+        "rk3",
+        "rk4",
+        "rk4",
+        "rk3",
+        "rk3"
+      ]
+    }
+  },
+  "fallback_counts_before": [
+    0,
+    0,
+    0
+  ],
+  "fallback_counts_after": [
+    0,
+    0,
+    0
+  ],
+  "note": "Short diagnostic continuation from ct=2.5 mm to ct=2.53 mm, not whole-trajectory convergence. Relative denominators are corresponding adaptive all-RK4 norms. Reaction totals were reset before the comparison and cover only the continuation. Preserved constrained single-fit source histories were retained. Internal scales were absolute 1e-8 in each group's native units and relative 1e-6; this weak case did not require internal trial rejections.",
+  "raw_artifacts": "/Users/benjaminfolsom/compute/mixed-adaptive-continuation-20260923-TzDPxJ/three_steps"
+}

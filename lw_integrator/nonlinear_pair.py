@@ -44,7 +44,7 @@ def capabilities() -> dict[str, Any]:
         },
         history_selection="Auto selects single-fit on compatible fresh data; missing budgets use 1e-10 of each initial tensor norm. Spacing defaults to the recording interval and is checkpointed. Resume preserves settings.",
         internal_step_control={
-            "method": "preserved DOP853 with explicit physical error scales",
+            "method": "preserved RK4 step doubling or DOP853 embedded errors with explicit physical scales; mixed many-particle runs use RK3 for passive particles",
             "history_cadence": "one source sample per requested outer step",
             "reaction_modes": ["off", "full_dipole_coupled", "full_dipole_rr"],
             "history_joins": "one-sided values for numerical integration only",
@@ -109,10 +109,13 @@ def configure_checkpoint(
         from core.pair_step_error import InternalStepSettings
 
         selected = asdict(InternalStepSettings.from_payload(internal_step_control))
-        if payload.get("integration_method") != "dop853" or not payload.get(
-            "source_precision"
-        ):
-            raise ValueError("Internal error control requires preserved DOP853 data")
+        if payload.get("integration_method", "rk4") not in (
+            "rk4",
+            "dop853",
+        ) or not payload.get("source_precision"):
+            raise ValueError(
+                "Internal error control requires preserved RK4 or DOP853 data"
+            )
         previous = payload.get("internal_step_control")
         if (
             previous is not None
@@ -216,7 +219,7 @@ def main(argv: list[str] | None = None, *, _multiparticle: bool = False) -> int:
         parser.add_argument(
             "--pseudogrid-rk3-active-count",
             type=int,
-            help="Experimental mixed stepping: selected particles use RK4, remaining particles use RK3; supports existing reaction modes and preserved increments, without internal step control",
+            help="Mixed stepping: selected particles use RK4, remaining particles use RK3; supports preserved increments and optional internal error control with off or full-dipole reaction",
         )
         parser.add_argument(
             "--pseudogrid-selection-spacing-ns",
@@ -270,7 +273,7 @@ def main(argv: list[str] | None = None, *, _multiparticle: bool = False) -> int:
     parser.add_argument(
         "--internal-error-settings",
         type=Path,
-        help="Explicit physical tolerance JSON for adaptive internal DOP853 steps; outer source cadence stays --step-ns",
+        help="Explicit physical tolerance JSON for adaptive internal RK4, mixed RK4/RK3, or DOP853 steps with preserved increments; outer source cadence stays --step-ns",
     )
     parser.add_argument(
         "--checkpoint-every",

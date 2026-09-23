@@ -2,21 +2,26 @@
 
 ## Unreleased
 
+- Connect optional internal adaptive RK4/RK3 stepping to the many-particle
+  solver and prepared-checkpoint CLI. Keep history publication and subset
+  selection on their physical recording schedule. Replace rejected state and
+  reaction increments on RK4 retry; preserve small physical error estimates.
+  Validate a short continuation with evolved constrained single-fit histories.
+  Preserve existing defaults and the DOP853 error path; internal `charge_ll`
+  and midpoint remain unsupported.
 - Extend the many-particle validation harness to mixed RK4/RK3 with fixed
   physical selection intervals, and reject comparisons with different actual
   selection schedules. Begin the combined preserved-history/reaction check.
-- Add an independently tested RK3/RK4 step-doubling error estimator for future
-  internal adaptive stepping. Preserve small increments and matching reaction
-  weights; mixed adaptive stepping remains disabled pending integration tests.
+- Add an independently tested RK3/RK4 step-doubling error estimator. Preserve
+  small increments and matching reaction weights through private trials.
 - Enable existing charge and dipole reaction models in optional mixed RK4/RK3
   stepping. Accumulate reaction impulse, torque, and mass exchange with the
   accepted integration stages; discard rejected RK3 stages on RK4 fallback.
   Preserve reaction records through CLI checkpoints. Midpoint still requires
-  reaction off, and mixed internal error control remains pending.
+  reaction off.
 - Support preserved state and dipole increments in mixed RK4/RK3 and
   RK4/midpoint runs with reaction off. An RK4 fallback replaces the rejected
-  candidate increment before history publication. Reaction and internal
-  error control in mixed runs remain the next integration tasks.
+  candidate increment before history publication.
 - Reject invalid many-particle recording intervals before calculating the
   selection clock. Add types to the new interfaces without increasing the
   existing development type-check backlog.
@@ -27,8 +32,8 @@
 - Add an opt-in third-order passive-motion candidate. Short post-arrival
   three-, four-, and eight-particle cases, including counter-propagating $0.8c$
   motion, tracked all-RK4 much more closely than midpoint while retaining
-  modest speedups. Preserved histories, reaction-on reduced updates, and large-scale
-  performance remain open; the full solver stays the general default.
+  modest speedups. Large-scale performance remains open; the full solver stays
+  the general default.
 - Complete the weak three-particle reaction-on recording-grid comparison, with
   all predeclared checks passing. Archive the sector-by-sector result and keep
   general conservation and strong-spin validity open.

@@ -6,13 +6,22 @@ state and reaction rates in one vector so they receive identical weights.
 """
 
 from decimal import localcontext
+from typing import Callable
 
 import numpy as np
 
 from .preserved_source import decimal_array, rk_increment, rounded_state
 
 
-def step_doubling(reference, high, low, width, rhs, *, method):
+def step_doubling(
+    reference: np.ndarray,
+    high: np.ndarray,
+    low: np.ndarray,
+    width: float,
+    rhs: Callable[[np.ndarray], np.ndarray],
+    *,
+    method: str,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, int]:
     """Return two-half-step increments, their estimated error, and call count.
 
     The estimated error is (full step - two half steps)/(2**order - 1),
@@ -42,7 +51,7 @@ def step_doubling(reference, high, low, width, rhs, *, method):
         raise ValueError("Step halves require distinct finite laboratory times")
     evaluations = 0
 
-    def rate(value):
+    def rate(value: np.ndarray) -> np.ndarray:
         nonlocal evaluations
         result = np.asarray(rhs(value), dtype=float)
         evaluations += 1
@@ -54,10 +63,17 @@ def step_doubling(reference, high, low, width, rhs, *, method):
             raise ValueError("Finite matching rate with clock derivative one required")
         return result.copy()
 
-    def step(head, tail, begin, finish):
+    def step(
+        head: np.ndarray, tail: np.ndarray, begin: float, finish: float
+    ) -> tuple[np.ndarray, np.ndarray]:
         span = finish - begin
 
-        def stage(rates, weights, divisor, time):
+        def stage(
+            rates: tuple[np.ndarray, ...],
+            weights: tuple[int, ...],
+            divisor: int,
+            time: float,
+        ) -> np.ndarray:
             parts = rk_increment(
                 head, tail, rates, span, weights=weights, divisor=divisor
             )
@@ -69,6 +85,8 @@ def step_doubling(reference, high, low, width, rhs, *, method):
         value[0] = begin
         k1 = rate(value)
         k2 = stage((k1,), (1,), 2, begin + span / 2)
+        rates: tuple[np.ndarray, ...]
+        weights: tuple[int, ...]
         if method == "rk3":
             k3 = stage((k1, k2), (-1, 2), 1, finish)
             rates, weights = (k1, k2, k3), (1, 4, 1)

@@ -6,9 +6,11 @@ Current status, 2026-09-23: the optional many-particle and mixed RK4/RK3 mode
 has been merged into development at `cce1cf0`. The feature branch additionally
 supports preserved source increments in mixed stepping, with passing restart,
 fallback, and bounded history tests. Matched reaction accounting is implemented
-for mixed RK4/RK3 stepping. Internal error control in mixed runs, combined
-single-fit/reaction refinement, ordinary bunch input, GUI launch,
-and larger-system validation remain open. The full solver is still the
+for mixed RK4/RK3 stepping. Internal error control is now connected to mixed
+stepping, with restart, failure-recovery, and short post-arrival evidence.
+The combined single-fit/reaction recording comparison is still running;
+ordinary bunch input, GUI launch, and larger-system validation remain open.
+The full solver is still the
 default. The agreed target and chronological results follow below.
 
 ## Objective
@@ -73,7 +75,7 @@ type-check result. Sphinx work is deferred until the default-mode milestone.
   pair entry point. Use a separate model identifier for many-particle checkpoints.
 - Keep exact pair arithmetic unchanged when there is only one non-self source.
 - Published histories remain immutable; an unsuccessful step publishes nothing.
-- Fixed history recording and adaptive internal DOP853 steps remain distinct.
+- Fixed history recording and adaptive internal RK4/RK3 or DOP853 steps remain distinct.
   This work does not authorize arbitrary adaptive history recording.
 - Full-spin reaction retains its conservation and strong-spin limitations.
 - Do not infer many-particle radiation accuracy from source superposition tests.
@@ -601,3 +603,107 @@ Remaining sequence:
    smooth intervals; history-boundary behavior needs explicit verification.
 4. Complete CLI/GUI and general particle-input compatibility, then revisit
    defaults and merge readiness. Do not change Sphinx documentation yet.
+
+## Adaptive mixed stepping connected, 2026-09-23
+
+The preceding error-estimator preparation is now connected to the native
+solver and prepared-checkpoint CLI. Active particles use adaptive RK4, and
+passive particles use adaptive RK3. Each method compares one trial step with
+two half steps, keeps the latter when its estimated error is acceptable, and
+reduces the internal step otherwise. Particle selection is held fixed during
+each recording interval. Only the final accepted endpoint is added to source
+history; internal trials and half steps are not published.
+
+An RK3 domain failure, exhausted accuracy-trial budget, or excessive endpoint
+constraint residual triggers an adaptive RK4 retry from the original accepted
+increments. The retry replaces both the particle state and every reaction
+integral. If the retry fails, no particle's history or selection counters are
+published. Domain/history errors other than the existing invalid-velocity
+failure remain explicit errors; they are not disguised as convergence.
+
+This requires preserved increments and supports reaction off, coupled dipole
+reaction, and the legacy full-dipole reaction. Internal control still rejects
+`charge_ll`, whose additional radiation records need a separate adapter.
+Fixed-step mixed RK3 still supports that charge-only option. Midpoint remains
+fixed-step and reaction-off. No integration or tolerance defaults change.
+
+The new RK error calculation preserves differences when constructing a nearby
+comparison state and transforming spin to the kinetic-momentum rest frame.
+Synthetic tests with errors of `1e-23` demonstrate why this matters: ordinary
+absolute-state subtraction can erase the estimate. Decimal arithmetic is
+limited to error bookkeeping, not field evaluation or the reaction solve.
+The existing DOP853 error path is unchanged in this commit; the new check does
+not claim sub-float64 potential accuracy.
+
+For prepared, precision-preserved RK4 data, the existing CLI controls combine:
+
+```sh
+python -m lw_integrator.nonlinear_particles --checkpoint initial.json \
+  --output continued.json --step-ns <recording-interval-ns> --steps 10 \
+  --pseudogrid-rk3-active-count <active-count> \
+  --pseudogrid-selection-spacing-ns <selection-interval-ns> \
+  --internal-error-settings tolerances.json
+```
+
+The tolerance file uses the existing six explicit absolute/relative physical
+scales. On resume, omit new selection options and retain the saved tolerances.
+Internal adaptivity is an accuracy option, not an assumed performance gain.
+It requires 10 RK3 or 13 RK4 right-hand-side evaluations per trial, including
+the endpoint domain check. The general many-particle GUI remains pending.
+
+### Completed short continuation
+
+The fixed-step coarse run completed 250 steps to `ct = 2.5 mm`, including
+147 steps sampling evolved histories, without any RK4 fallbacks. Its existing
+constrained single-fit histories provided the starting point for a diagnostic
+fork: three further recording intervals of `0.01 / c` ns using adaptive
+all-RK4 versus adaptive mixed RK4/RK3. Only accumulated reaction records were
+reset, so old totals cannot hide errors in newly calculated reaction.
+
+Both continuations completed to `ct = 2.53 mm`, sampled evolved histories,
+and required no fallback. The largest relative difference among the eight
+impulse/torque comparisons was `3.633748e-10` in charge–dipole impulse.
+Total impulse differed by `3.746574e-14`, and dipole-squared impulse by
+`1.026588e-11`. Each denominator is the corresponding adaptive all-RK4 norm
+over these three intervals, not a finer recording grid. Principal trajectory
+components agree to their stored floating-point resolution. These very small
+differences are bounded compatibility evidence in a weak case, not an
+equivalent claim of physical accuracy or complete radiation convergence.
+The separately tracked external-action mass exchange has a larger relative
+difference, `1.505328e-3`: absolute difference `5.392518e-28` against reference
+norm `3.582288e-25` in its native units. This is recorded separately rather than
+hidden by the much closer impulse/torque comparisons. The spin-state difference
+is `2.349525e-33` relative to its all-RK4 norm, again limited by the stored
+floating-point components, not a physical-accuracy claim.
+
+The explicit diagnostic scales were absolute `1e-8` in each group's native
+units and relative `1e-6`. Neither branch rejected an internal trial in this
+weak continuation. Separate manufactured-rate tests force internal rejection
+and verify that every reaction contribution is integrated correctly while
+exactly one history sample is published per requested recording interval.
+
+Reproduction utility: `scripts/validate_mixed_internal_continuation.py`.
+The compact result is archived in
+[adaptive continuation evidence](evidence/multiparticle_2026-09-23/mixed_internal_continuation.json);
+its metadata identifies the full checkpoint artifacts.
+
+### Remaining work
+
+Final validation: 157 selected regression tests passed in 421.37 seconds,
+including mixed internal fallback/restart, rejected-trial accounting, preserved
+histories, fixed-step multiparticle behavior, existing DOP853, and pair GUI
+tests. One slow test was excluded by the repository's normal policy; the
+separate post-arrival continuation above supplies new physical evidence.
+Black, Ruff, and diff whitespace checks pass. An initial regression run caught
+an outdated expected error-message string; that assertion was corrected,
+rerun, and included in the clean final run. No physical tolerance was relaxed.
+
+1. Finish the running 500-step fixed-grid comparison. The short adaptive
+   continuation does not replace that recording-resolution check.
+2. Implement ordinary many-particle input and GUI launch controls, then assess
+   default promotion and merge readiness. Retain the separate larger-system,
+   strong-spin, and radiation-conservation limitations.
+
+Targeted type checking has the same 196 errors as `4fd0760`, with no additional
+messages after source-line normalization. This is still a known repository
+backlog, not a clean type check.

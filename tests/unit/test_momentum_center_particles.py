@@ -357,7 +357,9 @@ def test_reduced_midpoint_rejects_unsupported_physics_and_bad_checkpoint():
     reacting = initialize_particles(
         reacting_particles, reacting_states, reacting_histories, **reacting_options
     )
-    with pytest.raises(ValueError, match="reaction requires passive_rk3"):
+    with pytest.raises(
+        ValueError, match="reaction and internal steps require passive_rk3"
+    ):
         configure_pseudogrid_midpoint(reacting, 1, 0.01 / c)
     reduced = configure_pseudogrid_midpoint(initial, 1, 0.01 / c)
     reduced["pseudogrid_reduced"]["activation_count"][0] = -1

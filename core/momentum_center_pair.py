@@ -739,11 +739,11 @@ def _restore(
         from .pair_step_error import InternalStepSettings
 
         InternalStepSettings.from_payload(payload["internal_step_control"])
-        if payload.get("integration_method") != "dop853" or any(
+        if payload.get("source_precision") is None or any(
             p.reaction_mode == "charge_ll" for p in particles
         ):
             raise ValueError(
-                "Internal error control requires preserved DOP853 with off or full-dipole reaction"
+                "Internal error control requires preserved RK4 or DOP853 with off or full-dipole reaction"
             )
     histories = [
         FullDipoleHistory.from_checkpoint_payload(h) for h in payload["histories"]
@@ -948,14 +948,14 @@ def _advance_particles(
                 raise ValueError("Passive indices must identify valid particle indices")
             if selected_passive and (
                 payload.get("integration_method", "rk4") != "rk4"
-                or "internal_step_control" in payload
+                or ("internal_step_control" in payload and passive_method != "rk3")
                 or (
                     passive_method != "rk3"
                     and any(p.reaction_mode != "off" for p in particles)
                 )
             ):
                 raise ValueError(
-                    "Reduced updates require RK4 without internal steps; reaction requires passive_rk3"
+                    "Reduced updates require RK4; reaction and internal steps require passive_rk3"
                 )
         providers = _providers(payload, particles, histories)
         trials, diagnostics, candidate_histories = [], [], []
@@ -1019,7 +1019,9 @@ def _advance_particles(
             trial_weights: tuple[int, ...] = (1, 2, 2, 1)
             trial_divisor = 6
             integrated_reaction, internal_statistics = None, None
-            if internal_settings is not None:
+
+            def internal_trial(method: str) -> np.ndarray:
+                nonlocal integrated_reaction, internal_statistics, weights, divisor
                 from .pair_internal_step import integrate_particle
 
                 (
@@ -1029,14 +1031,35 @@ def _advance_particles(
                     internal_statistics,
                 ) = integrate_particle(
                     source_reference[i],
-                    source_high[i],
-                    source_low[i],
+                    start_high,
+                    start_low,
                     width_ns,
                     particle,
                     provider,
                     internal_settings,
+                    method=method,
                 )
                 weights, divisor = (), 1
+                return finish_trial(None)
+
+            def retry_rk4() -> np.ndarray:
+                if internal_settings is not None:
+                    return internal_trial("rk4")
+                candidate, k3, k4 = rk4_from_first_two()
+                return finish_trial(candidate, (k1, k2, k3, k4))
+
+            if internal_settings is not None:
+                from .preserved_adaptive import InternalAccuracyError
+
+                try:
+                    trial = internal_trial(
+                        "rk3" if passive else payload.get("integration_method", "rk4")
+                    )
+                except (model.VelocityDomainError, InternalAccuracyError):
+                    if not passive or passive_constraint_budget_relative is None:
+                        raise
+                    forced_fallback = True
+                    trial = retry_rk4()
             elif payload.get("integration_method", "rk4") == "dop853":
                 from .preserved_runge_kutta import dop853_step
 
@@ -1078,8 +1101,7 @@ def _advance_particles(
                 ):
                     raise
                 forced_fallback = True
-                trial, k3, k4 = rk4_from_first_two()
-                trial = finish_trial(trial, (k1, k2, k3, k4))
+                trial = retry_rk4()
                 rate, diagnostic = dynamics_native(trial, particle, provider)
             if passive and passive_constraint_budget_relative is not None:
                 if forced_fallback:
@@ -1094,11 +1116,10 @@ def _advance_particles(
                         > passive_constraint_budget_relative
                     )
                 if fallback and not forced_fallback:
-                    # The first two reduced stages are exactly the first two
-                    # RK4 stages. Recompute only the missing RK4 stages against
-                    # the same frozen source histories, before publication.
-                    trial, k3, k4 = rk4_from_first_two()
-                    trial = finish_trial(trial, (k1, k2, k3, k4))
+                    # Fixed stepping reuses the first two stages; adaptive
+                    # stepping retries the entire interval from its original
+                    # increments and replaces all reaction integrals.
+                    trial = retry_rk4()
                     rate, diagnostic = dynamics_native(trial, particle, provider)
                 accepted_mass, accepted_spin = _relative_constraint_residuals(
                     trial, particle, diagnostic
