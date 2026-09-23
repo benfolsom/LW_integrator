@@ -27,12 +27,17 @@ from core.preserved_source import (
 )
 
 
-def test_increment_not_recovered_from_rounded_absolute():
+@pytest.mark.parametrize(
+    "weights,divisor", [((1, 2, 2, 1), 6), ((1, 4, 1), 6), ((1,), 1)]
+)
+def test_increment_not_recovered_from_rounded_absolute(weights, divisor):
     ref = np.ones(14)
     high, low = np.zeros(14), np.zeros(14)
-    rates = [np.full(14, 1e-23) for _ in range(4)]
+    rates = [np.full(14, 1e-23) for _ in weights]
     for _ in range(10):
-        high, low = rk_increment(high, low, rates, 0.1)
+        high, low = rk_increment(
+            high, low, rates, 0.1, weights=weights, divisor=divisor
+        )
     np.testing.assert_array_equal(rounded_state(ref, high, low), ref)
     np.testing.assert_allclose(high, 1e-23, rtol=1e-15, atol=0)
     assert np.any(low)

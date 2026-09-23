@@ -61,8 +61,11 @@ def test_native_cadence_matching_state_and_restart(mode):
 
 def test_incompatible_method_and_invalid_scale_rejected():
     initial = configured()
-    with pytest.raises(ValueError, match="requires preserved DOP853"):
-        pair.advance_pair(dict(initial, integration_method="rk4"), 0.01 / pair.c)
+    with pytest.raises(ValueError, match="requires preserved RK4 or DOP853"):
+        pair.advance_pair(
+            dict(initial, integration_method="rk4", source_precision=None),
+            0.01 / pair.c,
+        )
     bad = copy.deepcopy(initial)
     bad["internal_step_control"]["impulse_native"]["absolute"] = -1
     with pytest.raises(ValueError, match="error scales"):

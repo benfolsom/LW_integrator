@@ -2,6 +2,45 @@
 
 ## Unreleased
 
+## v0.10.0 — 2026-09-23 — many-particle full-spin milestone
+
+Release validation: 1,776 unit tests passed; five failures reproduce on
+development. The final 32-test input/GUI suite and strict Sphinx build passed.
+Targeted type checking retains its existing 196-error backlog. See the
+[release review](docs/multiparticle_merge_review_2026-09-23.md) for scope,
+baseline failures, and evidence. Solver defaults remain unchanged.
+
+- Add explicit physical-particle and reproducibly seeded bunch JSON input.
+  Preserve ordinary bunch-generator behavior and reject weighted or coincident
+  particles instead of silently converting them.
+- Extend the shared, scrollable GUI launcher to many-particle input and
+  checkpoints, mixed stepping, and startup fitting through the same CLI.
+- Complete the mixed 250/500-step reaction-on recording comparison: all declared
+  checks pass, with no RK4 fallback and matching physical selection schedules.
+  Keep defaults unchanged; conservation, strong-spin validity, and large-system
+  performance remain separate limitations.
+- Update Sphinx and README guidance and synchronize release-version metadata.
+
+- Connect optional internal adaptive RK4/RK3 stepping to the many-particle
+  solver and prepared-checkpoint CLI. Keep history publication and subset
+  selection on their physical recording schedule. Replace rejected state and
+  reaction increments on RK4 retry; preserve small physical error estimates.
+  Validate a short continuation with evolved constrained single-fit histories.
+  Preserve existing defaults and the DOP853 error path; internal `charge_ll`
+  and midpoint remain unsupported.
+- Extend the many-particle validation harness to mixed RK4/RK3 with fixed
+  physical selection intervals, and reject comparisons with different actual
+  selection schedules. Begin the combined preserved-history/reaction check.
+- Add an independently tested RK3/RK4 step-doubling error estimator. Preserve
+  small increments and matching reaction weights through private trials.
+- Enable existing charge and dipole reaction models in optional mixed RK4/RK3
+  stepping. Accumulate reaction impulse, torque, and mass exchange with the
+  accepted integration stages; discard rejected RK3 stages on RK4 fallback.
+  Preserve reaction records through CLI checkpoints. Midpoint still requires
+  reaction off.
+- Support preserved state and dipole increments in mixed RK4/RK3 and
+  RK4/midpoint runs with reaction off. An RK4 fallback replaces the rejected
+  candidate increment before history publication.
 - Reject invalid many-particle recording intervals before calculating the
   selection clock. Add types to the new interfaces without increasing the
   existing development type-check backlog.
@@ -12,8 +51,8 @@
 - Add an opt-in third-order passive-motion candidate. Short post-arrival
   three-, four-, and eight-particle cases, including counter-propagating $0.8c$
   motion, tracked all-RK4 much more closely than midpoint while retaining
-  modest speedups. Preserved histories, reaction-on reduced updates, and large-scale
-  performance remain open; the full solver stays the general default.
+  modest speedups. Large-scale performance remains open; the full solver stays
+  the general default.
 - Complete the weak three-particle reaction-on recording-grid comparison, with
   all predeclared checks passing. Archive the sector-by-sector result and keep
   general conservation and strong-spin validity open.

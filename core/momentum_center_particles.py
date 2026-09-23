@@ -104,12 +104,14 @@ def _configure_reduced(
         raise ValueError("Resume preserves the existing pseudogrid schedule")
     if (
         payload.get("integration_method", "rk4") != "rk4"
-        or "source_precision" in payload
-        or "internal_step_control" in payload
-        or any(p.get("reaction_mode") != "off" for p in payload["particles"])
+        or ("internal_step_control" in payload and mode != "passive_rk3")
+        or (
+            mode != "passive_rk3"
+            and any(p.get("reaction_mode") != "off" for p in payload["particles"])
+        )
     ):
         raise ValueError(
-            "Reduced passive updates require reaction-off, unpreserved RK4 without internal steps"
+            "Reduced updates require RK4; reaction and internal steps require passive_rk3"
         )
     if (
         not np.isscalar(constraint_budget_relative)

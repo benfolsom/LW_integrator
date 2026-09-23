@@ -18,6 +18,43 @@ def relative_difference(coarse, fine):
     )
 
 
+def compare_selection_schedules(summaries):
+    """Require the same physical selection events, not the same step numbers."""
+    keys = ("integration_method", "rk3_active_count", "selection_spacing_ns")
+    for key in keys:
+        if summaries[0].get(key) != summaries[1].get(key):
+            raise ValueError(f"Comparison requires matching {key}")
+    if summaries[0].get("rk3_active_count") is None:
+        return None
+    spacing = summaries[0].get("selection_spacing_ns")
+    if spacing is None or not np.isfinite(spacing) or spacing <= 0:
+        raise ValueError("Positive finite selection spacing required")
+    traces = [s.get("selection_trace", []) for s in summaries]
+    if not traces[0] or len(traces[0]) != len(traces[1]):
+        raise ValueError("Selection traces are missing or have different lengths")
+    for summary, trace in zip(summaries, traces):
+        times = np.asarray([row["time_ns"] for row in trace])
+        expected = np.arange(len(trace)) * spacing
+        if not np.allclose(times, expected, rtol=1e-12, atol=spacing * 1e-12):
+            raise ValueError("Selection events do not follow the physical clock")
+        end = summary["time_ns"]
+        if (
+            not np.isfinite(end)
+            or end <= times[-1]
+            or end > len(trace) * spacing + spacing * 1e-10
+        ):
+            raise ValueError("Selection trace does not cover the completed interval")
+        if any(
+            len(row["selected_indices"]) != summary["rk3_active_count"]
+            or len(set(row["selected_indices"])) != summary["rk3_active_count"]
+            for row in trace
+        ):
+            raise ValueError("Selection trace has an invalid active count")
+    if any(a["selected_indices"] != b["selected_indices"] for a, b in zip(*traces)):
+        raise ValueError("Active particle selections differ between grids")
+    return dict(matched=True, event_count=len(traces[0]), spacing_ns=spacing)
+
+
 def compare(coarse_dir, fine_dir):
     initial = [
         json.loads((p / "initial.json").read_text()) for p in (coarse_dir, fine_dir)
@@ -44,6 +81,7 @@ def compare(coarse_dir, fine_dir):
         summaries[0]["time_ns"], summaries[1]["time_ns"], rtol=1e-13, atol=0
     ):
         raise ValueError("Endpoint times disagree")
+    selection = compare_selection_schedules(summaries)
     states = [np.asarray(p["states"]) for p in checkpoints]
     if states[0].shape != states[1].shape:
         raise ValueError("Particle counts disagree")
@@ -93,6 +131,7 @@ def compare(coarse_dir, fine_dir):
                     else difference["relative"] <= 1e-2
                 )
     return dict(
+        selection_schedule=selection,
         position_mm=position,
         kinetic_spatial_momentum_native=momentum,
         spin_native=spin,

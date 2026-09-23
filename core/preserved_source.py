@@ -37,14 +37,19 @@ def rounded_state(reference, high, low):
         )
 
 
-def rk_increment(high, low, rates, width):
-    """Accumulate RK4 increments before adding them to the large reference."""
+def rk_increment(high, low, rates, width, *, weights=(1, 2, 2, 1), divisor=6):
+    """Accumulate integer-weighted RK increments apart from the large reference.
+
+    The default retains RK4 arithmetic; RK3 uses weights (1, 4, 1) / 6.
+    """
+    if len(rates) != len(weights) or divisor <= 0:
+        raise ValueError("Matching stage weights and a positive divisor required")
     with localcontext() as context:
         context.prec = 80
         increment = sum(
-            weight * decimal_array(rate) for weight, rate in zip((1, 2, 2, 1), rates)
+            weight * decimal_array(rate) for weight, rate in zip(weights, rates)
         )
-        increment *= Decimal.from_float(float(width)) / 6
+        increment *= Decimal.from_float(float(width)) / divisor
         return split_array(decimal_array(high) + decimal_array(low) + increment)
 
 

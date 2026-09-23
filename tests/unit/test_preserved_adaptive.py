@@ -39,7 +39,8 @@ def test_tiny_motion_and_reaction_integral_have_matching_weights():
     np.testing.assert_array_equal(low, 0)
 
 
-def test_piecewise_rate_can_be_resolved_without_publishing_extra_samples():
+@pytest.mark.parametrize("method", ["dop853", "rk3", "rk4"])
+def test_piecewise_rate_can_be_resolved_without_publishing_extra_samples(method):
     ref = np.zeros(2)
 
     def rhs(y):
@@ -53,6 +54,7 @@ def test_piecewise_rate_can_be_resolved_without_publishing_extra_samples():
         rhs,
         lambda old, new, err: np.max(abs(err))
         / (1e-10 + 1e-8 * max(abs(new[1]), abs(old[1]))),
+        method=method,
     )
     assert abs(head[1] + tail[1] - (0.37 + 3 * 0.63)) < 1e-6
     assert stats["rejected_trials"] > 0
@@ -88,3 +90,46 @@ def test_trial_budget_retains_accuracy_evidence_without_accepting_state():
     assert all(not row["accepted"] for row in caught.value.reports)
     assert all(row["normalized_error"] == 2 for row in caught.value.reports)
     np.testing.assert_array_equal(state, 0)
+
+
+@pytest.mark.parametrize("method", ["rk3", "rk4"])
+def test_rk_controller_rejects_large_trials_and_preserves_integral(method):
+    reference = np.array([0.0, 1.0, 0.0])
+    zero = np.zeros(3)
+    high, low, stats = integrate_interval(
+        reference,
+        zero,
+        zero,
+        0.4,
+        lambda state: np.array([1.0, state[1] ** 2, 2 * state[1] ** 2]),
+        lambda old, proposed, error: np.max(abs(error)) / 1e-9,
+        method=method,
+    )
+    assert stats["rejected_trials"] > 0
+    assert stats["accepted_steps"] > 1
+    assert high[0] == 0.4 and low[0] == 0
+    assert high[1] + low[1] == pytest.approx(0.4 / 0.6, abs=1e-7)
+    assert high[2] == 2 * high[1]
+    np.testing.assert_allclose(low[2], 2 * low[1], rtol=1e-14, atol=0)
+    assert stats["evaluations"] == len(stats["reports"]) * (
+        10 if method == "rk3" else 13
+    )
+    np.testing.assert_array_equal(zero, 0)
+
+
+@pytest.mark.parametrize("method", ["rk3", "rk4"])
+def test_rk_controller_budget_failure_keeps_inputs(method):
+    zero = np.zeros(2)
+    with pytest.raises(InternalAccuracyError, match="after 2 trials") as caught:
+        integrate_interval(
+            zero,
+            zero,
+            zero,
+            1.0,
+            lambda y: np.ones(2),
+            lambda *args: 2,
+            maximum_trials=2,
+            method=method,
+        )
+    assert len(caught.value.reports) == 2
+    np.testing.assert_array_equal(zero, 0)

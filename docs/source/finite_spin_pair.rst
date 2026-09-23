@@ -12,13 +12,14 @@ Many-particle integration
 The separate ``python -m lw_integrator.nonlinear_particles`` command accepts
 prepared many-particle checkpoints. It shares the pair numerical engine and sums
 all non-self sources before evaluating each particle's nonlinear response.
-It does not yet accept ordinary bunch configurations or use the pair GUI.
+It also accepts explicit physical-particle and seeded bunch input through
+``--initial-conditions``. The shared GUI can launch this runner; see
+:doc:`full_spin_particles` for the input format and supported controls.
 Its optional pseudogrid reference schedule records subset selections while
-still solving every particle. A separate, opt-in experimental mode uses RK4
-for selected particles and a cheaper midpoint motion step for the others.
-All particles remain individual retarded sources. This reduced-motion mode
-currently requires reaction off, unpreserved RK4, and no internal adaptive
-steps. Use ``--pseudogrid-midpoint-active-count N`` on a prepared checkpoint;
+still solving every particle. The optional mixed mode uses RK4 for selected
+particles and RK3 for the others, with preserved histories, matched reaction
+accounting, and optional internal adaptation. All particles remain individual
+retarded sources. Use ``--pseudogrid-rk3-active-count N``;
 also supply ``--pseudogrid-selection-spacing-ns T`` to keep the active
 rotation on a fixed physical clock. ``T`` must be an integer multiple of
 ``--step-ns``. Use the same ``T`` on coarse and fine recording grids.
@@ -31,7 +32,7 @@ integration and validation steps. The pair interface below remains unchanged.
 Start and resume
 ----------------
 
-Use a prepared native whole-pair checkpoint. The main GUI's **Nonlinear pair…**
+Use a prepared native whole-pair checkpoint. The main GUI's **Full-spin particles…**
 button and the command below use the same runner:
 
 .. code-block:: bash
@@ -69,7 +70,7 @@ spacing. The spacing must be an integer multiple of the recording interval,
 and the clocks must align. For coarse–fine comparisons, explicitly select the
 same physical spacing in both fresh inputs.
 
-DOP853 can adapt its internal integration steps between fixed recording times.
+Preserved RK4 and DOP853 can adapt their internal steps between fixed recording times.
 The separate adaptive recording controller and step-halving recovery are
 rejected for single-fit histories. History checkpoints record the method,
 spacing, accepted samples, and absolute drift budgets.
@@ -78,7 +79,7 @@ A constrained-startup candidate is available to prepared histories as
 ``startup_dipole_fit="constrained"`` (history format v8). It incorporates the
 known initial moment and its first three derivatives into the first fitting
 window. Existing checkpoints retain their recorded reconstruction; this is not
-yet a new default or an exposed GUI option. Select it with
+yet a new default. The shared GUI exposes it as **Startup fit**. Select it with
 ``--startup-dipole-fit constrained`` on fresh inertial-boundary input, after
 selecting single-fit history. Omission preserves the checkpoint policy; an
 evolved run cannot switch policies. Both pair and many-particle CLIs support

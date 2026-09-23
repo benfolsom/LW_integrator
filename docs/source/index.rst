@@ -59,6 +59,7 @@ If you are new to the project, start with the **Overview** and **Quick start** p
    validation
    checkpoints
    finite_spin_pair
+   full_spin_particles
    multirate_return
    rfs_m5_optimization
    metal_gpu_kernel_study

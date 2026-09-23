@@ -1,4 +1,4 @@
-"""Preserved DOP853 internal steps inside one source-publication interval.
+"""Preserved internal steps inside one source-publication interval.
 
 The caller supplies an error norm with physical units and may append reaction
 integrals to the state. All components use the same stage weights. This module
@@ -33,7 +33,15 @@ def embedded_error(rates, width):
 
 
 def integrate_interval(
-    reference, high, low, width, rhs, assess_error, *, maximum_trials=512
+    reference,
+    high,
+    low,
+    width,
+    rhs,
+    assess_error,
+    *,
+    maximum_trials=512,
+    method="dop853",
 ):
     """Advance one interval with private adaptive internal steps.
 
@@ -42,6 +50,9 @@ def integrate_interval(
     rather than an RMS over unrelated units, is the intended physical adapter.
     Coordinate zero is laboratory time in the caller's time units.
     """
+    if method not in ("dop853", "rk3", "rk4"):
+        raise ValueError("Internal method must be dop853, rk3, or rk4")
+    error_order = {"dop853": 8, "rk3": 4, "rk4": 5}[method]
     reference, high, low = [
         np.asarray(v, dtype=float).copy() for v in (reference, high, low)
     ]
@@ -105,7 +116,15 @@ def integrate_interval(
             rates.append(rate)
             return rate
 
-        next_high, next_low, _ = dop853_step(reference, high, low, step, stage)
+        if method == "dop853":
+            next_high, next_low, _ = dop853_step(reference, high, low, step, stage)
+        else:
+            from .preserved_rk_error import step_doubling
+
+            next_high, next_low, error, calls = step_doubling(
+                reference, high, low, step, rhs, method=method
+            )
+            evaluations += calls
         next_time = min(end, old[0] + step)
         next_high[0], next_low[0] = next_time - reference[0], 0.0
         proposed = rounded_state(reference, next_high, next_low)
@@ -119,7 +138,8 @@ def integrate_interval(
             raise ValueError(
                 "Finite matching rate with laboratory clock derivative one required"
             )
-        error = embedded_error([*rates, final_rate], step)
+        if method == "dop853":
+            error = embedded_error([*rates, final_rate], step)
         error[0] = 0.0  # Clock is set directly, not estimated by quadrature.
         norm = float(assess_error(old, proposed, error))
         if not np.isfinite(norm) or norm < 0:
@@ -133,7 +153,9 @@ def integrate_interval(
                 accepted=passed,
             )
         )
-        factor = 4.0 if norm == 0 else min(4.0, max(0.2, 0.9 * norm ** (-1 / 8)))
+        factor = (
+            4.0 if norm == 0 else min(4.0, max(0.2, 0.9 * norm ** (-1 / error_order)))
+        )
         if passed:
             high, low = next_high, next_low
             cached_rate = final_rate
@@ -150,7 +172,7 @@ def integrate_interval(
                     ),
                 )
         else:
-            cached_rate = rates[0]
+            cached_rate = rates[0] if method == "dop853" else None
             rejected += 1
             factor = min(1.0, factor)
         step *= factor
