@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Support preserved state and dipole increments in mixed RK4/RK3 and
+  RK4/midpoint runs with reaction off. An RK4 fallback replaces the rejected
+  candidate increment before history publication. Reaction and internal
+  error control in mixed runs remain the next integration tasks.
 - Reject invalid many-particle recording intervals before calculating the
   selection clock. Add types to the new interfaces without increasing the
   existing development type-check backlog.

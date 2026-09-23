@@ -2,15 +2,13 @@
 
 Started 2026-09-21, after the v0.9.0 pair-solver release.
 
-Current status, 2026-09-22: exact many-particle stepping and a weak
-three-particle reaction-on grid comparison are complete. An experimental
-reaction-off reduced-motion CLI mode is available, with a fixed physical
-active-selection interval and a same-step RK4 safety fallback. Third-order
-passive updates are the leading candidate: bounded tests keep constraints
-close to the exact solver, but larger systems, preserved histories,
-reaction-on reduced updates, bunch input, and GUI launch remain open. This is
-not yet a production magnetic pseudogrid. The chronological results and
-measurements are in the final section below.
+Current status, 2026-09-23: the optional many-particle and mixed RK4/RK3 mode
+has been merged into development at `cce1cf0`. The feature branch additionally
+supports preserved source increments in mixed stepping, with passing restart,
+fallback, and bounded history tests. Reaction
+and internal error control in mixed runs, ordinary bunch input, GUI launch,
+and larger-system validation remain open. The full solver is still the
+default. The agreed target and chronological results follow below.
 
 ## Objective
 
@@ -452,3 +450,46 @@ all-to-all, so this motion-only optimization cannot by itself solve
 thousand-particle scaling. The full RK4 solver remains the general default;
 RK3 is the leading opt-in reduced-motion candidate, and midpoint remains a
 useful lower-cost comparison rather than the recommended path.
+
+## Preserved increments for mixed stepping, 2026-09-23
+
+Mixed RK4/RK3 and RK4/midpoint now accumulate state changes separately from
+the large reference state and preserve the corresponding dipole changes.
+Each method uses its own integration weights. An RK4 retry starts from the
+original accepted increments and replaces the rejected candidate; it cannot
+add both candidate and retry increments to the history. The existing causal
+publication and history-drift checks remain active.
+
+Direct tests force failures at both an RK3 stage and its proposed endpoint.
+For the affected particle, the accepted state, preserved components, and
+published history exactly match an all-RK4 step. CLI restart tests cover both
+ordinary and preserved increments. A single-fit history test uses the archived
+weak three-particle setup, constrained startup fitting, and fitting-sample
+spacing `0.01 / c` ns. It advances 120 steps to `ct = 1.2 mm`, samples evolved
+source history, and reproduces the whole run exactly after JSON checkpoint
+restart at step 60.
+
+Two initially attempted history configurations were rejected, including in
+their all-RK4 controls. The compact geometry with startup duration `0.05 / c`
+ns and fitting-sample spacing `0.005 / c` ns rejected dipole drift
+`8.191479e-11` in the mixed run and `8.191528e-11` in its control, against the
+unchanged `1.271912e-12` budget. The larger weak geometry at fitting-sample
+spacing `0.025 / c` ns reproduced the known wide-span refusal: `1.315229e-12`
+for mixed stepping and `1.315212e-12` for all-RK4. Halving only the mixed
+recording step gave `1.314911e-12` and did not repair that refusal. The passing
+test uses the already archived `0.01 / c` physical fitting spacing. These
+rejections are recorded as history-resolution limits, not RK3 failures or
+successful radiation-accuracy checks.
+
+Short checkpoint comparisons against development `cce1cf0` are byte-identical
+after canonical JSON serialization for ordinary RK4, preserved RK4, preserved
+DOP853, and preserved RK4 with coupled dipole reaction. This checks unchanged
+paths; reaction in the mixed mode is still rejected. The next implementation
+task is consistent reaction impulse and torque accumulation for the accepted
+RK3 or RK4 stages, followed by a comparison after causal signals arrive.
+
+Final regression validation: 182 tests passed in 176.68 seconds, including
+the pair GUI tests, preserved histories, DOP853, internal controls, reaction
+paths, and the new mixed-method restart and fallback cases. Black, Ruff, and
+the diff whitespace check pass. Targeted type checking reports 196 existing
+errors, one fewer than the merge baseline and no new error messages.

@@ -847,6 +847,8 @@ def _advance_particles(
         raise ValueError("Positive passive constraint budget and selector required")
     source_components = _source_components(payload, states, histories)
     if source_components is not None:
+        from .preserved_source import rounded_state
+
         source_reference, source_high, source_low = (
             v.copy() for v in source_components
         )
@@ -946,12 +948,11 @@ def _advance_particles(
                 raise ValueError("Passive indices must identify valid particle indices")
             if selected_passive and (
                 payload.get("integration_method", "rk4") != "rk4"
-                or source_components is not None
                 or "internal_step_control" in payload
                 or any(p.reaction_mode != "off" for p in particles)
             ):
                 raise ValueError(
-                    "Passive reduced updates require reaction-off, unpreserved RK4 without internal steps"
+                    "Passive reduced updates require reaction-off RK4 without internal steps"
                 )
         providers = _providers(payload, particles, histories)
         trials, diagnostics, candidate_histories = [], [], []
@@ -962,6 +963,36 @@ def _advance_particles(
             stage_diagnostics = []
             passive = selected_passive is not None and i in selected_passive
             forced_fallback = False
+            if source_components is not None:
+                start_high = source_high[i].copy()
+                start_low = source_low[i].copy()
+
+            def finish_trial(
+                candidate: np.ndarray | None,
+                rates: tuple[np.ndarray, ...] | None = None,
+                stage_weights: tuple[int, ...] = (1, 2, 2, 1),
+                stage_divisor: int = 6,
+            ) -> np.ndarray:
+                if source_components is not None:
+                    from .preserved_source import rk_increment, rounded_state
+
+                    if rates is not None:
+                        source_high[i], source_low[i] = rk_increment(
+                            start_high,
+                            start_low,
+                            rates,
+                            width_ns,
+                            weights=stage_weights,
+                            divisor=stage_divisor,
+                        )
+                    source_high[i, 0] = endpoint - source_reference[i, 0]
+                    source_low[i, 0] = 0.0
+                    candidate = rounded_state(
+                        source_reference[i], source_high[i], source_low[i]
+                    )
+                assert candidate is not None
+                candidate[0] = endpoint
+                return candidate
 
             def rhs(value: np.ndarray) -> np.ndarray:
                 rate, data = dynamics_native(value, particle, provider)
@@ -969,11 +1000,18 @@ def _advance_particles(
                 return rate
 
             def rk4_from_first_two() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+                # Discard any reduced candidate stages before the RK4 retry.
+                del stage_diagnostics[2:]
                 k3 = rhs(state + width_ns * k2 / 2)
                 k4 = rhs(state + width_ns * k3)
                 return state + width_ns * (k1 + 2 * k2 + 2 * k3 + k4) / 6, k3, k4
 
-            weights, divisor = (1, 2, 2, 1), 6
+            weights: tuple[float, ...] = (1, 2, 2, 1)
+            divisor = 6
+            trial: np.ndarray | None = None
+            trial_rates: tuple[np.ndarray, ...] | None = None
+            trial_weights: tuple[int, ...] = (1, 2, 2, 1)
+            trial_divisor = 6
             integrated_reaction, internal_statistics = None, None
             if internal_settings is not None:
                 from .pair_internal_step import integrate_particle
@@ -1007,31 +1045,23 @@ def _advance_particles(
                     try:
                         k3_reduced = rhs(state + width_ns * (2 * k2 - k1))
                         trial = state + width_ns * (k1 + 4 * k2 + k3_reduced) / 6
+                        trial_rates = (k1, k2, k3_reduced)
+                        trial_weights = (1, 4, 1)
                     except model.VelocityDomainError:
                         if passive_constraint_budget_relative is None:
                             raise
                         forced_fallback = True
                         trial, k3, k4 = rk4_from_first_two()
+                        trial_rates = (k1, k2, k3, k4)
                 else:
                     trial = state + width_ns * k2
+                    trial_rates, trial_weights, trial_divisor = (k2,), (1,), 1
             else:
                 k1 = rhs(state)
                 k2 = rhs(state + width_ns * k1 / 2)
                 trial, k3, k4 = rk4_from_first_two()
-            if source_components is not None:
-                from .preserved_source import rk_increment, rounded_state
-
-                if divisor == 6:
-                    source_high[i], source_low[i] = rk_increment(
-                        source_high[i], source_low[i], (k1, k2, k3, k4), width_ns
-                    )
-                # Shared accepted lab time is the controller's exact float value.
-                source_high[i, 0] = endpoint - source_reference[i, 0]
-                source_low[i, 0] = 0.0
-                trial = rounded_state(
-                    source_reference[i], source_high[i], source_low[i]
-                )
-            trial[0] = endpoint
+                trial_rates = (k1, k2, k3, k4)
+            trial = finish_trial(trial, trial_rates, trial_weights, trial_divisor)
             try:
                 rate, diagnostic = dynamics_native(trial, particle, provider)
             except model.VelocityDomainError:
@@ -1043,7 +1073,7 @@ def _advance_particles(
                     raise
                 forced_fallback = True
                 trial, k3, k4 = rk4_from_first_two()
-                trial[0] = endpoint
+                trial = finish_trial(trial, (k1, k2, k3, k4))
                 rate, diagnostic = dynamics_native(trial, particle, provider)
             if passive and passive_constraint_budget_relative is not None:
                 if forced_fallback:
@@ -1062,7 +1092,7 @@ def _advance_particles(
                     # RK4 stages. Recompute only the missing RK4 stages against
                     # the same frozen source histories, before publication.
                     trial, k3, k4 = rk4_from_first_two()
-                    trial[0] = endpoint
+                    trial = finish_trial(trial, (k1, k2, k3, k4))
                     rate, diagnostic = dynamics_native(trial, particle, provider)
                 accepted_mass, accepted_spin = _relative_constraint_residuals(
                     trial, particle, diagnostic
