@@ -540,3 +540,64 @@ physical fitting and selection intervals, and then integrate internal error
 control. The all-RK4 option remains available. The midpoint experiment remains
 reaction-off; the intended default is RK4 for active particles and RK3 for
 passive particles. No default promotion is made by this change.
+
+## Combined history/reaction comparison and adaptive preparation, 2026-09-23
+
+The next comparison is running on the Mac in
+`/Users/benjaminfolsom/compute/mixed-reaction-20260923-GvDakv`, with `coarse`
+and `fine` subdirectories. Both use the archived weak three-particle fixture,
+coupled reaction, preserved increments, constrained startup fitting, one active
+RK4 particle, and two passive RK3 particles. They advance to `ct = 2.5 mm`
+in 250 and 500 recording steps. Both the fitting-sample spacing and active
+selection interval are `0.01 / c` ns. Thresholds are unchanged. These runs
+are pending evidence, not a passed accuracy check.
+An automatic comparison process is waiting for both completion summaries and
+will write `comparison.json` in that directory. It stops without claiming a
+comparison if either physical run fails.
+
+The validation script now accepts the integration method and mixed selection
+settings explicitly and records each actual selection time and active set.
+The comparison rejects missing, incomplete, or unequal selection schedules.
+This prevents a change in which particles receive RK4 from being mistaken
+for a recording-resolution effect. It still checks total and separate
+charge-squared, charge–dipole, and dipole-squared reaction quantities. Earlier
+archived DOP853 results are a different integration method, not an all-RK4
+control for these runs.
+
+Internal adaptive stepping is **not yet enabled for mixed runs**. The current
+controller uses DOP853; removing the compatibility guard would not provide
+adaptive RK4/RK3. A new numerical building block,
+`core/preserved_rk_error.py`, instead compares one full RK3 or RK4 step with
+two half steps of the same method. It returns the two-half-step result and
+an error estimate, without publishing any source history or changing defaults.
+State and appended reaction quantities use identical weights. Small errors
+are calculated from preserved increments, rather than subtracting rounded
+absolute states. No extrapolated state is accepted.
+
+The initial 34 focused tests pass: nonlinear analytic solutions verify the
+expected error order and sign, tiny-increment tests check matching reaction
+weights, invalid rates and domain failures leave inputs unchanged, existing
+DOP853 tests remain passing, and comparison tests reject incompatible schedules.
+This validates the building block, not the physical adaptive integration.
+The broader regression selection passed 123 tests in 202.16 seconds, with
+one slow physical test deselected by the repository's normal test policy.
+Black, Ruff, and the diff whitespace check pass.
+
+Remaining sequence:
+
+1. Analyze the completed two-resolution runs, including actual selections,
+   fallback counts, trajectories, and each reaction contribution.
+2. Connect the RK3/RK4 estimate to the existing physical error scales and an
+   internal accept/reject loop. Keep the selected particle set fixed throughout
+   a recording interval and publish histories only after all particles pass.
+   Verify that conversion to physical error scales does not round away small
+   preserved estimates when constructing a nearby comparison state.
+   Preserve the current constraint checks and retry a rejected passive method
+   from its original accepted state, including its reaction integrals.
+3. Test rejected trials, RK4 fallback, checkpoint replay, and a physical
+   reaction-on comparison before exposing the adaptive combination. Step
+   doubling costs nine RK3 or twelve RK4 right-hand-side evaluations per trial;
+   it is an accuracy feature, not an assumed speedup. Error estimates require
+   smooth intervals; history-boundary behavior needs explicit verification.
+4. Complete CLI/GUI and general particle-input compatibility, then revisit
+   defaults and merge readiness. Do not change Sphinx documentation yet.

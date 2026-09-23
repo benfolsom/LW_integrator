@@ -80,6 +80,73 @@ def test_identical_results_pass(tmp_path):
     assert compare(*outputs(tmp_path))["passed"]
 
 
+def mixed_outputs(tmp_path):
+    paths = outputs(tmp_path)
+    for path in paths:
+        change(
+            path,
+            "summary.json",
+            integration_method="rk4",
+            rk3_active_count=1,
+            selection_spacing_ns=0.05,
+            selection_trace=[
+                dict(time_ns=0.0, selected_indices=[0]),
+                dict(time_ns=0.05, selected_indices=[0]),
+            ],
+        )
+    return paths
+
+
+def test_mixed_comparison_checks_physical_selection_schedule(tmp_path):
+    coarse, fine = mixed_outputs(tmp_path)
+    change(coarse, "summary.json", step_ns=0.05)
+    change(fine, "summary.json", step_ns=0.025)
+    report = compare(coarse, fine)
+    assert report["passed"]
+    assert report["selection_schedule"]["event_count"] == 2
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        dict(integration_method="dop853"),
+        dict(rk3_active_count=2),
+        dict(selection_spacing_ns=0.025),
+        dict(selection_trace=[]),
+        dict(selection_trace=[dict(time_ns=0.0, selected_indices=[0])]),
+        dict(
+            selection_trace=[
+                dict(time_ns=0.0, selected_indices=[0]),
+                dict(time_ns=0.025, selected_indices=[0]),
+            ]
+        ),
+        dict(
+            selection_trace=[
+                dict(time_ns=0.0, selected_indices=[0]),
+                dict(time_ns=0.05, selected_indices=[1]),
+            ]
+        ),
+    ],
+)
+def test_mixed_comparison_rejects_different_selection_schedules(tmp_path, changes):
+    coarse, fine = mixed_outputs(tmp_path)
+    change(fine, "summary.json", **changes)
+    with pytest.raises(ValueError):
+        compare(coarse, fine)
+
+
+def test_matching_but_truncated_selection_traces_rejected(tmp_path):
+    paths = mixed_outputs(tmp_path)
+    for path in paths:
+        change(
+            path,
+            "summary.json",
+            selection_trace=[dict(time_ns=0.0, selected_indices=[0])],
+        )
+    with pytest.raises(ValueError, match="cover the completed interval"):
+        compare(*paths)
+
+
 def test_reaction_sector_failure_cannot_hide_in_total(tmp_path):
     coarse, fine = outputs(tmp_path)
     ledger = dict(

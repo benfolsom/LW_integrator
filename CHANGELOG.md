@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Extend the many-particle validation harness to mixed RK4/RK3 with fixed
+  physical selection intervals, and reject comparisons with different actual
+  selection schedules. Begin the combined preserved-history/reaction check.
+- Add an independently tested RK3/RK4 step-doubling error estimator for future
+  internal adaptive stepping. Preserve small increments and matching reaction
+  weights; mixed adaptive stepping remains disabled pending integration tests.
 - Enable existing charge and dipole reaction models in optional mixed RK4/RK3
   stepping. Accumulate reaction impulse, torque, and mass exchange with the
   accepted integration stages; discard rejected RK3 stages on RK4 fallback.
