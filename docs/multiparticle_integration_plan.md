@@ -8,8 +8,10 @@ supports preserved source increments in mixed stepping, with passing restart,
 fallback, and bounded history tests. Matched reaction accounting is implemented
 for mixed RK4/RK3 stepping. Internal error control is now connected to mixed
 stepping, with restart, failure-recovery, and short post-arrival evidence.
-The combined single-fit/reaction recording comparison is still running;
-ordinary bunch input, GUI launch, and larger-system validation remain open.
+The combined single-fit/reaction recording comparison has passed all declared
+checks. Ordinary physical-particle/bunch input and many-particle GUI launch
+are implemented; release regression checks are in progress. Larger-system
+validation, general conservation, and strong-spin validity remain open.
 The full solver is still the
 default. The agreed target and chronological results follow below.
 
@@ -42,7 +44,8 @@ validation. The 60-test follow-up passed, including five invalid-interval
 cases. Targeted type checking reports the same 197 existing errors on the
 branch and development, with no additional errors after normalizing source
 line numbers. This is a known repository type-check backlog, not a clean
-type-check result. Sphinx work is deferred until the default-mode milestone.
+type-check result. Sphinx guidance has now been updated for the optional-mode
+v0.10.0 release; this does not promote mixed stepping to the default.
 
 ## Implementation sequence
 
@@ -707,3 +710,46 @@ rerun, and included in the clean final run. No physical tolerance was relaxed.
 Targeted type checking has the same 196 errors as `4fd0760`, with no additional
 messages after source-line normalization. This is still a known repository
 backlog, not a clean type check.
+
+## v0.10.0 release preparation, 23 September
+
+The two remaining interface/comparison tasks above are now complete. The
+250-step and 500-step mixed runs both finished, including 147 and 293 steps
+after signals from newly evolved motion arrived. Their physical subset
+selection schedules match; neither run used an RK4 fallback. Every declared
+comparison check passed. The largest relative reaction impulse/torque
+difference is `9.103794e-5` for dipole-squared impulse, using the corresponding
+fine-result norm as denominator, against the declared `1e-2` threshold.
+Elapsed times were 1,396 and 4,181 seconds. The complete comparison is archived
+in [recording-resolution evidence](evidence/multiparticle_2026-09-23/mixed_recording_resolution.json).
+This is bounded recording-resolution agreement, not universal conservation or
+an independent physical validation of the reaction model.
+
+The new `full-spin-particles-v1` input accepts explicit physical particles and
+seeded bunches. It requires a chosen reaction mode, a straight-line past
+duration, and a smooth interaction-start duration. Native checkpoint resumes
+remain separate. Weighted macroparticles, coincident point particles, and
+unsupported fields are rejected. Bunch generation uses the existing helper
+with an isolated random generator, leaving legacy random behavior unchanged.
+
+The shared launcher now supports pair and many-particle modes, fresh input,
+checkpoint resumes, mixed RK4/RK3 settings, and startup fitting. Its scrollable
+window was opened and exercised with real Tk. A GUI-generated command was
+run through the CLI and checked for exact checkpoint continuation. Fresh
+coupled-reaction and zero-spin charge-reaction input also passed short stepping
+tests. The 32 focused input/GUI checks passed; these are interface smoke tests,
+not substitutes for the completed reaction comparison.
+
+Sphinx, README, changelog, and release-version metadata are updated. Sphinx
+passes with warnings treated as errors. Targeted type checking still reports
+196 existing errors, with identical normalized messages to the pre-release
+baseline. The full unit suite finished with 1,776 passes and five failures;
+all five reproduce on isolated development at `cce1cf0`. No new failing test
+was found. The [release review](multiparticle_merge_review_2026-09-23.md)
+records these inherited failures and the remaining scientific boundaries.
+The implementation is ready for the optional-mode release merge.
+
+After this optional-mode release, retain separate work items for larger-system
+performance, general radiation conservation, strong-spin model validity, and
+sweep/weighted-pseudogrid integration. Neither a new default nor source
+aggregation is part of this release.

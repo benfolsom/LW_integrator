@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+## v0.10.0 — 2026-09-23 — many-particle full-spin milestone
+
+Release validation: 1,776 unit tests passed; five failures reproduce on
+development. The final 32-test input/GUI suite and strict Sphinx build passed.
+Targeted type checking retains its existing 196-error backlog. See the
+[release review](docs/multiparticle_merge_review_2026-09-23.md) for scope,
+baseline failures, and evidence. Solver defaults remain unchanged.
+
+- Add explicit physical-particle and reproducibly seeded bunch JSON input.
+  Preserve ordinary bunch-generator behavior and reject weighted or coincident
+  particles instead of silently converting them.
+- Extend the shared, scrollable GUI launcher to many-particle input and
+  checkpoints, mixed stepping, and startup fitting through the same CLI.
+- Complete the mixed 250/500-step reaction-on recording comparison: all declared
+  checks pass, with no RK4 fallback and matching physical selection schedules.
+  Keep defaults unchanged; conservation, strong-spin validity, and large-system
+  performance remain separate limitations.
+- Update Sphinx and README guidance and synchronize release-version metadata.
+
 - Connect optional internal adaptive RK4/RK3 stepping to the many-particle
   solver and prepared-checkpoint CLI. Keep history publication and subset
   selection on their physical recording schedule. Replace rejected state and

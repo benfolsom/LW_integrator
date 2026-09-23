@@ -26,10 +26,38 @@ def build_command(
     dipole_budget="",
     history_spacing="",
     dipole_relative="",
+    runner="pair",
+    input_kind="checkpoint",
+    active_count="",
+    selection_spacing="",
+    constraint_budget="",
+    startup_fit="preserve",
 ):
     """One command builder for the GUI and headless interface tests."""
     if controller not in ("fixed", "adaptive_resume"):
         raise ValueError("Unsupported time controller")
+    if runner not in ("pair", "particles") or input_kind not in (
+        "checkpoint",
+        "initial_conditions",
+    ):
+        raise ValueError("Unsupported runner or input kind")
+    mixed = any(
+        str(v).strip() for v in (active_count, selection_spacing, constraint_budget)
+    )
+    if runner == "pair" and (input_kind != "checkpoint" or mixed):
+        raise ValueError(
+            "Particle/bunch input and mixed settings require the many-particle runner"
+        )
+    if controller == "adaptive_resume" and (
+        runner != "pair" or startup_fit != "preserve"
+    ):
+        raise ValueError(
+            "Adaptive recording resume is pair-only and keeps checkpoint settings"
+        )
+    if mixed and (not str(active_count).strip() or not str(selection_spacing).strip()):
+        raise ValueError(
+            "Mixed stepping requires active count and selection spacing; leave all blank on resume"
+        )
     if controller == "adaptive_resume":
         if (
             mode != "preserve"
@@ -60,8 +88,12 @@ def build_command(
     command = [
         sys.executable,
         "-m",
-        "lw_integrator.nonlinear_pair",
-        "--checkpoint",
+        (
+            "lw_integrator.nonlinear_pair"
+            if runner == "pair"
+            else "lw_integrator.nonlinear_particles"
+        ),
+        "--checkpoint" if input_kind == "checkpoint" else "--initial-conditions",
         str(checkpoint),
         "--output",
         str(output),
@@ -96,6 +128,22 @@ def build_command(
         command += ["--history-sample-spacing-ns", str(history_spacing)]
     if str(dipole_relative).strip():
         command += ["--dipole-drift-relative", str(dipole_relative)]
+    if mixed:
+        command += [
+            "--pseudogrid-rk3-active-count",
+            str(active_count),
+            "--pseudogrid-selection-spacing-ns",
+            str(selection_spacing),
+        ]
+        if str(constraint_budget).strip():
+            command += [
+                "--pseudogrid-constraint-budget-relative",
+                str(constraint_budget),
+            ]
+    if startup_fit != "preserve":
+        if startup_fit not in ("constrained", "interpolate"):
+            raise ValueError("Unsupported startup fitting policy")
+        command += ["--startup-dipole-fit", startup_fit]
     return command
 
 
@@ -120,19 +168,32 @@ def launch(command, output):
 
 def open_pair_window(parent):
     window = tk.Toplevel(parent)
-    window.title("Nonlinear pair — checkpoint runner")
-    frame = ttk.Frame(window, padding=12)
-    frame.pack(fill="both", expand=True)
+    window.title("Full-spin particles — pair and many-particle runner")
+    window.geometry("1000x760")
+    canvas = tk.Canvas(window, highlightthickness=0)
+    scrollbar = ttk.Scrollbar(window, orient="vertical", command=canvas.yview)
+    canvas.configure(yscrollcommand=scrollbar.set)
+    scrollbar.pack(side="right", fill="y")
+    canvas.pack(side="left", fill="both", expand=True)
+    frame = ttk.Frame(canvas, padding=12)
+    content = canvas.create_window((0, 0), window=frame, anchor="nw")
+    frame.bind(
+        "<Configure>", lambda event: canvas.configure(scrollregion=canvas.bbox("all"))
+    )
+    canvas.bind(
+        "<Configure>", lambda event: canvas.itemconfigure(content, width=event.width)
+    )
     frame.columnconfigure(1, weight=1)
     ttk.Label(
         frame,
         text=(
             "Working full-spin reaction: full_dipole_coupled.\n"
             "Fresh coupled preparation selects analytical derivatives; no fitting window is needed.\n"
-            "Resume prepared whole-pair histories; this does not convert older bunch configurations.\n"
+            "Choose pair or many-particle mode. Many-particle mode also accepts initial-condition JSON.\n"
+            "Bunch inputs represent physical particles, not weighted macroparticles.\n"
             "Adaptive resume requires an adaptive checkpoint prepared by the adaptive CLI.\n"
             "Internal error settings keep the requested source-recording timestep; leave blank to preserve them.\n"
-            "Self-consistency iteration, gamma reconciliation and chrono controls in the main window\n"
+            "Self-consistency iteration, gamma reconciliation, and chrono controls in the main window\n"
             "belong to the older solver and do not affect this runner."
         ),
     ).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 12))
@@ -153,10 +214,16 @@ def open_pair_window(parent):
             ("dipole_budget", ""),
             ("history_spacing", ""),
             ("dipole_relative", ""),
+            ("runner", "pair"),
+            ("input_kind", "checkpoint"),
+            ("active_count", ""),
+            ("selection_spacing", ""),
+            ("constraint_budget", ""),
+            ("startup_fit", "preserve"),
         )
     }
     labels = (
-        "Input checkpoint",
+        "Input checkpoint / initial-condition JSON",
         "New output checkpoint",
         "Additional steps / adaptive intervals",
         "Lab timestep (ns; blank for adaptive resume)",
@@ -170,6 +237,12 @@ def open_pair_window(parent):
         "Absolute dipole budget (optional override; native units)",
         "History sample spacing (ns; 11 samples cover 10 spacings)",
         "Relative dipole allowance (fresh default 1e-10; or absolute)",
+        "Runner (pair or many particles)",
+        "Input kind",
+        "Active RK4 particle count (blank keeps full solver / saved policy)",
+        "RK4/RK3 selection interval (ns; required with active count)",
+        "Relative mass/spin constraint budget (optional)",
+        "Startup fit (fresh input only)",
     )
     for row, ((key, variable), label) in enumerate(zip(values.items(), labels), 1):
         ttk.Label(frame, text=label).grid(row=row, column=0, sticky="w", pady=3)
@@ -183,6 +256,9 @@ def open_pair_window(parent):
                     "integration_method": ("preserve", "rk4", "dop853"),
                     "controller": ("fixed", "adaptive_resume"),
                     "history_method": ("auto", "preserve", *HISTORY_METHODS),
+                    "runner": ("pair", "particles"),
+                    "input_kind": ("checkpoint", "initial_conditions"),
+                    "startup_fit": ("preserve", "constrained", "interpolate"),
                 }[key],
                 state="readonly",
             )
@@ -193,6 +269,9 @@ def open_pair_window(parent):
                 "integration_method",
                 "controller",
                 "history_method",
+                "runner",
+                "input_kind",
+                "startup_fit",
             )
             else ttk.Entry(frame, textvariable=variable, width=45)
         )
@@ -253,10 +332,18 @@ def open_pair_window(parent):
                 values["dipole_budget"].get(),
                 values["history_spacing"].get(),
                 values["dipole_relative"].get(),
+                runner=values["runner"].get(),
+                input_kind=values["input_kind"].get(),
+                active_count=values["active_count"].get(),
+                selection_spacing=values["selection_spacing"].get(),
+                constraint_budget=values["constraint_budget"].get(),
+                startup_fit=values["startup_fit"].get(),
             )
             process, log = launch(command, target)
         except (ValueError, OSError) as error:
-            messagebox.showerror("Cannot launch pair", str(error), parent=window)
+            messagebox.showerror(
+                "Cannot launch full-spin run", str(error), parent=window
+            )
             return
         button.configure(state="disabled")
         status.set(
@@ -288,7 +375,7 @@ def open_pair_window(parent):
 
         window.after(1000, poll)
 
-    button = ttk.Button(frame, text="Run from checkpoint", command=start)
+    button = ttk.Button(frame, text="Run full-spin simulation", command=start)
     button.grid(row=len(labels) + 1, column=0, columnspan=3, pady=8)
     return window
 

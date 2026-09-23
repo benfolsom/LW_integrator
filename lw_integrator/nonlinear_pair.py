@@ -235,6 +235,12 @@ def main(argv: list[str] | None = None, *, _multiparticle: bool = False) -> int:
     parser.add_argument(
         "--checkpoint", type=Path, help="Input complete JSON checkpoint"
     )
+    if _multiparticle:
+        parser.add_argument(
+            "--initial-conditions",
+            type=Path,
+            help="Fresh physical-particle/bunch JSON; mutually exclusive with --checkpoint",
+        )
     parser.add_argument(
         "--output", type=Path, help="New output checkpoint; input is never overwritten"
     )
@@ -312,8 +318,14 @@ def main(argv: list[str] | None = None, *, _multiparticle: bool = False) -> int:
             selected_capabilities = capabilities
         print(json.dumps(selected_capabilities(), indent=2))
         return 0
-    if args.checkpoint is None or args.output is None or args.step_ns is None:
-        parser.error("--checkpoint, --output and --step-ns are required")
+    initial_conditions = getattr(args, "initial_conditions", None)
+    if (args.checkpoint is None) == (initial_conditions is None):
+        parser.error(
+            "Specify exactly one input: --checkpoint or --initial-conditions (many-particle only)"
+        )
+    source_path = args.checkpoint if args.checkpoint is not None else initial_conditions
+    if args.output is None or args.step_ns is None:
+        parser.error("--output and --step-ns are required")
     if args.steps < 1 or args.checkpoint_every < 1:
         parser.error("--steps and --checkpoint-every must be positive")
     if not math.isfinite(args.step_ns) or args.step_ns <= 0:
@@ -357,7 +369,7 @@ def main(argv: list[str] | None = None, *, _multiparticle: bool = False) -> int:
         and args.pseudogrid_rk3_active_count is None
     ):
         parser.error("Pseudogrid constraint budget requires reduced active count")
-    if args.checkpoint.resolve() == args.output.resolve():
+    if source_path.resolve() == args.output.resolve():
         parser.error("Use a distinct output path so the input checkpoint is preserved")
     if args.output.exists() and not args.overwrite_output:
         parser.error(
@@ -366,8 +378,14 @@ def main(argv: list[str] | None = None, *, _multiparticle: bool = False) -> int:
     completed = 0
     payload = None
     try:
+        if initial_conditions is not None:
+            from input_output.full_spin_initialization import prepare_particles
+
+            prepared = prepare_particles(json.loads(initial_conditions.read_text()))
+        else:
+            prepared = json.loads(args.checkpoint.read_text())
         payload = configure_checkpoint(
-            json.loads(args.checkpoint.read_text()),
+            prepared,
             args.radiation_reaction,
             args.reaction_window_ns,
             args.reaction_derivatives,

@@ -19,8 +19,9 @@ def capabilities() -> dict[str, Any]:
         reduced_motion_supported=True,
         pseudogrid_reference="Existing subset selector with exact updates for every particle; no speedup",
         pseudogrid_reduced="Opt-in RK4/RK3 with existing reaction modes, preserved source increments, and normalized-constraint RK4 fallback; internal error control supports off or full-dipole reaction; midpoint remains fixed-step and reaction-off; every particle remains a retarded source",
-        gui_supported=False,
-        limitation="Prepared histories required. Reduced source approximation, bunch initialization, and GUI integration remain pending. Full conservation and strong-spin validity remain open.",
+        initial_conditions="--initial-conditions: explicit particles or seeded physical bunches with inertial past and a startup ramp",
+        gui_supported=True,
+        limitation="All-to-all sources; no weighted macroparticles or source aggregation. General conservation, strong-spin validity, and large-system performance remain open.",
     )
     return result
 
