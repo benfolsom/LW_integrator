@@ -105,7 +105,9 @@ def connected_coefficients(
 
 
 @lru_cache(maxsize=32)
-def _startup_weights(times: tuple[float, ...], origin: float):
+def _startup_weights(
+    times: tuple[float, ...], origin: float
+) -> tuple[tuple[Fraction, ...], ...]:
     """Exact least-squares weights for powers four through ten at startup.
 
     The first four coefficients are known from the inertial past. Rational
@@ -116,7 +118,7 @@ def _startup_weights(times: tuple[float, ...], origin: float):
     nodes = [(Fraction(t) - Fraction(origin)) / span for t in times]
     design = [[node**k for k in range(4, 11)] for node in nodes]
     augmented = [
-        [sum(row[i] * row[j] for row in design) for j in range(7)]
+        [sum((row[i] * row[j] for row in design), Fraction(0)) for j in range(7)]
         + [row[i] for row in design]
         for i in range(7)
     ]
@@ -135,7 +137,12 @@ def _startup_weights(times: tuple[float, ...], origin: float):
 
 
 @lru_cache(maxsize=128)
-def _startup_map(times: tuple[float, ...], origin: float, left: float, width: float):
+def _startup_map(
+    times: tuple[float, ...],
+    origin: float,
+    left: float,
+    width: float,
+) -> CompensatedHistoryMap:
     fitted = _startup_weights(times, origin)
     span = Fraction(times[-1]) - Fraction(origin)
     offset = (Fraction(left) - Fraction(origin)) / span

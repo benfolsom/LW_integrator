@@ -7,7 +7,7 @@ The 14-component state is [t_ns, x_mm(3), P_native(4), S_native(6)].
 
 from dataclasses import asdict, dataclass
 import copy
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 
 import numpy as np
 from scipy.special import betainc
@@ -24,9 +24,8 @@ MODEL = "experimental_momentum_center_pair_v1"
 MULTIPARTICLE_MODEL = "momentum_center_particles_v1"
 UNITS = "mm_ns_amu_scaled_gaussian"
 FULL_DIPOLE_REACTION_MODES = ("full_dipole_rr", "full_dipole_coupled")
-NativeProvider = Callable[
-    [float, np.ndarray], tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]
-]
+NativeResponse = tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]
+NativeProvider = Callable[[float, np.ndarray], NativeResponse]
 
 
 def smooth_start_native(
@@ -474,26 +473,30 @@ class CombinedDipoleProvider:
                 setattr(self, name, getattr(first, name))
 
     @property
-    def samples(self):
+    def samples(self) -> list[tuple[float, float, float]]:
         return [sample for provider in self.providers for sample in provider.samples]
 
     @staticmethod
-    def _sum(values):
+    def _sum(values: Iterator[NativeResponse]) -> NativeResponse:
         result = [value.copy() for value in next(values)]
         for contribution in values:
             for total, value in zip(result, contribution):
                 total += value
-        return tuple(result)
+        return result[0], result[1], result[2], result[3]
 
-    def __call__(self, time_ns, position_mm):
+    def __call__(self, time_ns: float, position_mm: np.ndarray) -> NativeResponse:
         return self._sum(p(time_ns, position_mm) for p in self.providers)
 
-    def taylor_response_length_time(self, events):
+    def taylor_response_length_time(self, events: np.ndarray) -> NativeResponse:
         return self._sum(p.taylor_response_length_time(events) for p in self.providers)
 
 
-def _providers(payload, particles, histories):
-    result = []
+def _providers(
+    payload: dict[str, Any],
+    particles: list[MomentumCenterParticle],
+    histories: list[FullDipoleHistory],
+) -> list[FullDipoleProvider | CombinedDipoleProvider]:
+    result: list[FullDipoleProvider | CombinedDipoleProvider] = []
     for observer in range(len(particles)):
         sources = [
             FullDipoleProvider(
@@ -550,7 +553,7 @@ def _initialize_particles(
     inertial_prehistory: bool = False,
     preserve_source_increments: bool = False,
     integration_method: str = "rk4",
-    internal_step_settings=None,
+    internal_step_settings: Any = None,
     checkpoint_model: str = MODEL,
 ) -> dict[str, Any]:
     """Checkpoint accepted native states and their already prepared source past."""
@@ -672,7 +675,7 @@ def _initialize_source_precision(payload):
     return result
 
 
-def _source_format(payload):
+def _source_format(payload: dict[str, Any]) -> str:
     return (
         "preserved-particles-source-v1"
         if payload.get("model") == MULTIPARTICLE_MODEL
@@ -791,7 +794,11 @@ def advance_pair(
     return _advance_particles(payload, width_ns, steps)
 
 
-def _relative_constraint_residuals(state, particle, diagnostic):
+def _relative_constraint_residuals(
+    state: np.ndarray,
+    particle: MomentumCenterParticle,
+    diagnostic: dict[str, Any],
+) -> tuple[float, float]:
     """Dimensionless accepted-state checks in the simulation frame."""
     data = diagnostic["length_time"]
     momentum = np.asarray(data["kinetic_momentum"])
@@ -1041,14 +1048,15 @@ def _advance_particles(
             if passive and passive_constraint_budget_relative is not None:
                 if forced_fallback:
                     candidate_mass, candidate_spin = None, None
+                    fallback = True
                 else:
                     candidate_mass, candidate_spin = _relative_constraint_residuals(
                         trial, particle, diagnostic
                     )
-                fallback = forced_fallback or (
-                    max(candidate_mass, candidate_spin)
-                    > passive_constraint_budget_relative
-                )
+                    fallback = (
+                        max(candidate_mass, candidate_spin)
+                        > passive_constraint_budget_relative
+                    )
                 if fallback and not forced_fallback:
                     # The first two reduced stages are exactly the first two
                     # RK4 stages. Recompute only the missing RK4 stages against

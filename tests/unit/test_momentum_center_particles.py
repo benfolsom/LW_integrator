@@ -291,6 +291,18 @@ def test_three_particle_internal_adaptation_and_absolute_budgets():
     assert all(s[0] == 0.01 / c for s in result["states"])
 
 
+@pytest.mark.parametrize("width", [0, -1, float("nan"), float("inf"), True])
+def test_scheduled_run_rejects_invalid_interval_before_clock_calculation(width):
+    particles, states, histories, options = fixture()
+    initial = configure_pseudogrid_rk3(
+        initialize_particles(particles, states, histories, **options), 1, 0.01 / c
+    )
+    original = copy.deepcopy(initial)
+    with pytest.raises(ValueError, match="Positive finite recording interval"):
+        advance_particles(initial, width)
+    assert initial == original
+
+
 def test_bad_reference_checkpoint_is_rejected_without_mutation():
     particles, states, histories, options = fixture()
     initial = configure_pseudogrid_reference(

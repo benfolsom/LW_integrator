@@ -10,7 +10,10 @@ HISTORY_METHODS = ("endpoint", "connected_direct", "connected_single_fit")
 DEFAULT_DIPOLE_RELATIVE_BUDGET = 1e-10
 
 
-def configure_startup_dipole_fit(payload, method=None):
+def configure_startup_dipole_fit(
+    payload: dict[str, Any],
+    method: str | None = None,
+) -> dict[str, Any]:
     """Select fresh startup fitting without rewriting any evolved history."""
     from dataclasses import replace
 

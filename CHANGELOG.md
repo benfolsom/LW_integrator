@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Reject invalid many-particle recording intervals before calculating the
+  selection clock. Add types to the new interfaces without increasing the
+  existing development type-check backlog.
 - Add a checkpointed, normalized mass/spin constraint guard for experimental
   passive updates. A failing passive candidate is recomputed with RK4 before
   publication; an RK4 failure rejects the whole step. Record per-particle

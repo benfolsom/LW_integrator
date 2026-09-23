@@ -1,11 +1,13 @@
 """Run prepared many-particle full-spin checkpoints on a fixed recording grid."""
 
+from typing import Any
+
 from .nonlinear_pair import capabilities as pair_capabilities
 from .nonlinear_pair import main as checkpoint_main
 from core.momentum_center_pair import MULTIPARTICLE_MODEL
 
 
-def capabilities():
+def capabilities() -> dict[str, Any]:
     result = pair_capabilities()
     result.update(
         model=MULTIPARTICLE_MODEL,
@@ -23,7 +25,7 @@ def capabilities():
     return result
 
 
-def main(argv=None):
+def main(argv: list[str] | None = None) -> int:
     return checkpoint_main(argv, _multiparticle=True)
 
 

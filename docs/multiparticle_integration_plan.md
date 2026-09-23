@@ -18,6 +18,31 @@ Bring the full-spin motion and radiation-reaction calculations into practical
 many-particle simulations. Keep the established two-particle results as a
 regression reference. A merged pair solver was not completion of this work.
 
+## Agreed default and merge sequence, 2026-09-23
+
+The intended everyday mode is mixed stepping: selected active particles use
+RK4, and passive particles use RK3 with a recorded RK4 fallback. Every particle
+continues moving, evolving its spin, and supplying its own causal history.
+All-particle RK4 remains the higher-order alternative. This is the agreed
+implementation direction; the mixed method is still optional today.
+
+First merge the validated optional mode into development after branch review.
+Then add preserved source increments, matched reaction impulse and torque
+accounting, and compatibility with internal error control. Complete ordinary
+input and GUI support before default promotion. Compare both trajectories and
+reaction contributions after newly evolved signals arrive, using the same
+physical selection schedule at each tested recording resolution.
+
+The pre-merge review passed 167 broader regression tests covering pair and
+many-particle stepping, startup fitting, precision-preserved histories,
+internal controls, restart, and CLI/GUI pair behavior. Review found and fixed
+an invalid recording interval reaching the selection-clock division before
+validation. The 60-test follow-up passed, including five invalid-interval
+cases. Targeted type checking reports the same 197 existing errors on the
+branch and development, with no additional errors after normalizing source
+line numbers. This is a known repository type-check backlog, not a clean
+type-check result. Sphinx work is deferred until the default-mode milestone.
+
 ## Implementation sequence
 
 1. Generalize source collection, simultaneous history publication, preserved

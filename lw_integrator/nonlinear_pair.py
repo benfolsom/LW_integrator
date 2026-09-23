@@ -40,7 +40,7 @@ def capabilities() -> dict[str, Any]:
             "choices": ["interpolate", "constrained"],
             "default": "preserve checkpoint policy",
             "selection": "Explicit --startup-dipole-fit; changes require fresh inertial-boundary data",
-            "validation": "Constrained fitting passed the three-particle reaction-off recording comparison; reaction-on comparison remains open",
+            "validation": "Constrained fitting passed bounded three-particle recording comparisons with reaction off and on; general radiation accuracy remains open",
         },
         history_selection="Auto selects single-fit on compatible fresh data; missing budgets use 1e-10 of each initial tensor norm. Spacing defaults to the recording interval and is checkpointed. Resume preserves settings.",
         internal_step_control={

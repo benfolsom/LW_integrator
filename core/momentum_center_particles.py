@@ -5,26 +5,34 @@ the same accepted past; histories publish together after successful steps.
 """
 
 import copy
+from typing import Any
 
 import numpy as np
 
 from .momentum_center_pair import (
     MULTIPARTICLE_MODEL,
+    MomentumCenterParticle,
     _advance_particles,
     _initialize_particles,
 )
+from .full_dipole_history import FullDipoleHistory
 
 DEFAULT_PASSIVE_CONSTRAINT_BUDGET_RELATIVE = 1e-6
 
 
-def initialize_particles(particles, states, histories, **options):
+def initialize_particles(
+    particles: list[MomentumCenterParticle],
+    states: Any,
+    histories: list[FullDipoleHistory],
+    **options: Any,
+) -> dict[str, Any]:
     """Prepare two or more particles using the pair solver's physical options."""
     return _initialize_particles(
         particles, states, histories, checkpoint_model=MULTIPARTICLE_MODEL, **options
     )
 
 
-def _physical_schedule(payload, spacing_ns):
+def _physical_schedule(payload: dict[str, Any], spacing_ns: float) -> dict[str, Any]:
     if (
         not np.isscalar(spacing_ns)
         or isinstance(spacing_ns, (bool, str))
@@ -43,7 +51,11 @@ def _physical_schedule(payload, spacing_ns):
     )
 
 
-def configure_pseudogrid_reference(payload, active_count, selection_spacing_ns=None):
+def configure_pseudogrid_reference(
+    payload: dict[str, Any],
+    active_count: int,
+    selection_spacing_ns: float | None = None,
+) -> dict[str, Any]:
     """Record subset selections while retaining exact dynamics for everyone.
 
     This mode offers no speedup. Passive spin/history approximation is not yet
@@ -70,12 +82,12 @@ def configure_pseudogrid_reference(payload, active_count, selection_spacing_ns=N
 
 
 def _configure_reduced(
-    payload,
-    active_count,
-    selection_spacing_ns,
-    constraint_budget_relative,
-    mode,
-):
+    payload: dict[str, Any],
+    active_count: int,
+    selection_spacing_ns: float,
+    constraint_budget_relative: float,
+    mode: str,
+) -> dict[str, Any]:
     """Use RK4 for selected particles and a lower-order passive update.
 
     Every particle remains a distinct retarded source; the passive accepted
@@ -121,11 +133,11 @@ def _configure_reduced(
 
 
 def configure_pseudogrid_midpoint(
-    payload,
-    active_count,
-    selection_spacing_ns,
-    constraint_budget_relative=DEFAULT_PASSIVE_CONSTRAINT_BUDGET_RELATIVE,
-):
+    payload: dict[str, Any],
+    active_count: int,
+    selection_spacing_ns: float,
+    constraint_budget_relative: float = DEFAULT_PASSIVE_CONSTRAINT_BUDGET_RELATIVE,
+) -> dict[str, Any]:
     """Configure second-order passive motion with a recorded RK4 safety fallback."""
     return _configure_reduced(
         payload,
@@ -137,11 +149,11 @@ def configure_pseudogrid_midpoint(
 
 
 def configure_pseudogrid_rk3(
-    payload,
-    active_count,
-    selection_spacing_ns,
-    constraint_budget_relative=DEFAULT_PASSIVE_CONSTRAINT_BUDGET_RELATIVE,
-):
+    payload: dict[str, Any],
+    active_count: int,
+    selection_spacing_ns: float,
+    constraint_budget_relative: float = DEFAULT_PASSIVE_CONSTRAINT_BUDGET_RELATIVE,
+) -> dict[str, Any]:
     """Configure third-order passive motion with a recorded RK4 safety fallback."""
     return _configure_reduced(
         payload,
@@ -152,14 +164,19 @@ def configure_pseudogrid_rk3(
     )
 
 
-def _validate_model(payload):
+def _validate_model(payload: dict[str, Any]) -> None:
     if payload.get("model") != MULTIPARTICLE_MODEL:
         raise ValueError("A many-particle full-spin checkpoint is required")
     if "pseudo_grid" in payload:
         raise ValueError("Legacy reduced pseudogrid is not supported by this solver")
 
 
-def _schedule(config, states, step, mode):
+def _schedule(
+    config: dict[str, Any],
+    states: np.ndarray,
+    step: int,
+    mode: str,
+) -> tuple[dict[str, Any], list[int], bool]:
     from .pseudo_grid import select_active_indices
 
     config = copy.deepcopy(config)
@@ -278,9 +295,20 @@ def _schedule(config, states, step, mode):
     return config, active.tolist(), True
 
 
-def advance_particles(payload, width_ns, steps=1):
+def advance_particles(
+    payload: dict[str, Any],
+    width_ns: float,
+    steps: int = 1,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """Advance on the shared recording clock with optional subset selection."""
     _validate_model(payload)
+    if (
+        not np.isscalar(width_ns)
+        or isinstance(width_ns, (bool, str))
+        or not np.isfinite(width_ns)
+        or width_ns <= 0
+    ):
+        raise ValueError("Positive finite recording interval required")
     reference = "pseudogrid_reference" in payload
     reduced = "pseudogrid_reduced" in payload
     if reference and reduced:
@@ -326,7 +354,7 @@ def advance_particles(payload, width_ns, steps=1):
             )
     selections = []
 
-    def select(states, step):
+    def select(states: np.ndarray, step: int) -> frozenset[int]:
         nonlocal config
         config, active, updated = _schedule(config, states, step, mode)
         selections.append((active, updated))
