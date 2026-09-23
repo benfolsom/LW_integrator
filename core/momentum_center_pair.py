@@ -949,10 +949,13 @@ def _advance_particles(
             if selected_passive and (
                 payload.get("integration_method", "rk4") != "rk4"
                 or "internal_step_control" in payload
-                or any(p.reaction_mode != "off" for p in particles)
+                or (
+                    passive_method != "rk3"
+                    and any(p.reaction_mode != "off" for p in particles)
+                )
             ):
                 raise ValueError(
-                    "Passive reduced updates require reaction-off RK4 without internal steps"
+                    "Reduced updates require RK4 without internal steps; reaction requires passive_rk3"
                 )
         providers = _providers(payload, particles, histories)
         trials, diagnostics, candidate_histories = [], [], []
@@ -963,6 +966,8 @@ def _advance_particles(
             stage_diagnostics = []
             passive = selected_passive is not None and i in selected_passive
             forced_fallback = False
+            weights: tuple[float, ...] = (1, 2, 2, 1)
+            divisor = 6
             if source_components is not None:
                 start_high = source_high[i].copy()
                 start_low = source_low[i].copy()
@@ -973,6 +978,9 @@ def _advance_particles(
                 stage_weights: tuple[int, ...] = (1, 2, 2, 1),
                 stage_divisor: int = 6,
             ) -> np.ndarray:
+                nonlocal weights, divisor
+                if rates is not None:
+                    weights, divisor = stage_weights, stage_divisor
                 if source_components is not None:
                     from .preserved_source import rk_increment, rounded_state
 
@@ -1006,8 +1014,6 @@ def _advance_particles(
                 k4 = rhs(state + width_ns * k3)
                 return state + width_ns * (k1 + 2 * k2 + 2 * k3 + k4) / 6, k3, k4
 
-            weights: tuple[float, ...] = (1, 2, 2, 1)
-            divisor = 6
             trial: np.ndarray | None = None
             trial_rates: tuple[np.ndarray, ...] | None = None
             trial_weights: tuple[int, ...] = (1, 2, 2, 1)
@@ -1138,6 +1144,12 @@ def _advance_particles(
             if internal_statistics is not None:
                 diagnostic["internal_step_control"] = internal_statistics
             diagnostics.append(diagnostic)
+            if particle.reaction_mode != "off" and len(weights) != len(
+                stage_diagnostics
+            ):
+                raise ValueError(
+                    "Reaction integration requires one weight per accepted stage"
+                )
             if particle.reaction_mode == "charge_ll":
                 for key, source in zip(
                     ledger_keys,

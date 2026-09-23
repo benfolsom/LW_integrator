@@ -105,10 +105,13 @@ def _configure_reduced(
     if (
         payload.get("integration_method", "rk4") != "rk4"
         or "internal_step_control" in payload
-        or any(p.get("reaction_mode") != "off" for p in payload["particles"])
+        or (
+            mode != "passive_rk3"
+            and any(p.get("reaction_mode") != "off" for p in payload["particles"])
+        )
     ):
         raise ValueError(
-            "Reduced passive updates require reaction-off RK4 without internal steps"
+            "Reduced updates require RK4 without internal steps; reaction requires passive_rk3"
         )
     if (
         not np.isscalar(constraint_budget_relative)

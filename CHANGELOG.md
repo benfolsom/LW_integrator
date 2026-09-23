@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Enable existing charge and dipole reaction models in optional mixed RK4/RK3
+  stepping. Accumulate reaction impulse, torque, and mass exchange with the
+  accepted integration stages; discard rejected RK3 stages on RK4 fallback.
+  Preserve reaction records through CLI checkpoints. Midpoint still requires
+  reaction off, and mixed internal error control remains pending.
 - Support preserved state and dipole increments in mixed RK4/RK3 and
   RK4/midpoint runs with reaction off. An RK4 fallback replaces the rejected
   candidate increment before history publication. Reaction and internal

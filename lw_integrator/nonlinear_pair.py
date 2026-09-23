@@ -216,7 +216,7 @@ def main(argv: list[str] | None = None, *, _multiparticle: bool = False) -> int:
         parser.add_argument(
             "--pseudogrid-rk3-active-count",
             type=int,
-            help="Experimental reaction-off RK4 subset: selected particles use RK4, remaining particles use third-order RK; all remain retarded sources",
+            help="Experimental mixed stepping: selected particles use RK4, remaining particles use RK3; supports existing reaction modes and preserved increments, without internal step control",
         )
         parser.add_argument(
             "--pseudogrid-selection-spacing-ns",

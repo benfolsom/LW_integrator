@@ -5,8 +5,9 @@ Started 2026-09-21, after the v0.9.0 pair-solver release.
 Current status, 2026-09-23: the optional many-particle and mixed RK4/RK3 mode
 has been merged into development at `cce1cf0`. The feature branch additionally
 supports preserved source increments in mixed stepping, with passing restart,
-fallback, and bounded history tests. Reaction
-and internal error control in mixed runs, ordinary bunch input, GUI launch,
+fallback, and bounded history tests. Matched reaction accounting is implemented
+for mixed RK4/RK3 stepping. Internal error control in mixed runs, combined
+single-fit/reaction refinement, ordinary bunch input, GUI launch,
 and larger-system validation remain open. The full solver is still the
 default. The agreed target and chronological results follow below.
 
@@ -493,3 +494,49 @@ the pair GUI tests, preserved histories, DOP853, internal controls, reaction
 paths, and the new mixed-method restart and fallback cases. Black, Ruff, and
 the diff whitespace check pass. Targeted type checking reports 196 existing
 errors, one fewer than the merge baseline and no new error messages.
+
+## Reaction accounting in mixed RK4/RK3 stepping, 2026-09-23
+
+The mixed RK4/RK3 path now accepts the existing zero-spin `charge_ll`,
+`full_dipole_coupled`, and legacy `full_dipole_rr` options. The equations used
+at each stage are unchanged. Accepted RK3 stages use weights `(1, 4, 1) / 6`
+for both the state update and accumulated reaction quantities. An RK4 fallback
+removes the rejected third stage and uses `(1, 2, 2, 1) / 6` throughout. A
+stage/weight count mismatch raises an error before a checkpoint is returned.
+
+This covers applied impulse, applied torque, external-action mass exchange,
+and each charge-squared, charge–dipole, and dipole-squared contribution. For
+charge-only reaction it also covers outward radiation and bound-momentum
+integrals. Forced stage and endpoint failures reproduce the all-RK4 particle
+state, history, and every accumulated reaction quantity exactly, with and
+without preserved increments. A manufactured quadratic time dependence tests
+the integration weights independently of the physical equations. CLI tests
+resume coupled-reaction mixed runs with their saved reaction records.
+
+The first physical comparison uses three particles, preserved endpoint
+histories, coupled reaction, one active particle, and 25 steps of `0.005 / c`
+ns to `ct = 0.125 mm`. It includes sampling evolved source history and an
+exact checkpoint replay. Total reaction impulse and torque meet a 1% relative
+comparison limit against all-RK4 at the same recording step. This is a bounded
+integration test; it does not establish radiation convergence or high-order
+history-derivative accuracy. All eight impulse/torque comparisons passed,
+including the separate charge-squared, charge–dipole, and dipole-squared
+contributions. The maximum nonzero relative discrepancy is `3.930023e-4`
+for dipole-squared torque; total impulse differs by `8.984207e-5`, and total
+torque by `5.517900e-6`. Each denominator is the corresponding all-RK4 norm
+at the same step size. Charge-squared torque is exactly zero in both runs.
+There are five post-arrival steps and no RK4 fallbacks. The result is archived
+in [mixed reaction evidence](evidence/multiparticle_2026-09-23/mixed_reaction_postarrival.json).
+
+Validation: 107 regression tests passed; the explicitly selected slow
+post-arrival test also passed in 217.24 seconds. The slow test is excluded from
+the ordinary suite by repository policy and must be selected with `-m slow`.
+Black, Ruff, and diff whitespace checks pass. Targeted type checking remains
+at 196 existing errors, with no new messages in the changed code.
+
+Next: run mixed stepping with coupled reaction and constrained single-fit
+histories on the archived weak setup, compare recording resolutions at fixed
+physical fitting and selection intervals, and then integrate internal error
+control. The all-RK4 option remains available. The midpoint experiment remains
+reaction-off; the intended default is RK4 for active particles and RK3 for
+passive particles. No default promotion is made by this change.
