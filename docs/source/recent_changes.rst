@@ -9,6 +9,17 @@ This page summarizes recent improvements to the LW integrator, including
 optimization features, convergence enhancements, and critical physics
 corrections.
 
+September 2026: many-particle milestone (v0.10.0)
+--------------------------------------------------------
+
+The :doc:`full_spin_particles` guide covers physical-particle and seeded bunch
+input, GUI launch, guarded RK4/RK3 stepping, preserved histories, matched dipole
+reaction accounting, and optional internal adaptation. The weak 250/500-step
+reaction-on comparison passed its declared checks; its largest relative
+impulse/torque difference was 9.103794e-5 against the fine norm. General
+conservation, strong-spin validity, and large-system performance remain open.
+Existing defaults are unchanged.
+
 September 2026: finite-spin pair workflow
 -------------------------------------------
 

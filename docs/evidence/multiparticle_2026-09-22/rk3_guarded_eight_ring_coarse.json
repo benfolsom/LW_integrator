@@ -1,0 +1,441 @@
+{
+  "case": "weak eight_ring, reaction off, unpreserved RK4",
+  "passive_method": "rk3",
+  "charge_and_spin_scale": 1.0,
+  "beta_z": 0.0,
+  "beta_pattern": "common",
+  "particle_count": 8,
+  "active_count": 2,
+  "selection_spacing_ns": 1.6678204759907602e-05,
+  "passive_constraint_budget_relative": 1e-06,
+  "fallback_count_by_particle": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+  ],
+  "reduced_accepted_count_by_particle": [
+    37,
+    37,
+    38,
+    38,
+    37,
+    37,
+    38,
+    38
+  ],
+  "selection_trace": [
+    {
+      "time_ns": 0.0,
+      "selected_indices": [
+        0,
+        4
+      ]
+    },
+    {
+      "time_ns": 1.6678204759907602e-05,
+      "selected_indices": [
+        1,
+        5
+      ]
+    },
+    {
+      "time_ns": 3.3356409519815205e-05,
+      "selected_indices": [
+        2,
+        6
+      ]
+    },
+    {
+      "time_ns": 5.003461427972281e-05,
+      "selected_indices": [
+        3,
+        7
+      ]
+    },
+    {
+      "time_ns": 6.671281903963041e-05,
+      "selected_indices": [
+        0,
+        4
+      ]
+    },
+    {
+      "time_ns": 8.339102379953801e-05,
+      "selected_indices": [
+        1,
+        5
+      ]
+    },
+    {
+      "time_ns": 0.00010006922855944561,
+      "selected_indices": [
+        2,
+        6
+      ]
+    },
+    {
+      "time_ns": 0.00011674743331935322,
+      "selected_indices": [
+        3,
+        7
+      ]
+    },
+    {
+      "time_ns": 0.00013342563807926082,
+      "selected_indices": [
+        0,
+        4
+      ]
+    },
+    {
+      "time_ns": 0.00015010384283916842,
+      "selected_indices": [
+        1,
+        5
+      ]
+    },
+    {
+      "time_ns": 0.00016678204759907602,
+      "selected_indices": [
+        2,
+        6
+      ]
+    },
+    {
+      "time_ns": 0.00018346025235898363,
+      "selected_indices": [
+        3,
+        7
+      ]
+    },
+    {
+      "time_ns": 0.00020013845711889123,
+      "selected_indices": [
+        0,
+        4
+      ]
+    },
+    {
+      "time_ns": 0.00021681666187879883,
+      "selected_indices": [
+        1,
+        5
+      ]
+    },
+    {
+      "time_ns": 0.00023349486663870643,
+      "selected_indices": [
+        2,
+        6
+      ]
+    },
+    {
+      "time_ns": 0.00025017307139861404,
+      "selected_indices": [
+        3,
+        7
+      ]
+    },
+    {
+      "time_ns": 0.00026685127615852164,
+      "selected_indices": [
+        0,
+        4
+      ]
+    },
+    {
+      "time_ns": 0.00028352948091842924,
+      "selected_indices": [
+        1,
+        5
+      ]
+    },
+    {
+      "time_ns": 0.00030020768567833684,
+      "selected_indices": [
+        2,
+        6
+      ]
+    },
+    {
+      "time_ns": 0.00031688589043824445,
+      "selected_indices": [
+        3,
+        7
+      ]
+    },
+    {
+      "time_ns": 0.00033356409519815205,
+      "selected_indices": [
+        0,
+        4
+      ]
+    },
+    {
+      "time_ns": 0.00035024229995805965,
+      "selected_indices": [
+        1,
+        5
+      ]
+    },
+    {
+      "time_ns": 0.00036692050471796725,
+      "selected_indices": [
+        2,
+        6
+      ]
+    },
+    {
+      "time_ns": 0.00038359870947787486,
+      "selected_indices": [
+        3,
+        7
+      ]
+    },
+    {
+      "time_ns": 0.00040027691423778246,
+      "selected_indices": [
+        0,
+        4
+      ]
+    },
+    {
+      "time_ns": 0.00041695511899769006,
+      "selected_indices": [
+        1,
+        5
+      ]
+    },
+    {
+      "time_ns": 0.00043363332375759766,
+      "selected_indices": [
+        2,
+        6
+      ]
+    },
+    {
+      "time_ns": 0.00045031152851750527,
+      "selected_indices": [
+        3,
+        7
+      ]
+    },
+    {
+      "time_ns": 0.00046698973327741287,
+      "selected_indices": [
+        0,
+        4
+      ]
+    },
+    {
+      "time_ns": 0.00048366793803732047,
+      "selected_indices": [
+        1,
+        5
+      ]
+    },
+    {
+      "time_ns": 0.0005003461427972281,
+      "selected_indices": [
+        2,
+        6
+      ]
+    },
+    {
+      "time_ns": 0.0005170243475571357,
+      "selected_indices": [
+        3,
+        7
+      ]
+    },
+    {
+      "time_ns": 0.0005337025523170433,
+      "selected_indices": [
+        0,
+        4
+      ]
+    },
+    {
+      "time_ns": 0.0005503807570769509,
+      "selected_indices": [
+        1,
+        5
+      ]
+    },
+    {
+      "time_ns": 0.0005670589618368585,
+      "selected_indices": [
+        2,
+        6
+      ]
+    },
+    {
+      "time_ns": 0.0005837371665967661,
+      "selected_indices": [
+        3,
+        7
+      ]
+    },
+    {
+      "time_ns": 0.0006004153713566737,
+      "selected_indices": [
+        0,
+        4
+      ]
+    },
+    {
+      "time_ns": 0.0006170935761165813,
+      "selected_indices": [
+        1,
+        5
+      ]
+    },
+    {
+      "time_ns": 0.0006337717808764889,
+      "selected_indices": [
+        2,
+        6
+      ]
+    },
+    {
+      "time_ns": 0.0006504499856363965,
+      "selected_indices": [
+        3,
+        7
+      ]
+    },
+    {
+      "time_ns": 0.0006671281903963041,
+      "selected_indices": [
+        0,
+        4
+      ]
+    },
+    {
+      "time_ns": 0.0006838063951562117,
+      "selected_indices": [
+        1,
+        5
+      ]
+    },
+    {
+      "time_ns": 0.0007004845999161193,
+      "selected_indices": [
+        2,
+        6
+      ]
+    },
+    {
+      "time_ns": 0.0007171628046760269,
+      "selected_indices": [
+        3,
+        7
+      ]
+    },
+    {
+      "time_ns": 0.0007338410094359345,
+      "selected_indices": [
+        0,
+        4
+      ]
+    },
+    {
+      "time_ns": 0.0007505192141958421,
+      "selected_indices": [
+        1,
+        5
+      ]
+    },
+    {
+      "time_ns": 0.0007671974189557497,
+      "selected_indices": [
+        2,
+        6
+      ]
+    },
+    {
+      "time_ns": 0.0007838756237156573,
+      "selected_indices": [
+        3,
+        7
+      ]
+    },
+    {
+      "time_ns": 0.0008005538284755649,
+      "selected_indices": [
+        0,
+        4
+      ]
+    },
+    {
+      "time_ns": 0.0008172320332354725,
+      "selected_indices": [
+        1,
+        5
+      ]
+    }
+  ],
+  "schedules_match": true,
+  "steps": 50,
+  "step_ns": 1.6678204759907602e-05,
+  "end_ct_mm": 0.25,
+  "elapsed_seconds": {
+    "exact_reference": [
+      25.054935583029874
+    ],
+    "passive_rk3": [
+      21.422409834049176
+    ]
+  },
+  "speedup_vs_scheduled_exact": 1.1695666256560497,
+  "comparison": {
+    "position_mm": {
+      "absolute": 2.7107346247501494e-12,
+      "exact_norm": 0.22656990625558898,
+      "relative": 1.1964230685130019e-11
+    },
+    "canonical_spatial_momentum_native": {
+      "absolute": 3.377601655854147e-09,
+      "exact_norm": 0.7872530267196847,
+      "relative": 4.290363506035527e-09
+    },
+    "canonical_transverse_momentum_native": {
+      "absolute": 3.377601655854147e-09,
+      "exact_norm": 0.7872530267196847,
+      "relative": 4.290363506035527e-09
+    },
+    "spin_native": {
+      "absolute": 4.984277309580561e-10,
+      "exact_norm": 8.479418520558372,
+      "relative": 5.878088571163421e-11
+    },
+    "kinetic_spatial_momentum_native": {
+      "absolute": 3.3768344394803037e-09,
+      "exact_norm": 0.7878779206113569,
+      "relative": 4.285986891040221e-09
+    },
+    "kinetic_transverse_momentum_native": {
+      "absolute": 3.3768344394803037e-09,
+      "exact_norm": 0.7878779206113569,
+      "relative": 4.285986891040221e-09
+    }
+  },
+  "maximum_spin_constraint": {
+    "exact_reference": 2.600229727677562e-11,
+    "passive_rk3": 2.6284859869233198e-11
+  },
+  "maximum_mass_constraint": {
+    "exact_reference": 8.450396369444152e-08,
+    "passive_rk3": 8.451347673462486e-08
+  },
+  "postarrival_steps": {
+    "exact_reference": 38,
+    "passive_rk3": 38
+  },
+  "note": "The schedule equality is checked explicitly. All particles remain individually stored causal sources. Speed is measured against the scheduled exact control, not unscheduled batch RK4."
+}

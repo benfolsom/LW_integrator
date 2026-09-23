@@ -7,7 +7,9 @@ from .preserved_adaptive import integrate_interval
 from .preserved_source import rounded_state
 
 
-def integrate_particle(reference, high, low, width, particle, provider, settings):
+def integrate_particle(
+    reference, high, low, width, particle, provider, settings, *, method="dop853"
+):
     from .momentum_center_pair import dynamics_native
 
     reference, high, low = [
@@ -26,9 +28,17 @@ def integrate_particle(reference, high, low, width, particle, provider, settings
         width,
         rhs,
         lambda old, proposed, error: physical_error_norm(
-            proposed, error, particle, provider, settings
+            proposed,
+            error,
+            particle,
+            provider,
+            settings,
+            preserve_error=method != "dop853",
         ),
         maximum_trials=settings.maximum_trials,
+        method=method,
     )
+    if method != "dop853":
+        statistics["method"] = method
     integrals = rounded_state(reference, high, low)[14:]
     return high[:14], low[:14], reaction_ledger(integrals), statistics

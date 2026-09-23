@@ -1,0 +1,62 @@
+{
+  "active_count": 1,
+  "case": "three particles, preserved endpoint histories, coupled reaction, ct=0.125 mm",
+  "fallback_count": [
+    0,
+    0,
+    0
+  ],
+  "note": "Each relative difference uses the all-RK4 norm at the same recording step; no refinement or radiation-accuracy closure is claimed.",
+  "postarrival_steps": 5,
+  "reaction_comparison": {
+    "D_squared_impulse_native": {
+      "absolute": 4.1149432683335885e-10,
+      "relative": 0.00031867789042016063,
+      "rk4_norm": 0.0000012912547095464465
+    },
+    "D_squared_torque_native": {
+      "absolute": 2.298024159108501e-13,
+      "relative": 0.00039300225962321685,
+      "rk4_norm": 5.847356097422152e-10
+    },
+    "qD_impulse_native": {
+      "absolute": 3.634905974461185e-11,
+      "relative": 0.0003110697071861909,
+      "rk4_norm": 1.1685181457690159e-7
+    },
+    "qD_torque_native": {
+      "absolute": 4.2130071496712977e-14,
+      "relative": 9.118747557047775e-7,
+      "rk4_norm": 4.620159866598251e-8
+    },
+    "q_squared_impulse_native": {
+      "absolute": 2.3301256388593827e-12,
+      "relative": 5.043383472866967e-7,
+      "rk4_norm": 0.0000046201635298907724
+    },
+    "q_squared_torque_native": {
+      "absolute": 0,
+      "relative": null,
+      "rk4_norm": 0
+    },
+    "total_impulse_native": {
+      "absolute": 4.124941826667281e-10,
+      "relative": 0.00008984206827907219,
+      "rk4_norm": 0.000004591325540117986
+    },
+    "total_torque_native": {
+      "absolute": 2.5170952171443515e-13,
+      "relative": 0.000005517899542132519,
+      "rk4_norm": 4.561690907789819e-8
+    }
+  },
+  "restart_exact": true,
+  "steps": 25,
+  "width_ns": 0.000016678204759907602,
+  "validation": {
+    "test": "test_mixed_reaction_postarrival_restart_and_reference",
+    "elapsed_seconds": 217.24,
+    "relative_limit": 0.01,
+    "base_commit": "8ef77bd"
+  }
+}

@@ -7,7 +7,7 @@ The 14-component state is [t_ns, x_mm(3), P_native(4), S_native(6)].
 
 from dataclasses import asdict, dataclass
 import copy
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 
 import numpy as np
 from scipy.special import betainc
@@ -21,11 +21,11 @@ from .full_dipole_reaction import evaluate_reaction
 from .coupled_dipole_reaction import evaluate_coupled_reaction
 
 MODEL = "experimental_momentum_center_pair_v1"
+MULTIPARTICLE_MODEL = "momentum_center_particles_v1"
 UNITS = "mm_ns_amu_scaled_gaussian"
 FULL_DIPOLE_REACTION_MODES = ("full_dipole_rr", "full_dipole_coupled")
-NativeProvider = Callable[
-    [float, np.ndarray], tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]
-]
+NativeResponse = tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]
+NativeProvider = Callable[[float, np.ndarray], NativeResponse]
 
 
 def smooth_start_native(
@@ -449,6 +449,72 @@ class FullDipoleProvider:
         )
 
 
+class CombinedDipoleProvider:
+    """Sum independent non-self sources before evaluating nonlinear response.
+
+    Each source retains its own retarded time and derivative boundary checks.
+    Summing forces instead would lose nonlinear cross-source contributions.
+    """
+
+    def __init__(self, providers: list[FullDipoleProvider]) -> None:
+        if not providers:
+            raise ValueError("At least one non-self source required")
+        self.providers = providers
+        # All sources are constructed with the same driven-start policy.
+        first = providers[0]
+        if any(
+            p.startup_duration_ns != first.startup_duration_ns
+            or p.startup_smoothness != first.startup_smoothness
+            for p in providers
+        ):
+            raise ValueError("Combined sources require a common startup policy")
+        for name in ("zero_before_ns", "reaction_startup_boundaries_ns"):
+            if hasattr(first, name):
+                setattr(self, name, getattr(first, name))
+
+    @property
+    def samples(self) -> list[tuple[float, float, float]]:
+        return [sample for provider in self.providers for sample in provider.samples]
+
+    @staticmethod
+    def _sum(values: Iterator[NativeResponse]) -> NativeResponse:
+        result = [value.copy() for value in next(values)]
+        for contribution in values:
+            for total, value in zip(result, contribution):
+                total += value
+        return result[0], result[1], result[2], result[3]
+
+    def __call__(self, time_ns: float, position_mm: np.ndarray) -> NativeResponse:
+        return self._sum(p(time_ns, position_mm) for p in self.providers)
+
+    def taylor_response_length_time(self, events: np.ndarray) -> NativeResponse:
+        return self._sum(p.taylor_response_length_time(events) for p in self.providers)
+
+
+def _providers(
+    payload: dict[str, Any],
+    particles: list[MomentumCenterParticle],
+    histories: list[FullDipoleHistory],
+) -> list[FullDipoleProvider | CombinedDipoleProvider]:
+    result: list[FullDipoleProvider | CombinedDipoleProvider] = []
+    for observer in range(len(particles)):
+        sources = [
+            FullDipoleProvider(
+                history,
+                particle.charge_native,
+                payload.get("startup_duration_ns", 0.0),
+                payload.get("startup_smoothness", 5),
+                one_sided_derivatives="internal_step_control" in payload,
+            )
+            for index, (particle, history) in enumerate(zip(particles, histories))
+            if index != observer
+        ]
+        result.append(
+            sources[0] if len(sources) == 1 else CombinedDipoleProvider(sources)
+        )
+    return result
+
+
 def initialize_pair(
     particles: list[MomentumCenterParticle],
     states: Any,
@@ -461,9 +527,38 @@ def initialize_pair(
     integration_method: str = "rk4",
     internal_step_settings=None,
 ) -> dict[str, Any]:
-    """Checkpoint accepted native states and their already prepared source past."""
+    """Initialize the backward-compatible, exactly two-particle runner."""
     if len(particles) != 2 or len(histories) != 2:
         raise ValueError("Exactly two particles and histories required")
+    return _initialize_particles(
+        particles,
+        states,
+        histories,
+        startup_duration_ns=startup_duration_ns,
+        startup_smoothness=startup_smoothness,
+        inertial_prehistory=inertial_prehistory,
+        preserve_source_increments=preserve_source_increments,
+        integration_method=integration_method,
+        internal_step_settings=internal_step_settings,
+    )
+
+
+def _initialize_particles(
+    particles: list[MomentumCenterParticle],
+    states: Any,
+    histories: list[FullDipoleHistory],
+    *,
+    startup_duration_ns: float = 0.0,
+    startup_smoothness: int | None = None,
+    inertial_prehistory: bool = False,
+    preserve_source_increments: bool = False,
+    integration_method: str = "rk4",
+    internal_step_settings: Any = None,
+    checkpoint_model: str = MODEL,
+) -> dict[str, Any]:
+    """Checkpoint accepted native states and their already prepared source past."""
+    if len(particles) < 2 or len(histories) != len(particles):
+        raise ValueError("At least two particles with one history each required")
     if integration_method not in ("rk4", "dop853"):
         raise ValueError("Integration method must be rk4 or dop853")
     if integration_method == "dop853" and not preserve_source_increments:
@@ -477,7 +572,7 @@ def initialize_pair(
         # Existing checkpoints are never silently reclassified on restore.
         histories = [replace(h, inertial_until=float(h.time[-1])) for h in histories]
     payload = dict(
-        model=MODEL,
+        model=checkpoint_model,
         units=UNITS,
         particles=[asdict(p) for p in particles],
         states=np.asarray(states, dtype=float).tolist(),
@@ -544,19 +639,15 @@ def _initialize_source_precision(payload):
         )
     result = copy.deepcopy(payload)
     source = dict(
-        format="preserved-pair-source-v1",
+        format=_source_format(payload),
         reference=states.tolist(),
         high=np.zeros_like(states).tolist(),
         low=np.zeros_like(states).tolist(),
     )
     updated = []
-    for i, history in enumerate(histories):
-        provider = FullDipoleProvider(
-            histories[1 - i],
-            particles[1 - i].charge_native,
-            payload["startup_duration_ns"],
-            payload["startup_smoothness"],
-        )
+    for i, (history, provider) in enumerate(
+        zip(histories, _providers(payload, particles, histories))
+    ):
         _, diagnostic = dynamics_native(states[i], particles[i], provider)
         reference = history.dipole[-1]
         high, low = _preserved_dipole(
@@ -584,6 +675,14 @@ def _initialize_source_precision(payload):
     return result
 
 
+def _source_format(payload: dict[str, Any]) -> str:
+    return (
+        "preserved-particles-source-v1"
+        if payload.get("model") == MULTIPARTICLE_MODEL
+        else "preserved-pair-source-v1"
+    )
+
+
 def _source_components(payload, states, histories):
     from .preserved_source import rounded_state
 
@@ -594,15 +693,12 @@ def _source_components(payload, states, histories):
                 "Preserved pair histories require state increment metadata"
             )
         return None
-    if (
-        not isinstance(source, dict)
-        or source.get("format") != "preserved-pair-source-v1"
-    ):
+    if not isinstance(source, dict) or source.get("format") != _source_format(payload):
         raise ValueError("Invalid preserved pair source format")
     values = tuple(
         np.asarray(source.get(key), dtype=float) for key in ("reference", "high", "low")
     )
-    if any(v.shape != (2, 14) or not np.isfinite(v).all() for v in values):
+    if any(v.shape != (len(histories), 14) or not np.isfinite(v).all() for v in values):
         raise ValueError("Invalid preserved pair state components")
     if not np.array_equal(rounded_state(*values), states) or any(
         h.dipole_reference is None for h in histories
@@ -614,7 +710,10 @@ def _source_components(payload, states, histories):
 def _restore(
     payload: dict[str, Any]
 ) -> tuple[list[MomentumCenterParticle], np.ndarray, list[FullDipoleHistory]]:
-    if payload.get("model") != MODEL or payload.get("units") != UNITS:
+    if (
+        payload.get("model") not in (MODEL, MULTIPARTICLE_MODEL)
+        or payload.get("units") != UNITS
+    ):
         raise ValueError("Wrong nonlinear pair model or units")
     method = payload.get("integration_method", "rk4")
     if method not in ("rk4", "dop853"):
@@ -640,11 +739,11 @@ def _restore(
         from .pair_step_error import InternalStepSettings
 
         InternalStepSettings.from_payload(payload["internal_step_control"])
-        if payload.get("integration_method") != "dop853" or any(
+        if payload.get("source_precision") is None or any(
             p.reaction_mode == "charge_ll" for p in particles
         ):
             raise ValueError(
-                "Internal error control requires preserved DOP853 with off or full-dipole reaction"
+                "Internal error control requires preserved RK4 or DOP853 with off or full-dipole reaction"
             )
     histories = [
         FullDipoleHistory.from_checkpoint_payload(h) for h in payload["histories"]
@@ -652,13 +751,14 @@ def _restore(
     states = np.asarray(payload["states"], dtype=float)
     count = payload["accepted_steps"]
     if (
-        len(particles) != 2
-        or len(histories) != 2
-        or states.shape != (2, 14)
+        len(particles) < 2
+        or (payload["model"] == MODEL and len(particles) != 2)
+        or len(histories) != len(particles)
+        or states.shape != (len(particles), 14)
         or not np.isfinite(states).all()
     ):
         raise ValueError("Invalid nonlinear pair checkpoint")
-    if type(count) is not int or count < 0 or states[0, 0] != states[1, 0]:
+    if type(count) is not int or count < 0 or not np.all(states[:, 0] == states[0, 0]):
         raise ValueError("Invalid step count or unequal accepted times")
     for state, history in zip(states, histories):
         if (
@@ -668,16 +768,7 @@ def _restore(
         ):
             raise ValueError("History endpoint must match the native accepted state")
     _source_components(payload, states, histories)
-    providers = [
-        FullDipoleProvider(
-            histories[1 - i],
-            particles[1 - i].charge_native,
-            payload.get("startup_duration_ns", 0.0),
-            payload.get("startup_smoothness", 5),
-            one_sided_derivatives="internal_step_control" in payload,
-        )
-        for i in range(2)
-    ]
+    providers = _providers(payload, particles, histories)
     for state, particle, provider, history in zip(
         states, particles, providers, histories
     ):
@@ -697,7 +788,41 @@ def _restore(
 def advance_pair(
     payload: dict[str, Any], width_ns: float, steps: int = 1
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    """Fixed lab-time RK4 or DOP853, with matched reaction quadrature.
+    """Advance an existing pair checkpoint without changing its schema."""
+    if payload.get("model") != MODEL:
+        raise ValueError("Wrong nonlinear pair model or units")
+    return _advance_particles(payload, width_ns, steps)
+
+
+def _relative_constraint_residuals(
+    state: np.ndarray,
+    particle: MomentumCenterParticle,
+    diagnostic: dict[str, Any],
+) -> tuple[float, float]:
+    """Dimensionless accepted-state checks in the simulation frame."""
+    data = diagnostic["length_time"]
+    momentum = np.asarray(data["kinetic_momentum"])
+    spin = model.unpack(np.asarray(state[8:]) / c)
+    mass_scale = max(particle.mass_amu**2, data["kinetic_mass"] ** 2)
+    spin_scale = max(
+        np.linalg.norm(spin) * np.linalg.norm(momentum), np.finfo(float).tiny
+    )
+    return (
+        abs(float(data["mass_constraint"])) / mass_scale,
+        float(np.linalg.norm(data["spin_constraint"])) / spin_scale,
+    )
+
+
+def _advance_particles(
+    payload: dict[str, Any],
+    width_ns: float,
+    steps: int = 1,
+    *,
+    passive_selector: Callable[[np.ndarray, int], frozenset[int]] | None = None,
+    passive_constraint_budget_relative: float | None = None,
+    passive_method: str = "midpoint",
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Fixed lab-time RK4 or DOP853, with optional lower-order passive updates.
 
     Failure returns no partial checkpoint and never mutates the input. A smaller
     step does not necessarily repair insufficient published source history.
@@ -710,8 +835,20 @@ def advance_pair(
     ):
         raise ValueError("Positive finite step width and integer step count required")
     particles, states, histories = _restore(payload)
+    if passive_method not in ("midpoint", "rk3"):
+        raise ValueError("Passive method must be midpoint or rk3")
+    if passive_constraint_budget_relative is not None and (
+        not np.isscalar(passive_constraint_budget_relative)
+        or isinstance(passive_constraint_budget_relative, (bool, str))
+        or not np.isfinite(passive_constraint_budget_relative)
+        or passive_constraint_budget_relative <= 0
+        or passive_selector is None
+    ):
+        raise ValueError("Positive passive constraint budget and selector required")
     source_components = _source_components(payload, states, histories)
     if source_components is not None:
+        from .preserved_source import rounded_state
+
         source_reference, source_high, source_low = (
             v.copy() for v in source_components
         )
@@ -723,12 +860,12 @@ def advance_pair(
     ledger = copy.deepcopy(
         payload.get(
             "reaction_ledger",
-            [{key: [0.0] * 4 for key in ledger_keys} for _ in range(2)],
+            [{key: [0.0] * 4 for key in ledger_keys} for _ in particles],
         )
     )
     if (
         not isinstance(ledger, list)
-        or len(ledger) != 2
+        or len(ledger) != len(particles)
         or any(
             not isinstance(row, dict)
             or set(row) != set(ledger_keys)
@@ -761,11 +898,11 @@ def advance_pair(
                         for key in ("q_squared", "qD", "D_squared")
                     },
                 )
-                for _ in range(2)
+                for _ in particles
             ],
         )
     )
-    if not isinstance(dipole_ledger, list) or len(dipole_ledger) != 2:
+    if not isinstance(dipole_ledger, list) or len(dipole_ledger) != len(particles):
         raise ValueError("Invalid dipole reaction ledger")
     for row in dipole_ledger:
         if (
@@ -797,32 +934,94 @@ def advance_pair(
                 or not np.isfinite(sector["torque_native"]).all()
             ):
                 raise ValueError("Invalid dipole reaction sector ledger")
-    for _ in range(steps):
-        providers = [
-            FullDipoleProvider(
-                histories[1 - i],
-                particles[1 - i].charge_native,
-                payload.get("startup_duration_ns", 0.0),
-                payload.get("startup_smoothness", 5),
-                one_sided_derivatives=internal_settings is not None,
-            )
-            for i in range(2)
-        ]
+    for step_index in range(steps):
+        selected_passive = (
+            passive_selector(states.copy(), payload["accepted_steps"] + step_index)
+            if passive_selector is not None
+            else None
+        )
+        if selected_passive is not None:
+            if not isinstance(selected_passive, frozenset) or any(
+                type(i) is not int or not 0 <= i < len(particles)
+                for i in selected_passive
+            ):
+                raise ValueError("Passive indices must identify valid particle indices")
+            if selected_passive and (
+                payload.get("integration_method", "rk4") != "rk4"
+                or ("internal_step_control" in payload and passive_method != "rk3")
+                or (
+                    passive_method != "rk3"
+                    and any(p.reaction_mode != "off" for p in particles)
+                )
+            ):
+                raise ValueError(
+                    "Reduced updates require RK4; reaction and internal steps require passive_rk3"
+                )
+        providers = _providers(payload, particles, histories)
         trials, diagnostics, candidate_histories = [], [], []
         endpoint = states[0, 0] + width_ns
         for i, (state, particle, provider, history) in enumerate(
             zip(states, particles, providers, histories)
         ):
             stage_diagnostics = []
+            passive = selected_passive is not None and i in selected_passive
+            forced_fallback = False
+            weights: tuple[float, ...] = (1, 2, 2, 1)
+            divisor = 6
+            if source_components is not None:
+                start_high = source_high[i].copy()
+                start_low = source_low[i].copy()
+
+            def finish_trial(
+                candidate: np.ndarray | None,
+                rates: tuple[np.ndarray, ...] | None = None,
+                stage_weights: tuple[int, ...] = (1, 2, 2, 1),
+                stage_divisor: int = 6,
+            ) -> np.ndarray:
+                nonlocal weights, divisor
+                if rates is not None:
+                    weights, divisor = stage_weights, stage_divisor
+                if source_components is not None:
+                    from .preserved_source import rk_increment, rounded_state
+
+                    if rates is not None:
+                        source_high[i], source_low[i] = rk_increment(
+                            start_high,
+                            start_low,
+                            rates,
+                            width_ns,
+                            weights=stage_weights,
+                            divisor=stage_divisor,
+                        )
+                    source_high[i, 0] = endpoint - source_reference[i, 0]
+                    source_low[i, 0] = 0.0
+                    candidate = rounded_state(
+                        source_reference[i], source_high[i], source_low[i]
+                    )
+                assert candidate is not None
+                candidate[0] = endpoint
+                return candidate
 
             def rhs(value: np.ndarray) -> np.ndarray:
                 rate, data = dynamics_native(value, particle, provider)
                 stage_diagnostics.append(data["length_time"])
                 return rate
 
-            weights, divisor = (1, 2, 2, 1), 6
+            def rk4_from_first_two() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+                # Discard any reduced candidate stages before the RK4 retry.
+                del stage_diagnostics[2:]
+                k3 = rhs(state + width_ns * k2 / 2)
+                k4 = rhs(state + width_ns * k3)
+                return state + width_ns * (k1 + 2 * k2 + 2 * k3 + k4) / 6, k3, k4
+
+            trial: np.ndarray | None = None
+            trial_rates: tuple[np.ndarray, ...] | None = None
+            trial_weights: tuple[int, ...] = (1, 2, 2, 1)
+            trial_divisor = 6
             integrated_reaction, internal_statistics = None, None
-            if internal_settings is not None:
+
+            def internal_trial(method: str) -> np.ndarray:
+                nonlocal integrated_reaction, internal_statistics, weights, divisor
                 from .pair_internal_step import integrate_particle
 
                 (
@@ -832,14 +1031,35 @@ def advance_pair(
                     internal_statistics,
                 ) = integrate_particle(
                     source_reference[i],
-                    source_high[i],
-                    source_low[i],
+                    start_high,
+                    start_low,
                     width_ns,
                     particle,
                     provider,
                     internal_settings,
+                    method=method,
                 )
                 weights, divisor = (), 1
+                return finish_trial(None)
+
+            def retry_rk4() -> np.ndarray:
+                if internal_settings is not None:
+                    return internal_trial("rk4")
+                candidate, k3, k4 = rk4_from_first_two()
+                return finish_trial(candidate, (k1, k2, k3, k4))
+
+            if internal_settings is not None:
+                from .preserved_adaptive import InternalAccuracyError
+
+                try:
+                    trial = internal_trial(
+                        "rk3" if passive else payload.get("integration_method", "rk4")
+                    )
+                except (model.VelocityDomainError, InternalAccuracyError):
+                    if not passive or passive_constraint_budget_relative is None:
+                        raise
+                    forced_fallback = True
+                    trial = retry_rk4()
             elif payload.get("integration_method", "rk4") == "dop853":
                 from .preserved_runge_kutta import dop853_step
 
@@ -847,27 +1067,78 @@ def advance_pair(
                     source_reference[i], source_high[i], source_low[i], width_ns, rhs
                 )
                 divisor = 1
+            elif passive:
+                k1 = rhs(state)
+                k2 = rhs(state + width_ns * k1 / 2)
+                if passive_method == "rk3":
+                    try:
+                        k3_reduced = rhs(state + width_ns * (2 * k2 - k1))
+                        trial = state + width_ns * (k1 + 4 * k2 + k3_reduced) / 6
+                        trial_rates = (k1, k2, k3_reduced)
+                        trial_weights = (1, 4, 1)
+                    except model.VelocityDomainError:
+                        if passive_constraint_budget_relative is None:
+                            raise
+                        forced_fallback = True
+                        trial, k3, k4 = rk4_from_first_two()
+                        trial_rates = (k1, k2, k3, k4)
+                else:
+                    trial = state + width_ns * k2
+                    trial_rates, trial_weights, trial_divisor = (k2,), (1,), 1
             else:
                 k1 = rhs(state)
                 k2 = rhs(state + width_ns * k1 / 2)
-                k3 = rhs(state + width_ns * k2 / 2)
-                k4 = rhs(state + width_ns * k3)
-                trial = state + width_ns * (k1 + 2 * k2 + 2 * k3 + k4) / 6
-            if source_components is not None:
-                from .preserved_source import rk_increment, rounded_state
-
-                if divisor == 6:
-                    source_high[i], source_low[i] = rk_increment(
-                        source_high[i], source_low[i], (k1, k2, k3, k4), width_ns
+                trial, k3, k4 = rk4_from_first_two()
+                trial_rates = (k1, k2, k3, k4)
+            trial = finish_trial(trial, trial_rates, trial_weights, trial_divisor)
+            try:
+                rate, diagnostic = dynamics_native(trial, particle, provider)
+            except model.VelocityDomainError:
+                if (
+                    not passive
+                    or passive_constraint_budget_relative is None
+                    or forced_fallback
+                ):
+                    raise
+                forced_fallback = True
+                trial = retry_rk4()
+                rate, diagnostic = dynamics_native(trial, particle, provider)
+            if passive and passive_constraint_budget_relative is not None:
+                if forced_fallback:
+                    candidate_mass, candidate_spin = None, None
+                    fallback = True
+                else:
+                    candidate_mass, candidate_spin = _relative_constraint_residuals(
+                        trial, particle, diagnostic
                     )
-                # Shared accepted lab time is the controller's exact float value.
-                source_high[i, 0] = endpoint - source_reference[i, 0]
-                source_low[i, 0] = 0.0
-                trial = rounded_state(
-                    source_reference[i], source_high[i], source_low[i]
+                    fallback = (
+                        max(candidate_mass, candidate_spin)
+                        > passive_constraint_budget_relative
+                    )
+                if fallback and not forced_fallback:
+                    # Fixed stepping reuses the first two stages; adaptive
+                    # stepping retries the entire interval from its original
+                    # increments and replaces all reaction integrals.
+                    trial = retry_rk4()
+                    rate, diagnostic = dynamics_native(trial, particle, provider)
+                accepted_mass, accepted_spin = _relative_constraint_residuals(
+                    trial, particle, diagnostic
                 )
-            trial[0] = endpoint
-            rate, diagnostic = dynamics_native(trial, particle, provider)
+                if (
+                    max(accepted_mass, accepted_spin)
+                    > passive_constraint_budget_relative
+                ):
+                    raise ValueError(
+                        "RK4 fallback could not satisfy the passive constraint budget"
+                    )
+                diagnostic["passive_reduced"] = dict(
+                    method=passive_method,
+                    fallback_to_rk4=fallback,
+                    candidate_mass_relative=candidate_mass,
+                    candidate_spin_relative=candidate_spin,
+                    accepted_mass_relative=accepted_mass,
+                    accepted_spin_relative=accepted_spin,
+                )
             parts = None
             dipole = diagnostic["proper_dipole_native"]
             if source_components is not None:
@@ -894,6 +1165,12 @@ def advance_pair(
             if internal_statistics is not None:
                 diagnostic["internal_step_control"] = internal_statistics
             diagnostics.append(diagnostic)
+            if particle.reaction_mode != "off" and len(weights) != len(
+                stage_diagnostics
+            ):
+                raise ValueError(
+                    "Reaction integration requires one weight per accepted stage"
+                )
             if particle.reaction_mode == "charge_ll":
                 for key, source in zip(
                     ledger_keys,
@@ -971,7 +1248,7 @@ def advance_pair(
             )
         )
     result = dict(
-        model=MODEL,
+        model=payload["model"],
         units=UNITS,
         particles=[asdict(p) for p in particles],
         states=states.tolist(),
@@ -990,7 +1267,7 @@ def advance_pair(
         result["reaction_ledger"] = ledger
     if source_components is not None:
         result["source_precision"] = dict(
-            format="preserved-pair-source-v1",
+            format=_source_format(payload),
             reference=source_reference.tolist(),
             high=source_high.tolist(),
             low=source_low.tolist(),

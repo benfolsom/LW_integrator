@@ -1120,9 +1120,9 @@ class IntegratorGUI(
 
             open_pair_window(self.root)
 
-        ttk.Button(header, text="Nonlinear pair…", command=open_nonlinear_pair).grid(
-            row=0, column=2, padx=(10, 0)
-        )
+        ttk.Button(
+            header, text="Full-spin particles…", command=open_nonlinear_pair
+        ).grid(row=0, column=2, padx=(10, 0))
 
         # Create main horizontal split: left (tabs) and right (config/control panel)
         self._main_horizontal_paned = tk.PanedWindow(

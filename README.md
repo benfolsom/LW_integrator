@@ -1,11 +1,20 @@
 # LW Integrator
 
+Version **0.10.0** adds physical-particle and seeded bunch JSON input, a shared
+GUI launcher, and optional mixed RK4/RK3 stepping with preserved histories,
+full dipole reaction, internal error control, and resumable checkpoints.
+Every particle remains an individual retarded source; this is not weighted
+bunch pseudogrid aggregation. The full RK4 default and older solver defaults
+remain unchanged. See the [many-particle guide](docs/source/full_spin_particles.rst)
+and [implementation plan](docs/multiparticle_integration_plan.md) for usage,
+bounded validation results, and remaining physical limitations.
+
 ## Finite-spin pair solver — September 2026
 
 The separate two-particle solver supports coupled magnetic self-reaction,
 analytical derivatives, DOP853 integration, and resumable checkpoints. Compatible
 fresh runs now select coordinated single-fit motion and magnetic-moment histories
-automatically. The main GUI opens this workflow through **Nonlinear pair…**.
+automatically. The main GUI opens this workflow through **Full-spin particles…**.
 These defaults do not change the older charge-only or bunch simulation paths.
 
 The completed coarse–fine benchmark reduced late dipole-squared reaction-impulse

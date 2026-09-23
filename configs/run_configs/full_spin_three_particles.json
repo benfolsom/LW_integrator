@@ -1,0 +1,20 @@
+{
+  "format": "full-spin-particles-v1",
+  "reaction_mode": "off",
+  "prehistory_ns": 0.02,
+  "startup_duration_ns": 0.004,
+  "history_samples": 41,
+  "bunches": [
+    {
+      "mass_amu": 1.0,
+      "charge_e": 1.0,
+      "kinetic_energy_mev": 0.0,
+      "particle_count": 3,
+      "center_mm": [0.0, 0.0, 0.0],
+      "geometry": "ring",
+      "transverse_spread_mm": 0.6,
+      "rest_spin_native": [0.0, 0.0, 0.01],
+      "seed": 0
+    }
+  ]
+}

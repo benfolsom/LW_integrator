@@ -79,7 +79,9 @@ def _transverse_positions(
     transverse_spread: float,
     transverse_geometry: str | None,
     legacy_transverse_radius: float = 0.0,
+    rng: np.random.Generator | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
+    random = np.random if rng is None else rng
     geometry = _normalize_transverse_geometry(transverse_geometry)
     radius = abs(float(transverse_spread))
 
@@ -92,18 +94,18 @@ def _transverse_positions(
 
     if geometry == "gaussian" and radius > 0.0:
         return (
-            np.random.normal(transverse_offset_x, radius, count),
-            np.random.normal(transverse_offset_y, radius, count),
+            random.normal(transverse_offset_x, radius, count),
+            random.normal(transverse_offset_y, radius, count),
         )
 
     if geometry == "square" and radius > 0.0:
         return (
-            np.random.uniform(
+            random.uniform(
                 transverse_offset_x - radius,
                 transverse_offset_x + radius,
                 count,
             ),
-            np.random.uniform(
+            random.uniform(
                 transverse_offset_y - radius,
                 transverse_offset_y + radius,
                 count,
@@ -166,9 +168,11 @@ def create_bunch_from_energy(
     transverse_spread: float = 0.0,
     transverse_geometry: str = "square",
     longitudinal_spread: float = 0.0,
+    rng: np.random.Generator | None = None,
 ) -> Tuple[ParticleState, float]:
     """Generate a particle state dictionary from kinetic energy inputs."""
 
+    random = np.random if rng is None else rng
     gamma = _compute_gamma(kinetic_energy_mev, mass_amu)
     beta = math.sqrt(1.0 - 1.0 / (gamma**2)) if gamma > 1.0 else 0.0
     particle_mass = mass_amu
@@ -190,15 +194,16 @@ def create_bunch_from_energy(
         transverse_spread=transverse_spread,
         transverse_geometry=transverse_geometry,
         legacy_transverse_radius=transverse_radius,
+        rng=rng,
     )
 
     if transverse_momentum > 0.0:
         Px = (
-            np.random.uniform(-transverse_momentum, transverse_momentum, count)
+            random.uniform(-transverse_momentum, transverse_momentum, count)
             * particle_mass
         )
         Py = (
-            np.random.uniform(-transverse_momentum, transverse_momentum, count)
+            random.uniform(-transverse_momentum, transverse_momentum, count)
             * particle_mass
         )
     else:
@@ -218,7 +223,7 @@ def create_bunch_from_energy(
         "x": x,
         "y": y,
         "z": (
-            np.random.normal(position_z, longitudinal_spread, count)
+            random.normal(position_z, longitudinal_spread, count)
             if longitudinal_spread > 0.0
             else np.full(count, position_z, dtype=float)
         ),
@@ -296,7 +301,9 @@ def create_bunch_from_params(
     if long_dist > 0.0:
         z = np.random.normal(starting_distance, long_dist, pcount)
     else:
-        z = np.random.uniform(starting_distance - 1e-6, starting_distance + 1e-6, pcount)
+        z = np.random.uniform(
+            starting_distance - 1e-6, starting_distance + 1e-6, pcount
+        )
     t = np.zeros(pcount, dtype=float)
 
     state: ParticleState = {

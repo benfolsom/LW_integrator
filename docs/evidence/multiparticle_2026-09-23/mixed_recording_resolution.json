@@ -1,0 +1,110 @@
+{
+  "selection_schedule": {
+    "matched": true,
+    "event_count": 250,
+    "spacing_ns": 0.000033356409519815205
+  },
+  "position_mm": {
+    "absolute": 1.5700927928536614e-16,
+    "fine_norm": 1.0392806820729565,
+    "relative": 1.5107495212187947e-16
+  },
+  "kinetic_spatial_momentum_native": {
+    "absolute": 9.41477998616829e-17,
+    "fine_norm": 0.014993650068440579,
+    "relative": 6.279178147544615e-15
+  },
+  "spin_native": {
+    "absolute": 2.617065143858646e-17,
+    "fine_norm": 5.192557694149045,
+    "relative": 5.040030940450687e-18
+  },
+  "reaction": {
+    "total_impulse_native": {
+      "absolute": 1.293039833982372e-18,
+      "fine_norm": 4.497750094175631e-8,
+      "relative": 2.874859222740712e-11
+    },
+    "total_torque_native": {
+      "absolute": 2.6732828701914508e-20,
+      "fine_norm": 4.4977500873086167e-10,
+      "relative": 5.943600285250845e-11
+    },
+    "q_squared_impulse_native": {
+      "absolute": 1.2989027776984988e-18,
+      "fine_norm": 4.497750096327457e-8,
+      "relative": 2.8878945025404826e-11
+    },
+    "q_squared_torque_native": {
+      "absolute": 0,
+      "fine_norm": 0,
+      "relative": null
+    },
+    "qD_impulse_native": {
+      "absolute": 3.2676914444143518e-22,
+      "fine_norm": 2.958003492716934e-16,
+      "relative": 0.0000011046949242825162
+    },
+    "qD_torque_native": {
+      "absolute": 2.64392161157228e-20,
+      "fine_norm": 4.497750092701973e-10,
+      "relative": 5.87832039815261e-11
+    },
+    "D_squared_impulse_native": {
+      "absolute": 5.7537758361027455e-21,
+      "fine_norm": 6.320195331797198e-17,
+      "relative": 0.00009103794319702794
+    },
+    "D_squared_torque_native": {
+      "absolute": 3.171689051357345e-22,
+      "fine_norm": 2.165143663748121e-16,
+      "relative": 0.0000014648861895227658
+    }
+  },
+  "checks": {
+    "position": true,
+    "kinetic_spatial_momentum": true,
+    "spin": true,
+    "total_impulse_native": true,
+    "total_torque_native": true,
+    "q_squared_impulse_native": true,
+    "q_squared_torque_native": true,
+    "qD_impulse_native": true,
+    "qD_torque_native": true,
+    "D_squared_impulse_native": true,
+    "D_squared_torque_native": true
+  },
+  "passed": true,
+  "thresholds": {
+    "position_absolute_mm": 1e-8,
+    "momentum_relative": 0.0001,
+    "spin_relative": 0.000001,
+    "reaction_relative": 0.01
+  },
+  "postarrival_steps": [
+    147,
+    293
+  ],
+  "note": "Relative errors use the corresponding fine norm. Momentum excludes the rest-energy component. Passing is a recording-resolution check, not conservation or radiation-accuracy closure.",
+  "artifacts": "/Users/benjaminfolsom/compute/mixed-reaction-20260923-GvDakv",
+  "recording_steps": [
+    250,
+    500
+  ],
+  "fallback_counts": [
+    [
+      0,
+      0,
+      0
+    ],
+    [
+      0,
+      0,
+      0
+    ]
+  ],
+  "elapsed_seconds": [
+    1395.9972368329982,
+    4181.129173707999
+  ]
+}
