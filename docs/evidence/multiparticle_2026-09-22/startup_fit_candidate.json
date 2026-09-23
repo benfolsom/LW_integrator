@@ -1,0 +1,2293 @@
+{
+  "particles": [
+    {
+      "budget": 1.2719116800022996e-12,
+      "maximum_old_error": 1.2484752858158815e-12,
+      "maximum_candidate_error": 1.2994583913968254e-14,
+      "rows": [
+        {
+          "time_ns": 3.3356409519815205e-05,
+          "startup_window": true,
+          "old_error": 4.520220297950324e-19,
+          "candidate_error": 6.769276791604018e-19,
+          "high_coefficient_change": 6.875726141674393e-19
+        },
+        {
+          "time_ns": 6.671281903963041e-05,
+          "startup_window": true,
+          "old_error": 5.2291811080942756e-18,
+          "candidate_error": 6.76943027400574e-19,
+          "high_coefficient_change": 5.539148077547419e-20
+        },
+        {
+          "time_ns": 0.00010006922855944561,
+          "startup_window": true,
+          "old_error": 2.029812807503954e-17,
+          "candidate_error": 6.769689447825513e-19,
+          "high_coefficient_change": 1.4134200912179188e-20
+        },
+        {
+          "time_ns": 0.00013342563807926082,
+          "startup_window": true,
+          "old_error": 5.162551404389082e-17,
+          "candidate_error": 6.769190561436844e-19,
+          "high_coefficient_change": 7.626842781199979e-21
+        },
+        {
+          "time_ns": 0.00016678204759907602,
+          "startup_window": true,
+          "old_error": 1.0517799011114043e-16,
+          "candidate_error": 6.769325127165882e-19,
+          "high_coefficient_change": 2.8108989834559524e-21
+        },
+        {
+          "time_ns": 0.00020013845711889123,
+          "startup_window": true,
+          "old_error": 1.869222073699801e-16,
+          "candidate_error": 6.769805780945214e-19,
+          "high_coefficient_change": 5.979389484598488e-21
+        },
+        {
+          "time_ns": 0.00023349486663870643,
+          "startup_window": false,
+          "old_error": 3.0282525437455597e-16,
+          "candidate_error": 6.770264585064101e-19,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.00026685127615852164,
+          "startup_window": false,
+          "old_error": 4.58869608567213e-16,
+          "candidate_error": 6.893529102110532e-19,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.00030020768567833684,
+          "startup_window": false,
+          "old_error": 6.610507720608911e-16,
+          "candidate_error": 7.943297986611684e-19,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.00033356409519815205,
+          "startup_window": false,
+          "old_error": 9.153738952168573e-16,
+          "candidate_error": 1.1648284372129045e-18,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.00036692050471796725,
+          "startup_window": false,
+          "old_error": 1.2278508879101434e-15,
+          "candidate_error": 1.9362497988382986e-18,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.00040027691423778246,
+          "startup_window": false,
+          "old_error": 1.6044979750331897e-15,
+          "candidate_error": 3.1779967600272056e-18,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.00043363332375759766,
+          "startup_window": false,
+          "old_error": 2.0513336550607414e-15,
+          "candidate_error": 4.960746163796034e-18,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.00046698973327741287,
+          "startup_window": false,
+          "old_error": 2.5743770227111713e-15,
+          "candidate_error": 7.367111029483543e-18,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0005003461427972281,
+          "startup_window": false,
+          "old_error": 3.1796464189031648e-15,
+          "candidate_error": 1.0485101910251671e-17,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0005337025523170433,
+          "startup_window": false,
+          "old_error": 3.8731583733251145e-15,
+          "candidate_error": 1.4403726095190372e-17,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0005670589618368585,
+          "startup_window": false,
+          "old_error": 4.6609268069698034e-15,
+          "candidate_error": 1.921072280570369e-17,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0006004153713566737,
+          "startup_window": false,
+          "old_error": 5.548962464008021e-15,
+          "candidate_error": 2.4991360488765184e-17,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0006337717808764889,
+          "startup_window": false,
+          "old_error": 6.543272544341983e-15,
+          "candidate_error": 3.182778196474101e-17,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0006671281903963041,
+          "startup_window": false,
+          "old_error": 7.649860509950937e-15,
+          "candidate_error": 3.9798673204279294e-17,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0007004845999161193,
+          "startup_window": false,
+          "old_error": 8.874726040306514e-15,
+          "candidate_error": 4.8979148697678975e-17,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0007338410094359345,
+          "startup_window": false,
+          "old_error": 1.0223865113364786e-14,
+          "candidate_error": 5.944079402871082e-17,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0007671974189557497,
+          "startup_window": false,
+          "old_error": 1.170327019094227e-14,
+          "candidate_error": 7.125182781065035e-17,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0008005538284755649,
+          "startup_window": false,
+          "old_error": 1.3318930488943943e-14,
+          "candidate_error": 8.447735519833589e-17,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0008339102379953801,
+          "startup_window": false,
+          "old_error": 1.5076832313288175e-14,
+          "candidate_error": 9.917968996184601e-17,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0008672666475151953,
+          "startup_window": false,
+          "old_error": 1.698295944694578e-14,
+          "candidate_error": 1.1541872833627164e-16,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0009006230570350105,
+          "startup_window": false,
+          "old_error": 1.9043293570203026e-14,
+          "candidate_error": 1.3325235579794574e-16,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0009339794665548257,
+          "startup_window": false,
+          "old_error": 2.1263814703921737e-14,
+          "candidate_error": 1.5273687599348212e-16,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0009673358760746409,
+          "startup_window": false,
+          "old_error": 2.3650501660165898e-14,
+          "candidate_error": 1.7392744624945365e-16,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0010006922855944561,
+          "startup_window": false,
+          "old_error": 2.6209332492782658e-14,
+          "candidate_error": 1.9687851222127994e-16,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0010340486951142713,
+          "startup_window": false,
+          "old_error": 2.894628493468988e-14,
+          "candidate_error": 2.2164422855633052e-16,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0010674051046340866,
+          "startup_window": false,
+          "old_error": 3.1867336817408085e-14,
+          "candidate_error": 2.4827886196729867e-16,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0011007615141539018,
+          "startup_window": false,
+          "old_error": 3.497846646282503e-14,
+          "candidate_error": 2.7683716612112527e-16,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.001134117923673717,
+          "startup_window": false,
+          "old_error": 3.828565304228371e-14,
+          "candidate_error": 3.073747246147945e-16,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0011674743331935322,
+          "startup_window": false,
+          "old_error": 4.179487689843484e-14,
+          "candidate_error": 3.39948257949701e-16,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0012008307427133474,
+          "startup_window": false,
+          "old_error": 4.551211982470276e-14,
+          "candidate_error": 3.746158882859071e-16,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0012341871522331626,
+          "startup_window": false,
+          "old_error": 4.944336530251613e-14,
+          "candidate_error": 4.1143736504514776e-16,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0012675435617529778,
+          "startup_window": false,
+          "old_error": 5.359459868775011e-14,
+          "candidate_error": 4.504742408230815e-16,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.001300899971272793,
+          "startup_window": false,
+          "old_error": 5.797180735588626e-14,
+          "candidate_error": 4.917900070651264e-16,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0013342563807926082,
+          "startup_window": false,
+          "old_error": 6.258098079194083e-14,
+          "candidate_error": 5.354501798073357e-16,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0013676127903124234,
+          "startup_window": false,
+          "old_error": 6.74281106402964e-14,
+          "candidate_error": 5.815223447493123e-16,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0014009691998322386,
+          "startup_window": false,
+          "old_error": 7.251919070025981e-14,
+          "candidate_error": 6.300761523099077e-16,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0014343256093520538,
+          "startup_window": false,
+          "old_error": 7.786021688435885e-14,
+          "candidate_error": 6.811832770609491e-16,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.001467682018871869,
+          "startup_window": false,
+          "old_error": 8.345718713041774e-14,
+          "candidate_error": 7.349173344027517e-16,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0015010384283916842,
+          "startup_window": false,
+          "old_error": 8.931610127308074e-14,
+          "candidate_error": 7.913537583551002e-16,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0015343948379114994,
+          "startup_window": false,
+          "old_error": 9.544296088034868e-14,
+          "candidate_error": 8.505696463765319e-16,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0015677512474313146,
+          "startup_window": false,
+          "old_error": 1.0184376906219649e-13,
+          "candidate_error": 9.12643578319256e-16,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0016011076569511298,
+          "startup_window": false,
+          "old_error": 1.0852453024009033e-13,
+          "candidate_error": 9.776553985752372e-16,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.001634464066470945,
+          "startup_window": false,
+          "old_error": 1.1549124990556604e-13,
+          "candidate_error": 1.0456859859848323e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0016678204759907602,
+          "startup_window": false,
+          "old_error": 1.2274993434972605e-13,
+          "candidate_error": 1.1168169986970517e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0017011768855105754,
+          "startup_window": false,
+          "old_error": 1.3030659038095055e-13,
+          "candidate_error": 1.1911306074817868e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0017345332950303907,
+          "startup_window": false,
+          "old_error": 1.3816722504125e-13,
+          "candidate_error": 1.2687092247851875e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0017678897045502059,
+          "startup_window": false,
+          "old_error": 1.463378453001581e-13,
+          "candidate_error": 1.3496352144284058e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.001801246114070021,
+          "startup_window": false,
+          "old_error": 1.5482445777702773e-13,
+          "candidate_error": 1.4339906309673428e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0018346025235898363,
+          "startup_window": false,
+          "old_error": 1.6363306843421207e-13,
+          "candidate_error": 1.5218569192433828e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0018679589331096515,
+          "startup_window": false,
+          "old_error": 1.7276968232670784e-13,
+          "candidate_error": 1.6133146797673234e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0019013153426294667,
+          "startup_window": false,
+          "old_error": 1.8224030331431e-13,
+          "candidate_error": 1.7084433967708665e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0019346717521492819,
+          "startup_window": false,
+          "old_error": 1.920509338560403e-13,
+          "candidate_error": 1.8073212302103534e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.001968028161669097,
+          "startup_window": false,
+          "old_error": 2.022075747658625e-13,
+          "candidate_error": 1.9100247904594446e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0020013845711889123,
+          "startup_window": false,
+          "old_error": 2.127162250527011e-13,
+          "candidate_error": 2.0166289812235453e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0020347409807087275,
+          "startup_window": false,
+          "old_error": 2.2358288176797656e-13,
+          "candidate_error": 2.1272068432112775e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0020680973902285427,
+          "startup_window": false,
+          "old_error": 2.348135398918264e-13,
+          "candidate_error": 2.2418294511165704e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.002101453799748358,
+          "startup_window": false,
+          "old_error": 2.4641419226855346e-13,
+          "candidate_error": 2.3605658339711128e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.002134810209268173,
+          "startup_window": false,
+          "old_error": 2.583908295819794e-13,
+          "candidate_error": 2.4834829686535077e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0021681666187879883,
+          "startup_window": false,
+          "old_error": 2.7074944036579335e-13,
+          "candidate_error": 2.6106457587862506e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0022015230283078035,
+          "startup_window": false,
+          "old_error": 2.8349601108371884e-13,
+          "candidate_error": 2.7421171281988414e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0022348794378276187,
+          "startup_window": false,
+          "old_error": 2.9663652624498775e-13,
+          "candidate_error": 2.8779581119702814e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.002268235847347434,
+          "startup_window": false,
+          "old_error": 3.101769685361892e-13,
+          "candidate_error": 3.0182279908295027e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.002301592256867249,
+          "startup_window": false,
+          "old_error": 3.241233190918668e-13,
+          "candidate_error": 3.1629845177476127e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0023349486663870643,
+          "startup_window": false,
+          "old_error": 3.3848155769058035e-13,
+          "candidate_error": 3.312284135263506e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0023683050759068795,
+          "startup_window": false,
+          "old_error": 3.532576630862237e-13,
+          "candidate_error": 3.466182260401591e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0024016614854266947,
+          "startup_window": false,
+          "old_error": 3.684576133330862e-13,
+          "candidate_error": 3.624733599846101e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.00243501789494651,
+          "startup_window": false,
+          "old_error": 3.840873861745298e-13,
+          "candidate_error": 3.787992512370289e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.002468374304466325,
+          "startup_window": false,
+          "old_error": 4.0015295943393143e-13,
+          "candidate_error": 3.956013404680826e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0025017307139861404,
+          "startup_window": false,
+          "old_error": 4.1666031144316846e-13,
+          "candidate_error": 4.128851085726603e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0025350871235059556,
+          "startup_window": false,
+          "old_error": 4.3361542151501165e-13,
+          "candidate_error": 4.3065612680353325e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0025684435330257708,
+          "startup_window": false,
+          "old_error": 4.51024270334016e-13,
+          "candidate_error": 4.489200899997825e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.002601799942545586,
+          "startup_window": false,
+          "old_error": 4.688928404893336e-13,
+          "candidate_error": 4.676828719656944e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.002635156352065401,
+          "startup_window": false,
+          "old_error": 4.872271168248958e-13,
+          "candidate_error": 4.869505536848521e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0026685127615852164,
+          "startup_window": false,
+          "old_error": 5.060330868963829e-13,
+          "candidate_error": 5.067294708596389e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0027018691711050316,
+          "startup_window": false,
+          "old_error": 5.253167413377805e-13,
+          "candidate_error": 5.270262493951528e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.002735225580624847,
+          "startup_window": false,
+          "old_error": 5.450840741328546e-13,
+          "candidate_error": 5.4784783117315435e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.002768581990144662,
+          "startup_window": false,
+          "old_error": 5.653410829281791e-13,
+          "candidate_error": 5.692015024047601e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.002801938399664477,
+          "startup_window": false,
+          "old_error": 5.860937690658278e-13,
+          "candidate_error": 5.9109490322232046e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0028352948091842924,
+          "startup_window": false,
+          "old_error": 6.073481376782586e-13,
+          "candidate_error": 6.135360367394303e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0028686512187041076,
+          "startup_window": false,
+          "old_error": 6.291101976053634e-13,
+          "candidate_error": 6.365332588280982e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.002902007628223923,
+          "startup_window": false,
+          "old_error": 6.513859610514861e-13,
+          "candidate_error": 6.600952539795851e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.002935364037743738,
+          "startup_window": false,
+          "old_error": 6.741814431975987e-13,
+          "candidate_error": 6.842309978703482e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0029687204472635532,
+          "startup_window": false,
+          "old_error": 6.975026614880575e-13,
+          "candidate_error": 7.089496936019684e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0030020768567833684,
+          "startup_window": false,
+          "old_error": 7.213556347724189e-13,
+          "candidate_error": 7.342606939846351e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0030354332663031836,
+          "startup_window": false,
+          "old_error": 7.457463820614796e-13,
+          "candidate_error": 7.601733884060088e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.003068789675822999,
+          "startup_window": false,
+          "old_error": 7.706809210821849e-13,
+          "candidate_error": 7.86697068523645e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.003102146085342814,
+          "startup_window": false,
+          "old_error": 7.961652664495709e-13,
+          "candidate_error": 8.138407599813723e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0031355024948626293,
+          "startup_window": false,
+          "old_error": 8.22205427390739e-13,
+          "candidate_error": 8.416130145708925e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0031688589043824445,
+          "startup_window": false,
+          "old_error": 8.48807405188908e-13,
+          "candidate_error": 8.700216714044031e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0032022153139022597,
+          "startup_window": false,
+          "old_error": 8.759771900148528e-13,
+          "candidate_error": 8.990735646980811e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.003235571723422075,
+          "startup_window": false,
+          "old_error": 9.037207574169952e-13,
+          "candidate_error": 9.287741957413328e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.00326892813294189,
+          "startup_window": false,
+          "old_error": 9.320440640016053e-13,
+          "candidate_error": 9.591273334525743e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0033022845424617053,
+          "startup_window": false,
+          "old_error": 9.609530429728446e-13,
+          "candidate_error": 9.90134554932457e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0033356409519815205,
+          "startup_window": false,
+          "old_error": 9.904536057592369e-13,
+          "candidate_error": 1.0217948859357252e-14,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0033689973615013357,
+          "startup_window": false,
+          "old_error": 1.0205516923209735e-12,
+          "candidate_error": 1.0541087514186177e-14,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.003402353771021151,
+          "startup_window": false,
+          "old_error": 1.0512533393495131e-12,
+          "candidate_error": 1.0870863516959255e-14,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.003435710180540966,
+          "startup_window": false,
+          "old_error": 1.0825646045550363e-12,
+          "candidate_error": 1.1207414313854465e-14,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0034690665900607813,
+          "startup_window": false,
+          "old_error": 1.1144915009338749e-12,
+          "candidate_error": 1.155083210705907e-14,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0035024229995805965,
+          "startup_window": false,
+          "old_error": 1.1470400238066608e-12,
+          "candidate_error": 1.190118857236651e-14,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0035357794091004117,
+          "startup_window": false,
+          "old_error": 1.1802161666356611e-12,
+          "candidate_error": 1.2258553122848864e-14,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.003569135818620227,
+          "startup_window": false,
+          "old_error": 1.2140259228342001e-12,
+          "candidate_error": 1.262299512137123e-14,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.003602492228140042,
+          "startup_window": false,
+          "old_error": 1.2484752858158815e-12,
+          "candidate_error": 1.2994583913968254e-14,
+          "high_coefficient_change": 0.0
+        }
+      ]
+    },
+    {
+      "budget": 1.2719116800022996e-12,
+      "maximum_old_error": 1.2484752861184802e-12,
+      "maximum_candidate_error": 1.2994583839992545e-14,
+      "rows": [
+        {
+          "time_ns": 3.3356409519815205e-05,
+          "startup_window": true,
+          "old_error": 4.520220298800078e-19,
+          "candidate_error": 6.769276791753345e-19,
+          "high_coefficient_change": 6.875726142944055e-19
+        },
+        {
+          "time_ns": 6.671281903963041e-05,
+          "startup_window": true,
+          "old_error": 5.2291811090982374e-18,
+          "candidate_error": 6.769430274332294e-19,
+          "high_coefficient_change": 5.539148078763603e-20
+        },
+        {
+          "time_ns": 0.00010006922855944561,
+          "startup_window": true,
+          "old_error": 2.0298128078978138e-17,
+          "candidate_error": 6.769689447604011e-19,
+          "high_coefficient_change": 1.413420091483086e-20
+        },
+        {
+          "time_ns": 0.00013342563807926082,
+          "startup_window": true,
+          "old_error": 5.1625514053961284e-17,
+          "candidate_error": 6.769190561307197e-19,
+          "high_coefficient_change": 7.626842782090225e-21
+        },
+        {
+          "time_ns": 0.00016678204759907602,
+          "startup_window": true,
+          "old_error": 1.0517799013172165e-16,
+          "candidate_error": 6.769325127589385e-19,
+          "high_coefficient_change": 2.8108989837721532e-21
+        },
+        {
+          "time_ns": 0.00020013845711889123,
+          "startup_window": true,
+          "old_error": 1.869222074066325e-16,
+          "candidate_error": 6.769805780496461e-19,
+          "high_coefficient_change": 5.979389485434475e-21
+        },
+        {
+          "time_ns": 0.00023349486663870643,
+          "startup_window": false,
+          "old_error": 3.0282525443402223e-16,
+          "candidate_error": 6.770264585736946e-19,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.00026685127615852164,
+          "startup_window": false,
+          "old_error": 4.588696086574019e-16,
+          "candidate_error": 6.893529104106245e-19,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.00030020768567833684,
+          "startup_window": false,
+          "old_error": 6.6105077219091e-16,
+          "candidate_error": 7.943297992297696e-19,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.00033356409519815205,
+          "startup_window": false,
+          "old_error": 9.153738953969568e-16,
+          "candidate_error": 1.1648284392919538e-18,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.00036692050471796725,
+          "startup_window": false,
+          "old_error": 1.2278508881517887e-15,
+          "candidate_error": 1.936249800087829e-18,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.00040027691423778246,
+          "startup_window": false,
+          "old_error": 1.6044979753489557e-15,
+          "candidate_error": 3.1779967614688728e-18,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.00043363332375759766,
+          "startup_window": false,
+          "old_error": 2.051333655464901e-15,
+          "candidate_error": 4.960746165947431e-18,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.00046698973327741287,
+          "startup_window": false,
+          "old_error": 2.5743770232179514e-15,
+          "candidate_error": 7.367111031787689e-18,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0005003461427972281,
+          "startup_window": false,
+          "old_error": 3.179646419529345e-15,
+          "candidate_error": 1.0485101910913283e-17,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0005337025523170433,
+          "startup_window": false,
+          "old_error": 3.873158374087895e-15,
+          "candidate_error": 1.4403726097589172e-17,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0005670589618368585,
+          "startup_window": false,
+          "old_error": 4.6609268078870396e-15,
+          "candidate_error": 1.921072280757316e-17,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0006004153713566737,
+          "startup_window": false,
+          "old_error": 5.548962465102558e-15,
+          "candidate_error": 2.4991360490123507e-17,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0006337717808764889,
+          "startup_window": false,
+          "old_error": 6.543272545629056e-15,
+          "candidate_error": 3.182778196450036e-17,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0006671281903963041,
+          "startup_window": false,
+          "old_error": 7.64986051145747e-15,
+          "candidate_error": 3.979867320365271e-17,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0007004845999161193,
+          "startup_window": false,
+          "old_error": 8.874726042059794e-15,
+          "candidate_error": 4.8979148706539424e-17,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0007338410094359345,
+          "startup_window": false,
+          "old_error": 1.0223865115374381e-14,
+          "candidate_error": 5.944079402651972e-17,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0007671974189557497,
+          "startup_window": false,
+          "old_error": 1.1703270193264325e-14,
+          "candidate_error": 7.125182782838547e-17,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0008005538284755649,
+          "startup_window": false,
+          "old_error": 1.3318930491557901e-14,
+          "candidate_error": 8.447735519173181e-17,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0008339102379953801,
+          "startup_window": false,
+          "old_error": 1.5076832316292025e-14,
+          "candidate_error": 9.917968999020333e-17,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0008672666475151953,
+          "startup_window": false,
+          "old_error": 1.6982959450292424e-14,
+          "candidate_error": 1.1541872833860235e-16,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0009006230570350105,
+          "startup_window": false,
+          "old_error": 1.9043293573981538e-14,
+          "candidate_error": 1.3325235581872056e-16,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0009339794665548257,
+          "startup_window": false,
+          "old_error": 2.1263814708119648e-14,
+          "candidate_error": 1.5273687599336034e-16,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0009673358760746409,
+          "startup_window": false,
+          "old_error": 2.365050166482957e-14,
+          "candidate_error": 1.7392744625052278e-16,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0010006922855944561,
+          "startup_window": false,
+          "old_error": 2.6209332497953957e-14,
+          "candidate_error": 1.9687851216406036e-16,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0010340486951142713,
+          "startup_window": false,
+          "old_error": 2.89462849403593e-14,
+          "candidate_error": 2.216442284971822e-16,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0010674051046340866,
+          "startup_window": false,
+          "old_error": 3.1867336823741293e-14,
+          "candidate_error": 2.482788619647365e-16,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0011007615141539018,
+          "startup_window": false,
+          "old_error": 3.497846646980297e-14,
+          "candidate_error": 2.768371661550487e-16,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.001134117923673717,
+          "startup_window": false,
+          "old_error": 3.8285653049939484e-14,
+          "candidate_error": 3.073747247067053e-16,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0011674743331935322,
+          "startup_window": false,
+          "old_error": 4.1794876906739586e-14,
+          "candidate_error": 3.399482579576965e-16,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0012008307427133474,
+          "startup_window": false,
+          "old_error": 4.551211983377324e-14,
+          "candidate_error": 3.746158883457429e-16,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0012341871522331626,
+          "startup_window": false,
+          "old_error": 4.944336531225386e-14,
+          "candidate_error": 4.1143736513651185e-16,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0012675435617529778,
+          "startup_window": false,
+          "old_error": 5.359459869835078e-14,
+          "candidate_error": 4.504742408138009e-16,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.001300899971272793,
+          "startup_window": false,
+          "old_error": 5.797180736743027e-14,
+          "candidate_error": 4.917900072527378e-16,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0013342563807926082,
+          "startup_window": false,
+          "old_error": 6.258098080431637e-14,
+          "candidate_error": 5.354501798619175e-16,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0013676127903124234,
+          "startup_window": false,
+          "old_error": 6.742811065359013e-14,
+          "candidate_error": 5.815223447301517e-16,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0014009691998322386,
+          "startup_window": false,
+          "old_error": 7.251919071413638e-14,
+          "candidate_error": 6.300761519942286e-16,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0014343256093520538,
+          "startup_window": false,
+          "old_error": 7.786021689978288e-14,
+          "candidate_error": 6.811832771032762e-16,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.001467682018871869,
+          "startup_window": false,
+          "old_error": 8.345718714675402e-14,
+          "candidate_error": 7.349173346134064e-16,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0015010384283916842,
+          "startup_window": false,
+          "old_error": 8.931610129080618e-14,
+          "candidate_error": 7.913537589336689e-16,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0015343948379114994,
+          "startup_window": false,
+          "old_error": 9.544296089975152e-14,
+          "candidate_error": 8.505696477918362e-16,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0015677512474313146,
+          "startup_window": false,
+          "old_error": 1.0184376908320647e-13,
+          "candidate_error": 9.126435798183623e-16,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0016011076569511298,
+          "startup_window": false,
+          "old_error": 1.0852453026245933e-13,
+          "candidate_error": 9.776553998628666e-16,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.001634464066470945,
+          "startup_window": false,
+          "old_error": 1.1549124993042339e-13,
+          "candidate_error": 1.0456859876297197e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0016678204759907602,
+          "startup_window": false,
+          "old_error": 1.227499343760356e-13,
+          "candidate_error": 1.1168169997653052e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0017011768855105754,
+          "startup_window": false,
+          "old_error": 1.3030659040948628e-13,
+          "candidate_error": 1.1911306085595642e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0017345332950303907,
+          "startup_window": false,
+          "old_error": 1.3816722507121545e-13,
+          "candidate_error": 1.2687092250932025e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0017678897045502059,
+          "startup_window": false,
+          "old_error": 1.4633784533232245e-13,
+          "candidate_error": 1.3496352154576394e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.001801246114070021,
+          "startup_window": false,
+          "old_error": 1.5482445781036103e-13,
+          "candidate_error": 1.4339906306843624e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0018346025235898363,
+          "startup_window": false,
+          "old_error": 1.636330684704099e-13,
+          "candidate_error": 1.521856917912489e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0018679589331096515,
+          "startup_window": false,
+          "old_error": 1.7276968236495427e-13,
+          "candidate_error": 1.6133146764847178e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0019013153426294667,
+          "startup_window": false,
+          "old_error": 1.8224030335665001e-13,
+          "candidate_error": 1.7084433922748175e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0019346717521492819,
+          "startup_window": false,
+          "old_error": 1.9205093389938264e-13,
+          "candidate_error": 1.8073212242366005e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.001968028161669097,
+          "startup_window": false,
+          "old_error": 2.0220757481093376e-13,
+          "candidate_error": 1.91002478425987e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0020013845711889123,
+          "startup_window": false,
+          "old_error": 2.1271622510050256e-13,
+          "candidate_error": 2.0166289763235496e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0020347409807087275,
+          "startup_window": false,
+          "old_error": 2.2358288181751642e-13,
+          "candidate_error": 2.1272068377162144e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0020680973902285427,
+          "startup_window": false,
+          "old_error": 2.348135399461536e-13,
+          "candidate_error": 2.2418294456722823e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.002101453799748358,
+          "startup_window": false,
+          "old_error": 2.4641419232493603e-13,
+          "candidate_error": 2.360565831414166e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.002134810209268173,
+          "startup_window": false,
+          "old_error": 2.5839082964064307e-13,
+          "candidate_error": 2.483482961359567e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0021681666187879883,
+          "startup_window": false,
+          "old_error": 2.7074944042688435e-13,
+          "candidate_error": 2.6106457544778825e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0022015230283078035,
+          "startup_window": false,
+          "old_error": 2.834960111483851e-13,
+          "candidate_error": 2.7421171252714393e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0022348794378276187,
+          "startup_window": false,
+          "old_error": 2.9663652630902715e-13,
+          "candidate_error": 2.8779581052383577e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.002268235847347434,
+          "startup_window": false,
+          "old_error": 3.101769686086718e-13,
+          "candidate_error": 3.0182279838565628e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.002301592256867249,
+          "startup_window": false,
+          "old_error": 3.241233191702476e-13,
+          "candidate_error": 3.16298451285007e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0023349486663870643,
+          "startup_window": false,
+          "old_error": 3.384815577670566e-13,
+          "candidate_error": 3.312284125165393e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0023683050759068795,
+          "startup_window": false,
+          "old_error": 3.5325766316499315e-13,
+          "candidate_error": 3.466182246544407e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0024016614854266947,
+          "startup_window": false,
+          "old_error": 3.684576134160395e-13,
+          "candidate_error": 3.624733583526108e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.00243501789494651,
+          "startup_window": false,
+          "old_error": 3.840873862594388e-13,
+          "candidate_error": 3.787992499018646e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.002468374304466325,
+          "startup_window": false,
+          "old_error": 4.0015295952351215e-13,
+          "candidate_error": 3.956013387004716e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0025017307139861404,
+          "startup_window": false,
+          "old_error": 4.166603115392557e-13,
+          "candidate_error": 4.128851069822353e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0025350871235059556,
+          "startup_window": false,
+          "old_error": 4.3361542160907275e-13,
+          "candidate_error": 4.306561243062852e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0025684435330257708,
+          "startup_window": false,
+          "old_error": 4.5102427043472833e-13,
+          "candidate_error": 4.489200878480382e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.002601799942545586,
+          "startup_window": false,
+          "old_error": 4.688928405921306e-13,
+          "candidate_error": 4.676828692244982e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.002635156352065401,
+          "startup_window": false,
+          "old_error": 4.872271169250079e-13,
+          "candidate_error": 4.8695055035094234e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0026685127615852164,
+          "startup_window": false,
+          "old_error": 5.06033086996837e-13,
+          "candidate_error": 5.0672946723413805e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0027018691711050316,
+          "startup_window": false,
+          "old_error": 5.253167414396194e-13,
+          "candidate_error": 5.270262457314874e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.002735225580624847,
+          "startup_window": false,
+          "old_error": 5.450840742479359e-13,
+          "candidate_error": 5.478478279916245e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.002768581990144662,
+          "startup_window": false,
+          "old_error": 5.653410830429991e-13,
+          "candidate_error": 5.692014987733258e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.002801938399664477,
+          "startup_window": false,
+          "old_error": 5.860937691885796e-13,
+          "candidate_error": 5.910948998163908e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0028352948091842924,
+          "startup_window": false,
+          "old_error": 6.07348137809947e-13,
+          "candidate_error": 6.135360330019881e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0028686512187041076,
+          "startup_window": false,
+          "old_error": 6.291101977417548e-13,
+          "candidate_error": 6.365332547644602e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.002902007628223923,
+          "startup_window": false,
+          "old_error": 6.513859611938266e-13,
+          "candidate_error": 6.600952497678344e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.002935364037743738,
+          "startup_window": false,
+          "old_error": 6.74181443347489e-13,
+          "candidate_error": 6.842309929199315e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0029687204472635532,
+          "startup_window": false,
+          "old_error": 6.975026616493033e-13,
+          "candidate_error": 7.089496888801338e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0030020768567833684,
+          "startup_window": false,
+          "old_error": 7.213556349338927e-13,
+          "candidate_error": 7.342606889424535e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0030354332663031836,
+          "startup_window": false,
+          "old_error": 7.457463822291347e-13,
+          "candidate_error": 7.601733823170816e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.003068789675822999,
+          "startup_window": false,
+          "old_error": 7.706809212686828e-13,
+          "candidate_error": 7.866970624021293e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.003102146085342814,
+          "startup_window": false,
+          "old_error": 7.961652666400813e-13,
+          "candidate_error": 8.138407532078322e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0031355024948626293,
+          "startup_window": false,
+          "old_error": 8.222054275884037e-13,
+          "candidate_error": 8.416130079014318e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0031688589043824445,
+          "startup_window": false,
+          "old_error": 8.488074053930905e-13,
+          "candidate_error": 8.700216649937457e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0032022153139022597,
+          "startup_window": false,
+          "old_error": 8.759771902417422e-13,
+          "candidate_error": 8.990735591994004e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.003235571723422075,
+          "startup_window": false,
+          "old_error": 9.037207576380467e-13,
+          "candidate_error": 9.287741895336966e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.00326892813294189,
+          "startup_window": false,
+          "old_error": 9.320440642351112e-13,
+          "candidate_error": 9.591273276728734e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0033022845424617053,
+          "startup_window": false,
+          "old_error": 9.609530432303874e-13,
+          "candidate_error": 9.901345490894358e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0033356409519815205,
+          "startup_window": false,
+          "old_error": 9.904536060189817e-13,
+          "candidate_error": 1.0217948775773412e-14,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0033689973615013357,
+          "startup_window": false,
+          "old_error": 1.0205516925904478e-12,
+          "candidate_error": 1.0541087442122719e-14,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.003402353771021151,
+          "startup_window": false,
+          "old_error": 1.0512533396206083e-12,
+          "candidate_error": 1.0870863433936497e-14,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.003435710180540966,
+          "startup_window": false,
+          "old_error": 1.0825646048327737e-12,
+          "candidate_error": 1.1207414232646378e-14,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0034690665900607813,
+          "startup_window": false,
+          "old_error": 1.114491501240277e-12,
+          "candidate_error": 1.1550832033643542e-14,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0035024229995805965,
+          "startup_window": false,
+          "old_error": 1.1470400241070096e-12,
+          "candidate_error": 1.1901188493858696e-14,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0035357794091004117,
+          "startup_window": false,
+          "old_error": 1.1802161669360777e-12,
+          "candidate_error": 1.2258553051028113e-14,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.003569135818620227,
+          "startup_window": false,
+          "old_error": 1.2140259231374198e-12,
+          "candidate_error": 1.2622995057094282e-14,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.003602492228140042,
+          "startup_window": false,
+          "old_error": 1.2484752861184802e-12,
+          "candidate_error": 1.2994583839992545e-14,
+          "high_coefficient_change": 0.0
+        }
+      ]
+    },
+    {
+      "budget": 1.2719116800022996e-12,
+      "maximum_old_error": 1.2484752861559055e-12,
+      "maximum_candidate_error": 1.2994583906501395e-14,
+      "rows": [
+        {
+          "time_ns": 3.3356409519815205e-05,
+          "startup_window": true,
+          "old_error": 4.520220298486098e-19,
+          "candidate_error": 6.769276791476493e-19,
+          "high_coefficient_change": 6.875726142475651e-19
+        },
+        {
+          "time_ns": 6.671281903963041e-05,
+          "startup_window": true,
+          "old_error": 5.2291811087273164e-18,
+          "candidate_error": 6.769430273711776e-19,
+          "high_coefficient_change": 5.539148078312905e-20
+        },
+        {
+          "time_ns": 0.00010006922855944561,
+          "startup_window": true,
+          "old_error": 2.0298128077522412e-17,
+          "candidate_error": 6.769689448013523e-19,
+          "high_coefficient_change": 1.4134200913857356e-20
+        },
+        {
+          "time_ns": 0.00013342563807926082,
+          "startup_window": true,
+          "old_error": 5.1625514050238353e-17,
+          "candidate_error": 6.769190561576843e-19,
+          "high_coefficient_change": 7.626842781772051e-21
+        },
+        {
+          "time_ns": 0.00016678204759907602,
+          "startup_window": true,
+          "old_error": 1.0517799012411196e-16,
+          "candidate_error": 6.769325126757451e-19,
+          "high_coefficient_change": 2.8108989836615398e-21
+        },
+        {
+          "time_ns": 0.00020013845711889123,
+          "startup_window": true,
+          "old_error": 1.869222073930794e-16,
+          "candidate_error": 6.769805781370675e-19,
+          "high_coefficient_change": 5.979389485130768e-21
+        },
+        {
+          "time_ns": 0.00023349486663870643,
+          "startup_window": false,
+          "old_error": 3.028252544120317e-16,
+          "candidate_error": 6.770264584417368e-19,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.00026685127615852164,
+          "startup_window": false,
+          "old_error": 4.588696086240504e-16,
+          "candidate_error": 6.893529099624552e-19,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.00030020768567833684,
+          "startup_window": false,
+          "old_error": 6.610507721428179e-16,
+          "candidate_error": 7.943297971779475e-19,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.00033356409519815205,
+          "startup_window": false,
+          "old_error": 9.153738953303598e-16,
+          "candidate_error": 1.1648284365224833e-18,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.00036692050471796725,
+          "startup_window": false,
+          "old_error": 1.2278508880623796e-15,
+          "candidate_error": 1.9362497965815983e-18,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.00040027691423778246,
+          "startup_window": false,
+          "old_error": 1.604497975232195e-15,
+          "candidate_error": 3.1779967583881094e-18,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.00043363332375759766,
+          "startup_window": false,
+          "old_error": 2.0513336553153403e-15,
+          "candidate_error": 4.96074616230877e-18,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.00046698973327741287,
+          "startup_window": false,
+          "old_error": 2.5743770230304265e-15,
+          "candidate_error": 7.36711102825595e-18,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0005003461427972281,
+          "startup_window": false,
+          "old_error": 3.179646419297597e-15,
+          "candidate_error": 1.048510190819192e-17,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0005337025523170433,
+          "startup_window": false,
+          "old_error": 3.873158373806055e-15,
+          "candidate_error": 1.4403726094895212e-17,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0005670589618368585,
+          "startup_window": false,
+          "old_error": 4.6609268075482136e-15,
+          "candidate_error": 1.9210722804388748e-17,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0006004153713566737,
+          "startup_window": false,
+          "old_error": 5.548962464699881e-15,
+          "candidate_error": 2.4991360489132932e-17,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0006337717808764889,
+          "startup_window": false,
+          "old_error": 6.5432725451526105e-15,
+          "candidate_error": 3.182778196161046e-17,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0006671281903963041,
+          "startup_window": false,
+          "old_error": 7.64986051090563e-15,
+          "candidate_error": 3.979867320318562e-17,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0007004845999161193,
+          "startup_window": false,
+          "old_error": 8.87472604141129e-15,
+          "candidate_error": 4.897914869981113e-17,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0007338410094359345,
+          "startup_window": false,
+          "old_error": 1.0223865114630788e-14,
+          "candidate_error": 5.944079402446087e-17,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0007671974189557497,
+          "startup_window": false,
+          "old_error": 1.1703270192408179e-14,
+          "candidate_error": 7.125182782887293e-17,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0008005538284755649,
+          "startup_window": false,
+          "old_error": 1.3318930490584742e-14,
+          "candidate_error": 8.447735518323861e-17,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0008339102379953801,
+          "startup_window": false,
+          "old_error": 1.5076832315175528e-14,
+          "candidate_error": 9.917968998544596e-17,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0008672666475151953,
+          "startup_window": false,
+          "old_error": 1.698295944903339e-14,
+          "candidate_error": 1.1541872831888605e-16,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0009006230570350105,
+          "startup_window": false,
+          "old_error": 1.9043293572566252e-14,
+          "candidate_error": 1.332523558099634e-16,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0009339794665548257,
+          "startup_window": false,
+          "old_error": 2.1263814706540377e-14,
+          "candidate_error": 1.527368759892343e-16,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0009673358760746409,
+          "startup_window": false,
+          "old_error": 2.365050166311549e-14,
+          "candidate_error": 1.7392744626893734e-16,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0010006922855944561,
+          "startup_window": false,
+          "old_error": 2.6209332496054954e-14,
+          "candidate_error": 1.9687851215867042e-16,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0010340486951142713,
+          "startup_window": false,
+          "old_error": 2.894628493820425e-14,
+          "candidate_error": 2.2164422842151538e-16,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0010674051046340866,
+          "startup_window": false,
+          "old_error": 3.1867336821469525e-14,
+          "candidate_error": 2.4827886197851445e-16,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0011007615141539018,
+          "startup_window": false,
+          "old_error": 3.497846646725601e-14,
+          "candidate_error": 2.768371660996062e-16,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.001134117923673717,
+          "startup_window": false,
+          "old_error": 3.8285653047265636e-14,
+          "candidate_error": 3.0737472466175783e-16,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0011674743331935322,
+          "startup_window": false,
+          "old_error": 4.179487690354342e-14,
+          "candidate_error": 3.3994825757156305e-16,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0012008307427133474,
+          "startup_window": false,
+          "old_error": 4.5512119830484965e-14,
+          "candidate_error": 3.746158881268848e-16,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0012341871522331626,
+          "startup_window": false,
+          "old_error": 4.944336530851275e-14,
+          "candidate_error": 4.114373646755271e-16,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0012675435617529778,
+          "startup_window": false,
+          "old_error": 5.3594598694488876e-14,
+          "candidate_error": 4.504742407394216e-16,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.001300899971272793,
+          "startup_window": false,
+          "old_error": 5.797180736299075e-14,
+          "candidate_error": 4.917900070013662e-16,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0013342563807926082,
+          "startup_window": false,
+          "old_error": 6.258098079974015e-14,
+          "candidate_error": 5.354501798961134e-16,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0013676127903124234,
+          "startup_window": false,
+          "old_error": 6.742811064834301e-14,
+          "candidate_error": 5.815223444956701e-16,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0014009691998322386,
+          "startup_window": false,
+          "old_error": 7.251919070915801e-14,
+          "candidate_error": 6.300761525991861e-16,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0014343256093520538,
+          "startup_window": false,
+          "old_error": 7.786021689372183e-14,
+          "candidate_error": 6.811832770711573e-16,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.001467682018871869,
+          "startup_window": false,
+          "old_error": 8.345718714104565e-14,
+          "candidate_error": 7.349173348820629e-16,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0015010384283916842,
+          "startup_window": false,
+          "old_error": 8.931610128465486e-14,
+          "candidate_error": 7.913537589134359e-16,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0015343948379114994,
+          "startup_window": false,
+          "old_error": 9.544296089339692e-14,
+          "candidate_error": 8.50569647081609e-16,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0015677512474313146,
+          "startup_window": false,
+          "old_error": 1.0184376907688442e-13,
+          "candidate_error": 9.126435787594207e-16,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0016011076569511298,
+          "startup_window": false,
+          "old_error": 1.0852453025765495e-13,
+          "candidate_error": 9.776553997450234e-16,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.001634464066470945,
+          "startup_window": false,
+          "old_error": 1.1549124992435562e-13,
+          "candidate_error": 1.0456859864276952e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0016678204759907602,
+          "startup_window": false,
+          "old_error": 1.2274993437022318e-13,
+          "candidate_error": 1.1168169999610185e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0017011768855105754,
+          "startup_window": false,
+          "old_error": 1.3030659040314727e-13,
+          "candidate_error": 1.1911306080734786e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0017345332950303907,
+          "startup_window": false,
+          "old_error": 1.381672250651777e-13,
+          "candidate_error": 1.2687092255653965e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0017678897045502059,
+          "startup_window": false,
+          "old_error": 1.463378453277141e-13,
+          "candidate_error": 1.349635217468418e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.001801246114070021,
+          "startup_window": false,
+          "old_error": 1.5482445780453464e-13,
+          "candidate_error": 1.4339906297840002e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0018346025235898363,
+          "startup_window": false,
+          "old_error": 1.6363306846587488e-13,
+          "candidate_error": 1.52185691814228e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0018679589331096515,
+          "startup_window": false,
+          "old_error": 1.7276968236223122e-13,
+          "candidate_error": 1.6133146794458245e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0019013153426294667,
+          "startup_window": false,
+          "old_error": 1.8224030335306546e-13,
+          "candidate_error": 1.7084433949449113e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0019346717521492819,
+          "startup_window": false,
+          "old_error": 1.9205093389575504e-13,
+          "candidate_error": 1.8073212273280604e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.001968028161669097,
+          "startup_window": false,
+          "old_error": 2.0220757480686602e-13,
+          "candidate_error": 1.9100247875939835e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0020013845711889123,
+          "startup_window": false,
+          "old_error": 2.1271622509709514e-13,
+          "candidate_error": 2.016628980257988e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0020347409807087275,
+          "startup_window": false,
+          "old_error": 2.2358288181274196e-13,
+          "candidate_error": 2.127206841158033e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0020680973902285427,
+          "startup_window": false,
+          "old_error": 2.3481353994118307e-13,
+          "candidate_error": 2.2418294496581626e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.002101453799748358,
+          "startup_window": false,
+          "old_error": 2.4641419232055855e-13,
+          "candidate_error": 2.360565835203389e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.002134810209268173,
+          "startup_window": false,
+          "old_error": 2.5839082963541064e-13,
+          "candidate_error": 2.4834829659100703e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0021681666187879883,
+          "startup_window": false,
+          "old_error": 2.7074944041801255e-13,
+          "candidate_error": 2.6106457558245524e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0022015230283078035,
+          "startup_window": false,
+          "old_error": 2.834960111400426e-13,
+          "candidate_error": 2.7421171270040725e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0022348794378276187,
+          "startup_window": false,
+          "old_error": 2.9663652630007685e-13,
+          "candidate_error": 2.8779581087191438e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.002268235847347434,
+          "startup_window": false,
+          "old_error": 3.101769686020288e-13,
+          "candidate_error": 3.0182279887031664e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.002301592256867249,
+          "startup_window": false,
+          "old_error": 3.2412331916404856e-13,
+          "candidate_error": 3.1629845176440456e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0023349486663870643,
+          "startup_window": false,
+          "old_error": 3.3848155776419357e-13,
+          "candidate_error": 3.312284132706798e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0023683050759068795,
+          "startup_window": false,
+          "old_error": 3.532576631639843e-13,
+          "candidate_error": 3.4661822541933896e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0024016614854266947,
+          "startup_window": false,
+          "old_error": 3.6845761341388156e-13,
+          "candidate_error": 3.624733592511045e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.00243501789494651,
+          "startup_window": false,
+          "old_error": 3.840873862566512e-13,
+          "candidate_error": 3.787992506483062e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.002468374304466325,
+          "startup_window": false,
+          "old_error": 4.0015295952150034e-13,
+          "candidate_error": 3.956013395012617e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0025017307139861404,
+          "startup_window": false,
+          "old_error": 4.1666031153637976e-13,
+          "candidate_error": 4.1288510807058915e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0025350871235059556,
+          "startup_window": false,
+          "old_error": 4.336154216054306e-13,
+          "candidate_error": 4.306561254044322e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0025684435330257708,
+          "startup_window": false,
+          "old_error": 4.510242704322377e-13,
+          "candidate_error": 4.489200895420636e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.002601799942545586,
+          "startup_window": false,
+          "old_error": 4.688928405824597e-13,
+          "candidate_error": 4.676828710591899e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.002635156352065401,
+          "startup_window": false,
+          "old_error": 4.872271169058028e-13,
+          "candidate_error": 4.8695055155658915e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0026685127615852164,
+          "startup_window": false,
+          "old_error": 5.060330869816242e-13,
+          "candidate_error": 5.0672946934515665e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0027018691711050316,
+          "startup_window": false,
+          "old_error": 5.253167414241517e-13,
+          "candidate_error": 5.270262475918939e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.002735225580624847,
+          "startup_window": false,
+          "old_error": 5.450840742335023e-13,
+          "candidate_error": 5.4784782968615636e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.002768581990144662,
+          "startup_window": false,
+          "old_error": 5.65341083030864e-13,
+          "candidate_error": 5.692015012574575e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.002801938399664477,
+          "startup_window": false,
+          "old_error": 5.860937691705815e-13,
+          "candidate_error": 5.910949017056253e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0028352948091842924,
+          "startup_window": false,
+          "old_error": 6.073481378010014e-13,
+          "candidate_error": 6.135360356827263e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0028686512187041076,
+          "startup_window": false,
+          "old_error": 6.291101977307168e-13,
+          "candidate_error": 6.365332569061912e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.002902007628223923,
+          "startup_window": false,
+          "old_error": 6.513859611883074e-13,
+          "candidate_error": 6.600952521365333e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.002935364037743738,
+          "startup_window": false,
+          "old_error": 6.741814433393628e-13,
+          "candidate_error": 6.8423099569938654e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0029687204472635532,
+          "startup_window": false,
+          "old_error": 6.975026616392366e-13,
+          "candidate_error": 7.089496907122494e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0030020768567833684,
+          "startup_window": false,
+          "old_error": 7.213556349300979e-13,
+          "candidate_error": 7.342606910831896e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0030354332663031836,
+          "startup_window": false,
+          "old_error": 7.457463822214256e-13,
+          "candidate_error": 7.601733851203032e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.003068789675822999,
+          "startup_window": false,
+          "old_error": 7.706809212581111e-13,
+          "candidate_error": 7.866970653914468e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.003102146085342814,
+          "startup_window": false,
+          "old_error": 7.961652666257561e-13,
+          "candidate_error": 8.138407564691091e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0031355024948626293,
+          "startup_window": false,
+          "old_error": 8.222054275805845e-13,
+          "candidate_error": 8.41613011848667e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0031688589043824445,
+          "startup_window": false,
+          "old_error": 8.488074053899043e-13,
+          "candidate_error": 8.700216691619316e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0032022153139022597,
+          "startup_window": false,
+          "old_error": 8.759771902352032e-13,
+          "candidate_error": 8.990735637632665e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.003235571723422075,
+          "startup_window": false,
+          "old_error": 9.037207576330532e-13,
+          "candidate_error": 9.287741946588742e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.00326892813294189,
+          "startup_window": false,
+          "old_error": 9.320440642251337e-13,
+          "candidate_error": 9.591273333582026e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0033022845424617053,
+          "startup_window": false,
+          "old_error": 9.609530432227503e-13,
+          "candidate_error": 9.901345546740152e-15,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0033356409519815205,
+          "startup_window": false,
+          "old_error": 9.90453606018174e-13,
+          "candidate_error": 1.0217948838711686e-14,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0033689973615013357,
+          "startup_window": false,
+          "old_error": 1.0205516925970927e-12,
+          "candidate_error": 1.0541087510749707e-14,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.003402353771021151,
+          "startup_window": false,
+          "old_error": 1.0512533396359541e-12,
+          "candidate_error": 1.0870863502500149e-14,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.003435710180540966,
+          "startup_window": false,
+          "old_error": 1.0825646048612187e-12,
+          "candidate_error": 1.1207414304675934e-14,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0034690665900607813,
+          "startup_window": false,
+          "old_error": 1.1144915012514488e-12,
+          "candidate_error": 1.155083209187712e-14,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0035024229995805965,
+          "startup_window": false,
+          "old_error": 1.1470400241384051e-12,
+          "candidate_error": 1.1901188562618241e-14,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.0035357794091004117,
+          "startup_window": false,
+          "old_error": 1.1802161669821309e-12,
+          "candidate_error": 1.2258553126052126e-14,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.003569135818620227,
+          "startup_window": false,
+          "old_error": 1.2140259231591617e-12,
+          "candidate_error": 1.2622995107311888e-14,
+          "high_coefficient_change": 0.0
+        },
+        {
+          "time_ns": 0.003602492228140042,
+          "startup_window": false,
+          "old_error": 1.2484752861559055e-12,
+          "candidate_error": 1.2994583906501395e-14,
+          "high_coefficient_change": 0.0
+        }
+      ]
+    }
+  ]
+}

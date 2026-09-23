@@ -1,5 +1,14 @@
 # LW Integrator
 
+Many-particle full-spin integration now includes an experimental reaction-off
+reduced-motion option. It advances selected particles with RK4 and the others
+with midpoint steps, while retaining every particle as a retarded source.
+It is not the separate bunch pseudogrid and has not passed a general accuracy
+gate. See the
+[implementation plan](docs/multiparticle_integration_plan.md) for scope,
+validation steps, and the distinction between exact reference scheduling and
+reduced particle updates.
+
 ## Finite-spin pair solver — September 2026
 
 The separate two-particle solver supports coupled magnetic self-reaction,

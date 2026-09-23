@@ -1,0 +1,381 @@
+{
+  "case": "weak three_symmetric, reaction off, unpreserved RK4",
+  "passive_method": "rk3",
+  "charge_and_spin_scale": 1.0,
+  "beta_z": 0.8,
+  "beta_pattern": "alternating",
+  "particle_count": 3,
+  "active_count": 1,
+  "selection_spacing_ns": 1.6678204759907602e-05,
+  "passive_constraint_budget_relative": 1e-06,
+  "fallback_count_by_particle": [
+    0,
+    0,
+    0
+  ],
+  "reduced_accepted_count_by_particle": [
+    33,
+    33,
+    34
+  ],
+  "selection_trace": [
+    {
+      "time_ns": 0.0,
+      "selected_indices": [
+        0
+      ]
+    },
+    {
+      "time_ns": 1.6678204759907602e-05,
+      "selected_indices": [
+        1
+      ]
+    },
+    {
+      "time_ns": 3.3356409519815205e-05,
+      "selected_indices": [
+        2
+      ]
+    },
+    {
+      "time_ns": 5.003461427972281e-05,
+      "selected_indices": [
+        0
+      ]
+    },
+    {
+      "time_ns": 6.671281903963041e-05,
+      "selected_indices": [
+        1
+      ]
+    },
+    {
+      "time_ns": 8.339102379953801e-05,
+      "selected_indices": [
+        2
+      ]
+    },
+    {
+      "time_ns": 0.00010006922855944561,
+      "selected_indices": [
+        0
+      ]
+    },
+    {
+      "time_ns": 0.00011674743331935322,
+      "selected_indices": [
+        1
+      ]
+    },
+    {
+      "time_ns": 0.00013342563807926082,
+      "selected_indices": [
+        2
+      ]
+    },
+    {
+      "time_ns": 0.00015010384283916842,
+      "selected_indices": [
+        0
+      ]
+    },
+    {
+      "time_ns": 0.00016678204759907602,
+      "selected_indices": [
+        1
+      ]
+    },
+    {
+      "time_ns": 0.00018346025235898363,
+      "selected_indices": [
+        2
+      ]
+    },
+    {
+      "time_ns": 0.00020013845711889123,
+      "selected_indices": [
+        0
+      ]
+    },
+    {
+      "time_ns": 0.00021681666187879883,
+      "selected_indices": [
+        1
+      ]
+    },
+    {
+      "time_ns": 0.00023349486663870643,
+      "selected_indices": [
+        2
+      ]
+    },
+    {
+      "time_ns": 0.00025017307139861404,
+      "selected_indices": [
+        0
+      ]
+    },
+    {
+      "time_ns": 0.00026685127615852164,
+      "selected_indices": [
+        1
+      ]
+    },
+    {
+      "time_ns": 0.00028352948091842924,
+      "selected_indices": [
+        2
+      ]
+    },
+    {
+      "time_ns": 0.00030020768567833684,
+      "selected_indices": [
+        0
+      ]
+    },
+    {
+      "time_ns": 0.00031688589043824445,
+      "selected_indices": [
+        1
+      ]
+    },
+    {
+      "time_ns": 0.00033356409519815205,
+      "selected_indices": [
+        2
+      ]
+    },
+    {
+      "time_ns": 0.00035024229995805965,
+      "selected_indices": [
+        0
+      ]
+    },
+    {
+      "time_ns": 0.00036692050471796725,
+      "selected_indices": [
+        1
+      ]
+    },
+    {
+      "time_ns": 0.00038359870947787486,
+      "selected_indices": [
+        2
+      ]
+    },
+    {
+      "time_ns": 0.00040027691423778246,
+      "selected_indices": [
+        0
+      ]
+    },
+    {
+      "time_ns": 0.00041695511899769006,
+      "selected_indices": [
+        1
+      ]
+    },
+    {
+      "time_ns": 0.00043363332375759766,
+      "selected_indices": [
+        2
+      ]
+    },
+    {
+      "time_ns": 0.00045031152851750527,
+      "selected_indices": [
+        0
+      ]
+    },
+    {
+      "time_ns": 0.00046698973327741287,
+      "selected_indices": [
+        1
+      ]
+    },
+    {
+      "time_ns": 0.00048366793803732047,
+      "selected_indices": [
+        2
+      ]
+    },
+    {
+      "time_ns": 0.0005003461427972281,
+      "selected_indices": [
+        0
+      ]
+    },
+    {
+      "time_ns": 0.0005170243475571357,
+      "selected_indices": [
+        1
+      ]
+    },
+    {
+      "time_ns": 0.0005337025523170433,
+      "selected_indices": [
+        2
+      ]
+    },
+    {
+      "time_ns": 0.0005503807570769509,
+      "selected_indices": [
+        0
+      ]
+    },
+    {
+      "time_ns": 0.0005670589618368585,
+      "selected_indices": [
+        1
+      ]
+    },
+    {
+      "time_ns": 0.0005837371665967661,
+      "selected_indices": [
+        2
+      ]
+    },
+    {
+      "time_ns": 0.0006004153713566737,
+      "selected_indices": [
+        0
+      ]
+    },
+    {
+      "time_ns": 0.0006170935761165813,
+      "selected_indices": [
+        1
+      ]
+    },
+    {
+      "time_ns": 0.0006337717808764889,
+      "selected_indices": [
+        2
+      ]
+    },
+    {
+      "time_ns": 0.0006504499856363965,
+      "selected_indices": [
+        0
+      ]
+    },
+    {
+      "time_ns": 0.0006671281903963041,
+      "selected_indices": [
+        1
+      ]
+    },
+    {
+      "time_ns": 0.0006838063951562117,
+      "selected_indices": [
+        2
+      ]
+    },
+    {
+      "time_ns": 0.0007004845999161193,
+      "selected_indices": [
+        0
+      ]
+    },
+    {
+      "time_ns": 0.0007171628046760269,
+      "selected_indices": [
+        1
+      ]
+    },
+    {
+      "time_ns": 0.0007338410094359345,
+      "selected_indices": [
+        2
+      ]
+    },
+    {
+      "time_ns": 0.0007505192141958421,
+      "selected_indices": [
+        0
+      ]
+    },
+    {
+      "time_ns": 0.0007671974189557497,
+      "selected_indices": [
+        1
+      ]
+    },
+    {
+      "time_ns": 0.0007838756237156573,
+      "selected_indices": [
+        2
+      ]
+    },
+    {
+      "time_ns": 0.0008005538284755649,
+      "selected_indices": [
+        0
+      ]
+    },
+    {
+      "time_ns": 0.0008172320332354725,
+      "selected_indices": [
+        1
+      ]
+    }
+  ],
+  "schedules_match": true,
+  "steps": 50,
+  "step_ns": 1.6678204759907602e-05,
+  "end_ct_mm": 0.25,
+  "elapsed_seconds": {
+    "exact_reference": [
+      3.223789374984335
+    ],
+    "passive_rk3": [
+      2.7761739999987185
+    ]
+  },
+  "speedup_vs_scheduled_exact": 1.1612346254182278,
+  "comparison": {
+    "position_mm": {
+      "absolute": 1.0545171304671279e-11,
+      "exact_norm": 0.36167370224844614,
+      "relative": 2.915658849154434e-11
+    },
+    "canonical_spatial_momentum_native": {
+      "absolute": 4.794470872407628e-10,
+      "exact_norm": 692.4113739737426,
+      "relative": 6.924309814398633e-13
+    },
+    "canonical_transverse_momentum_native": {
+      "absolute": 2.2500507483785778e-10,
+      "exact_norm": 0.06309561284544941,
+      "relative": 3.5660969866320208e-09
+    },
+    "spin_native": {
+      "absolute": 1.5137348971008205e-11,
+      "exact_norm": 5.192557830099526,
+      "relative": 2.915200844420459e-12
+    },
+    "kinetic_spatial_momentum_native": {
+      "absolute": 4.790969378977711e-10,
+      "exact_norm": 692.3837229314053,
+      "relative": 6.919529186350261e-13
+    },
+    "kinetic_transverse_momentum_native": {
+      "absolute": 2.250000733546246e-10,
+      "exact_norm": 0.06319597894601447,
+      "relative": 3.5603542679010034e-09
+    }
+  },
+  "maximum_spin_constraint": {
+    "exact_reference": 7.439175186639952e-12,
+    "passive_rk3": 7.426079773213707e-12
+  },
+  "maximum_mass_constraint": {
+    "exact_reference": 8.882934865151082e-08,
+    "passive_rk3": 8.863117852435943e-08
+  },
+  "postarrival_steps": {
+    "exact_reference": 16,
+    "passive_rk3": 16
+  },
+  "note": "The schedule equality is checked explicitly. All particles remain individually stored causal sources. Speed is measured against the scheduled exact control, not unscheduled batch RK4."
+}

@@ -140,8 +140,18 @@ class FullDipoleHistory:
     dipole_tolerance: float | None = None
     geometry_reconstruction: str = "endpoint"
     fit_sample_spacing: float | None = None
+    startup_dipole_fit: str = "interpolate"
 
     def __post_init__(self) -> None:
+        if self.startup_dipole_fit not in ("interpolate", "constrained"):
+            raise ValueError("Unknown startup dipole fitting policy")
+        if self.startup_dipole_fit == "constrained" and (
+            self.geometry_reconstruction != "connected_single_fit"
+            or self.startup_fit != "one_sided"
+        ):
+            raise ValueError(
+                "Constrained startup requires one-sided single-fit history"
+            )
         if self.geometry_reconstruction not in ("endpoint", "connected_single_fit"):
             raise ValueError("Unknown geometry reconstruction")
         if self.geometry_reconstruction == "connected_single_fit":
@@ -608,6 +618,7 @@ class FullDipoleHistory:
             self.dipole_tolerance,
             self.geometry_reconstruction,
             self.fit_sample_spacing,
+            self.startup_dipole_fit,
         )
 
     def append(
@@ -651,6 +662,7 @@ class FullDipoleHistory:
             self.dipole_tolerance,
             self.geometry_reconstruction,
             self.fit_sample_spacing,
+            self.startup_dipole_fit,
         ).completed()
 
     @property
@@ -717,12 +729,22 @@ class FullDipoleHistory:
                 geometry_reconstruction=self.geometry_reconstruction,
                 fit_sample_spacing=self.fit_sample_spacing,
             )
+        if self.startup_dipole_fit == "constrained":
+            payload.update(
+                format="full-dipole-history-v8", startup_dipole_fit="constrained"
+            )
         return payload
 
     @classmethod
     def from_checkpoint_payload(cls, payload: dict[str, object]) -> FullDipoleHistory:
         version = payload.get("format")
-        single_fit = version == "full-dipole-history-v7"
+        constrained = version == "full-dipole-history-v8"
+        if constrained:
+            if payload.get("startup_dipole_fit") != "constrained":
+                raise ValueError("History v8 requires constrained startup fitting")
+        elif "startup_dipole_fit" in payload:
+            raise ValueError("Startup dipole fitting selector requires history v8")
+        single_fit = version in ("full-dipole-history-v7", "full-dipole-history-v8")
         if single_fit:
             if (
                 payload.get("geometry_reconstruction") != "connected_single_fit"
@@ -733,7 +755,11 @@ class FullDipoleHistory:
                 )
         elif "geometry_reconstruction" in payload or "fit_sample_spacing" in payload:
             raise ValueError("Single-fit settings require history v7")
-        connected = version in ("full-dipole-history-v6", "full-dipole-history-v7")
+        connected = version in (
+            "full-dipole-history-v6",
+            "full-dipole-history-v7",
+            "full-dipole-history-v8",
+        )
         if connected:
             if (
                 payload.get("dipole_reconstruction") != "connected_direct"
@@ -807,6 +833,7 @@ class FullDipoleHistory:
             fit_sample_spacing=(
                 cast(float, payload["fit_sample_spacing"]) if single_fit else None
             ),
+            startup_dipole_fit="constrained" if constrained else "interpolate",
             derivative_degree=cast(int, payload["derivative_degree"]),
             integrate_velocity=cast(bool, payload["integrate_velocity"]),
             position_tolerance=float(cast(float, payload["position_tolerance"])),
@@ -859,4 +886,5 @@ class FullDipoleHistory:
             raw.dipole_tolerance,
             raw.geometry_reconstruction,
             raw.fit_sample_spacing,
+            raw.startup_dipole_fit,
         )

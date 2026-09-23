@@ -19,6 +19,7 @@ from core.connected_dipole_history import SourceDipoleError
 from .pair_history_options import (
     HISTORY_METHODS,
     configure_run_history,
+    configure_startup_dipole_fit,
     validate_recording_spacing,
 )
 
@@ -35,6 +36,12 @@ def capabilities() -> dict[str, Any]:
         supported_integration_methods=["rk4", "dop853"],
         supported_history_methods=list(HISTORY_METHODS),
         default_fresh_history="connected_single_fit for compatible fixed recording grids",
+        startup_dipole_fit={
+            "choices": ["interpolate", "constrained"],
+            "default": "preserve checkpoint policy",
+            "selection": "Explicit --startup-dipole-fit; changes require fresh inertial-boundary data",
+            "validation": "Constrained fitting passed bounded three-particle recording comparisons with reaction off and on; general radiation accuracy remains open",
+        },
         history_selection="Auto selects single-fit on compatible fresh data; missing budgets use 1e-10 of each initial tensor norm. Spacing defaults to the recording interval and is checkpointed. Resume preserves settings.",
         internal_step_control={
             "method": "preserved DOP853 with explicit physical error scales",
@@ -189,16 +196,51 @@ def write_checkpoint(path: Path, payload: dict[str, Any]) -> None:
             temporary.unlink()
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
+def main(argv: list[str] | None = None, *, _multiparticle: bool = False) -> int:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Many-particle full-spin checkpoint runner" if _multiparticle else __doc__
+        )
+    )
+    if _multiparticle:
+        parser.add_argument(
+            "--pseudogrid-reference-active-count",
+            type=int,
+            help="Record subset selections while still solving every particle exactly; no reduced updates or speedup",
+        )
+        parser.add_argument(
+            "--pseudogrid-midpoint-active-count",
+            type=int,
+            help="Experimental reaction-off RK4 subset: selected particles use RK4, remaining particles use midpoint; all remain retarded sources",
+        )
+        parser.add_argument(
+            "--pseudogrid-rk3-active-count",
+            type=int,
+            help="Experimental reaction-off RK4 subset: selected particles use RK4, remaining particles use third-order RK; all remain retarded sources",
+        )
+        parser.add_argument(
+            "--pseudogrid-selection-spacing-ns",
+            type=float,
+            help="Fixed physical time between active-subset reselections; required for reduced modes and must align with --step-ns",
+        )
+        parser.add_argument(
+            "--pseudogrid-constraint-budget-relative",
+            type=float,
+            help="Experimental passive-step limit on normalized mass and spin constraints; default 1e-6, with same-step RK4 fallback",
+        )
     parser.add_argument("--capabilities", action="store_true")
     parser.add_argument(
-        "--checkpoint", type=Path, help="Input whole-pair JSON checkpoint"
+        "--checkpoint", type=Path, help="Input complete JSON checkpoint"
     )
     parser.add_argument(
         "--output", type=Path, help="New output checkpoint; input is never overwritten"
     )
     parser.add_argument("--steps", type=int, default=1)
+    parser.add_argument(
+        "--startup-dipole-fit",
+        choices=("interpolate", "constrained"),
+        help="Fresh single-fit histories: fit the known inertial startup conditions directly with constrained. Omitted preserves the recorded policy; evolved runs cannot change it",
+    )
     parser.add_argument(
         "--history-method",
         choices=("auto", "preserve", *HISTORY_METHODS),
@@ -261,7 +303,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
     if args.capabilities:
-        print(json.dumps(capabilities(), indent=2))
+        if _multiparticle:
+            from .nonlinear_particles import capabilities as selected_capabilities
+        else:
+            selected_capabilities = capabilities
+        print(json.dumps(selected_capabilities(), indent=2))
         return 0
     if args.checkpoint is None or args.output is None or args.step_ns is None:
         parser.error("--checkpoint, --output and --step-ns are required")
@@ -275,6 +321,39 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--reaction-window-ns must be finite and positive")
     if not 0 <= args.max_step_halvings <= 10:
         parser.error("--max-step-halvings must be between 0 and 10")
+    if _multiparticle and args.max_step_halvings:
+        parser.error("Many-particle runs currently require fixed recording intervals")
+    if _multiparticle:
+        selected_modes = sum(
+            value is not None
+            for value in (
+                args.pseudogrid_reference_active_count,
+                args.pseudogrid_midpoint_active_count,
+                args.pseudogrid_rk3_active_count,
+            )
+        )
+        if selected_modes > 1:
+            parser.error("Choose only one pseudogrid active-count mode")
+        if (
+            args.pseudogrid_midpoint_active_count is not None
+            or args.pseudogrid_rk3_active_count is not None
+        ) and args.pseudogrid_selection_spacing_ns is None:
+            parser.error("Reduced mode requires --pseudogrid-selection-spacing-ns")
+    if (
+        _multiparticle
+        and args.pseudogrid_selection_spacing_ns is not None
+        and args.pseudogrid_midpoint_active_count is None
+        and args.pseudogrid_rk3_active_count is None
+        and args.pseudogrid_reference_active_count is None
+    ):
+        parser.error("Pseudogrid selection spacing requires an active-count option")
+    if (
+        _multiparticle
+        and args.pseudogrid_constraint_budget_relative is not None
+        and args.pseudogrid_midpoint_active_count is None
+        and args.pseudogrid_rk3_active_count is None
+    ):
+        parser.error("Pseudogrid constraint budget requires reduced active count")
     if args.checkpoint.resolve() == args.output.resolve():
         parser.error("Use a distinct output path so the input checkpoint is preserved")
     if args.output.exists() and not args.overwrite_output:
@@ -304,6 +383,47 @@ def main(argv: list[str] | None = None) -> int:
             args.step_ns,
             args.dipole_drift_relative,
         )
+        payload = configure_startup_dipole_fit(payload, args.startup_dipole_fit)
+        if _multiparticle and args.pseudogrid_reference_active_count is not None:
+            from core.momentum_center_particles import configure_pseudogrid_reference
+
+            payload = configure_pseudogrid_reference(
+                payload,
+                args.pseudogrid_reference_active_count,
+                args.pseudogrid_selection_spacing_ns,
+            )
+        if _multiparticle and args.pseudogrid_midpoint_active_count is not None:
+            from core.momentum_center_particles import (
+                DEFAULT_PASSIVE_CONSTRAINT_BUDGET_RELATIVE,
+                configure_pseudogrid_midpoint,
+            )
+
+            payload = configure_pseudogrid_midpoint(
+                payload,
+                args.pseudogrid_midpoint_active_count,
+                args.pseudogrid_selection_spacing_ns,
+                constraint_budget_relative=(
+                    DEFAULT_PASSIVE_CONSTRAINT_BUDGET_RELATIVE
+                    if args.pseudogrid_constraint_budget_relative is None
+                    else args.pseudogrid_constraint_budget_relative
+                ),
+            )
+        if _multiparticle and args.pseudogrid_rk3_active_count is not None:
+            from core.momentum_center_particles import (
+                DEFAULT_PASSIVE_CONSTRAINT_BUDGET_RELATIVE,
+                configure_pseudogrid_rk3,
+            )
+
+            payload = configure_pseudogrid_rk3(
+                payload,
+                args.pseudogrid_rk3_active_count,
+                args.pseudogrid_selection_spacing_ns,
+                constraint_budget_relative=(
+                    DEFAULT_PASSIVE_CONSTRAINT_BUDGET_RELATIVE
+                    if args.pseudogrid_constraint_budget_relative is None
+                    else args.pseudogrid_constraint_budget_relative
+                ),
+            )
         if "dipole_budget_policy" in payload:
             print(
                 json.dumps({"dipole_budget_policy": payload["dipole_budget_policy"]}),
@@ -327,35 +447,44 @@ def main(argv: list[str] | None = None) -> int:
                     )
                     records.extend(each)
             else:
-                candidate, records = advance_pair(payload, args.step_ns, count)
+                if _multiparticle:
+                    from core.momentum_center_particles import advance_particles
+
+                    candidate, records = advance_particles(payload, args.step_ns, count)
+                else:
+                    candidate, records = advance_pair(payload, args.step_ns, count)
             write_checkpoint(args.output, candidate)
             payload = candidate
             completed += count
-            print(
-                json.dumps(
-                    dict(
-                        completed_steps=completed,
-                        accepted_substeps_in_batch=len(records),
-                        time_ns=records[-1]["time_ns"],
-                        checkpoint=str(args.output),
-                        maximum_momentum_frame_beta_squared=max(
-                            (
-                                d["length_time"]["momentum_rest_frame_beta_squared"]
-                                for d in records[-1].get("particles", [])
-                            ),
-                            default=None,
-                        ),
-                        internal_steps=[
-                            {
-                                key: value
-                                for key, value in d["internal_step_control"].items()
-                                if key != "reports"
-                            }
-                            for d in records[-1].get("particles", [])
-                            if "internal_step_control" in d
-                        ],
-                    )
+            progress = dict(
+                completed_steps=completed,
+                accepted_substeps_in_batch=len(records),
+                time_ns=records[-1]["time_ns"],
+                checkpoint=str(args.output),
+                maximum_momentum_frame_beta_squared=max(
+                    (
+                        d["length_time"]["momentum_rest_frame_beta_squared"]
+                        for d in records[-1].get("particles", [])
+                    ),
+                    default=None,
                 ),
+                internal_steps=[
+                    {
+                        key: value
+                        for key, value in d["internal_step_control"].items()
+                        if key != "reports"
+                    }
+                    for d in records[-1].get("particles", [])
+                    if "internal_step_control" in d
+                ],
+            )
+            if _multiparticle:
+                for key in ("pseudogrid_reduced", "pseudogrid_reference"):
+                    if key in records[-1]:
+                        progress["pseudogrid_update"] = records[-1][key]
+                        break
+            print(
+                json.dumps(progress),
                 flush=True,
             )
     except KeyboardInterrupt:
