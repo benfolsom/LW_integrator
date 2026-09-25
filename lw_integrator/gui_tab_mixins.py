@@ -1952,14 +1952,13 @@ class IntegratorGUITabMixin:
         Tooltip(
             iter_help,
             "Maximum self-consistency iterations per particle per step.\n\n"
-            "Loop continues until:\n"
-            "  • Mass-shell constraint satisfied (momentum-based check), OR\n"
-            "  • Max iterations reached (applies projection as fallback)\n\n"
-            "More iterations = better accuracy but slower.\n"
-            "Typical convergence: 2-4 iterations\n\n"
-            "Default: 10\n"
-            "Aggressive: 20 for ultra-relativistic particles (γ > 1000)\n"
-            "Increase if seeing 'max iterations reached' warnings",
+            "The mass-shell check starts on the second iteration. The loop\n"
+            "stops when |Pt² - P² - (mc)²|/(mc)² < target MS tolerance.\n"
+            "If max iterations is reached first, the step fails with a\n"
+            "self-consistency nonconvergence error (no silent projection).\n"
+            "Values below 2 are rejected while self-consistency is enabled.\n\n"
+            "Default: 2 (all entry points).\n"
+            "Increase if seeing nonconvergence errors.",
         )
         self.sc_max_iterations_entry = ttk.Entry(
             sc_frame, textvariable=self.self_consistency_max_iterations_var, width=16
@@ -2078,6 +2077,20 @@ class IntegratorGUITabMixin:
             row=12, column=0, columnspan=2, sticky="ew", pady=2, padx=(20, 0)
         )
         gamma_recon_frame.columnconfigure(1, weight=1)
+        self.sc_gamma_reconciliation_note = ttk.Label(
+            gamma_recon_frame,
+            text=(
+                "Diagnostic only. No effect with Medina/LAD radiation reaction, on "
+                "the exact RFS/dipole (inertial prehistory) path, or with "
+                "self-consistency disabled; a warning is logged at run start."
+            ),
+            foreground="gray",
+            wraplength=460,
+            justify="left",
+        )
+        self.sc_gamma_reconciliation_note.grid(
+            row=3, column=0, columnspan=2, sticky="w", pady=(4, 0)
+        )
 
         # Method selection
         method_frame = ttk.Frame(gamma_recon_frame)
@@ -2327,7 +2340,7 @@ class IntegratorGUITabMixin:
         )
         self.sc_chrono_high_precision_check = ttk.Checkbutton(
             chrono_highprec_frame,
-            text="High-precision mode (cubic + position interpolation)",
+            text="High-precision mode (deprecated: no effect)",
             variable=self.self_consistency_chrono_high_precision_var,
         )
         self.sc_chrono_high_precision_check.pack(side="left")
@@ -2337,20 +2350,12 @@ class IntegratorGUITabMixin:
         chrono_highprec_help.pack(side="left", padx=(3, 0))
         Tooltip(
             chrono_highprec_help,
-            "Enable high-precision chrono-matching features.\n\n"
-            "When enabled:\n"
-            "  • Uses cubic (Catmull-Rom) interpolation instead of linear\n"
-            "  • Interpolates particle positions (x/y/z) in addition to velocities\n"
-            "  • Provides smoother derivatives for acceleration terms\n"
-            "  • Better accuracy for ultra-relativistic particles (γ > 1000)\n\n"
-            "Performance impact:\n"
-            "  • ~3-5% overhead vs linear interpolation\n"
-            "  • Requires at least 4 trajectory points for cubic fit\n\n"
-            "When to enable:\n"
-            "  • γ > 1000 with coarse timesteps\n"
-            "  • Need smooth βdot derivatives\n"
-            "  • Critical accuracy requirements\n\n"
-            "Default: OFF (linear interpolation is usually sufficient)",
+            "Deprecated: this option has no effect.\n\n"
+            "The maintained runner always uses the structure-of-arrays\n"
+            "chrono matcher, which interpolates linearly and never applies\n"
+            "the cubic/position interpolation this option once selected.\n"
+            "Saved configs that set it still load; a deprecation warning is\n"
+            "logged at run start. Leave it OFF.",
         )
 
         # Adaptive tolerance
@@ -2382,9 +2387,25 @@ class IntegratorGUITabMixin:
             "Default: OFF (use fixed tolerance)",
         )
 
-        # Note: chrono_matching_mode removed from GUI
-        # Always uses FAST mode for the maintained GUI path.
-        # AVERAGED mode reserved for future APPROXIMATE_BACK_HISTORY implementation
+        self.sc_chrono_note = ttk.Label(
+            chrono_frame,
+            text=(
+                "No effect on the exact RFS/dipole (inertial prehistory) path, "
+                "which solves the light cone directly. Tolerance and adaptive "
+                "tolerance only act with interpolation enabled. Run-start "
+                "warnings flag both cases."
+            ),
+            foreground="gray",
+            wraplength=460,
+            justify="left",
+        )
+        self.sc_chrono_note.grid(
+            row=4, column=0, columnspan=2, sticky="w", pady=(4, 0), padx=(20, 0)
+        )
+
+        # The retardation mode (chrono_matching_mode) has no GUI control. New
+        # runs use FAST; a loaded config's AVERAGED value is carried through
+        # unchanged (see _current_chrono_matching_mode).
 
     def _build_adaptive_timestep_section(self, stability_frame: ttk.Frame) -> None:
         """Build adaptive timestep refinement controls."""

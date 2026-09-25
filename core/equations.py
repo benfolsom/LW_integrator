@@ -257,7 +257,7 @@ def _extract_self_consistency_params(
         self_consistency.mass_shell_relaxation if self_consistency is not None else 0.7
     )
     max_iterations = (
-        self_consistency.max_iterations if self_consistency is not None else 10
+        self_consistency.max_iterations if self_consistency is not None else 2
     )
     verbosity = self_consistency.verbosity if self_consistency is not None else 0
 
@@ -1753,7 +1753,7 @@ def retarded_equations_of_motion(
     index_traj: int,
     aperture_radius: float,
     sim_type: SimulationType,
-    chrono_mode: ChronoMatchingMode = ChronoMatchingMode.AVERAGED,
+    chrono_mode: ChronoMatchingMode = ChronoMatchingMode.FAST,
     startup_mode: StartupMode = StartupMode.COLD_START,
     self_consistency: Optional[SelfConsistencyConfig] = None,
     step_idx: Optional[int] = None,

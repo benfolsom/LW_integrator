@@ -54,6 +54,7 @@ from .pseudo_grid import (
 from .self_consistency import (
     SelfConsistencyConfig,
     canonicalize_self_consistency_mode,
+    emit_self_consistency_runtime_warnings,
     self_consistent_step,
 )
 from .types import (
@@ -2800,7 +2801,7 @@ def retarded_integrator(
     z_cutoff: float,
     z_cutoff_mode: str = "absolute",
     self_consistency: Optional[SelfConsistencyConfig] = None,
-    chrono_mode: ChronoMatchingMode = ChronoMatchingMode.AVERAGED,
+    chrono_mode: ChronoMatchingMode = ChronoMatchingMode.FAST,
     startup_mode: StartupMode = StartupMode.COLD_START,
     image_subcharge_count: int = 12,
     use_conducting_image_weighting: bool = True,
@@ -3267,6 +3268,33 @@ def retarded_integrator(
                     "covariant_retarded_point does not yet support cavity-exit "
                     "synthetic coasting tails"
                 )
+    # Flag self-consistency/chrono options that cannot act in this run. These
+    # are warnings only; the run proceeds with the options ignored.
+    exact_endpoint_path = bool(
+        magnetic_dipole.enabled
+        and magnetic_dipole.spin_model == "rfs_minimal_2021"
+        and startup_mode is StartupMode.INERTIAL_PREHISTORY
+        and sim_type == SimulationType.BUNCH_TO_BUNCH
+    )
+
+    def _option_warning_logger(message: str) -> None:
+        if logger is None:
+            return
+        if callable(logger):
+            logger(message)
+        else:
+            logger.warning(message)
+
+    emit_self_consistency_runtime_warnings(
+        self_consistency,
+        radiation_reaction_mode=_canonicalize_radiation_reaction_mode(
+            radiation_reaction_mode
+        ),
+        exact_path=exact_endpoint_path,
+        chrono_mode=chrono_mode,
+        logger=_option_warning_logger if logger is not None else None,
+    )
+
     # Magnetic metadata is integration-local state. Copy caller-owned inputs so
     # an enabled run cannot leave active spin arrays behind for a later disabled
     # run that reuses the same dictionaries.

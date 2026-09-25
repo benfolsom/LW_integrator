@@ -373,6 +373,10 @@ def test_self_consistency_nonconvergence_raises(
         _make_state(x=[0.0], z=[1.1], t=[0.1], gamma=[2.0], charge=[-1.0], mass=[1.0]),
     ]
 
+    # max_iterations < 2 is now rejected by SelfConsistencyConfig; force a
+    # nonconverging mass-shell check instead.
+    _patch_mass_shell_convergence_sequence(monkeypatch, [(False, 1.0)])
+
     with pytest.raises(equations.SelfConsistencyNonConvergenceError):
         equations.retarded_equations_of_motion(
             0.1,
@@ -385,7 +389,7 @@ def test_self_consistency_nonconvergence_raises(
             startup_mode=StartupMode.COLD_START,
             self_consistency=SelfConsistencyConfig(
                 enabled=True,
-                max_iterations=1,
+                max_iterations=2,
                 verbosity=0,
             ),
         )
@@ -1129,7 +1133,7 @@ def test_retarded_equations_of_motion_raises_gamma_blowup_for_sc_runs() -> None:
             index_traj=0,
             aperture_radius=1.0,
             sim_type=SimulationType.CONDUCTING_WALL,
-            self_consistency=SelfConsistencyConfig(enabled=True, max_iterations=1),
+            self_consistency=SelfConsistencyConfig(enabled=True, max_iterations=2),
             step_idx=3,
         )
 

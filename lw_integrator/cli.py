@@ -1785,6 +1785,11 @@ def _merge_simulation_payload(
         "self_consistency_verbosity",
         "self_consistency_gamma_reconciliation_method",
         "self_consistency_gamma_reconciliation_fixed_weight",
+        "self_consistency_gamma_reconciliation_low_beta_threshold",
+        "self_consistency_gamma_reconciliation_high_beta_threshold",
+        "self_consistency_gamma_reconciliation_low_beta_weight",
+        "self_consistency_gamma_reconciliation_high_beta_weight",
+        "self_consistency_gamma_reconciliation_mid_beta_weight",
         "chrono_interpolate",
         "chrono_tolerance",
         "chrono_high_precision",
@@ -1798,6 +1803,9 @@ def _merge_simulation_payload(
     for key in passthrough_keys:
         if key in file_payload:
             result[key] = file_payload[key]
+    result["chrono_mode"] = _resolve_file_chrono_mode(
+        file_payload, result["chrono_mode"]
+    )
     legacy_adaptive_keys = {
         "adaptive_timestep_enabled": "enabled",
         "adaptive_timestep_threshold": "energy_jump_threshold",
@@ -1846,10 +1854,11 @@ def _merge_simulation_payload(
     ):
         if getattr(args, key, None) is not None:
             result[key] = getattr(args, key)
-    if "chrono_matching_mode" not in result and "chrono_mode" in result:
-        result["chrono_matching_mode"] = (
-            str(result["chrono_mode"]).replace("-", "_").upper()
-        )
+    # The runtime retardation mode is chrono_mode; keep the carried aliases
+    # (SelfConsistencyConfig.chrono_matching_mode) consistent with it.
+    resolved_chrono_mode = _parse_chrono_mode(result["chrono_mode"]).name
+    result["chrono_matching_mode"] = resolved_chrono_mode
+    result["self_consistency_chrono_matching_mode"] = resolved_chrono_mode
 
     cavity_exit = result.get("cavity_exit")
     if not isinstance(cavity_exit, MutableMapping):
@@ -2506,6 +2515,40 @@ def _parse_simulation_type(value: Any) -> SimulationType:
     raise SimulationConfigError(f"Unknown simulation type: {value!r}")
 
 
+_CHRONO_MODE_FILE_KEYS = (
+    "chrono_mode",
+    "chrono_matching_mode",
+    "self_consistency_chrono_matching_mode",
+)
+
+
+def _resolve_file_chrono_mode(file_payload: Mapping[str, Any], default: Any) -> Any:
+    """Resolve ``chrono_mode`` and its testbed/legacy aliases from a config file.
+
+    ``chrono_mode`` is canonical. ``chrono_matching_mode`` and
+    ``self_consistency_chrono_matching_mode`` (testbed/GUI spellings) are
+    accepted as aliases; any present keys must agree.
+    """
+
+    present = {
+        key: _parse_chrono_mode(file_payload[key])
+        for key in _CHRONO_MODE_FILE_KEYS
+        if key in file_payload and file_payload[key] is not None
+    }
+    if not present:
+        return default
+    if len(set(present.values())) > 1:
+        detail = ", ".join(f"{key}={mode.name}" for key, mode in present.items())
+        raise SimulationConfigError(
+            f"Conflicting retardation modes in configuration: {detail}. "
+            "Set chrono_mode only (chrono_matching_mode is an alias)."
+        )
+    for key in _CHRONO_MODE_FILE_KEYS:
+        if key in present:
+            return file_payload[key]
+    return default
+
+
 def _parse_chrono_mode(value: Any) -> ChronoMatchingMode:
     if isinstance(value, ChronoMatchingMode):
         return value
@@ -3008,28 +3051,50 @@ def _build_space_charge_config(
     )
 
 
+def _strict_optional_bool(payload: Mapping[str, Any], key: str) -> Optional[bool]:
+    """Return a JSON boolean, ``None`` when absent, or raise for other types."""
+
+    if key not in payload or payload[key] is None:
+        return None
+    value = payload[key]
+    if isinstance(value, (bool, np.bool_)):
+        return bool(value)
+    raise SimulationConfigError(
+        f"{key} must be a JSON boolean (true/false), got {value!r} "
+        f"({type(value).__name__})"
+    )
+
+
+def _strict_bool_with_alias(
+    payload: Mapping[str, Any], key: str, alias: str, default: bool
+) -> bool:
+    value = _strict_optional_bool(payload, key)
+    if value is not None:
+        return value
+    alias_value = _strict_optional_bool(payload, alias)
+    return default if alias_value is None else alias_value
+
+
 def _build_self_consistency_config(
     payload: Mapping[str, Any],
 ) -> Optional[SelfConsistencyConfig]:
-    chrono_interpolate = bool(
-        payload.get(
-            "chrono_interpolate",
-            payload.get("self_consistency_chrono_interpolate", False),
-        )
+    chrono_interpolate = _strict_bool_with_alias(
+        payload, "chrono_interpolate", "self_consistency_chrono_interpolate", False
     )
-    chrono_high_precision = bool(
-        payload.get(
-            "chrono_high_precision",
-            payload.get("self_consistency_chrono_high_precision", False),
-        )
+    chrono_high_precision = _strict_bool_with_alias(
+        payload,
+        "chrono_high_precision",
+        "self_consistency_chrono_high_precision",
+        False,
     )
-    chrono_adaptive_tolerance = bool(
-        payload.get(
-            "chrono_adaptive_tolerance",
-            payload.get("self_consistency_chrono_adaptive_tolerance", False),
-        )
+    chrono_adaptive_tolerance = _strict_bool_with_alias(
+        payload,
+        "chrono_adaptive_tolerance",
+        "self_consistency_chrono_adaptive_tolerance",
+        False,
     )
-    sc_enabled = bool(payload.get("self_consistency_enabled", False))
+    sc_enabled_value = _strict_optional_bool(payload, "self_consistency_enabled")
+    sc_enabled = True if sc_enabled_value is None else sc_enabled_value
     if not sc_enabled and not (
         chrono_interpolate or chrono_high_precision or chrono_adaptive_tolerance
     ):
@@ -3045,6 +3110,7 @@ def _build_self_consistency_config(
             f"Unknown gamma reconciliation method: {method_name!r}"
         ) from None
 
+    reference = SelfConsistencyConfig
     try:
         return SelfConsistencyConfig(
             enabled=sc_enabled,
@@ -3060,7 +3126,12 @@ def _build_self_consistency_config(
             mass_shell_relaxation=float(
                 payload.get("self_consistency_mass_shell_relaxation", 0.7)
             ),
-            max_iterations=int(payload.get("self_consistency_max_iterations", 2)),
+            max_iterations=int(
+                payload.get(
+                    "self_consistency_max_iterations",
+                    reference.max_iterations,
+                )
+            ),
             verbosity=int(payload.get("self_consistency_verbosity", 0)),
             chrono_interpolate=chrono_interpolate,
             chrono_tolerance=float(
@@ -3069,22 +3140,52 @@ def _build_self_consistency_config(
                     payload.get("self_consistency_chrono_tolerance", 1e-3),
                 )
             ),
-            chrono_matching_mode=str(
+            chrono_matching_mode=_parse_chrono_mode(
                 payload.get(
                     "chrono_matching_mode",
                     payload.get("self_consistency_chrono_matching_mode", "FAST"),
                 )
-            ),
+            ).name,
             chrono_high_precision=chrono_high_precision,
             chrono_adaptive_tolerance=chrono_adaptive_tolerance,
             gamma_reconciliation_method=gamma_method,
             gamma_reconciliation_fixed_weight=float(
                 payload.get("self_consistency_gamma_reconciliation_fixed_weight", 0.5)
             ),
+            gamma_reconciliation_low_beta_threshold=float(
+                payload.get(
+                    "self_consistency_gamma_reconciliation_low_beta_threshold",
+                    reference.gamma_reconciliation_low_beta_threshold,
+                )
+            ),
+            gamma_reconciliation_high_beta_threshold=float(
+                payload.get(
+                    "self_consistency_gamma_reconciliation_high_beta_threshold",
+                    reference.gamma_reconciliation_high_beta_threshold,
+                )
+            ),
+            gamma_reconciliation_low_beta_weight=float(
+                payload.get(
+                    "self_consistency_gamma_reconciliation_low_beta_weight",
+                    reference.gamma_reconciliation_low_beta_weight,
+                )
+            ),
+            gamma_reconciliation_high_beta_weight=float(
+                payload.get(
+                    "self_consistency_gamma_reconciliation_high_beta_weight",
+                    reference.gamma_reconciliation_high_beta_weight,
+                )
+            ),
+            gamma_reconciliation_mid_beta_weight=float(
+                payload.get(
+                    "self_consistency_gamma_reconciliation_mid_beta_weight",
+                    reference.gamma_reconciliation_mid_beta_weight,
+                )
+            ),
         )
     except (TypeError, ValueError) as exc:
         raise SimulationConfigError(
-            "Invalid self-consistency or chrono-matching option"
+            f"Invalid self-consistency or chrono-matching option: {exc}"
         ) from exc
 
 

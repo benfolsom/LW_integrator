@@ -9,14 +9,31 @@ Overview
 
 Self-consistency iterations are a critical component of the Liénard-Wiechert
 integrator that ensure numerical stability and physical accuracy in relativistic
-particle tracking. The integrator uses a **dual independent convergence** approach
-that simultaneously satisfies both:
+particle tracking. The maintained implementation iterates each particle step and
+applies a **one-way mass-shell convergence check**:
 
 1. **Mass-shell constraint:** :math:`P_t^2 - \mathbf{P}^2 = (mc)^2`
-2. **Gamma consistency:** :math:`\gamma_{\text{velocity}} = \gamma_{\text{energy}}`
 
-This dual-criterion approach prevents catastrophic numerical failures observed in
-high-energy close-approach scenarios where mass-shell alone is insufficient.
+.. important::
+   **Current behaviour (September 2026).** Earlier revisions of this page
+   described a "dual independent" mode with a second gamma-consistency
+   criterion (``target_gamma_tolerance``). That mode and parameter no longer
+   exist. The maintained modes are ``fixed_geometry`` and
+   ``variable_geometry``; both check only the mass-shell error, from the
+   second iteration onward. If ``max_iterations`` is exhausted the step raises
+   ``SelfConsistencyNonConvergenceError`` (the pseudo-grid active solve may
+   instead mark the particle lost within its numerical-failure budget).
+   ``max_iterations`` below 2 is therefore rejected when self-consistency is
+   enabled, as are unknown convergence modes. Every entry point (API, CLI,
+   GUI/testbed, sweeps) now uses the same defaults when keys are missing:
+   enabled, ``fixed_geometry``, ``max_iterations=2``, ``verbosity=0``, gamma
+   reconciliation ``DISABLED``, chrono options off, retardation mode
+   ``FAST``. Gamma reconciliation is diagnostic-only and only reseeds the
+   next iteration; ``chrono_high_precision`` is deprecated and has no effect.
+   A warning is emitted at run start for options that cannot act in the
+   selected run. See ``docs/self_consistency_option_audit.md`` for the full
+   trace. Sections below that discuss the gamma-consistency criterion are
+   historical.
 
 .. warning::
    Without self-consistency iterations, the integrator can produce energy jumps
@@ -248,10 +265,17 @@ How Working Variables Are Calculated
 Convergence Algorithm
 =====================
 
-Dual Independent Mode
-----------------------
+Historical Dual Independent Mode
+--------------------------------
 
-In ``dual_independent`` mode (default), **both** criteria must be satisfied:
+.. note::
+   Historical. ``dual_independent`` and ``target_gamma_tolerance`` are no
+   longer accepted. The maintained check is
+   ``converged = E_ms < target_ms_tolerance`` only, evaluated from the second
+   iteration onward. The flowchart and worked examples below keep the
+   original two-criterion description for reference.
+
+In the former ``dual_independent`` mode, **both** criteria had to be satisfied:
 
 .. code-block:: text
 
@@ -434,9 +458,12 @@ a final safety check is performed:
        # Log warning
        print(f"⚠️ Applied mass-shell projection (error was {E_ms_final:.2e})")
 
-This acts as a **safety net** if the iteration loop fails to converge within
-max_iterations. The projection ensures the particle state satisfies the mass-shell
-constraint, preventing catastrophic energy violations.
+.. note::
+   In the maintained code this block runs only after a converged loop, because
+   exhausting ``max_iterations`` raises ``SelfConsistencyNonConvergenceError``
+   first. With ``target_ms_tolerance <= mass_shell_tolerance`` (all shipped
+   defaults) the projection is therefore not reached in normal runs; it is not
+   a fallback for nonconvergence.
 
 .. note::
    The safety net threshold (``mass_shell_tolerance``, default 1e-2) is much
@@ -458,11 +485,10 @@ For typical high-energy particle tracking:
 
    config = SelfConsistencyConfig(
        enabled=True,
-       convergence_mode="dual_independent",
+       convergence_mode="fixed_geometry",
        target_ms_tolerance=1e-6,
-       target_gamma_tolerance=1e-6,
        mass_shell_tolerance=1e-2,
-       max_iterations=10,
+       max_iterations=2,               # shared default
        verbosity=0
    )
 
@@ -475,9 +501,8 @@ For ultra-relativistic particles (γ > 1000) or narrow apertures:
 
    config = SelfConsistencyConfig(
        enabled=True,
-       convergence_mode="dual_independent",
+       convergence_mode="variable_geometry",
        target_ms_tolerance=1e-8,      # 100x stricter
-       target_gamma_tolerance=1e-8,
        mass_shell_tolerance=1e-3,
        max_iterations=15,              # More iterations
        verbosity=2                     # Detailed logging
@@ -648,8 +673,12 @@ via :py:class:`core.types.GammaReconciliationMethod`:
    - β > 0.99: α = 0.2 (trust velocity more)
    - 0.9 ≤ β ≤ 0.99: α = 0.5 (balanced)
 
-   After reconciliation, both γ and Pt are updated, and spatial momentum is
-   rescaled to preserve the mass shell: Pt² = P² + (mc)²
+   In the maintained code the reconciled γ only seeds the next
+   self-consistency iteration; the stored γ, Pt and spatial momentum remain
+   energy/momentum based. It has no effect when self-consistency is disabled,
+   and it is structurally inert when ``radiation_reaction_mode="medina_lad"``
+   or on the exact RFS/dipole path, where β is derived from the on-shell
+   mechanical momentum so γ_velocity equals γ_energy.
 
 **FIXED_WEIGHTED**
    Fixed 50/50 blend (or custom weight) across all velocities:
@@ -695,9 +724,10 @@ Configure via ``SelfConsistencyConfig``:
    from core.self_consistency import SelfConsistencyConfig
    from core.types import GammaReconciliationMethod
 
-   # Example 1: Default (ADAPTIVE_WEIGHTED with standard thresholds)
+   # Example 1: Default (reconciliation DISABLED)
    config = SelfConsistencyConfig()
-   # Uses ADAPTIVE_WEIGHTED with β thresholds [0.9, 0.99] and weights [0.8, 0.5, 0.2]
+   # ADAPTIVE_WEIGHTED, if selected, uses β thresholds [0.9, 0.99] and
+   # weights [0.8, 0.5, 0.2]
 
    # Example 2: Custom adaptive weighting for ultra-relativistic particles
    config = SelfConsistencyConfig(

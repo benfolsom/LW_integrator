@@ -181,7 +181,7 @@ class LienardWiechertIntegrator:
             cav_spacing=0.0,
             z_cutoff=float(z_cutoff),
             chrono_mode=(
-                self.config.chrono_mode if self.config else ChronoMatchingMode.AVERAGED
+                self.config.chrono_mode if self.config else ChronoMatchingMode.FAST
             ),
             startup_mode=(
                 self.config.startup_mode if self.config else StartupMode.COLD_START
