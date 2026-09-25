@@ -79,6 +79,15 @@ helper, missing sweep fixtures, no Tk in the venv), plus 42 new passes; the
 GUI suites pass under a Tk-enabled Python; the strict Sphinx build has no new
 warnings.
 
+**Test and portability fixes**
+
+- Fix NumPy 2 incompatibilities (`linalg.solve` right-hand-side shape in the
+  translating-shell kinematics, `np.trapz` in a Medina test), stale
+  `retarded_integrator` unpacking in the pseudo-grid tests, and missing sweep
+  fixtures for the CLI/GUI parity tests (now in `tests/fixtures/`).
+- The headless sweep runner no longer needs Tk at import; Tk-only test modules
+  are skipped on Pythons without Tk.
+
 ## v0.10.0 — 2026-09-23 — many-particle full-spin milestone
 
 Release validation: 1,776 unit tests passed; five failures reproduce on

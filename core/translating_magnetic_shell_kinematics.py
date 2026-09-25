@@ -268,7 +268,9 @@ def _differentiate_on_node_times(
         system = normalized[:, np.newaxis, :] ** powers
         right_hand_side = np.zeros((sample_count, 5))
         right_hand_side[:, 1] = 1.0 / scale
-        weights = np.linalg.solve(system, right_hand_side)
+        # Explicit trailing axis: NumPy >= 2 no longer treats a (K, M) right-hand
+        # side as K stacked vectors.
+        weights = np.linalg.solve(system, right_hand_side[..., np.newaxis])[..., 0]
         centered_values = values[stencil_indices, node] - values[:, node, np.newaxis]
         derivative[:, node] = np.einsum("ki,kic->kc", weights, centered_values)
     return derivative

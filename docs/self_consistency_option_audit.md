@@ -602,6 +602,36 @@ already fail at base (`optimization/config.py`,
 `tests/unit/test_trajectory_integrator_helpers.py`). `ruff` is not installed
 in either environment and was not run.
 
+### Follow-up: pre-existing failures fixed (2026-09-25)
+
+A separate commit fixes the pre-existing failures listed above:
+
+- `core/translating_magnetic_shell_kinematics.py`: pass `np.linalg.solve` an
+  explicit trailing axis. NumPy >= 2 treats a `(K, M)` right-hand side as a
+  matrix (16 tests).
+- `tests/physics/test_pseudo_grid_feasibility.py`: the run helpers keep the
+  first four `retarded_integrator` results (9 tests).
+- `tests/unit/test_medina_radiation_reaction.py`: use `np.trapezoid` when
+  available (`np.trapz` was removed in NumPy 2.4).
+- `tests/test_cli_gui_parity.py`: the two sweep configs are tracked in
+  `tests/fixtures/sweep_configs/`, because `configs/sweep_configs/*.json` is
+  git-ignored (5 tests).
+- `optimization/results_mixins.py` imports Tk only inside its two dialog
+  methods, so `lw_integrator.headless_optimization_runner` imports without
+  Tk. `tests/conftest.py` skips the modules that need Tk at import, and two
+  full-spin GUI tests `importorskip("tkinter")`.
+
+Result: `pytest tests` (default markers) with the integrator venv (NumPy 2.4,
+no Tk) and with the Pixi Python (NumPy 1.26, Tk). Tolerances are unchanged.
+Before the Tk import changes, the venv run had 2376 passed and 1 failed
+(`test_sweep_runner_logging.py`, which needed Tk through the headless
+runner; it now passes). The Pixi run had 2562 passed and 5 failed. Those 5
+are Numba bitwise-reproducibility checks
+(`test_exact_retarded_charge_numba.py`, `test_retarded_dipole_fields.py`,
+`test_retarded_dipole_numba_full_strict.py`) that pass with the project's
+Numba 0.64 but differ in the last bits under Pixi's Numba 0.63. They were
+left as they are.
+
 ## Not done
 
 - No cubic interpolation in the SOA chrono path (SC-7 decision: deprecate).

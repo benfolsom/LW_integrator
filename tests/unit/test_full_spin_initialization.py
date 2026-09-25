@@ -130,6 +130,7 @@ def test_invalid_particle_velocity_rejected(beta):
 
 
 def test_gui_generated_command_runs_fresh_input_and_preserves_restart(tmp_path):
+    pytest.importorskip("tkinter")
     from lw_integrator.nonlinear_pair_gui import build_command
     from lw_integrator.nonlinear_particles import main
     from core.momentum_center_particles import advance_particles
@@ -165,6 +166,7 @@ def test_gui_generated_command_runs_fresh_input_and_preserves_restart(tmp_path):
 
 
 def test_gui_rejects_pair_only_and_incomplete_mixed_options():
+    pytest.importorskip("tkinter")
     from lw_integrator.nonlinear_pair_gui import build_command
 
     for options in (
