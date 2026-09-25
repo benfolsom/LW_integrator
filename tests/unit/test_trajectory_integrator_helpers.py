@@ -400,8 +400,13 @@ def test_chrono_match_indices_returns_bounded_results():
         trajectory.append(state)
         trajectory_ext.append(ext_state)
 
+    # AVERAGED must be explicit: the API default is FAST (SC-10).
     indices_averaged = chrono_match_indices(
-        trajectory, trajectory_ext, index_traj=2, index_part=0
+        trajectory,
+        trajectory_ext,
+        index_traj=2,
+        index_part=0,
+        mode=ChronoMatchingMode.AVERAGED,
     )
     indices_fast = chrono_match_indices(
         trajectory,

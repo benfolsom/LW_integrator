@@ -18,6 +18,7 @@ Enable self-consistency checks when:
 from __future__ import annotations
 
 import inspect
+import warnings
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any, Callable, Optional
@@ -53,6 +54,18 @@ def _signature_parameters(step_function: StepFunction):
     return inspect.signature(step_function).parameters
 
 
+SUPPORTED_CONVERGENCE_MODES = ("fixed_geometry", "variable_geometry")
+MIN_ENABLED_MAX_ITERATIONS = 2
+
+
+class SelfConsistencyOptionWarning(UserWarning):
+    """Warn that a self-consistency/chrono option has no effect in this run."""
+
+
+class ChronoHighPrecisionDeprecationWarning(FutureWarning):
+    """``chrono_high_precision`` is deprecated and ignored by the SOA runner."""
+
+
 def canonicalize_self_consistency_mode(mode: object) -> str:
     """Return the maintained self-consistency mode name."""
 
@@ -68,12 +81,13 @@ def canonicalize_self_consistency_mode(mode: object) -> str:
 class SelfConsistencyConfig:
     """Configuration for self-consistency iterations.
 
-    Self-consistency is now ENABLED BY DEFAULT to prevent energy jumps and
-    numerical instabilities in relativistic simulations.
+    Self-consistency is ENABLED BY DEFAULT (fixed geometry, two iterations)
+    in every entry point: this dataclass, the CLI, the GUI/testbed and sweeps.
 
-    The iterations occur WITHIN the force calculation loop for each particle,
-    ensuring both the relativistic mass-shell constraint and gamma consistency
-    are satisfied.
+    The iterations occur WITHIN the force calculation loop for each particle.
+    Convergence is a one-way mass-shell check, evaluated from the second
+    iteration onward; exhausting ``max_iterations`` raises
+    ``SelfConsistencyNonConvergenceError``.
 
     CONVERGENCE STRATEGY:
     Two convergence modes with distinct behaviors:
@@ -138,17 +152,18 @@ class SelfConsistencyConfig:
         (if chrono_interpolate=True) or a warning is issued (if verbosity >= 2).
         Default is 1e-3 ns (1 picosecond).
     chrono_matching_mode : str
-        Chrono-matching algorithm mode. Options:
-        - "FAST": Single-sample delay Δt = R(1 + β·n̂)/c (default)
-        - "AVERAGED": Reserved for APPROXIMATE_BACK_HISTORY startup mode only.
-          Not recommended for general use until fully validated (~2-5× slower).
-        Default is "FAST".
+        Recorded for configuration round-trips only; the solver does not read
+        it. The retardation mode actually used is the separate ``chrono_mode``
+        argument of :func:`core.integration_runner.retarded_integrator`
+        (CLI ``chrono_mode``; testbed/GUI ``chrono_matching_mode`` option).
+        Options: "FAST" (default) or "AVERAGED" (diagnostic).
     chrono_high_precision : bool
-        Enable high-precision chrono-matching features. When True:
-        - Uses cubic (Catmull-Rom) interpolation instead of linear
-        - Interpolates particle positions (x/y/z) in addition to velocities
-        - Provides smoother derivatives for acceleration terms
-        Adds ~3-5% overhead. Useful for γ > 1000. Default is False.
+        Deprecated; accepted for saved configs but has no effect in the
+        maintained runner, which always uses the structure-of-arrays chrono
+        path (linear interpolation only). Only the legacy non-SOA fallback
+        used by direct API calls implements cubic/position interpolation.
+        Setting it emits :class:`ChronoHighPrecisionDeprecationWarning` at run
+        start. Default is False.
     chrono_adaptive_tolerance : bool
         Automatically set chrono_tolerance = 0.1 × timestep_h. When True,
         overrides the manual chrono_tolerance setting and scales with the
@@ -156,8 +171,10 @@ class SelfConsistencyConfig:
         Default is False (use fixed tolerance).
 
     max_iterations : int
-        Maximum number of refinement iterations per particle per step. Default is 10.
-        Increased from 5 to accommodate dual-criterion convergence.
+        Maximum number of refinement iterations per particle per step. Default is 2.
+        The mass-shell check runs from the second iteration onward; exhausting
+        the limit raises ``SelfConsistencyNonConvergenceError``. Values below 2
+        are rejected when ``enabled`` is True.
     verbosity : int
         Verbosity level for convergence information. Default is 0.
         0 = silent (no output)
@@ -172,7 +189,7 @@ class SelfConsistencyConfig:
         config = SelfConsistencyConfig()
         # enabled=True, convergence_mode="fixed_geometry"
         # Pt projection with fixed geometry (fast)
-        # target_ms_tolerance=1e-6, mass_shell_relaxation=0.7, max_iterations=10
+        # target_ms_tolerance=1e-6, mass_shell_relaxation=0.7, max_iterations=2
 
     Variable geometry mode (high accuracy, updates geometry)::
 
@@ -221,18 +238,32 @@ class SelfConsistencyConfig:
     chrono_matching_mode: str = (
         "FAST"  # "FAST" or "AVERAGED" (AVERAGED for APPROXIMATE_BACK_HISTORY only)
     )
-    chrono_high_precision: bool = False  # Enable cubic + position interpolation
+    chrono_high_precision: bool = False  # Deprecated; ignored by the SOA runner
     chrono_adaptive_tolerance: bool = False  # Auto-set tolerance = 0.1 × timestep
-    max_iterations: int = 10  # Maximum SC iterations per particle per step
+    max_iterations: int = 2  # Maximum SC iterations per particle per step
     verbosity: int = 0
 
     def __post_init__(self):
-        """Normalize mode name using historical aliases."""
-        object.__setattr__(
-            self,
-            "convergence_mode",
-            canonicalize_self_consistency_mode(self.convergence_mode),
-        )
+        """Normalize the mode name and reject configurations that cannot run."""
+        mode = canonicalize_self_consistency_mode(self.convergence_mode)
+        if mode not in SUPPORTED_CONVERGENCE_MODES:
+            raise ValueError(
+                f"Unknown self-consistency convergence_mode {self.convergence_mode!r}; "
+                f"expected one of {', '.join(SUPPORTED_CONVERGENCE_MODES)} "
+                "(historical aliases: mass_shell_only, full_iteration). The former "
+                "'dual_independent' mode no longer exists."
+            )
+        object.__setattr__(self, "convergence_mode", mode)
+        if self.enabled and int(self.max_iterations) < MIN_ENABLED_MAX_ITERATIONS:
+            raise ValueError(
+                "self-consistency max_iterations must be at least "
+                f"{MIN_ENABLED_MAX_ITERATIONS} when self-consistency is enabled "
+                f"(got {self.max_iterations}). The mass-shell convergence check "
+                "starts on the second iteration, so a single pass always ends in "
+                "SelfConsistencyNonConvergenceError; the former single-pass plus "
+                "safety-net behaviour was removed in June 2026. Use 2 (the "
+                "default) or disable self-consistency."
+            )
 
     @classmethod
     def standard(cls) -> "SelfConsistencyConfig":
@@ -248,7 +279,7 @@ class SelfConsistencyConfig:
             target_ms_tolerance=1e-6,
             mass_shell_tolerance=1e-2,
             mass_shell_relaxation=0.7,
-            max_iterations=10,
+            max_iterations=2,
         )
 
     @classmethod
@@ -532,7 +563,127 @@ def self_consistent_step(
     return result
 
 
+def self_consistency_runtime_warnings(
+    config: Optional[SelfConsistencyConfig],
+    *,
+    radiation_reaction_mode: Optional[str],
+    exact_path: bool,
+    chrono_mode: Optional[ChronoMatchingMode] = None,
+) -> list[tuple[type[Warning], str]]:
+    """Return warnings for options that have no effect in the selected run.
+
+    Warnings only: none of these combinations is rejected.
+    """
+
+    messages: list[tuple[type[Warning], str]] = []
+    if exact_path and chrono_mode is ChronoMatchingMode.AVERAGED:
+        messages.append(
+            (
+                SelfConsistencyOptionWarning,
+                "chrono_mode AVERAGED has no effect on the exact RFS/dipole path "
+                "(INERTIAL_PREHISTORY); the exact provider solves the light cone "
+                "directly.",
+            )
+        )
+    if config is None:
+        return messages
+
+    method = config.gamma_reconciliation_method
+    if method is not GammaReconciliationMethod.DISABLED:
+        inert_reason = None
+        if not config.enabled:
+            inert_reason = "self-consistency is disabled"
+        elif exact_path:
+            inert_reason = (
+                "the exact RFS/dipole path derives beta from on-shell momentum"
+            )
+        elif str(radiation_reaction_mode or "").lower() == "medina_lad":
+            inert_reason = (
+                "radiation_reaction_mode='medina_lad' derives beta from on-shell "
+                "momentum, so gamma_velocity equals gamma_energy"
+            )
+        if inert_reason is not None:
+            messages.append(
+                (
+                    SelfConsistencyOptionWarning,
+                    f"gamma_reconciliation_method={method.name} has no effect: "
+                    f"{inert_reason}. Gamma reconciliation is a diagnostic-only "
+                    "option; use DISABLED.",
+                )
+            )
+
+    chrono_flags = [
+        name
+        for name in (
+            "chrono_interpolate",
+            "chrono_high_precision",
+            "chrono_adaptive_tolerance",
+        )
+        if bool(getattr(config, name, False))
+    ]
+    if exact_path and chrono_flags:
+        messages.append(
+            (
+                SelfConsistencyOptionWarning,
+                "No effect on the exact RFS/dipole path (INERTIAL_PREHISTORY), "
+                f"where sampled chrono matching is bypassed: {', '.join(chrono_flags)}.",
+            )
+        )
+    elif not config.chrono_interpolate:
+        orphan = [
+            name
+            for name in ("chrono_high_precision", "chrono_adaptive_tolerance")
+            if bool(getattr(config, name, False))
+        ]
+        if orphan:
+            messages.append(
+                (
+                    SelfConsistencyOptionWarning,
+                    "No effect without chrono_interpolate=True: "
+                    f"{', '.join(orphan)}.",
+                )
+            )
+    if config.chrono_high_precision:
+        messages.append(
+            (
+                ChronoHighPrecisionDeprecationWarning,
+                "chrono_high_precision is deprecated and has no effect in the "
+                "maintained (structure-of-arrays) runner; results equal "
+                "chrono_high_precision=False.",
+            )
+        )
+    return messages
+
+
+def emit_self_consistency_runtime_warnings(
+    config: Optional[SelfConsistencyConfig],
+    *,
+    radiation_reaction_mode: Optional[str],
+    exact_path: bool,
+    chrono_mode: Optional[ChronoMatchingMode] = None,
+    logger: Optional[Callable[[str], Any]] = None,
+) -> list[str]:
+    """Emit :func:`self_consistency_runtime_warnings` once each at run start."""
+
+    emitted: list[str] = []
+    for category, message in self_consistency_runtime_warnings(
+        config,
+        radiation_reaction_mode=radiation_reaction_mode,
+        exact_path=exact_path,
+        chrono_mode=chrono_mode,
+    ):
+        warnings.warn(message, category, stacklevel=3)
+        if logger is not None:
+            logger(f"[WARNING] {message}")
+        emitted.append(message)
+    return emitted
+
+
 __all__ = [
+    "ChronoHighPrecisionDeprecationWarning",
+    "SelfConsistencyOptionWarning",
+    "emit_self_consistency_runtime_warnings",
+    "self_consistency_runtime_warnings",
     "SelfConsistencyConfig",
     "canonicalize_self_consistency_mode",
     "self_consistent_step",

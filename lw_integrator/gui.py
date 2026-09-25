@@ -756,7 +756,7 @@ class IntegratorGUI(
             value=self.options.self_consistency_mass_shell_tolerance
         )
         self.self_consistency_verbosity_var = tk.IntVar(
-            value=getattr(self.options, "self_consistency_verbosity", 2)
+            value=getattr(self.options, "self_consistency_verbosity", 0)
         )
         self.chrono_interpolate_var = tk.BooleanVar(
             value=getattr(

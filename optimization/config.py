@@ -280,10 +280,10 @@ class OptimizationConfig:
     self_consistency_tolerance: float = 1e-4
     self_consistency_convergence_mode: str = "fixed_geometry"
     self_consistency_target_ms_tolerance: float = 1e-6
-    self_consistency_max_iterations: int = 5
+    self_consistency_max_iterations: int = 2
     self_consistency_mass_shell_tolerance: float = 1e-2
     self_consistency_mass_shell_relaxation: float = 0.7
-    self_consistency_verbosity: int = 2  # 0=silent, 1=summary, 2=failures, 3=full
+    self_consistency_verbosity: int = 0  # 0=silent, 1=summary, 2=failures, 3=full
 
     # Chrono-matching options for retarded-time sampling. The legacy
     # self_consistency_chrono_* fields are retained below for compatibility.

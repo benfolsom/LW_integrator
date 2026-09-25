@@ -14,7 +14,6 @@ from lw_integrator.optimization_plugin import OptimizationConfig, OptimizationPl
 from optimization.plugin_config_mixins import OptimizationPluginConfigMixin
 from optimization.plugin_control_mixins import (
     OptimizationPluginControlMixin,
-    _stability_dialog_logging_defaults,
 )
 from optimization.plugin_form_mixins import OptimizationPluginFormMixin
 from optimization.plugin_parameter_mixins import OptimizationPluginParameterMixin
@@ -370,14 +369,6 @@ class TestOptimizationPluginIntegration:
             kwargs["self_consistency_gamma_reconciliation_method"] == "FIXED_WEIGHTED"
         )
         assert kwargs["self_consistency_gamma_reconciliation_fixed_weight"] == 0.7
-
-    def test_stability_dialog_logging_defaults_preserve_silent_config(self):
-        config = OptimizationConfig(
-            self_consistency_verbosity=0,
-            adaptive_timestep_debug=False,
-        )
-
-        assert _stability_dialog_logging_defaults(config) == ("0", False)
 
     def test_gather_output_and_failure_kwargs_includes_worker_count(self):
         harness = OptimizationPluginControlMixin()

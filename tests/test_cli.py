@@ -417,7 +417,9 @@ class TestCliConfigParsing:
             with pytest.raises(AttributeError):
                 getattr(core, name)
 
-    def test_build_request_carries_chrono_options_without_sc_iterations(self):
+    def test_build_request_carries_chrono_options_with_default_sc(self):
+        # A config without self-consistency keys now uses the shared default
+        # (enabled, fixed_geometry, 2 iterations) instead of disabling SC.
         request = cli.build_request(
             _make_args(
                 chrono_interpolate=True,
@@ -427,7 +429,8 @@ class TestCliConfigParsing:
         )
 
         assert request.self_consistency is not None
-        assert request.self_consistency.enabled is False
+        assert request.self_consistency.enabled is True
+        assert request.self_consistency.max_iterations == 2
         assert request.self_consistency.chrono_interpolate is True
         assert request.self_consistency.chrono_tolerance == pytest.approx(5e-4)
         assert request.self_consistency.chrono_high_precision is True

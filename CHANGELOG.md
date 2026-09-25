@@ -2,6 +2,83 @@
 
 ## Unreleased
 
+Self-consistency and chrono option clean-up. See the
+[self-consistency option audit](docs/self_consistency_option_audit.md) for the
+trace, evidence and the "Migration / effect on saved configs" section.
+
+**Behaviour and default changes**
+
+- One set of defaults for missing self-consistency keys in every entry point
+  (`SelfConsistencyConfig`, `SelfConsistencyConfig.standard()`, CLI JSON,
+  GUI/testbed `SimulationOptions`, sweep `OptimizationConfig`, saved
+  sweep-plugin configs): enabled, `fixed_geometry`, `max_iterations=2`,
+  `verbosity=0`, gamma reconciliation `DISABLED`, chrono options off, `FAST`.
+  Previously the CLI disabled self-consistency when the keys were missing, the
+  GUI/testbed used 10 iterations (verbosity 2 in a fresh GUI) and sweeps used
+  5 (verbosity 2). **A keyless CLI config now runs with self-consistency
+  enabled**; in a bounded 16-particle B2B probe this changed final states by
+  about 1.6e-5 relative. Configs that set these keys explicitly are
+  unaffected. The `aggressive()` and `variable_geometry()` presets are
+  unchanged.
+- Reject `max_iterations < 2` while self-consistency is enabled, and unknown
+  convergence modes (after `mass_shell_only`/`full_iteration` aliasing), when
+  the config is built. Such runs previously failed at the first step with a
+  nonconvergence error, or at the first iteration with `ValueError`.
+- Change the retardation-mode default of `retarded_integrator`,
+  `retarded_equations_of_motion`, `chrono_match_indices(_soa)` and the
+  config-less `LienardWiechertIntegrator` fallback from `AVERAGED` to `FAST`,
+  matching every CLI/GUI/sweep entry point. Direct API calls that omitted the
+  mode now use `FAST`. No existing test changed result under either default;
+  the one test that relied on the `AVERAGED` default for coverage now passes
+  it explicitly.
+- Deprecate `chrono_high_precision`: still accepted, but it has no effect in
+  the maintained (structure-of-arrays) runner; a
+  `ChronoHighPrecisionDeprecationWarning` (`FutureWarning`) is emitted at run
+  start and the GUI checkbox is relabelled. The non-SOA fallback is kept.
+- Warn once at run start (`SelfConsistencyOptionWarning`, also written to the
+  run log) when gamma reconciliation cannot act (`medina_lad`, exact RFS/dipole
+  path, or self-consistency disabled), when chrono options or `AVERAGED` are
+  set on the exact path, and when chrono sub-options are set without
+  `chrono_interpolate`. Warnings only. The GUI stability tab carries matching
+  notes.
+- CLI: pass through the adaptive gamma-reconciliation thresholds and weights
+  (previously silently replaced by defaults), and accept `chrono_matching_mode`
+  / `self_consistency_chrono_matching_mode` as aliases of `chrono_mode`
+  (canonical `chrono_mode` wins; conflicting values raise).
+- The GUI now carries a loaded non-`FAST` `chrono_matching_mode` through runs
+  and saves instead of resetting it to `FAST`.
+- CLI and testbed: `self_consistency_enabled` and the chrono switches must be
+  JSON booleans; strings such as `"false"` (previously read as true) raise. No
+  saved config in the project or study repositories uses a non-boolean value.
+- Reject unknown `self_consistency_gamma_reconciliation_method` names in the
+  GUI/testbed path, as the CLI already did (previously silently
+  `ADAPTIVE_WEIGHTED`).
+- Sweep JSON and saved sweep-plugin configs resolve `chrono_*` against the
+  legacy `self_consistency_chrono_*` aliases like the CLI and testbed: the
+  canonical key wins.
+- Update `configs/run_configs/example_b2b_counter_propagating_proton_bunches.json`
+  to the maintained defaults (gamma `DISABLED`, chrono off, 2 iterations,
+  verbosity 0, explicit `medina_lad`).
+
+**Removed**
+
+- The unused sweep "Confirm Stability Options" dialog
+  (`_confirm_stability_options`) and its helper.
+
+**Documentation**
+
+- Correct the self-consistency Sphinx page, GUI tooltips, README and
+  docstrings: one-way mass-shell check, nonconvergence failure, unreachable
+  safety net, seed-only gamma reconciliation, and the exact `FAST` delay
+  formula `Δt = R/(c(1 − β·n̂))` with `n̂` pointing from source to observer.
+  `APPROXIMATE_BACK_HISTORY` bypasses sampled chrono matching.
+
+Validation (see the audit's "Validation" section): the main suites produce the
+same 33 failures as `7c8e235` (NumPy 2.x API changes, the pseudo-grid test
+helper, missing sweep fixtures, no Tk in the venv), plus 42 new passes; the
+GUI suites pass under a Tk-enabled Python; the strict Sphinx build has no new
+warnings.
+
 ## v0.10.0 — 2026-09-23 — many-particle full-spin milestone
 
 Release validation: 1,776 unit tests passed; five failures reproduce on

@@ -124,6 +124,13 @@ def _looks_like_sweep_or_optimization_config(path: Path) -> bool:
     return any(key in data for key in _SWEEP_OR_OPTIMIZATION_KEYS)
 
 
+def _normalize_chrono_matching_mode(value: object) -> str:
+    """Normalize a saved retardation-mode name to ``FAST`` or ``AVERAGED``."""
+
+    text = str(value or "FAST").strip().replace("-", "_").upper()
+    return "AVERAGED" if text in {"AVERAGED", "AVERAGE", "BLENDED"} else "FAST"
+
+
 class IntegratorGUIConfigMixin:
     """Translate between GUI state and ``SimulationOptions`` configs."""
 
@@ -986,6 +993,16 @@ class IntegratorGUIConfigMixin:
             self._set_status(f"Loaded sweep/optimization config: {path.name}")
         print("[INFO] Auto-switched to Sweep/Optim run mode")
 
+    def _current_chrono_matching_mode(self) -> str:
+        """Return the retardation mode to save/run (loaded value, else FAST)."""
+
+        loaded = getattr(self, "_loaded_chrono_matching_mode", None)
+        if loaded is None:
+            loaded = getattr(
+                getattr(self, "options", None), "chrono_matching_mode", None
+            )
+        return _normalize_chrono_matching_mode(loaded)
+
     def _apply_options_to_ui(
         self, options: SimulationOptions, preserve_directories: bool = False
     ) -> None:
@@ -1133,6 +1150,11 @@ class IntegratorGUIConfigMixin:
             options.self_consistency_mass_shell_tolerance
         )
         self.self_consistency_verbosity_var.set(options.self_consistency_verbosity)
+        # No GUI control exists for the retardation mode; carry a loaded
+        # non-FAST value through to the next run/save instead of resetting it.
+        self._loaded_chrono_matching_mode = _normalize_chrono_matching_mode(
+            getattr(options, "chrono_matching_mode", "FAST")
+        )
         self.chrono_interpolate_var.set(
             getattr(
                 options,
@@ -1747,8 +1769,8 @@ class IntegratorGUIConfigMixin:
             self_consistency_gamma_reconciliation_fixed_weight=float(
                 self.self_consistency_gamma_reconciliation_fixed_weight_var.get()
             ),
-            chrono_matching_mode="FAST",
-            self_consistency_chrono_matching_mode="FAST",
+            chrono_matching_mode=self._current_chrono_matching_mode(),
+            self_consistency_chrono_matching_mode=self._current_chrono_matching_mode(),
             energy_monitor_enabled=False,
             energy_monitor_threshold=2.0,
             energy_monitor_check_interval=10,

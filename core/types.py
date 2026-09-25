@@ -102,19 +102,33 @@ class SimulationType(IntEnum):
 
 
 class ChronoMatchingMode(Enum):
-    """Retardation sampling strategies used by chrono-matching.
+    """Retardation sampling strategies used by sampled chrono-matching.
 
-    ``FAST`` (default) reproduces the historical implementation by evaluating
-    the causal delay once using the instantaneous dot product of particle
-    velocity and the line-of-sight unit vector (``Δt = R (1 + β·n̂) / c``).
+    Both modes estimate the delay ``Δt = t_obs - t_ret`` from the source sample
+    at the current source step, then search the recorded source history for the
+    sample nearest ``t_src - Δt``. Here ``R`` is the distance from that source
+    sample to the observer, ``n̂ = (x_obs - x_src) / R`` is the unit vector
+    **from the source to the observer**, and ``β`` is the source velocity at
+    that sample.
 
-    ``AVERAGED`` is reserved for internal use with ``APPROXIMATE_BACK_HISTORY``
-    startup mode. It samples two limiting cases—first assuming the source
-    particle is stationary (``R / c``) and then assuming it moves at the speed
-    of light in the line-of-sight direction (``2R / c``). The averaged dot
-    product from those two samples is used to compute the retardation interval.
-    This mode should NOT be used in production until APPROXIMATE_BACK_HISTORY
-    is fully implemented and validated.
+    ``FAST`` (default for every entry point and API function) evaluates
+
+        ``Δt = R (1 + β·n̂) / (c (1 - (β·n̂)²)) = R / (c (1 - β·n̂))``
+
+    with ``1 - (β·n̂)²`` clamped to ``±1e-12``; when ``|1 - β·n̂| < 1e-15`` it
+    falls back to ten characteristic times. A source moving towards the
+    observer (``β·n̂ > 0``) therefore gets a longer delay. This equals the exact
+    uniform-motion light-cone delay only when ``β`` is parallel to ``n̂``;
+    otherwise it is the maintained estimate that the history search then
+    refines by nearest-sample (or linearly interpolated) matching.
+
+    ``AVERAGED`` is a diagnostic alternative. It samples the source history at
+    ``R / c`` and ``2R / c`` before the current source time, averages the two
+    ``β·n̂`` projections and uses the averaged projection in the same delay
+    formula. It has no effect under ``APPROXIMATE_BACK_HISTORY`` (that startup
+    mode bypasses sampled chrono matching for external sources), on the exact
+    RFS/dipole ``INERTIAL_PREHISTORY`` path, or for same-bunch space charge
+    (always ``FAST``).
     """
 
     FAST = auto()

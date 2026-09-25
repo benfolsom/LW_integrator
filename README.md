@@ -102,12 +102,14 @@ residual-wake acceleration with a covariant retarded-potential integrator_
   ways: from conjugate momentum (γ_energy) and from velocity (γ_velocity).
   Numerical differences between these can cause energy jumps. Five reconciliation
   methods are available via `GammaReconciliationMethod`:
-  - **ADAPTIVE_WEIGHTED (default)**: Velocity-dependent blending with configurable
+  - **ADAPTIVE_WEIGHTED**: Velocity-dependent blending with configurable
     thresholds and weights. Trusts energy at low β, velocity at high β.
   - **FIXED_WEIGHTED**: Fixed 50/50 blend (or custom weight).
   - **USE_VELOCITY** / **USE_ENERGY**: Use one calculation exclusively.
-  - **DISABLED**: No reconciliation. This is the maintained default for the
-    current solver path.
+  - **DISABLED** (default): No reconciliation. The other methods are
+    diagnostic-only; they only reseed the next self-consistency iteration and
+    have no effect with `medina_lad` radiation reaction or on the exact
+    RFS/dipole path (a warning is emitted at run start).
     Configurable via API (`self_consistency_gamma_reconciliation_method` and related
     parameters) and GUI (Stability → Self-Consistency → Gamma Reconciliation).
 - **Adaptive timestep and beta clamping.** The integrator includes numerical

@@ -343,7 +343,7 @@ class SimulationOptions:
     self_consistency_convergence_mode: str = "fixed_geometry"  # or "variable_geometry"
     self_consistency_target_ms_tolerance: float = 1e-6  # Mass-shell loop criterion
     self_consistency_max_iterations: int = (
-        10  # Maximum SC iterations per particle per step
+        2  # Maximum SC iterations per particle per step (minimum 2 when enabled)
     )
     self_consistency_mass_shell_tolerance: float = (
         1e-2  # Safety net threshold enforced after loop
@@ -352,7 +352,7 @@ class SimulationOptions:
         0.7  # Relaxation weight for Pt correction (0.0-1.0, default 0.7)
     )
     self_consistency_verbosity: int = (
-        2  # 0=silent, 1=basic, 2=detailed (prints to console and saved logs)
+        0  # 0=silent, 1=summary, 2=failures, 3=full (console and saved logs)
     )
 
     # Chrono-matching options for retarded-time sampling. These are conceptually
@@ -948,6 +948,19 @@ class SimulationOptions:
     def from_dict(cls, payload: Dict[str, object]) -> "SimulationOptions":
         def _bool(name: str, default: bool) -> bool:
             return bool(payload.get(name, default))
+
+        def _strict_bool(name: str, default: bool) -> bool:
+            # Self-consistency/chrono switches must be JSON booleans: bool("false")
+            # is True, so strings are rejected rather than silently enabled.
+            value = payload.get(name)
+            if value is None:
+                return default
+            if isinstance(value, bool):
+                return value
+            raise ValueError(
+                f"{name} must be a JSON boolean (true/false), got {value!r} "
+                f"({type(value).__name__})"
+            )
 
         def _int(name: str, default: int) -> int:
             value = payload.get(name, default)
@@ -1576,7 +1589,7 @@ class SimulationOptions:
             macroparticle_smearing_refresh_policy=str(
                 _smearing_value("refresh_policy", "fixed_per_particle")
             ).replace("-", "_"),
-            self_consistency_enabled=_bool("self_consistency_enabled", True),
+            self_consistency_enabled=_strict_bool("self_consistency_enabled", True),
             self_consistency_tolerance=_float("self_consistency_tolerance", 1e-4),
             self_consistency_convergence_mode=canonicalize_self_consistency_mode(
                 payload.get("self_consistency_convergence_mode", "fixed_geometry")
@@ -1584,7 +1597,7 @@ class SimulationOptions:
             self_consistency_target_ms_tolerance=_float(
                 "self_consistency_target_ms_tolerance", 1e-6
             ),
-            self_consistency_max_iterations=_int("self_consistency_max_iterations", 10),
+            self_consistency_max_iterations=_int("self_consistency_max_iterations", 2),
             self_consistency_mass_shell_tolerance=_float(
                 "self_consistency_mass_shell_tolerance", 1e-2
             ),
@@ -1592,9 +1605,9 @@ class SimulationOptions:
                 "self_consistency_mass_shell_relaxation", 0.7
             ),
             self_consistency_verbosity=_int("self_consistency_verbosity", 0),
-            chrono_interpolate=_bool(
+            chrono_interpolate=_strict_bool(
                 "chrono_interpolate",
-                _bool("self_consistency_chrono_interpolate", False),
+                _strict_bool("self_consistency_chrono_interpolate", False),
             ),
             chrono_tolerance=_float(
                 "chrono_tolerance",
@@ -1604,17 +1617,17 @@ class SimulationOptions:
                 "chrono_matching_mode",
                 _str("self_consistency_chrono_matching_mode", "FAST"),
             ),
-            chrono_high_precision=_bool(
+            chrono_high_precision=_strict_bool(
                 "chrono_high_precision",
-                _bool("self_consistency_chrono_high_precision", False),
+                _strict_bool("self_consistency_chrono_high_precision", False),
             ),
-            chrono_adaptive_tolerance=_bool(
+            chrono_adaptive_tolerance=_strict_bool(
                 "chrono_adaptive_tolerance",
-                _bool("self_consistency_chrono_adaptive_tolerance", False),
+                _strict_bool("self_consistency_chrono_adaptive_tolerance", False),
             ),
-            self_consistency_chrono_interpolate=_bool(
+            self_consistency_chrono_interpolate=_strict_bool(
                 "chrono_interpolate",
-                _bool("self_consistency_chrono_interpolate", False),
+                _strict_bool("self_consistency_chrono_interpolate", False),
             ),
             self_consistency_chrono_tolerance=_float(
                 "chrono_tolerance",
@@ -1624,13 +1637,13 @@ class SimulationOptions:
                 "chrono_matching_mode",
                 _str("self_consistency_chrono_matching_mode", "FAST"),
             ),
-            self_consistency_chrono_high_precision=_bool(
+            self_consistency_chrono_high_precision=_strict_bool(
                 "chrono_high_precision",
-                _bool("self_consistency_chrono_high_precision", False),
+                _strict_bool("self_consistency_chrono_high_precision", False),
             ),
-            self_consistency_chrono_adaptive_tolerance=_bool(
+            self_consistency_chrono_adaptive_tolerance=_strict_bool(
                 "chrono_adaptive_tolerance",
-                _bool("self_consistency_chrono_adaptive_tolerance", False),
+                _strict_bool("self_consistency_chrono_adaptive_tolerance", False),
             ),
             energy_monitor_enabled=_bool("energy_monitor_enabled", True),
             energy_monitor_threshold=_float("energy_monitor_threshold", 2.0),
@@ -2818,13 +2831,18 @@ def build_self_consistency_config(options: SimulationOptions) -> Optional[object
     from core.self_consistency import SelfConsistencyConfig
     from core.types import GammaReconciliationMethod
 
-    # Parse gamma reconciliation method string to enum
-    method_str = options.self_consistency_gamma_reconciliation_method.upper()
+    # Parse gamma reconciliation method string to enum. Reject unknown names
+    # (as the CLI does) instead of silently enabling a non-default blend.
+    method_str = str(options.self_consistency_gamma_reconciliation_method).upper()
     try:
         gamma_method = GammaReconciliationMethod[method_str]
     except KeyError:
-        # Fallback to ADAPTIVE_WEIGHTED if invalid method specified
-        gamma_method = GammaReconciliationMethod.ADAPTIVE_WEIGHTED
+        valid = ", ".join(method.name for method in GammaReconciliationMethod)
+        raise ValueError(
+            "Unknown self_consistency_gamma_reconciliation_method "
+            f"{options.self_consistency_gamma_reconciliation_method!r}; "
+            f"expected one of: {valid}"
+        ) from None
 
     return SelfConsistencyConfig(
         enabled=bool(options.self_consistency_enabled),
