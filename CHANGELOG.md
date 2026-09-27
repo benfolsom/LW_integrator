@@ -5,11 +5,14 @@
 - Scale full-dipole retarded-root tolerances to segment duration and coordinate
   roundoff, preventing interior roots in tiny intervals from being rounded onto
   nonsmooth joins. Retain strict join checks and caller position budgets.
+  See [justification and evidence](docs/pseudo_grid_guard_and_full_dipole_root_fix_2026-09-27.md).
 
 - Reject invalid pseudo-grid reconstructed states with `PseudoGridStateError`,
   including the step, particle index, speed, and time. Check advanced live
   particles for finite kinematics, subluminal speed, and increasing time before
-  publication; retain explicit frozen and dead-particle behavior.
+  publication; retain explicit frozen and dead-particle behavior. A live weighted
+  passive without anchors now raises instead of silently keeping its old time.
+  See [justification and evidence](docs/pseudo_grid_guard_and_full_dipole_root_fix_2026-09-27.md).
 
 Self-consistency and chrono option clean-up. See the
 [self-consistency option audit](docs/self_consistency_option_audit.md) for the
