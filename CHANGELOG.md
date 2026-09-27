@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Scale full-dipole retarded-root tolerances to segment duration and coordinate
+  roundoff, preventing interior roots in tiny intervals from being rounded onto
+  nonsmooth joins. Retain strict join checks and caller position budgets.
+
 - Reject invalid pseudo-grid reconstructed states with `PseudoGridStateError`,
   including the step, particle index, speed, and time. Check advanced live
   particles for finite kinematics, subluminal speed, and increasing time before
