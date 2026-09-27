@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add a slow physics regression test for the free-crossing null: on the exact
+  pair-return path, a uniformly moving source delivers the full analytic
+  approach half-impulse to a static rider and then cancels it, leaving no net
+  first-order longitudinal impulse. See
+  `tests/physics/test_free_crossing_null.py`.
 - Scale full-dipole retarded-root tolerances to segment duration and coordinate
   roundoff, preventing interior roots in tiny intervals from being rounded onto
   nonsmooth joins. Retain strict join checks and caller position budgets.
