@@ -212,6 +212,7 @@ def _active_result_state(
     active_state = slice_particle_state(previous_state, active_indices)
     if active_indices.size == 0:
         return active_state
+    active_state["t"] = np.asarray(active_state["t"], dtype=float) + 1.0e-6
     active_state["x"] = np.asarray(active_state["x"], dtype=float) + 1.0e-6
     active_state["z"] = np.asarray(active_state["z"], dtype=float) + 1.0e-6
     active_state["gamma"] = np.asarray(active_state["gamma"], dtype=float) + 1.0e-9
@@ -368,6 +369,7 @@ def run_case(
             schedule.rider_active_indices,
             active_result,
             schedule.rider_passive_map,
+            step_index=len(rider_history),
         ),
         repeats,
     )

@@ -1185,6 +1185,45 @@ def slice_trajectory_particle_history(
     ]
 
 
+class PseudoGridStateError(ValueError):
+    """A reconstructed particle cannot be published as a physical state."""
+
+
+def _validate_reconstructed_particles(
+    previous: ParticleState,
+    state: ParticleState,
+    indices: np.ndarray,
+    step_index: int | None,
+) -> None:
+    """Check advanced, live particles without changing their reconstructed values."""
+    indices = np.asarray(indices, dtype=int)
+    dead = np.asarray(
+        state.get("_dead_particles", np.zeros(len(state["t"]), dtype=bool)),
+        dtype=bool,
+    )
+    indices = indices[~dead[indices]]
+    beta = np.stack([np.asarray(state[key])[indices] for key in ("bx", "by", "bz")])
+    with np.errstate(over="ignore", invalid="ignore"):
+        speed = np.linalg.norm(beta, axis=0)
+    times = np.asarray(state["t"])[indices]
+    previous_times = np.asarray(previous["t"])[indices]
+    finite = np.isfinite(times) & np.isfinite(previous_times)
+    for key in PSEUDO_GRID_PASSIVE_DELTA_FIELDS:
+        if key in state:
+            finite &= np.isfinite(np.asarray(state[key])[indices])
+    invalid = (
+        (~np.isfinite(speed)) | (speed >= 1) | (~finite) | (times <= previous_times)
+    )
+    if np.any(invalid):
+        local = int(np.flatnonzero(invalid)[0])
+        raise PseudoGridStateError(
+            f"Pseudo-grid reconstruction at step {step_index}, "
+            f"particle {indices[local]}: |beta|={speed[local]:.17g}, "
+            f"time={times[local]:.17g}, previous_time={previous_times[local]:.17g}; "
+            "require finite state, |beta| < 1, and strictly increasing time"
+        )
+
+
 def reconstruct_full_state_from_active_result(
     previous_full_state: ParticleState,
     active_indices: np.ndarray,
@@ -1194,11 +1233,16 @@ def reconstruct_full_state_from_active_result(
     loss_tracking_enabled: bool = True,
     passive_update_mode: str = "weighted_delta",
     h_step: float | None = None,
+    step_index: int | None = None,
 ) -> ParticleState:
     """Rebuild a full bunch state from an active-only solve result."""
     full_state = _copy_particle_state(previous_full_state)
     active = np.asarray(active_indices, dtype=int)
     if active.size == 0:
+        if passive_update_mode != "frozen":
+            _validate_reconstructed_particles(
+                previous_full_state, full_state, passive_map.passive_indices, step_index
+            )
         return full_state
 
     result_particle_count = len(np.asarray(active_result_state.get("x", [])))
@@ -1265,6 +1309,10 @@ def reconstruct_full_state_from_active_result(
         else:
             full_state.pop("_particle_failure_info", None)
 
+    _validate_reconstructed_particles(
+        previous_full_state, full_state, active, step_index
+    )
+
     active_field_deltas = {
         field_name: np.asarray(active_result_state[field_name], dtype=float)
         - np.asarray(previous_full_state[field_name], dtype=float)[active]
@@ -1291,6 +1339,9 @@ def reconstruct_full_state_from_active_result(
                 f"h_step is required for {passive_update_mode} passive updates"
             )
         _coast_passive_indices(full_state, passive_indices, float(h_step))
+        _validate_reconstructed_particles(
+            previous_full_state, full_state, passive_indices, step_index
+        )
         return full_state
     if passive_update_mode != "weighted_delta":
         raise ValueError(
@@ -1332,6 +1383,9 @@ def reconstruct_full_state_from_active_result(
         weights[valid_passive_mask] /= weight_sums[valid_passive_mask, np.newaxis]
 
     if not np.any(valid_passive_mask):
+        _validate_reconstructed_particles(
+            previous_full_state, full_state, passive_indices, step_index
+        )
         return full_state
 
     valid_passive_indices = passive_indices[valid_passive_mask]
@@ -1349,6 +1403,10 @@ def reconstruct_full_state_from_active_result(
             ]
             + weighted_deltas
         )
+
+    _validate_reconstructed_particles(
+        previous_full_state, full_state, passive_indices, step_index
+    )
 
     if (
         "beta_avg_x" in previous_full_state
@@ -2063,6 +2121,7 @@ def _fallback_self_excluded_neighbor_weights(
 
 
 __all__ = [
+    "PseudoGridStateError",
     "PassiveNeighborMap",
     "PairReuseTracker",
     "PseudoGridPlannerState",

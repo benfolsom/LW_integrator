@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Reject invalid pseudo-grid reconstructed states with `PseudoGridStateError`,
+  including the step, particle index, speed, and time. Check advanced live
+  particles for finite kinematics, subluminal speed, and increasing time before
+  publication; retain explicit frozen and dead-particle behavior.
+
 Self-consistency and chrono option clean-up. See the
 [self-consistency option audit](docs/self_consistency_option_audit.md) for the
 trace, evidence and the "Migration / effect on saved configs" section.
