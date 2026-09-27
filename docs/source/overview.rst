@@ -161,6 +161,17 @@ marked dead by the existing status machinery, pseudo-grid loss tracking removes
 it from later schedules and renormalizes passive-anchor weights onto surviving
 anchors when possible.
 
+Reconstruction fails before publishing an advanced live particle if its speed
+has ``|beta| >= 1``, any reconstructed dynamical field is non-finite, or its
+time does not strictly increase. ``PseudoGridStateError`` reports the step,
+full-bunch particle index, speed, and old and new times. This check covers
+weighted passive deltas, ballistic updates, and copied active or external
+interbunch solve results. It never clips or repairs a state. Dead particles and
+passives deliberately left unchanged by ``frozen`` mode are not advanced and
+are excluded from this check. Passing the check establishes a finite,
+subluminal state with increasing time; it does not establish energy conservation
+or the physical accuracy of the passive approximation.
+
 Key ideas to keep in mind
 -------------------------
 

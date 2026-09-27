@@ -59,18 +59,35 @@ def response(
         x = np.polynomial.polynomial.polyval((time - start) / duration, position)
         return float(event[0] - time - np.linalg.norm(event[1:] - x))
 
+    # The light-cone solve uses length-time units. A fixed absolute tolerance
+    # can round an interior root onto a join when source intervals are tiny.
+    # Bound endpoint roundoff by the coordinates involved in the subtraction;
+    # resolve the root to segment-scale absolute and machine-relative accuracy.
+    epsilon = np.finfo(float).eps
+    endpoint_roundoff = (
+        8
+        * epsilon
+        * max(
+            abs(event[0]),
+            abs(start),
+            duration,
+            np.linalg.norm(event[1:]),
+            np.linalg.norm(position[0]),
+        )
+    )
+    root_atol = max(np.nextafter(0.0, 1.0), 4 * epsilon * duration)
     endpoint = next(
         (
             t
             for t in (start, start + duration)
-            if allow_boundary and abs(cone(t)) <= 2e-14 * max(1.0, duration)
+            if allow_boundary and abs(cone(t)) <= endpoint_roundoff
         ),
         None,
     )
     root = (
         endpoint
         if endpoint is not None
-        else brentq(cone, start, start + duration, xtol=2e-14, rtol=1e-14)
+        else brentq(cone, start, start + duration, xtol=root_atol, rtol=4 * epsilon)
     )
     fraction = (root - start) / duration
     if not allow_boundary and not 1e-8 < fraction < 1 - 1e-8:

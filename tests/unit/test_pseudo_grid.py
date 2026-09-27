@@ -6,6 +6,8 @@ import pytest
 from core.constants import C_MMNS
 from core.pseudo_grid import (
     PairReuseTracker,
+    PseudoGridStateError,
+    PSEUDO_GRID_PASSIVE_DELTA_FIELDS,
     PassiveNeighborMap,
     accumulate_effective_source_charges,
     accumulate_field_representative_charges,
@@ -719,6 +721,7 @@ def test_reconstruct_full_state_invalidates_passive_medina_force_history():
     )
     active_indices = np.array([0, 2], dtype=int)
     active_result_state = slice_particle_state(previous_full_state, active_indices)
+    active_result_state["t"] += 1.0
     active_result_state["medina_external_force_x"] = np.array([2.0, 3.0])
     active_result_state["medina_external_force_sample_time"] = np.array([2.5, 2.5])
     passive_map = PassiveNeighborMap(
@@ -793,6 +796,7 @@ def test_reconstruct_full_state_from_active_result_ignores_dead_anchors_when_ena
     )
     active_indices = np.array([0, 2], dtype=int)
     active_result_state = slice_particle_state(previous_full_state, active_indices)
+    active_result_state["t"] += 1.0
     active_result_state["x"] = np.array([1.0, 40.0], dtype=float)
     active_result_state["bx"] = np.array([0.2, 0.9], dtype=float)
     active_result_state["q"] = np.array([1.0, 0.0], dtype=float)
@@ -1121,3 +1125,86 @@ def test_charge_localization_stats_detects_localization():
     assert _charge_localization_stats(np.array([])) is None
     assert _charge_localization_stats(np.array([0.0, 0.0])) is None
     assert _charge_localization_stats(None) is None
+
+
+@pytest.mark.parametrize("beta", [1.0, 1.1, np.nan, np.inf])
+def test_reconstruction_rejects_invalid_passive_speed(beta):
+    previous = _make_solver_state(x=[0.0, 1.0], bx=[0.0, 0.5])
+    active = slice_particle_state(previous, np.array([0]))
+    active["t"][:] = 1.0
+    active["bx"][:] = 0.5
+    # Each active state is physical, but adding its delta to the passive is not.
+    previous["bx"][1] = beta - 0.5
+    neighbors = PassiveNeighborMap(np.array([1]), np.array([[0]]), np.ones((1, 1)))
+    before = {key: value.copy() for key, value in previous.items()}
+    with pytest.raises(PseudoGridStateError, match=r"step 17, particle 1: \|beta\|="):
+        reconstruct_full_state_from_active_result(
+            previous,
+            np.array([0]),
+            active,
+            neighbors,
+            step_index=17,
+        )
+    for key in previous:
+        np.testing.assert_array_equal(previous[key], before[key])
+
+
+@pytest.mark.parametrize("mode", ["ballistic", "external_interbunch"])
+@pytest.mark.parametrize("time", [0.0, -1.0, np.nan, np.inf])
+def test_reconstruction_rejects_invalid_time(mode, time):
+    previous = _make_solver_state(x=[0.0, 1.0], bx=[0.1, 0.2])
+    active = slice_particle_state(previous, np.array([0]))
+    active["t"][:] = 1.0
+    neighbors = PassiveNeighborMap(np.array([1]), np.array([[0]]), np.ones((1, 1)))
+    with pytest.raises(PseudoGridStateError, match="particle 1"):
+        reconstruct_full_state_from_active_result(
+            previous,
+            np.array([0]),
+            active,
+            neighbors,
+            step_index=18,
+            passive_update_mode=mode,
+            h_step=time,
+        )
+
+
+def test_weighted_reconstruction_rejects_time_lost_to_roundoff():
+    previous = _make_solver_state(x=[0.0, 1.0], bx=[0.1, 0.2], t=[0.0, 1e20])
+    active = slice_particle_state(previous, np.array([0]))
+    active["t"][:] = 1.0
+    neighbors = PassiveNeighborMap(np.array([1]), np.array([[0]]), np.ones((1, 1)))
+    with pytest.raises(PseudoGridStateError, match="step 19, particle 1"):
+        reconstruct_full_state_from_active_result(
+            previous,
+            np.array([0]),
+            active,
+            neighbors,
+            step_index=19,
+        )
+
+
+@pytest.mark.parametrize("key", PSEUDO_GRID_PASSIVE_DELTA_FIELDS)
+def test_copied_solver_state_rejects_nonfinite_kinematics(key):
+    previous = _make_solver_state(x=[0.0], bx=[0.1])
+    previous.setdefault(key, np.zeros(1))
+    active = slice_particle_state(previous, np.array([0]))
+    active["t"][:] = 1.0
+    active[key][:] = np.nan
+    empty = PassiveNeighborMap(
+        np.array([], dtype=int), np.empty((0, 0), dtype=int), np.empty((0, 0))
+    )
+    with pytest.raises(PseudoGridStateError, match="step 20, particle 0"):
+        reconstruct_full_state_from_active_result(
+            previous, np.array([0]), active, empty, step_index=20
+        )
+
+
+def test_live_passive_without_surviving_anchors_fails_instead_of_freezing():
+    previous = _make_solver_state(x=[0.0, 1.0], bx=[0.1, 0.2])
+    active = slice_particle_state(previous, np.array([0]))
+    active["_dead_particles"] = np.array([True])
+    neighbors = PassiveNeighborMap(np.array([1]), np.array([[0]]), np.ones((1, 1)))
+    with pytest.raises(PseudoGridStateError, match="particle 1"):
+        reconstruct_full_state_from_active_result(
+            previous, np.array([0]), active, neighbors
+        )

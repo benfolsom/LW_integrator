@@ -1757,6 +1757,7 @@ def _run_pseudo_grid_reduced_step(
         observer_active_indices,
         active_result_state,
         passive_map,
+        step_index=step_idx,
         loss_tracking_enabled=loss_tracking_enabled,
         passive_update_mode=(
             "frozen"
@@ -1819,6 +1820,7 @@ def _run_pseudo_grid_reduced_step(
         passive_indices,
         passive_result_state,
         empty_passive_map,
+        step_index=step_idx,
         loss_tracking_enabled=loss_tracking_enabled,
     )
 
