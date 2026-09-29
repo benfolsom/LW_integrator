@@ -83,6 +83,9 @@ def evaluate_exact_endpoint_four_potential(
         )
         potentials[particle_idx] += charge_field.four_potential
         if own_history is not None and particle_count > 1:
+            # Bunch-mates advance in proper time, so their latest lab times can
+            # differ slightly; continue their last segment across that spread.
+            own_times = np.asarray(observer_state["t"], dtype=float)
             own_field = evaluate_retarded_charge_field_native(
                 own_history,
                 event,
@@ -90,7 +93,8 @@ def evaluate_exact_endpoint_four_potential(
                 require_complete_history=require_complete_history,
                 root_tolerance_mm=charge_root_tolerance_mm,
                 max_root_iterations=charge_max_root_iterations,
-                backend=magnetic_dipole.exact_retarded_backend,
+                backend="python",
+                extrapolate_ns=2.0 * float(np.ptp(own_times)),
             )
             potentials[particle_idx] += own_field.four_potential
         if include_dipole_source:
