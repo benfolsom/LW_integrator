@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Same-bunch (space-charge) fields on the exact RFS charge path with
+  INERTIAL_PREHISTORY: each particle receives the exact retarded field of its
+  bunch-mates (itself excluded) in the force, the canonical potentials, the
+  prehistory preflight and the endpoint reconstruction. Bunch-mates closer
+  than one light-step are evaluated by continuing their last accepted quintic
+  segment (opt-in `extrapolate_ns`, python provider only). A two-particle
+  bunch reproduces the same pair run as rider + driver bitwise. COLD_START,
+  dipole sources, softening and non-retarded space charge remain rejected on
+  this path.
+
 - Remove roundoff curvature from ballistic charge histories with constant beta
   and zero acceleration. This prevents spurious radiation fields near the
   light cone while preserving accelerated segments.

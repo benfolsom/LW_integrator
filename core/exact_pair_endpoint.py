@@ -29,10 +29,12 @@ def evaluate_exact_endpoint_four_potential(
     *,
     magnetic_dipole: MagneticDipoleConfig,
     include_dipole_source: bool,
+    own_history: Any = None,
+    require_complete_history: bool = True,
     dipole_source_collection: Any = None,
     spin_interpolation_model: str = "centered_c1",
 ) -> np.ndarray:
-    """Evaluate ``A_charge + A_dipole`` at provisional observer endpoints."""
+    """Evaluate cross-bunch and non-self own-bunch potentials at endpoints."""
 
     from .retarded_fields import evaluate_retarded_charge_field_native
 
@@ -74,12 +76,23 @@ def evaluate_exact_endpoint_four_potential(
         charge_field = evaluate_retarded_charge_field_native(
             source_history,
             event,
-            require_complete_history=True,
+            require_complete_history=require_complete_history,
             root_tolerance_mm=charge_root_tolerance_mm,
             max_root_iterations=charge_max_root_iterations,
             backend=magnetic_dipole.exact_retarded_backend,
         )
         potentials[particle_idx] += charge_field.four_potential
+        if own_history is not None and particle_count > 1:
+            own_field = evaluate_retarded_charge_field_native(
+                own_history,
+                event,
+                excluded_source_indices=(int(particle_idx),),
+                require_complete_history=require_complete_history,
+                root_tolerance_mm=charge_root_tolerance_mm,
+                max_root_iterations=charge_max_root_iterations,
+                backend=magnetic_dipole.exact_retarded_backend,
+            )
+            potentials[particle_idx] += own_field.four_potential
         if include_dipole_source:
             if dipole_source_collection is not None:
                 if source_options.history_model == "causal_c5":
@@ -233,6 +246,8 @@ def finalize_exact_source_canonical_pair_states(
     driver_endpoint_history: Any,
     magnetic_dipole: MagneticDipoleConfig,
     include_dipole_source: bool,
+    same_bunch_fields: bool = False,
+    require_complete_history: bool = True,
     rider_dipole_source_collection: Any = None,
     driver_dipole_source_collection: Any = None,
     spin_interpolation_model: str = "centered_c1",
@@ -251,6 +266,8 @@ def finalize_exact_source_canonical_pair_states(
         driver_endpoint_history,
         magnetic_dipole=magnetic_dipole,
         include_dipole_source=include_dipole_source,
+        own_history=rider_endpoint_history if same_bunch_fields else None,
+        require_complete_history=require_complete_history,
         dipole_source_collection=driver_dipole_source_collection,
         spin_interpolation_model=spin_interpolation_model,
     )
@@ -259,6 +276,8 @@ def finalize_exact_source_canonical_pair_states(
         rider_endpoint_history,
         magnetic_dipole=magnetic_dipole,
         include_dipole_source=include_dipole_source,
+        own_history=driver_endpoint_history if same_bunch_fields else None,
+        require_complete_history=require_complete_history,
         dipole_source_collection=rider_dipole_source_collection,
         spin_interpolation_model=spin_interpolation_model,
     )

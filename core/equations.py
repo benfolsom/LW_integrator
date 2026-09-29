@@ -2096,9 +2096,12 @@ def retarded_equations_of_motion(
             exact_charge_source_selected or radiation_mode == "medina_lad"
         )
         exact_charge_field_cache = None
+        exact_same_bunch_field_cache = None
         dipole_source_field_cache = None
         exact_charge_source_interaction = None
+        exact_same_bunch_interaction = None
         exact_charge_analytic_response = None
+        exact_same_bunch_analytic_response = None
         exact_dipole_analytic_response = None
         exact_analytic_antisymmetric_response = None
         exact_analytic_partial_antisymmetric_response = None
@@ -2348,7 +2351,9 @@ def retarded_equations_of_motion(
             rfs_field_tensor = np.zeros((4, 4), dtype=float)
             rfs_partial_f = np.zeros((4, 4, 4), dtype=float)
             exact_charge_source_interaction = None
+            exact_same_bunch_interaction = None
             exact_charge_analytic_response = None
+            exact_same_bunch_analytic_response = None
             exact_dipole_analytic_response = None
             exact_analytic_antisymmetric_response = None
             exact_analytic_partial_antisymmetric_response = None
@@ -2555,6 +2560,7 @@ def retarded_equations_of_motion(
             if (
                 space_charge is not None
                 and space_charge.enabled
+                and not exact_charge_source_selected
                 and len(trajectory) >= 1
             ):
                 n_particles = current_state["x"].shape[0]
@@ -3212,6 +3218,91 @@ def retarded_equations_of_motion(
                     )
                     rfs_partial_f += exact_charge_source_interaction.field.partial_f
 
+                if (
+                    space_charge is not None
+                    and space_charge.enabled
+                    and num_particles > 1
+                ):
+                    # The observer's own accepted history is a source history
+                    # for every other particle in this bunch. Exclude only its
+                    # own index; the provider retains the same exact backend.
+                    if exact_same_bunch_field_cache is None:
+                        own_history = traj_soa if traj_soa is not None else trajectory
+                        # Bunch-mates closer than one light-step have their retarded
+                        # point inside the step being solved: continue their last
+                        # accepted quintic segment (python provider only).
+                        gamma_now = float(np.max(np.asarray(current_state["gamma"])))
+                        exact_same_bunch_field_cache = (
+                            evaluate_retarded_charge_field_gradient_native(
+                                own_history,
+                                charge_event,
+                                excluded_source_indices=(particle_idx,),
+                                relative_step=charge_relative_step,
+                                minimum_step_mm=charge_minimum_step,
+                                root_tolerance_mm=charge_root_tolerance,
+                                max_root_iterations=charge_root_iterations,
+                                backend="python",
+                                extrapolate_ns=2.0 * float(h) * gamma_now,
+                            )
+                        )
+                    if isinstance(
+                        exact_same_bunch_field_cache,
+                        RetardedChargeResponseGradientResult,
+                    ):
+                        exact_same_bunch_analytic_response = (
+                            exact_same_bunch_field_cache
+                        )
+                        exact_same_bunch_interaction = (
+                            charge_source_interaction_from_response_native(
+                                exact_same_bunch_field_cache,
+                                four_velocity_mm_ns=_four_velocity_native(
+                                    exact_ordinary_response_beta
+                                ),
+                                observer_charge_native=float(force_particle_charge),
+                                proper_time_step_ns=float(h),
+                                contraction_backend="numba_strict_serial",
+                            )
+                        )
+                    else:
+                        exact_same_bunch_interaction = (
+                            charge_source_interaction_from_field_native(
+                                exact_same_bunch_field_cache,
+                                four_velocity_mm_ns=_four_velocity_native(
+                                    exact_ordinary_response_beta
+                                ),
+                                observer_charge_native=float(force_particle_charge),
+                                proper_time_step_ns=float(h),
+                            )
+                        )
+                    own_impulse = exact_same_bunch_interaction.mechanical_four_impulse
+                    accumulated_momentum_t += float(own_impulse[0])
+                    exact_mechanical_temporal_impulse += float(own_impulse[0])
+                    accumulated_momentum_x += float(own_impulse[1])
+                    accumulated_momentum_y += float(own_impulse[2])
+                    accumulated_momentum_z += float(own_impulse[3])
+                    own_potential = (
+                        exact_same_bunch_interaction.canonical_potential_momentum
+                    )
+                    if not charge_canonical_ready:
+                        accumulated_momentum_t += float(own_potential[0])
+                        accumulated_momentum_x += float(own_potential[1])
+                        accumulated_momentum_y += float(own_potential[2])
+                        accumulated_momentum_z += float(own_potential[3])
+                    accumulated_field_x += float(own_potential[1] / particle_mass)
+                    accumulated_field_y += float(own_potential[2] / particle_mass)
+                    accumulated_field_z += float(own_potential[3] / particle_mass)
+                    accumulated_scalar_potential += float(
+                        exact_same_bunch_interaction.four_potential[0]
+                    )
+                    exact_source_start_four_potential += (
+                        exact_same_bunch_interaction.four_potential
+                    )
+                    if exact_same_bunch_interaction.field is not None:
+                        rfs_field_tensor += (
+                            exact_same_bunch_interaction.field.field.field_tensor
+                        )
+                        rfs_partial_f += exact_same_bunch_interaction.field.partial_f
+
             if (
                 dipole_source_selected
                 and sim_type == SimulationType.BUNCH_TO_BUNCH
@@ -3482,6 +3573,7 @@ def retarded_equations_of_motion(
                 payload
                 for payload in (
                     exact_charge_analytic_response,
+                    exact_same_bunch_analytic_response,
                     exact_dipole_analytic_response,
                 )
                 if payload is not None
@@ -3646,6 +3738,7 @@ def retarded_equations_of_motion(
                 ordinary_force_native = np.zeros(4, dtype=float)
                 for interaction in (
                     exact_charge_source_interaction,
+                    exact_same_bunch_interaction,
                     dipole_source_interaction,
                 ):
                     if interaction is not None:
@@ -3842,6 +3935,7 @@ def retarded_equations_of_motion(
                     )
                 for interaction in (
                     exact_charge_source_interaction,
+                    exact_same_bunch_interaction,
                     dipole_source_interaction,
                 ):
                     if interaction is None:

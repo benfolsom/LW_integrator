@@ -672,12 +672,18 @@ def _quintic_worldline_sample(
     source: _PreparedSourceHistory,
     segment_index: int,
     time_ns: float,
+    allow_extrapolation: bool = False,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Interpolate position, velocity, and acceleration continuously."""
+    """Interpolate position, velocity, and acceleration continuously.
+
+    With ``allow_extrapolation`` the last segment's quintic is continued past
+    its end knot (a predictor for sources whose next row is not yet accepted).
+    """
 
     t0 = float(source.time_ns[segment_index])
     duration = float(source.segment_duration_ns[segment_index])
-    tau = float(np.clip((time_ns - t0) / duration, 0.0, 1.0))
+    upper = np.inf if allow_extrapolation else 1.0
+    tau = float(np.clip((time_ns - t0) / duration, 0.0, upper))
     c0, c1, c2, c3, c4, c5 = source.position_coefficients_mm[segment_index]
 
     position = c0 + c1 * tau + c2 * tau**2 + c3 * tau**3 + c4 * tau**4 + c5 * tau**5
@@ -1186,6 +1192,43 @@ def _find_retarded_knot_bracket(
     return lower
 
 
+def _extrapolated_bracket(
+    source: _PreparedSourceHistory,
+    *,
+    observer_time_ns: float,
+    observer_position_mm: np.ndarray,
+    extrapolate_ns: float,
+) -> tuple[int, float, float] | None:
+    """Bracket a root that lies after the last knot, within ``extrapolate_ns``."""
+
+    times = source.time_ns
+    if extrapolate_ns <= 0.0 or source.ended_by_loss or times.size < 2:
+        return None
+    segment = times.size - 2
+    t_last = float(times[-1])
+    g_last, _ = _light_cone_residual_mm(
+        observer_time_ns=observer_time_ns,
+        observer_position_mm=observer_position_mm,
+        source_time_ns=t_last,
+        source_position_mm=source.position_mm[-1],
+    )
+    if g_last <= 0.0:
+        return None
+    t_upper = t_last + float(extrapolate_ns)
+    position, _, _ = _quintic_worldline_sample(
+        source, segment, t_upper, allow_extrapolation=True
+    )
+    g_upper, _ = _light_cone_residual_mm(
+        observer_time_ns=observer_time_ns,
+        observer_position_mm=observer_position_mm,
+        source_time_ns=t_upper,
+        source_position_mm=position,
+    )
+    if g_upper > 0.0:
+        return None
+    return segment, t_last, t_upper
+
+
 def _solve_retarded_sample(
     source: _PreparedSourceHistory,
     *,
@@ -1193,23 +1236,35 @@ def _solve_retarded_sample(
     observer_position_mm: np.ndarray,
     root_tolerance_mm: float,
     max_root_iterations: int,
+    extrapolate_ns: float = 0.0,
 ) -> _RetardedSample | None:
     times = source.time_ns
+    extrapolated = False
     segment = _find_retarded_knot_bracket(
         source,
         observer_time_ns=observer_time_ns,
         observer_position_mm=observer_position_mm,
     )
     if segment is None:
-        return None
-    lower_time = float(times[segment])
-    upper_time = float(times[segment + 1])
+        bracket = _extrapolated_bracket(
+            source,
+            observer_time_ns=observer_time_ns,
+            observer_position_mm=observer_position_mm,
+            extrapolate_ns=extrapolate_ns,
+        )
+        if bracket is None:
+            return None
+        segment, lower_time, upper_time = bracket
+        extrapolated = True
+    else:
+        lower_time = float(times[segment])
+        upper_time = float(times[segment + 1])
     source_position = source.position_mm[segment]
     trial_time = 0.5 * (lower_time + upper_time)
 
     for _ in range(max_root_iterations):
         source_position, source_beta, source_beta_prime = _quintic_worldline_sample(
-            source, segment, trial_time
+            source, segment, trial_time, allow_extrapolation=extrapolated
         )
         residual, separation = _light_cone_residual_mm(
             observer_time_ns=observer_time_ns,
@@ -1242,7 +1297,7 @@ def _solve_retarded_sample(
 
     retarded_time = 0.5 * (lower_time + upper_time)
     source_position, source_beta, source_beta_prime = _quintic_worldline_sample(
-        source, segment, retarded_time
+        source, segment, retarded_time, allow_extrapolation=extrapolated
     )
     residual, separation = _light_cone_residual_mm(
         observer_time_ns=observer_time_ns,
@@ -1400,6 +1455,7 @@ def _evaluate_prepared_charge_field_native(
     require_complete_history: bool,
     root_tolerance_mm: float,
     max_root_iterations: int,
+    extrapolate_ns: float = 0.0,
 ) -> RetardedChargeFieldResult:
     """Evaluate one event without extracting or preparing its history again."""
 
@@ -1422,6 +1478,7 @@ def _evaluate_prepared_charge_field_native(
             observer_position_mm=observer_position_mm,
             root_tolerance_mm=root_tolerance_mm,
             max_root_iterations=max_root_iterations,
+            extrapolate_ns=extrapolate_ns,
         )
         if sample is None:
             if _source_terminated_before_light_cone(
@@ -1760,7 +1817,10 @@ def _evaluate_prepared_charge_batch(
     require_complete_history: bool,
     root_tolerance_mm: float,
     max_root_iterations: int,
+    extrapolate_ns: float = 0.0,
 ) -> tuple[RetardedChargeFieldResult, ...]:
+    if extrapolate_ns > 0.0 and backend != "python":
+        raise ValueError("source-history extrapolation requires the python backend")
     if backend == "numba_roots_exact_serial":
         return _evaluate_prepared_charge_batch_numba_roots_exact_serial(
             prepared,
@@ -1789,6 +1849,7 @@ def _evaluate_prepared_charge_batch(
             require_complete_history=require_complete_history,
             root_tolerance_mm=root_tolerance_mm,
             max_root_iterations=max_root_iterations,
+            extrapolate_ns=extrapolate_ns,
         )
         for event in observer_events
     )
@@ -2251,6 +2312,7 @@ def evaluate_retarded_charge_field_native(
     max_root_iterations: int = _DEFAULT_MAX_ROOT_ITERATIONS,
     backend: str = "python",
     source_acceleration_semantics: str = "preceding_interval",
+    extrapolate_ns: float = 0.0,
 ) -> RetardedChargeFieldResult:
     """Evaluate the summed native Gaussian charge field at one event.
 
@@ -2275,6 +2337,7 @@ def evaluate_retarded_charge_field_native(
         require_complete_history=require_complete_history,
         root_tolerance_mm=tolerance,
         max_root_iterations=iterations,
+        extrapolate_ns=extrapolate_ns,
     )[0]
 
 
@@ -2531,8 +2594,13 @@ def evaluate_retarded_charge_field_gradient_native(
     max_root_iterations: int = _DEFAULT_MAX_ROOT_ITERATIONS,
     backend: str = "python",
     source_acceleration_semantics: str = "preceding_interval",
+    extrapolate_ns: float = 0.0,
 ) -> RetardedChargeFieldGradientResult:
     """Evaluate F and its complete centered spacetime derivative.
+
+    ``extrapolate_ns`` (python backend only) lets a source whose retarded point
+    lies just after its last accepted knot be continued along its last quintic
+    segment; used for same-bunch sources inside the current step.
 
     partial_f[lambda, mu, nu] is partial_lambda F^(mu nu) for
     x=(ct,x,y,z) in millimetres. Every displaced event independently re-solves
@@ -2549,6 +2617,8 @@ def evaluate_retarded_charge_field_gradient_native(
     tolerance, iterations = _validated_root_options(
         root_tolerance_mm, max_root_iterations
     )
+    if extrapolate_ns > 0.0 and selected_backend != "python":
+        raise ValueError("source-history extrapolation requires the python backend")
     if selected_backend in {
         "numba_analytic_charge_response_serial",
         "numba_analytic_charge_dipole_response_serial",
@@ -2608,6 +2678,7 @@ def evaluate_retarded_charge_field_gradient_native(
         require_complete_history=require_complete_history,
         root_tolerance_mm=tolerance,
         max_root_iterations=iterations,
+        extrapolate_ns=extrapolate_ns,
     )
     finite_separations = center.separation_mm[center.valid_sources]
     if finite_separations.size == 0:
@@ -2649,6 +2720,7 @@ def evaluate_retarded_charge_field_gradient_native(
         require_complete_history=require_complete_history,
         root_tolerance_mm=tolerance,
         max_root_iterations=iterations,
+        extrapolate_ns=extrapolate_ns,
     )
     for derivative_index in range(4):
         lower = displaced_fields[2 * derivative_index]

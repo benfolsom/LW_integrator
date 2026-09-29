@@ -870,6 +870,7 @@ def _estimate_inertial_prehistory_duration_ns(
     driver: ParticleState,
     magnetic_dipole: MagneticDipoleConfig,
     *,
+    same_bunch_fields: bool = False,
     safety_factor: float = _INERTIAL_PREHISTORY_SAFETY_FACTOR,
 ) -> float:
     """Conservatively cover every initial exact-field stencil light cone."""
@@ -878,6 +879,12 @@ def _estimate_inertial_prehistory_duration_ns(
     if not np.isfinite(safety) or safety < 1.0:
         raise ValueError("inertial prehistory safety_factor must be finite and >= 1")
     separation = _maximum_cross_bunch_separation_mm(rider, driver)
+    if same_bunch_fields:
+        separation = max(
+            separation,
+            _maximum_cross_bunch_separation_mm(rider, rider),
+            _maximum_cross_bunch_separation_mm(driver, driver),
+        )
     if magnetic_dipole.enabled and magnetic_dipole.source.active:
         relative_step = max(
             1.0e-4,
@@ -1079,6 +1086,7 @@ def _preflight_inertial_exact_histories(
     magnetic_dipole: MagneticDipoleConfig,
     charge_field_required: bool,
     dipole_field_required: bool,
+    same_bunch_fields: bool = False,
     causal_c5_source_history: Any = None,
     causal_local_source_history: Any = None,
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -1119,6 +1127,7 @@ def _preflight_inertial_exact_histories(
         (
             rider_history[-1],
             driver_history,
+            rider_history,
             rider_offsets,
             (
                 None
@@ -1129,6 +1138,7 @@ def _preflight_inertial_exact_histories(
         (
             driver_history[-1],
             rider_history,
+            driver_history,
             driver_offsets,
             (
                 None
@@ -1140,6 +1150,7 @@ def _preflight_inertial_exact_histories(
     for (
         observer_state,
         source_history,
+        own_history,
         potential_offsets,
         exact_dipole_source_collection,
     ) in directions:
@@ -1169,43 +1180,51 @@ def _preflight_inertial_exact_histories(
                 ),
             )
             if charge_field_required:
-                charge_interaction = evaluate_retarded_charge_source_interaction_native(
-                    source_history,
-                    event,
-                    four_velocity_mm_ns=four_velocity,
-                    observer_charge_native=observer_charge,
-                    proper_time_step_ns=0.0,
-                    relative_step=max(
-                        1.0e-4,
-                        (
-                            float(source_options.relative_stencil_step)
-                            if source_options.active
-                            else 1.0e-4
-                        ),
-                    ),
-                    minimum_step_mm=max(
-                        1.0e-15,
-                        (
-                            float(source_options.minimum_stencil_step_mm)
-                            if source_options.active
-                            else 1.0e-15
-                        ),
-                    ),
-                    root_tolerance_mm=(
-                        float(source_options.root_tolerance_mm)
-                        if source_options.active
-                        else 1.0e-21
-                    ),
-                    max_root_iterations=(
-                        int(source_options.max_root_iterations)
-                        if source_options.active
-                        else 96
-                    ),
-                    backend=magnetic_dipole.exact_retarded_backend,
-                )
-                potential_offsets[
-                    particle_idx
-                ] += charge_interaction.canonical_potential_momentum
+                # Preflight both light cones and seed P=p+qA/c with their sum.
+                charge_histories = [(source_history, ())]
+                if same_bunch_fields and particle_count > 1:
+                    charge_histories.append((own_history, (particle_idx,)))
+                for charge_history, excluded in charge_histories:
+                    charge_interaction = (
+                        evaluate_retarded_charge_source_interaction_native(
+                            charge_history,
+                            event,
+                            four_velocity_mm_ns=four_velocity,
+                            observer_charge_native=observer_charge,
+                            proper_time_step_ns=0.0,
+                            excluded_source_indices=excluded,
+                            relative_step=max(
+                                1.0e-4,
+                                (
+                                    float(source_options.relative_stencil_step)
+                                    if source_options.active
+                                    else 1.0e-4
+                                ),
+                            ),
+                            minimum_step_mm=max(
+                                1.0e-15,
+                                (
+                                    float(source_options.minimum_stencil_step_mm)
+                                    if source_options.active
+                                    else 1.0e-15
+                                ),
+                            ),
+                            root_tolerance_mm=(
+                                float(source_options.root_tolerance_mm)
+                                if source_options.active
+                                else 1.0e-21
+                            ),
+                            max_root_iterations=(
+                                int(source_options.max_root_iterations)
+                                if source_options.active
+                                else 96
+                            ),
+                            backend=magnetic_dipole.exact_retarded_backend,
+                        )
+                    )
+                    potential_offsets[
+                        particle_idx
+                    ] += charge_interaction.canonical_potential_momentum
             if dipole_field_required:
                 if exact_dipole_source_collection is None:
                     dipole_interaction = (
@@ -1293,6 +1312,8 @@ def _finalize_exact_source_canonical_pair(
     driver_builder: TrajectoryBuilder,
     magnetic_dipole: MagneticDipoleConfig,
     include_dipole_source: bool,
+    same_bunch_fields: bool = False,
+    require_complete_history: bool = True,
 ) -> None:
     """Recompose both accepted canonical endpoints from their retarded fields.
 
@@ -1311,6 +1332,8 @@ def _finalize_exact_source_canonical_pair(
         driver_endpoint_history=driver_history,
         magnetic_dipole=magnetic_dipole,
         include_dipole_source=include_dipole_source,
+        same_bunch_fields=same_bunch_fields,
+        require_complete_history=require_complete_history,
     )
     rider_state.clear()
     rider_state.update(finalized_rider)
@@ -3133,8 +3156,8 @@ def retarded_integrator(
             )
         )
 
-    # Only opposing-bunch fields enter this first RFS path. A charged rider
-    # with no driver (or vice versa) has no cross-bunch source history to solve.
+    # Opposing and, when requested, own-bunch point charges share the exact
+    # retarded provider; each own-bunch observer excludes its own source index.
     rfs_has_charge_sources = bool(
         (_has_particles(init_rider) and _has_source_charge(init_driver))
         or (_has_particles(init_driver) and _has_source_charge(init_rider))
@@ -3176,11 +3199,22 @@ def retarded_integrator(
                 "and mu**2 intrinsic-dipole self-recoil remain outside the model."
             )
         if _space_charge_enabled(space_charge):
-            raise NotImplementedError(
-                "Exact RFS/dipole-source dynamics do not yet include same-bunch "
-                "fields; disable space charge for the first point-particle "
-                "validation."
-            )
+            if dipole_source_active:
+                raise NotImplementedError(
+                    "Exact same-bunch fields support charge sources only; "
+                    "dipole sources are not implemented"
+                )
+            if not space_charge.retarded or space_charge.softening_mm != 0.0:
+                raise NotImplementedError(
+                    "Exact same-bunch fields require retarded=True and "
+                    "softening_mm=0 for point charges"
+                )
+            if startup_mode is not StartupMode.INERTIAL_PREHISTORY:
+                raise NotImplementedError(
+                    "Exact same-bunch fields require INERTIAL_PREHISTORY: with "
+                    "COLD_START a bunch-mate's field would switch on at its light "
+                    "cone instead of being present from t = 0"
+                )
         if (
             (rfs_has_charge_sources or dipole_source_active)
             and beamline_geometry is not None
@@ -3403,6 +3437,7 @@ def retarded_integrator(
             init_rider,
             cast(ParticleState, init_driver),
             magnetic_dipole,
+            same_bunch_fields=_space_charge_enabled(space_charge),
         )
         if taper_exact_pair_prehistory:
             inertial_prehistory_time_offsets_ns = _causal_c5_inertial_time_offsets_ns(
@@ -3592,6 +3627,7 @@ def retarded_integrator(
                         magnetic_dipole=magnetic_dipole,
                         charge_field_required=exact_magnetic_active,
                         dipole_field_required=dipole_source_active,
+                        same_bunch_fields=_space_charge_enabled(space_charge),
                         causal_c5_source_history=(initial_causal_c5_source_history),
                         causal_local_source_history=(
                             initial_causal_local_source_history
@@ -4703,6 +4739,8 @@ def retarded_integrator(
                     driver_builder=_traj_drv_builder,
                     magnetic_dipole=magnetic_dipole,
                     include_dipole_source=dipole_source_active,
+                    same_bunch_fields=_space_charge_enabled(space_charge),
+                    require_complete_history=inertial_prehistory_enabled,
                 )
             if (
                 pseudo_grid.enabled
