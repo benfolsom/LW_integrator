@@ -514,23 +514,34 @@ Simple example configs live under `configs/`. Load them via the GUI
 
 ### Sweep examples (`configs/sweep_configs/`)
 
-**`example_b2b_linked_energy_vs_driver_distance.json`** — 80×80 log-spaced sweep of initial energy (0.5–3000 GeV) vs driver starting distance (10–100,000 mm) for counter-propagating proton-mass, opposite-charge bunches with linked rider/driver energy. Rider and driver each have 1 µm transverse spot size.
+The ideal-screening maps below use a proton rider and a counter-propagating H-
+driver with linked kinetic energies. The driver is removed behind an ideal
+screen at distance $R$ from the rider, leaving the energy gained during its
+approach. Each driver macroparticle supplies the source charge $N e$, while the
+rider has observer charge $e$ and the proton mass.
 
-![B2B proton/H- 1 µm spot size](docs/assets/proton_proton_1micron.png)
+For the README population $N = 5\times10^7$, a 1 mm cut gives about 130 eV at
+low energy: roughly $10^{-5}$% of a 1 GeV rider. Spot averaging reduces the
+high-energy off-axis result to about $10^{-10}$% at 3 TeV. A 10 T bend cut at
+$R = 2.8$ m gives gains of roughly $10^{-11}$% to $10^{-7}$% across the map.
+The relative gain is therefore largest at low GeV energies and small cut
+distances. Hatching marks regions where the first-order model is invalid or the
+driver is not point-like at the cut.
 
----
+![Ideal-screening proton/H- energy-gain maps](docs/assets/b2b_ideal_screening_gain_maps.png)
 
-**`example_b2b_linked_energy_vs_driver_distance_35um_rider.json`** — Same sweep geometry but with an asymmetric spot size: rider 35 µm, driver 0.1 µm. The larger rider spot reduces near-collision blowups for the proton/H- style counter-propagating pair.
+The closed-form result was checked against LW_integrator's exact retarded field:
+on axis it agrees to $3\times10^{-7}$ at 1, 100, and 3000 GeV; off axis it
+agrees to $4\times10^{-6}$ at 1 GeV and $4\times10^{-4}$ at 100 GeV. The
+high-energy off-axis corner uses the closed form.
 
-![B2B proton/H- 35 µm rider spot size](docs/assets/proton_proton_35micron.png)
-
-The bunch-to-bunch examples illustrate a screening regime: after the interaction
-point, the driver bunch is treated as proceeding through a virtual exit aperture
-that blocks direct line of sight to the rider a short distance downstream. The
-maps therefore visualize residual post-screening fields rather than an
-unbounded, permanently visible counter-propagating bunch interaction.
-
-![B2B screening example heatmap](docs/assets/b2b_screening_example_heatmap.png)
+The existing sweep configs are retained as historical examples:
+**`example_b2b_linked_energy_vs_driver_distance.json`** uses 1 µm rider and
+driver spots, while
+**`example_b2b_linked_energy_vs_driver_distance_35um_rider.json`** uses a
+35 µm rider and 0.1 µm driver. Their old maps were artifacts of a cold start
+and of assigning the observer charge $5\times10^7 e$ as well as the source
+charge; they are not physical ideal-screening predictions.
 
 ---
 
