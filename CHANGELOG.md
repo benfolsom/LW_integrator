@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Remove roundoff curvature from ballistic charge histories with constant beta
+  and zero acceleration. This prevents spurious radiation fields near the
+  light cone while preserving accelerated segments.
+
 - Add opt-in `MomentumCenterParticle.reaction_source_order` (integer 2-7; with
   a full-dipole reaction and analytic derivatives only). It is passed to that
   observer's `FullDipoleProvider(taylor_source_order=...)`. The analytic

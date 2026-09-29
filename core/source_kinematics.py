@@ -123,7 +123,8 @@ def reconstruct_instantaneous_beta_prime_per_mm(
             selected_coordinate,
             center_index=center,
         )
-        result[knot] = weights @ velocities[indices]
+        # Centering keeps constant beta at exactly zero despite weight roundoff.
+        result[knot] = weights @ (velocities[indices] - velocities[knot])
     return result
 
 

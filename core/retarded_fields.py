@@ -757,6 +757,22 @@ def _quintic_position_coefficients_mm(
             + 0.5 * acceleration_remainder
         )
         coefficients = np.stack((c0, c1, c2, c3, c4, c5), axis=1)
+        # Ignore endpoint roundoff when the supplied segment is ballistic.
+        endpoint_roundoff = (
+            4.0
+            * np.finfo(float).eps
+            * (np.abs(positions[:-1]) + np.abs(c1) + np.abs(positions[1:]))
+        )
+        ballistic = (
+            np.all(betas[1:] == betas[:-1], axis=1)
+            & np.all(beta_primes[:-1] == 0.0, axis=1)
+            & np.all(beta_primes[1:] == 0.0, axis=1)
+            & np.all(
+                np.abs(position_remainder) <= endpoint_roundoff,
+                axis=1,
+            )
+        )
+        coefficients[ballistic, 2:, :] = 0.0
 
     return durations, coefficients
 
