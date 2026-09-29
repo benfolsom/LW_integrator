@@ -109,9 +109,19 @@ class MomentumCenterParticle:
     reaction_mode: str = "off"
     reaction_window_ns: float | None = None
     reaction_derivative_method: str = "centered"
+    reaction_source_order: int | None = None
 
     def __post_init__(self) -> None:
         self.length_time_particle()
+        if self.reaction_source_order is not None and (
+            type(self.reaction_source_order) is not int
+            or not 2 <= self.reaction_source_order <= 7
+            or self.reaction_mode not in FULL_DIPOLE_REACTION_MODES
+            or self.reaction_derivative_method != "analytic"
+        ):
+            raise ValueError(
+                "reaction_source_order must be an integer 2-7 and requires a full-dipole reaction with analytic derivatives"
+            )
         if self.reaction_derivative_method not in (
             "centered",
             "backward",
@@ -306,6 +316,7 @@ class FullDipoleProvider:
         startup_smoothness: int = 5,
         *,
         one_sided_derivatives: bool = False,
+        taylor_source_order: int | None = None,
     ) -> None:
         if history.speed_limit != c or not np.isfinite(charge_native):
             raise ValueError(
@@ -318,6 +329,12 @@ class FullDipoleProvider:
         if not isinstance(one_sided_derivatives, bool):
             raise ValueError("Explicit one-sided derivative policy required")
         self.one_sided_derivatives = one_sided_derivatives
+        # Optional: build Taylor data from source derivatives through this
+        # order at the retarded point (dipole one order lower), matching the
+        # C4/C3 continuity of evolved history joins. Higher segment-polynomial
+        # derivatives are interpolation artifacts that jump at every join and
+        # grow as the recording step shrinks. Point responses are unchanged.
+        self.taylor_source_order = taylor_source_order
         self.samples: list[tuple[float, float, float]] = []
         self.prepared = smooth_start_native(
             self._response, startup_duration_ns, startup_smoothness
@@ -405,14 +422,32 @@ class FullDipoleProvider:
                     self.history.inertial_until is not None
                     and segment.end < self.history.inertial_until
                 )
+                position, dipole = segment.position, segment.dipole / c
+                allow_boundary = inertial or self.one_sided_derivatives
+                if self.taylor_source_order is not None and not inertial:
+                    from .full_dipole_response import local_source_polynomial
+
+                    retarded = response(
+                        events[0],
+                        c * segment.start,
+                        c * segment.duration,
+                        position,
+                        dipole,
+                        charge=self.charge_native / c,
+                        allow_boundary=allow_boundary,
+                    )["retarded_time"]
+                    point = (retarded - c * segment.start) / (c * segment.duration)
+                    order = self.taylor_source_order
+                    position = local_source_polynomial(position, point, order)
+                    dipole = local_source_polynomial(dipole, point, order - 1)
                 values = response_taylor(
                     events,
                     c * segment.start,
                     c * segment.duration,
-                    segment.position,
-                    segment.dipole / c,
+                    position,
+                    dipole,
                     charge=self.charge_native / c,
-                    allow_boundary=inertial or self.one_sided_derivatives,
+                    allow_boundary=allow_boundary,
                 )
                 break
         else:
@@ -505,6 +540,7 @@ def _providers(
                 payload.get("startup_duration_ns", 0.0),
                 payload.get("startup_smoothness", 5),
                 one_sided_derivatives="internal_step_control" in payload,
+                taylor_source_order=particles[observer].reaction_source_order,
             )
             for index, (particle, history) in enumerate(zip(particles, histories))
             if index != observer

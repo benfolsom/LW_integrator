@@ -186,6 +186,30 @@ def _extract_response(hertz, charge_a):
     return a, da, field, df
 
 
+def local_source_polynomial(coefficients, point, order):
+    """Truncate a segment polynomial to its order-`order` Taylor part at `point`.
+
+    Coefficients are in the segment's normalized power basis, leading axis the
+    power. The result is in the same basis and agrees with the input in value
+    and first `order` derivatives at `point`. Higher derivatives become zero.
+    """
+    from math import comb, factorial
+
+    coefficients = np.asarray(coefficients, dtype=float)
+    polynomial = np.polynomial.polynomial
+    order = min(order, len(coefficients) - 1)
+    taylor = [
+        polynomial.polyval(point, polynomial.polyder(coefficients, k, axis=0))
+        / factorial(k)
+        for k in range(order + 1)
+    ]
+    result = np.zeros((order + 1,) + coefficients.shape[1:])
+    for k, value in enumerate(taylor):
+        for j in range(k + 1):
+            result[j] += value * comb(k, j) * (-point) ** (k - j)
+    return result
+
+
 def response_taylor(
     events,
     start,

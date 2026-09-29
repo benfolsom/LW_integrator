@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+- Add opt-in `MomentumCenterParticle.reaction_source_order` (integer 2-7; with
+  a full-dipole reaction and analytic derivatives only). It is passed to that
+  observer's `FullDipoleProvider(taylor_source_order=...)`. The analytic
+  reaction's Taylor data is then built from each source's worldline derivatives
+  through that order at the retarded point, with the dipole one order lower.
+  Point responses are unchanged. New helper:
+  `full_dipole_response.local_source_polynomial`.
+  - **Why.** Evolved history joins are C4 in position and C3 in dipole. The
+    reaction force of a charge source uses worldline derivatives up to order 7.
+    Above order 4 the segment-polynomial derivatives are interpolation artifacts
+    that jump at every join, and they grow roughly as $h^{-(m-1)}$ as the
+    recording step $h$ shrinks.
+  - **Observed.** In a 100 keV electron-carbon full-spin encounter (b = 1 pm),
+    this produced step-tied high-frequency reaction noise at step fraction 0.005.
+    At 1 $T$ after periapsis the force deviated from a smooth reference by 0.61
+    relative. With order 4 the deviation is $1.6\times10^{-6}$. On a smooth
+    history the truncation costs about $1.2\times10^{-9}$ in force.
+  - Default `None` keeps existing behaviour. Checkpoints now record the field.
+
 - Raise the preserved-history segment-map caches (`segment_map`,
   `indexed_segment_map` in `core/preserved_history_map.py`) from 4096 to 65536
   entries. Every checkpoint restore rebuilds all accepted segments; past 4096
