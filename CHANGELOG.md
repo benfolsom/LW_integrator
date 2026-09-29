@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Raise the preserved-history segment-map caches (`segment_map`,
+  `indexed_segment_map` in `core/preserved_history_map.py`) from 4096 to 65536
+  entries. Every checkpoint restore rebuilds all accepted segments; past 4096
+  segments the LRU cache evicted each entry before its reuse, so every restore
+  rebuilt all exact rational maps. In a full-spin pair run, a warm restore at 4120
+  accepted steps took 38.5 s with 0 hits (it now takes 12.8 s with all hits), and
+  8-step blocks slowed from about 30 s to 78 s. Peak memory at 5568 steps is
+  about 250 MB. Results are unchanged, since the cache only memoizes exact maps.
+
 - Add a slow physics regression test for the free-crossing null: on the exact
   pair-return path, a uniformly moving source delivers the full analytic
   approach half-impulse to a static rider and then cancels it, leaving no net

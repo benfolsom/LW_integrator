@@ -12,6 +12,10 @@ import numpy as np
 
 from .compensated_history import CompensatedHistoryMap
 
+# Restores rebuild every accepted segment. The cache must hold a whole run's
+# segments, or LRU eviction turns every restore into a full rebuild.
+_MAP_CACHE_SIZE = 1 << 16
+
 
 def _lagrange(nodes, point, derivative):
     result = []
@@ -39,7 +43,7 @@ def _lagrange(nodes, point, derivative):
     return result
 
 
-@lru_cache(maxsize=4096)
+@lru_cache(maxsize=_MAP_CACHE_SIZE)
 def segment_map(times, left, first_left, first_right, inertial_left, inertial_right):
     """Return a map from the specified accepted samples to normalized D(s)."""
     return indexed_segment_map(
@@ -52,7 +56,7 @@ def segment_map(times, left, first_left, first_right, inertial_left, inertial_ri
     )
 
 
-@lru_cache(maxsize=4096)
+@lru_cache(maxsize=_MAP_CACHE_SIZE)
 def indexed_segment_map(
     times, left, indices_left, indices_right, inertial_left, inertial_right
 ):
