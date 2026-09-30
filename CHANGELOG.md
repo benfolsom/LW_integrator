@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Exact endpoint reconstruction: cross-bunch sources whose retarded point lies
+  after their last accepted knot (the two bunches end at slightly different
+  lab times; an observer closer than c times that spread, e.g. a muon captured
+  by a nucleus) no longer raise `RetardedHistoryError`. The endpoint retries
+  with the source's last segment continued across twice the spread (python
+  provider); histories that bracket the light cone are unchanged.
+
 - Same-bunch (space-charge) fields on the exact RFS charge path with
   INERTIAL_PREHISTORY: each particle receives the exact retarded field of its
   bunch-mates (itself excluded) in the force, the canonical potentials, the

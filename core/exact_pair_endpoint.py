@@ -19,7 +19,7 @@ from typing import Any
 import numpy as np
 
 from .canonical_momentum import replace_canonical_potential_native
-from .retarded_fields import ObserverEvent
+from .retarded_fields import ObserverEvent, RetardedHistoryError
 from .types import MagneticDipoleConfig, ParticleState
 
 
@@ -33,8 +33,16 @@ def evaluate_exact_endpoint_four_potential(
     require_complete_history: bool = True,
     dipole_source_collection: Any = None,
     spin_interpolation_model: str = "centered_c1",
+    cross_extrapolate_ns: float = 0.0,
 ) -> np.ndarray:
-    """Evaluate cross-bunch and non-self own-bunch potentials at endpoints."""
+    """Evaluate cross-bunch and non-self own-bunch potentials at endpoints.
+
+    ``cross_extrapolate_ns`` is a fallback for the cross-bunch sources: the two
+    bunches advance in proper time, so their final lab times differ; when an
+    observer is closer to a source than c times that spread, the source's
+    retarded point lies after its last accepted knot and its last segment is
+    continued (python backend) instead of failing.
+    """
 
     from .retarded_fields import evaluate_retarded_charge_field_native
 
@@ -73,14 +81,27 @@ def evaluate_exact_endpoint_four_potential(
                 float(observer_state["z"][particle_idx]),
             ),
         )
-        charge_field = evaluate_retarded_charge_field_native(
-            source_history,
-            event,
-            require_complete_history=require_complete_history,
-            root_tolerance_mm=charge_root_tolerance_mm,
-            max_root_iterations=charge_max_root_iterations,
-            backend=magnetic_dipole.exact_retarded_backend,
-        )
+        try:
+            charge_field = evaluate_retarded_charge_field_native(
+                source_history,
+                event,
+                require_complete_history=require_complete_history,
+                root_tolerance_mm=charge_root_tolerance_mm,
+                max_root_iterations=charge_max_root_iterations,
+                backend=magnetic_dipole.exact_retarded_backend,
+            )
+        except RetardedHistoryError:
+            if cross_extrapolate_ns <= 0.0:
+                raise
+            charge_field = evaluate_retarded_charge_field_native(
+                source_history,
+                event,
+                require_complete_history=require_complete_history,
+                root_tolerance_mm=charge_root_tolerance_mm,
+                max_root_iterations=charge_max_root_iterations,
+                backend="python",
+                extrapolate_ns=cross_extrapolate_ns,
+            )
         potentials[particle_idx] += charge_field.four_potential
         if own_history is not None and particle_count > 1:
             # Bunch-mates advance in proper time, so their latest lab times can
@@ -265,6 +286,13 @@ def finalize_exact_source_canonical_pair_states(
 
     rider = copy.deepcopy(rider_state)
     driver = copy.deepcopy(driver_state)
+    endpoint_times = np.concatenate(
+        (
+            np.asarray(rider.get("t", []), dtype=float),
+            np.asarray(driver.get("t", []), dtype=float),
+        )
+    )
+    cross_spread = float(np.ptp(endpoint_times)) if endpoint_times.size else 0.0
     rider_endpoint = evaluate_exact_endpoint_four_potential(
         rider,
         driver_endpoint_history,
@@ -274,6 +302,7 @@ def finalize_exact_source_canonical_pair_states(
         require_complete_history=require_complete_history,
         dipole_source_collection=driver_dipole_source_collection,
         spin_interpolation_model=spin_interpolation_model,
+        cross_extrapolate_ns=2.0 * cross_spread,
     )
     driver_endpoint = evaluate_exact_endpoint_four_potential(
         driver,
@@ -284,6 +313,7 @@ def finalize_exact_source_canonical_pair_states(
         require_complete_history=require_complete_history,
         dipole_source_collection=rider_dipole_source_collection,
         spin_interpolation_model=spin_interpolation_model,
+        cross_extrapolate_ns=2.0 * cross_spread,
     )
     replace_exact_source_endpoint_potential(rider, rider_endpoint)
     replace_exact_source_endpoint_potential(driver, driver_endpoint)
