@@ -266,12 +266,19 @@ def _accepted_pair_time_ns(
         raise SharedLabTimeError("accepted rider and driver histories are misaligned")
     rider_time = np.asarray(rider_builder.build_current().t[-1], dtype=np.float64)
     driver_time = np.asarray(driver_builder.build_current().t[-1], dtype=np.float64)
-    if rider_time.shape != (1,) or driver_time.shape != (1,):
+    if (
+        rider_time.ndim != 1
+        or driver_time.ndim != 1
+        or not rider_time.size
+        or not driver_time.size
+    ):
         raise SharedLabTimeError(
-            "adaptive pair return mode currently requires one particle per role"
+            "adaptive pair return mode requires nonempty one-dimensional time arrays"
         )
     values = (float(rider_time[0]), float(driver_time[0]))
-    if not all(np.isfinite(value) for value in values):
+    if max(np.ptp(rider_time), np.ptp(driver_time)) > tolerance_ns:
+        raise SharedLabTimeError("accepted particles do not share a lab-time barrier")
+    if not np.all(np.isfinite(rider_time)) or not np.all(np.isfinite(driver_time)):
         raise SharedLabTimeError("accepted pair coordinate time is not finite")
     if abs(values[0] - values[1]) > tolerance_ns:
         raise SharedLabTimeError("accepted rider and driver times are not synchronized")
@@ -360,6 +367,7 @@ def attempt_exact_pair_adaptive_step(
     maximum_step_ns: float,
     magnetic_dipole: MagneticDipoleConfig,
     include_dipole_source: bool,
+    same_bunch_fields: bool = False,
     spin_interpolation_model: str = "causal_frozen_c1",
     absolute_time_tolerance_ns: float = 1.0e-18,
     relative_time_tolerance: float = 1.0e-12,
@@ -473,6 +481,7 @@ def attempt_exact_pair_adaptive_step(
         driver_initial_proper_step_ns=(controller_state.driver_proper_step_guess_ns),
         magnetic_dipole=magnetic_dipole,
         include_dipole_source=include_dipole_source,
+        same_bunch_fields=same_bunch_fields,
         tolerances=tolerances,
         method_order=controller_config.method_order,
         causal_c5_source_history=(
@@ -655,6 +664,7 @@ def run_exact_pair_adaptive_window(
     public_sample_interval_ns: float,
     magnetic_dipole: MagneticDipoleConfig,
     include_dipole_source: bool,
+    same_bunch_fields: bool = False,
     public_output_state: AdaptivePairPublicOutputState | None = None,
     checkpoint_store: _AcceptedPairCheckpoint | None = None,
     spin_interpolation_model: str = "causal_frozen_c1",
@@ -863,6 +873,7 @@ def run_exact_pair_adaptive_window(
                 maximum_step_ns=maximum_step_ns,
                 magnetic_dipole=magnetic_dipole,
                 include_dipole_source=include_dipole_source,
+                same_bunch_fields=same_bunch_fields,
                 spin_interpolation_model=spin_interpolation_model,
                 absolute_time_tolerance_ns=absolute_time_tolerance_ns,
                 relative_time_tolerance=relative_time_tolerance,

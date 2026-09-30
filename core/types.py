@@ -967,17 +967,22 @@ class MagneticDipoleConfig:
 
 @dataclass
 class AdaptivePairReturnConfig:
-    """Checkpointable shared-lab-time integration for one exact particle pair.
+    """Checkpointable shared-lab-time integration for exact source bunches.
 
-    The mode is deliberately narrow: one rider and one driver, exact inertial
-    prehistory, causal-frozen spin history, step doubling, and joint pair
-    commits. ``time_step`` remains the initial proper-time guess; the factors
+    Multiple particles per bunch require charge sources with spin self-reaction
+    off. Every particle reaches a shared lab-time barrier; step doubling retains
+    accepted midpoints and jointly commits both bunches. One-particle roles
+    retain the existing dipole and spin-reaction support. ``time_step`` remains the initial proper-time guess; the factors
     below bound the adaptive shared-lab-time slab relative to that value.
+    ``diagnostics_absolute_tolerance_native`` optionally supplies an absolute
+    native-energy budget for radiation, recoil work, and mass-shell projection.
+    None preserves the original scaled tolerance.
     """
 
     enabled: bool = False
     target_lab_time_ns: float | None = None
     tolerance_scale: float = 1.0
+    diagnostics_absolute_tolerance_native: float | None = None
     minimum_step_factor: float = 1.0 / 64.0
     maximum_step_factor: float = 64.0
     public_sample_interval_ns: float | None = None
@@ -990,6 +995,17 @@ class AdaptivePairReturnConfig:
         self.enabled = bool(self.enabled)
         if self.target_lab_time_ns is not None:
             self.target_lab_time_ns = float(self.target_lab_time_ns)
+        if self.diagnostics_absolute_tolerance_native is not None:
+            self.diagnostics_absolute_tolerance_native = float(
+                self.diagnostics_absolute_tolerance_native
+            )
+            if (
+                not np.isfinite(self.diagnostics_absolute_tolerance_native)
+                or self.diagnostics_absolute_tolerance_native <= 0
+            ):
+                raise ValueError(
+                    "diagnostics_absolute_tolerance_native must be finite and positive"
+                )
         self.tolerance_scale = float(self.tolerance_scale)
         self.minimum_step_factor = float(self.minimum_step_factor)
         self.maximum_step_factor = float(self.maximum_step_factor)

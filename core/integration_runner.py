@@ -3081,13 +3081,11 @@ def retarded_integrator(
             )
         if init_driver is None:
             raise ValueError("exact-pair adaptive return mode requires a driver")
-        if (
-            int(np.asarray(init_rider.get("x", np.zeros(0))).size) != 1
-            or int(np.asarray(init_driver.get("x", np.zeros(0))).size) != 1
+        if magnetic_dipole.source.active and (
+            len(init_rider["x"]) != 1 or len(init_driver["x"]) != 1
         ):
             raise NotImplementedError(
-                "exact-pair adaptive return mode currently requires one particle "
-                "per role"
+                "adaptive bunches currently support charge sources only"
             )
         if magnetic_dipole.exact_retarded_update != (
             "second_order_start_taylor_endpoint"
@@ -3735,12 +3733,14 @@ def retarded_integrator(
                 "radiation_reaction_mode": radiation_reaction_mode,
                 "magnetic_dipole": magnetic_dipole,
                 "adaptive_pair_return": adaptive_pair_return,
+                "space_charge": space_charge,
             }
         )
         from .exact_pair_integration import run_exact_pair_adaptive_integrator
 
         return run_exact_pair_adaptive_integrator(
             rider_seed=rider_seed_history,
+            space_charge=space_charge,
             driver_seed=driver_seed_history,
             initial_step_ns=h_step,
             requested_public_samples=int(steps),

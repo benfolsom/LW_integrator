@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import copy
 from dataclasses import dataclass
-from typing import Callable
+from typing import Any, Callable
 
 import numpy as np
 
@@ -294,6 +294,97 @@ def solve_shared_lab_time_pair(
     return pair
 
 
+def solve_shared_lab_time_bunches(
+    *,
+    advance_rider: Callable[[np.ndarray], ParticleState],
+    advance_driver: Callable[[np.ndarray], ParticleState],
+    rider_start: ParticleState,
+    driver_start: ParticleState,
+    **options: Any,
+) -> SharedLabTimePair:
+    """Solve every particle's proper increment against one common lab barrier.
+
+    The maintained EOM processes observers independently against immutable
+    histories. Changing one particle's proper increment cannot change another
+    particle's trial. Scalar root solves therefore compose into a bunch trial.
+    The final vector evaluation retains all per-particle diagnostic metadata.
+    """
+    start = float(options["start_time_ns"])
+    target = start + float(options["delta_time_ns"])
+    absolute = float(options["absolute_tolerance_ns"])
+    relative = float(options["relative_tolerance"])
+
+    def solve_role(
+        advance: Callable[[np.ndarray], ParticleState],
+        state: ParticleState,
+        role: str,
+    ) -> ProperTimeEndpoint:
+        times = np.asarray(state["t"], dtype=float)
+        count = len(times)
+        tolerance = absolute + relative * abs(target - start)
+        if (
+            not np.all(np.isfinite(times))
+            or np.max(np.abs(times - start)) > 2 * tolerance
+        ):
+            raise SharedLabTimeError(f"{role} particles do not share the start barrier")
+        # gamma supplies a close first guess, reducing repeated bunch evaluations.
+        steps = (target - times) / np.asarray(state["gamma"], dtype=float)
+        evaluations = 0
+        cached_steps = steps.copy()
+        cached_state = advance(steps)
+        evaluations += 1
+        for index in range(count):
+
+            def trial(h: float, index: int = index) -> ParticleState:
+                nonlocal cached_steps, cached_state, evaluations
+                proposal = steps.copy()
+                proposal[index] = h
+                if not np.array_equal(proposal, cached_steps):
+                    cached_state = advance(proposal)
+                    evaluations += 1
+                    cached_steps = proposal
+                return {"t": np.asarray(cached_state["t"])[index : index + 1]}
+
+            endpoint = solve_proper_step_to_lab_time(
+                trial,
+                role=f"{role}[{index}]",
+                start_time_ns=float(times[index]),
+                target_time_ns=target,
+                initial_proper_step_ns=float(steps[index]),
+                absolute_tolerance_ns=absolute,
+                relative_tolerance=relative,
+                max_iterations=options["max_iterations"],
+                max_bracket_expansions=options["max_bracket_expansions"],
+                maximum_proper_step_ns=options["maximum_proper_step_ns"],
+            )
+            steps[index] = endpoint.proper_step_ns
+        if np.array_equal(steps, cached_steps):
+            result = cached_state
+        else:
+            result = advance(steps)
+            evaluations += 1
+        residuals = np.asarray(result["t"]) - target
+        if np.max(np.abs(residuals)) > tolerance:
+            raise SharedLabTimeError(f"{role} vector trial missed the lab barrier")
+        # Root residuals are already bounded; publish an exact common time so
+        # a smaller following slab cannot reject the previous clock spread.
+        result["t"] = np.full(count, target)
+        return ProperTimeEndpoint(
+            state=result,
+            proper_step_ns=float(np.mean(steps)),
+            coordinate_time_ns=float(result["t"][0]),
+            residual_ns=float(np.max(np.abs(residuals))),
+            evaluations=evaluations,
+        )
+
+    return SharedLabTimePair(
+        start_time_ns=start,
+        target_time_ns=target,
+        rider=solve_role(advance_rider, rider_start, "rider"),
+        driver=solve_role(advance_driver, driver_start, "driver"),
+    )
+
+
 def commit_shared_lab_time_pair(
     pair: SharedLabTimePair,
     *,
@@ -342,5 +433,6 @@ __all__ = [
     "SharedLabTimePair",
     "commit_shared_lab_time_pair",
     "solve_proper_step_to_lab_time",
+    "solve_shared_lab_time_bunches",
     "solve_shared_lab_time_pair",
 ]

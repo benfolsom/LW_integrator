@@ -287,6 +287,7 @@ class SimulationOptions:
     adaptive_pair_return_enabled: bool = False
     adaptive_pair_target_lab_time_ns: Optional[float] = None
     adaptive_pair_tolerance_scale: float = 1.0
+    adaptive_pair_diagnostics_absolute_tolerance_native: float | None = None
     adaptive_pair_minimum_step_factor: float = 1.0 / 64.0
     adaptive_pair_maximum_step_factor: float = 64.0
     adaptive_pair_public_sample_interval_ns: Optional[float] = None
@@ -580,6 +581,7 @@ class SimulationOptions:
             enabled=self.adaptive_pair_return_enabled,
             target_lab_time_ns=self.adaptive_pair_target_lab_time_ns,
             tolerance_scale=self.adaptive_pair_tolerance_scale,
+            diagnostics_absolute_tolerance_native=self.adaptive_pair_diagnostics_absolute_tolerance_native,
             minimum_step_factor=self.adaptive_pair_minimum_step_factor,
             maximum_step_factor=self.adaptive_pair_maximum_step_factor,
             public_sample_interval_ns=self.adaptive_pair_public_sample_interval_ns,
@@ -595,6 +597,9 @@ class SimulationOptions:
         self.adaptive_pair_return_enabled = adaptive_pair.enabled
         self.adaptive_pair_target_lab_time_ns = adaptive_pair.target_lab_time_ns
         self.adaptive_pair_tolerance_scale = adaptive_pair.tolerance_scale
+        self.adaptive_pair_diagnostics_absolute_tolerance_native = (
+            adaptive_pair.diagnostics_absolute_tolerance_native
+        )
         self.adaptive_pair_minimum_step_factor = adaptive_pair.minimum_step_factor
         self.adaptive_pair_maximum_step_factor = adaptive_pair.maximum_step_factor
         self.adaptive_pair_public_sample_interval_ns = (
@@ -682,6 +687,7 @@ class SimulationOptions:
                 "enabled": self.adaptive_pair_return_enabled,
                 "target_lab_time_ns": self.adaptive_pair_target_lab_time_ns,
                 "tolerance_scale": self.adaptive_pair_tolerance_scale,
+                "diagnostics_absolute_tolerance_native": self.adaptive_pair_diagnostics_absolute_tolerance_native,
                 "minimum_step_factor": self.adaptive_pair_minimum_step_factor,
                 "maximum_step_factor": self.adaptive_pair_maximum_step_factor,
                 "public_sample_interval_ns": (
@@ -1498,6 +1504,9 @@ class SimulationOptions:
                 float(adaptive_pair_payload["target_lab_time_ns"])
                 if adaptive_pair_payload.get("target_lab_time_ns") not in {None, ""}
                 else None
+            ),
+            adaptive_pair_diagnostics_absolute_tolerance_native=adaptive_pair_payload.get(
+                "diagnostics_absolute_tolerance_native"
             ),
             adaptive_pair_tolerance_scale=float(
                 adaptive_pair_payload.get("tolerance_scale", 1.0)
@@ -3346,6 +3355,7 @@ def run_testbed(
         enabled=options.adaptive_pair_return_enabled,
         target_lab_time_ns=options.adaptive_pair_target_lab_time_ns,
         tolerance_scale=options.adaptive_pair_tolerance_scale,
+        diagnostics_absolute_tolerance_native=options.adaptive_pair_diagnostics_absolute_tolerance_native,
         minimum_step_factor=options.adaptive_pair_minimum_step_factor,
         maximum_step_factor=options.adaptive_pair_maximum_step_factor,
         public_sample_interval_ns=options.adaptive_pair_public_sample_interval_ns,

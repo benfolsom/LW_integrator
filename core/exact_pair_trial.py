@@ -20,6 +20,7 @@ from .shared_lab_time import (
     DEFAULT_PROPER_TIME_ROOT_MAX_ITERATIONS,
     SharedLabTimeError,
     SharedLabTimePair,
+    solve_shared_lab_time_bunches,
     solve_shared_lab_time_pair,
 )
 from .step_doubling import (
@@ -40,7 +41,9 @@ from .types import (
     TrialTrajectoryHistory,
 )
 
-AdvanceRoleTrial = Callable[[float, ParticleState, ParticleState, Any], ParticleState]
+AdvanceRoleTrial = Callable[
+    [float | np.ndarray, ParticleState, ParticleState, Any], ParticleState
+]
 
 if TYPE_CHECKING:
     from .causal_c5_dipole_provider import AcceptedPairCausalC5SourceHistory
@@ -52,6 +55,7 @@ class ExactRoleSourceHistory:
     """Charge chronology plus an optional independent dipole history."""
 
     charge_history: Any
+    observer_history: Any = None
     dipole_source_collection: Any = None
     observer_spin_reduction_history: Any = None
     observer_proper_time_ns: float | None = None
@@ -73,6 +77,7 @@ class ExactPairEOMOptions:
     aperture_radius_mm: float
     magnetic_dipole: MagneticDipoleConfig
     self_consistency: SelfConsistencyConfig | None = None
+    space_charge: Any = None
     chrono_mode: ChronoMatchingMode = ChronoMatchingMode.FAST
     radiation_reaction_mode: str = "off"
     external_field: ExternalFieldConfig | None = None
@@ -152,15 +157,17 @@ def make_exact_role_eom_advance(options: ExactPairEOMOptions) -> AdvanceRoleTria
         )
 
     def advance(
-        proper_step_ns: float,
+        proper_step_ns: float | np.ndarray,
         observer_start: ParticleState,
         source_start: ParticleState,
         exact_source_history: Any,
     ) -> ParticleState:
         charge_history = exact_source_history
+        observer_history = None
         dipole_source_collection = None
         if isinstance(exact_source_history, ExactRoleSourceHistory):
             charge_history = exact_source_history.charge_history
+            observer_history = exact_source_history.observer_history
             dipole_source_collection = exact_source_history.dipole_source_collection
         if experimental and (
             not isinstance(exact_source_history, ExactRoleSourceHistory)
@@ -171,12 +178,24 @@ def make_exact_role_eom_advance(options: ExactPairEOMOptions) -> AdvanceRoleTria
                 "experimental spin recoil requires accepted observer reduction history"
             )
 
-        def run(bound_eom):
+        eom_for_step: Callable[..., ParticleState]
+        if np.ndim(proper_step_ns) != 0:
+            from functools import partial
+
+            eom_for_step = partial(
+                eom, _particle_proper_steps_ns=np.asarray(proper_step_ns)
+            )
+            scalar_step = float(np.asarray(proper_step_ns)[0])
+        else:
+            eom_for_step = eom
+            scalar_step = cast(float, proper_step_ns)
+
+        def run(bound_eom: Callable[..., ParticleState]) -> ParticleState:
             return cast(
                 ParticleState,
                 self_consistent_step(
                     bound_eom,
-                    proper_step_ns,
+                    scalar_step,
                     [observer_start],
                     [source_start],
                     0,
@@ -191,6 +210,8 @@ def make_exact_role_eom_advance(options: ExactPairEOMOptions) -> AdvanceRoleTria
                     external_field=options.external_field,
                     magnetic_dipole=options.magnetic_dipole,
                     exact_source_history=charge_history,
+                    traj_soa=observer_history,
+                    space_charge=options.space_charge,
                     exact_dipole_source_collection=dipole_source_collection,
                     exact_source_spin_interpolation_model=(
                         options.spin_interpolation_model
@@ -198,11 +219,13 @@ def make_exact_role_eom_advance(options: ExactPairEOMOptions) -> AdvanceRoleTria
                 ),
             )
 
+        result: ParticleState
         if (
             options.moment_impulse_diagnostic is not None
             and options.radiation_reaction_mode == "medina_lad"
         ):
             from functools import partial
+
             from .moment_medina_diagnostic import match_medina_force
 
             result = match_medina_force(
@@ -210,7 +233,7 @@ def make_exact_role_eom_advance(options: ExactPairEOMOptions) -> AdvanceRoleTria
                 particle_count=len(observer_start["x"]),
             )
         else:
-            result = run(eom)
+            result = run(eom_for_step)
         if experimental:
             from .experimental_spin_reaction import (
                 apply_experimental_linear_spin_feedback,
@@ -221,7 +244,7 @@ def make_exact_role_eom_advance(options: ExactPairEOMOptions) -> AdvanceRoleTria
                 start=observer_start,
                 accepted_history=exact_source_history.observer_spin_reduction_history,
                 proper_time_ns=exact_source_history.observer_proper_time_ns,
-                proper_step_ns=proper_step_ns,
+                proper_step_ns=scalar_step,
             )
         return result
 
@@ -234,10 +257,6 @@ def _history_tail_state(
     *,
     role: str,
 ) -> ParticleState:
-    if base.n_particles != 1:
-        raise SharedLabTimeError(
-            f"{role} exact pair trial currently requires exactly one particle"
-        )
     if tail:
         return copy.deepcopy(tail[-1])
     return copy.deepcopy(base.state_at(-1))
@@ -245,8 +264,8 @@ def _history_tail_state(
 
 def _single_state_time(state: ParticleState, *, role: str) -> float:
     values = np.asarray(state.get("t", []), dtype=np.float64)
-    if values.shape != (1,) or not np.all(np.isfinite(values)):
-        raise SharedLabTimeError(f"{role} trial start must have one finite time")
+    if values.ndim != 1 or not values.size or not np.all(np.isfinite(values)):
+        raise SharedLabTimeError(f"{role} trial start must have finite times")
     return float(values[0])
 
 
@@ -281,6 +300,7 @@ def solve_exact_pair_slab_trial(
     driver_initial_proper_step_ns: float,
     magnetic_dipole: MagneticDipoleConfig,
     include_dipole_source: bool,
+    same_bunch_fields: bool = False,
     rider_prior_tail: tuple[ParticleState, ...] = (),
     driver_prior_tail: tuple[ParticleState, ...] = (),
     causal_c5_source_history: AcceptedPairCausalC5SourceHistory | None = None,
@@ -357,8 +377,30 @@ def solve_exact_pair_slab_trial(
         accepted_rider_history,
         rider_prior_tail,
     )
+    bunch_mode = (
+        accepted_rider_history.n_particles > 1
+        or accepted_driver_history.n_particles > 1
+    )
+    if bunch_mode and (
+        include_dipole_source
+        or magnetic_dipole.intrinsic_spin_self_reaction_mode != "off"
+    ):
+        raise NotImplementedError(
+            "adaptive bunch trials support charge sources with spin self-reaction off"
+        )
     rider_source_history: Any = rider_charge_history
     driver_source_history: Any = driver_charge_history
+    if bunch_mode:
+        rider_source_history = ExactRoleSourceHistory(
+            charge_history=rider_charge_history,
+            observer_history=_source_history(accepted_rider_history, rider_prior_tail),
+        )
+        driver_source_history = ExactRoleSourceHistory(
+            charge_history=driver_charge_history,
+            observer_history=_source_history(
+                accepted_driver_history, driver_prior_tail
+            ),
+        )
     dipole_history = causal_c5_source_history or causal_local_source_history
     if include_dipole_source and dipole_history is not None:
         rider_source_history = ExactRoleSourceHistory(
@@ -392,7 +434,14 @@ def solve_exact_pair_slab_trial(
             observer_spin_reduction_history=intrinsic_spin_reduction_history.driver,
             observer_proper_time_ns=intrinsic_spin_reduction_history.driver_endpoint_proper_time_ns,
         )
-    provisional = solve_shared_lab_time_pair(
+    solve_pair = (
+        solve_shared_lab_time_bunches if bunch_mode else solve_shared_lab_time_pair
+    )
+    bunch_options = (
+        {"rider_start": rider_start, "driver_start": driver_start} if bunch_mode else {}
+    )
+    provisional = solve_pair(
+        **bunch_options,
         advance_rider=lambda h: advance_rider(
             h,
             copy.deepcopy(rider_start),
@@ -454,6 +503,7 @@ def solve_exact_pair_slab_trial(
     rider_state, driver_state = finalize_exact_source_canonical_pair_states(
         rider_state=provisional.rider.state,
         driver_state=provisional.driver.state,
+        same_bunch_fields=same_bunch_fields,
         rider_endpoint_history=provisional_rider_history,
         driver_endpoint_history=provisional_driver_history,
         magnetic_dipole=magnetic_dipole,
@@ -499,6 +549,7 @@ def solve_exact_pair_step_doubling_trial(
     driver_initial_proper_step_ns: float,
     magnetic_dipole: MagneticDipoleConfig,
     include_dipole_source: bool,
+    same_bunch_fields: bool = False,
     tolerances: StepDoublingTolerances,
     method_order: int = 1,
     causal_c5_source_history: AcceptedPairCausalC5SourceHistory | None = None,
@@ -564,6 +615,7 @@ def solve_exact_pair_step_doubling_trial(
             driver_initial_proper_step_ns=driver_proper_step_ns,
             magnetic_dipole=magnetic_dipole,
             include_dipole_source=include_dipole_source,
+            same_bunch_fields=same_bunch_fields,
             rider_prior_tail=rider_tail,
             driver_prior_tail=driver_tail,
             causal_c5_source_history=slab_causal_c5_source_history,
@@ -691,7 +743,7 @@ def _state_has_finite_medina_sample(state: ParticleState) -> bool:
         state.get("medina_external_force_sample_time", np.array([np.nan])),
         dtype=np.float64,
     )
-    return bool(values.shape == (1,) and np.isfinite(values[0]))
+    return bool(values.ndim == 1 and values.size and np.all(np.isfinite(values)))
 
 
 def _state_observer_is_charged(state: ParticleState) -> bool:
@@ -699,7 +751,7 @@ def _state_observer_is_charged(state: ParticleState) -> bool:
         state.get("q_observer", state.get("q", np.zeros(1))),
         dtype=np.float64,
     )
-    return bool(values.shape == (1,) and np.isfinite(values[0]) and values[0] != 0.0)
+    return bool(values.ndim == 1 and np.any(np.isfinite(values) & (values != 0.0)))
 
 
 def _trial_state_health_failures(
@@ -709,27 +761,30 @@ def _trial_state_health_failures(
     expected_medina_ready: bool | None,
 ) -> list[str]:
     failures: list[str] = []
-    dead = np.asarray(state.get("_dead_particles", np.zeros(1, dtype=bool)), dtype=bool)
-    if dead.shape != (1,) or bool(dead[0]):
+    count = len(state["x"])
+    dead = np.asarray(
+        state.get("_dead_particles", np.zeros(count, dtype=bool)), dtype=bool
+    )
+    if dead.shape != (count,) or bool(np.any(dead)):
         failures.append(f"{label}: particle death")
     capped = np.asarray(
-        state.get("medina_impulse_capped", np.zeros(1, dtype=bool)), dtype=bool
+        state.get("medina_impulse_capped", np.zeros(count, dtype=bool)), dtype=bool
     )
-    if capped.shape != (1,) or bool(capped[0]):
+    if capped.shape != (count,) or bool(np.any(capped)):
         failures.append(f"{label}: Medina impulse cap")
     far_energy = np.asarray(
-        state.get("radiation_energy", np.zeros(1)), dtype=np.float64
+        state.get("radiation_energy", np.zeros(count)), dtype=np.float64
     )
-    if far_energy.shape != (1,) or not np.isfinite(far_energy[0]):
+    if far_energy.shape != (count,) or not np.all(np.isfinite(far_energy)):
         failures.append(f"{label}: invalid far-radiated energy")
-    elif far_energy[0] < 0.0:
+    elif np.any(far_energy < 0.0):
         failures.append(f"{label}: negative far-radiated energy")
     if expected_medina_ready is not None:
         ready = np.asarray(
-            state.get("medina_force_derivative_ready", np.zeros(1, dtype=bool)),
+            state.get("medina_force_derivative_ready", np.zeros(count, dtype=bool)),
             dtype=bool,
         )
-        if ready.shape != (1,) or bool(ready[0]) is not expected_medina_ready:
+        if ready.shape != (count,) or not np.all(ready == expected_medina_ready):
             failures.append(f"{label}: unexpected Medina derivative readiness")
     return failures
 

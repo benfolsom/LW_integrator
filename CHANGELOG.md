@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Extend opt-in `adaptive_pair_return` to exact INERTIAL_PREHISTORY runs with
+  multiple particles per bunch and same-bunch charge fields. Every particle
+  reaches a shared lab-time barrier, step doubling controls errors across all
+  particles, and both bunches commit their midpoint and endpoint together.
+  Complete unequal-spaced source histories survive checkpoint restart. Charge
+  bunches currently require dipole sources and intrinsic spin self-reaction off.
+  Optional `diagnostics_absolute_tolerance_native` sets a separate absolute
+  energy budget for diagnostics without changing position or momentum tolerances.
+  Fixed stepping and existing adaptive-pair tolerance defaults are unchanged.
+
 - Exact endpoint reconstruction: cross-bunch sources whose retarded point lies
   after their last accepted knot (the two bunches end at slightly different
   lab times; an observer closer than c times that spread, e.g. a muon captured

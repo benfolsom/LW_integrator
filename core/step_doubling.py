@@ -56,6 +56,7 @@ class StepDoublingState:
     mechanical_momentum_native: np.ndarray
     rest_spin: np.ndarray
     diagnostics_native: np.ndarray
+    particle_vector_scales: bool = False
 
 
 @dataclass(frozen=True)
@@ -191,6 +192,38 @@ def build_pair_step_doubling_state(
     over both accepted half steps on the refined path.
     """
 
+    counts = [len(states[-1]["x"]) for states in (rider_states, driver_states)]
+    if max(counts) > 1:
+        # Reuse the scalar reduction and its validation for every observer.
+        values = []
+        for role, states, count in zip(
+            ("rider", "driver"), (rider_states, driver_states), counts
+        ):
+            for index in range(count):
+                particle_states = [
+                    {
+                        key: (
+                            value[index : index + 1]
+                            if isinstance(value, np.ndarray)
+                            and value.ndim
+                            and len(value) == count
+                            else value
+                        )
+                        for key, value in state.items()
+                    }
+                    for state in states
+                ]
+                values.append(
+                    _pair_role_step_doubling_values(particle_states, role=role)
+                )
+        return StepDoublingState(
+            position_mm=np.stack([value[0] for value in values]),
+            mechanical_momentum_native=np.stack([value[1] for value in values]),
+            rest_spin=np.stack([value[2] for value in values]),
+            diagnostics_native=np.stack([value[3] for value in values]),
+            particle_vector_scales=True,
+        )
+
     include_spin_feedback = any(
         "_linear_spin_feedback_record" in state
         for states in (rider_states, driver_states)
@@ -226,6 +259,7 @@ def _scaled_max_error(
     scale: ErrorScale,
     richardson_denominator: float,
     name: str,
+    particle_vector_scales: bool = False,
 ) -> tuple[float, tuple[int, ...]]:
     full = _validated_array(full_values, f"full {name}")
     refined = _validated_array(refined_values, f"refined {name}")
@@ -234,6 +268,15 @@ def _scaled_max_error(
     if full.size == 0:
         return 0.0, ()
     local_error = np.abs(refined - full) / richardson_denominator
+    if particle_vector_scales:
+        # Relative vector accuracy must not depend on the coordinate axes or
+        # collapse when an orbit's momentum component crosses zero.
+        denominator = scale.absolute + scale.relative * np.maximum(
+            np.linalg.norm(full, axis=-1), np.linalg.norm(refined, axis=-1)
+        )
+        errors = np.linalg.norm(local_error, axis=-1) / denominator
+        index = int(np.argmax(errors))
+        return float(errors[index]), (index, int(np.argmax(local_error[index])))
     denominator = scale.absolute + scale.relative * np.maximum(
         np.abs(full), np.abs(refined)
     )
@@ -265,6 +308,8 @@ def assess_step_doubling(
     end-to-end refinement study establishes otherwise.
     """
 
+    if full.particle_vector_scales != refined.particle_vector_scales:
+        raise ValueError("full and refined vector error scales must match")
     method_order = int(method_order)
     if method_order < 1:
         raise ValueError("method_order must be positive")
@@ -275,6 +320,7 @@ def assess_step_doubling(
         scale=tolerances.position_mm,
         richardson_denominator=richardson_denominator,
         name="position",
+        particle_vector_scales=full.particle_vector_scales,
     )
     momentum_error, momentum_error_index = _scaled_max_error(
         full.mechanical_momentum_native,
@@ -282,6 +328,7 @@ def assess_step_doubling(
         scale=tolerances.mechanical_momentum_native,
         richardson_denominator=richardson_denominator,
         name="mechanical momentum",
+        particle_vector_scales=full.particle_vector_scales,
     )
     spin_error, spin_error_index = _scaled_max_error(
         full.rest_spin,
@@ -289,6 +336,7 @@ def assess_step_doubling(
         scale=tolerances.rest_spin,
         richardson_denominator=richardson_denominator,
         name="rest spin",
+        particle_vector_scales=full.particle_vector_scales,
     )
     diagnostics_error, diagnostics_error_index = _scaled_max_error(
         full.diagnostics_native,

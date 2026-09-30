@@ -2270,6 +2270,9 @@ def _build_adaptive_pair_return_config(payload: Any) -> AdaptivePairReturnConfig
             enabled=bool(payload.get("enabled", False)),
             target_lab_time_ns=payload.get("target_lab_time_ns"),
             tolerance_scale=float(payload.get("tolerance_scale", 1.0)),
+            diagnostics_absolute_tolerance_native=payload.get(
+                "diagnostics_absolute_tolerance_native"
+            ),
             minimum_step_factor=float(payload.get("minimum_step_factor", 1.0 / 64.0)),
             maximum_step_factor=float(payload.get("maximum_step_factor", 64.0)),
             public_sample_interval_ns=payload.get("public_sample_interval_ns"),

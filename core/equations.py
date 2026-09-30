@@ -1776,6 +1776,7 @@ def retarded_equations_of_motion(
     moment_impulse_diagnostic: Optional[Any] = None,
     moment_radiation_force_native: Optional[Any] = None,
     _experimental_linear_spin_adapter: bool = False,
+    _particle_proper_steps_ns: np.ndarray | None = None,
 ) -> ParticleState:
     """Core equations of motion preserving the validated reference behavior.
 
@@ -2012,8 +2013,18 @@ def retarded_equations_of_motion(
     # Import IntegrationCancelled at top of function for use in cancel checks
     from .integration_runner import IntegrationCancelled
 
+    # Adaptive bunch trials solve a separate proper increment for each particle.
+    # Keep the scalar path untouched for fixed-step and existing pair runs.
+    if _particle_proper_steps_ns is not None:
+        proper_steps = np.asarray(_particle_proper_steps_ns, dtype=float)
+        if proper_steps.shape != (num_particles,) or not np.all(
+            np.isfinite(proper_steps) & (proper_steps > 0.0)
+        ):
+            raise ValueError("particle proper steps must be finite and positive")
     # Process each particle independently
     for particle_idx in range(num_particles):
+        if _particle_proper_steps_ns is not None:
+            h = float(proper_steps[particle_idx])
         # Check for cancellation before processing each particle
         if cancel_callback is not None and cancel_callback():
             raise IntegrationCancelled("Integration cancelled by caller.")
