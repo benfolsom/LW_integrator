@@ -921,6 +921,9 @@ class IntegratorGUI(
         # max_substeps is now calculated from min_timestep_factor (read-only display)
         self.adaptive_timestep_max_substeps_display_var = tk.StringVar(value="")
 
+        self.source_history_representation_var = tk.StringVar(
+            value=self.options.source_history_representation
+        )
         self.radiation_reaction_mode_var = tk.StringVar(
             value=getattr(self.options, "radiation_reaction_mode", "medina_lad")
         )

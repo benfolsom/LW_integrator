@@ -121,9 +121,7 @@ class OptimizationConfig:
     )
     driver_transv_dist_points: int = 1
     driver_transv_dist_log_scale: bool = False
-    driver_long_dist_range: Optional[Tuple[float, float]] = (
-        None  # mm (BUNCH_TO_BUNCH)
-    )
+    driver_long_dist_range: Optional[Tuple[float, float]] = None  # mm (BUNCH_TO_BUNCH)
     driver_long_dist_points: int = 1
     driver_long_dist_log_scale: bool = False
     driver_starting_distance_range: Optional[Tuple[float, float]] = (
@@ -352,6 +350,7 @@ class OptimizationConfig:
     external_field_t_max: Optional[float] = None
 
     # Radiation-reaction handling
+    source_history_representation: str = "light_cone_quintic"
     radiation_reaction_mode: str = "medina_lad"
 
     # Fixed-size particle-loss options
@@ -403,6 +402,11 @@ class OptimizationConfig:
 
     def __post_init__(self):
         """Set defaults for list fields."""
+        from core.proper_velocity_history import validate_source_history_representation
+
+        self.source_history_representation = validate_source_history_representation(
+            self.source_history_representation
+        )
         if self.transverse_offset_fractions is None:
             self.transverse_offset_fractions = [0.0]
         if self.starting_z_positions is None:
@@ -662,6 +666,9 @@ class OptimizationConfig:
             external_field_z_max=getattr(options, "external_field_z_max", None),
             external_field_t_min=getattr(options, "external_field_t_min", None),
             external_field_t_max=getattr(options, "external_field_t_max", None),
+            source_history_representation=getattr(
+                options, "source_history_representation", "light_cone_quintic"
+            ),
             radiation_reaction_mode=getattr(
                 options,
                 "radiation_reaction_mode",

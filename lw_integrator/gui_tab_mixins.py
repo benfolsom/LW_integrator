@@ -2804,6 +2804,25 @@ class IntegratorGUITabMixin:
             wraplength=700,
         ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(2, 0))
 
+        ttk.Label(rr_frame, text="Source interpolation:").grid(
+            row=2, column=0, sticky="w", pady=(8, 2)
+        )
+        history_choice = ttk.Combobox(
+            rr_frame,
+            textvariable=getattr(self, "source_history_representation_var"),
+            values=("light_cone_quintic", "proper_velocity"),
+            state="readonly",
+            width=24,
+        )
+        history_choice.grid(row=2, column=1, sticky="w", pady=(8, 2))
+        Tooltip(
+            history_choice,
+            "proper_velocity keeps accepted positions at the knots and enforces "
+            "subluminal interpolation between them. Requires the exact scalar "
+            "BUNCH_TO_BUNCH path with INERTIAL_PREHISTORY; Metal and magnetic "
+            "dipole/spin histories are unsupported.",
+        )
+
     def _build_space_charge_section(self, stability_frame: ttk.Frame) -> None:
         """Build intra-bunch space-charge controls."""
         from .gui import Tooltip
