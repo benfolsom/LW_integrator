@@ -1317,6 +1317,7 @@ def reconstruct_full_state_from_active_result(
         field_name: np.asarray(active_result_state[field_name], dtype=float)
         - np.asarray(previous_full_state[field_name], dtype=float)[active]
         for field_name in PSEUDO_GRID_PASSIVE_DELTA_FIELDS
+        if field_name not in {"bx", "by", "bz", "bdotx", "bdoty", "bdotz"}
         if field_name in active_result_state and field_name in previous_full_state
     }
 
@@ -1347,6 +1348,25 @@ def reconstruct_full_state_from_active_result(
         raise ValueError(
             "passive_update_mode must be weighted_delta, ballistic, "
             "external_interbunch, or frozen"
+        )
+
+    # Accepted endpoint velocities alone do not establish that the source path
+    # segments are timelike. Reject invalid live segments before mixing them.
+    with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
+        active_segment_beta = np.stack(
+            [active_field_deltas[axis] for axis in ("x", "y", "z")]
+        ) / (C_MMNS * active_field_deltas["t"])
+        active_segment_speed = np.linalg.norm(active_segment_beta, axis=0)
+    invalid_segments = (~active_dead_mask) & (
+        ~np.isfinite(active_segment_speed) | (active_segment_speed >= 1)
+    )
+    if np.any(invalid_segments):
+        local = int(np.flatnonzero(invalid_segments)[0])
+        raise PseudoGridStateError(
+            f"Pseudo-grid reconstruction at step {step_index}, "
+            f"particle {active[local]}: active segment "
+            f"|beta|={active_segment_speed[local]:.17g}; "
+            "require finite state, |beta| < 1, and strictly increasing time"
         )
 
     full_dead_mask = np.asarray(
@@ -1392,6 +1412,7 @@ def reconstruct_full_state_from_active_result(
     valid_neighbor_indices = local_neighbor_indices[valid_passive_mask]
     valid_weights = weights[valid_passive_mask]
 
+    segment_increments = {}
     for field_name, delta_values in active_field_deltas.items():
         weighted_deltas = np.sum(
             valid_weights * delta_values[valid_neighbor_indices],
@@ -1403,6 +1424,24 @@ def reconstruct_full_state_from_active_result(
             ]
             + weighted_deltas
         )
+        if field_name in {"x", "y", "z", "t"}:
+            segment_increments[field_name] = weighted_deltas
+
+    # Use the increments in hand: subtracting large published coordinates again
+    # can lose the small displacement or lab-time interval to roundoff.
+    dt = segment_increments["t"]
+    with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
+        for axis, beta_field, derivative_field in (
+            ("x", "bx", "bdotx"),
+            ("y", "by", "bdoty"),
+            ("z", "bz", "bdotz"),
+        ):
+            beta = segment_increments[axis] / (C_MMNS * dt)
+            full_state[beta_field][valid_passive_indices] = beta
+            if derivative_field in full_state:
+                full_state[derivative_field][valid_passive_indices] = (
+                    beta - previous_full_state[beta_field][valid_passive_indices]
+                ) / dt
 
     _validate_reconstructed_particles(
         previous_full_state, full_state, passive_indices, step_index
