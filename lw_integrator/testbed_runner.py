@@ -959,6 +959,18 @@ class SimulationOptions:
 
     @classmethod
     def from_dict(cls, payload: Dict[str, object]) -> "SimulationOptions":
+        sweep_keys = {"sweep_parameters", "energy_min", "energy_max", "energy_points"}
+        if (
+            "rider_params" not in payload
+            and "driver_params" not in payload
+            and sweep_keys.intersection(payload)
+        ):
+            raise ValueError(
+                "Flat sweep configuration cannot be loaded as a testbed config; "
+                "use --sweep-config instead of --testbed-config. Testbed configs "
+                "use nested rider_params, driver_params, and core_params."
+            )
+
         def _bool(name: str, default: bool) -> bool:
             return bool(payload.get(name, default))
 
