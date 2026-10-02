@@ -30,6 +30,7 @@ from typing import Sequence, cast
 import numpy as np
 
 from .constants import C_MMNS
+from .exact_source_cloud import ExactCloudHistory, transverse_offsets
 from .ballistic_charge import ballistic_retarded_point
 from .precise_charge import (
     precise_charge_jets,
@@ -46,6 +47,7 @@ from .rfs import electromagnetic_field_tensor_native
 from .source_kinematics import reconstruct_instantaneous_beta_prime_per_mm
 from .types import (
     IndexedTrajectoryArrays,
+    MacroparticleSmearingConfig,
     Trajectory,
     TrajectoryArrays,
     TrialTrajectoryHistory,
@@ -232,6 +234,7 @@ class _PreparedHistory:
     arrays: _HistoryArrays
     sources: dict[int, _PreparedSourceHistory]
     source_acceleration_semantics: str = "preceding_interval"
+    parent_indices: np.ndarray | None = None
 
 
 _CHARGE_PREPARED_HISTORY_CACHE: AppendAwarePreparedHistoryCache[
@@ -1109,7 +1112,7 @@ def _append_prepared_history(
 
 
 def _prepare_history(
-    history: TrajectoryHistory,
+    history: TrajectoryHistory | ExactCloudHistory,
     excluded_source_indices: Sequence[int],
     *,
     source_acceleration_semantics: str = "preceding_interval",
@@ -1119,6 +1122,15 @@ def _prepare_history(
     acceleration_semantics = _validated_source_acceleration_semantics(
         source_acceleration_semantics
     )
+    if isinstance(history, ExactCloudHistory):
+        # Exclude parents before expansion: every child of the observer's
+        # own macro is absent, including off-centre children.
+        macro = _prepare_history(
+            history.base,
+            excluded_source_indices,
+            source_acceleration_semantics=acceleration_semantics,
+        )
+        return _expand_cloud_prepared_history(macro, history.config)
     if isinstance(history, TrialTrajectoryHistory):
         return _prepare_trial_history(
             history,
@@ -1143,6 +1155,54 @@ def _prepare_history(
             excluded,
         ),
     ).value
+
+
+def _expand_cloud_prepared_history(
+    macro: _PreparedHistory, config: MacroparticleSmearingConfig
+) -> _PreparedHistory:
+    """Translate already reconstructed centre curves, including inertial past.
+
+    A constant translation changes only each segment's constant coefficient.
+    Velocity, acceleration, knot times, and trial acceptance stay unchanged.
+    Every translated curve is then solved independently by ordinary providers.
+    """
+    count = config.subcharge_count
+    parents = np.repeat(np.arange(macro.arrays.n_sources), count)
+    offsets_and_weights = [
+        transverse_offsets(macro.arrays.beta[0, parent], config)
+        for parent in range(macro.arrays.n_sources)
+    ]
+    offsets = np.concatenate([item[0] for item in offsets_and_weights])
+    fractions = np.concatenate([item[1] for item in offsets_and_weights])
+    arrays = _HistoryArrays(
+        time_ns=macro.arrays.time_ns[:, parents],
+        position_mm=macro.arrays.position_mm[:, parents] + offsets,
+        beta=macro.arrays.beta[:, parents],
+        beta_prime_per_mm=macro.arrays.beta_prime_per_mm[:, parents],
+        charge_native=macro.arrays.charge_native[parents] * fractions,
+        dead=macro.arrays.dead[:, parents],
+    )
+    sources = {}
+    for child, parent in enumerate(parents):
+        if parent not in macro.sources:
+            continue
+        centre = macro.sources[int(parent)]
+        coefficients = centre.position_coefficients_mm.copy()
+        coefficients[:, 0] += offsets[child]
+        boundary = centre.inertial_boundary
+        if boundary is not None:
+            boundary = (boundary[0], boundary[1] + offsets[child], boundary[2])
+        sources[child] = replace(
+            centre,
+            source_index=child,
+            position_mm=centre.position_mm + offsets[child],
+            position_coefficients_mm=coefficients,
+            inertial_boundary=boundary,
+            _coefficient_buffer=None,
+        )
+    return _PreparedHistory(
+        arrays, sources, macro.source_acceleration_semantics, parents
+    )
 
 
 def _next_safeguarded_root_trial(
@@ -2149,7 +2209,7 @@ def _stationary_span_margin_ratio(
 
 
 def _response_gradient_from_maintained_stencil(
-    history: TrajectoryHistory,
+    history: TrajectoryHistory | ExactCloudHistory,
     observer_event: ObserverEvent,
     *,
     excluded_source_indices: Sequence[int],
@@ -2205,7 +2265,7 @@ def _response_gradient_from_maintained_stencil(
 
 
 def evaluate_retarded_charge_response_gradient_native(
-    history: TrajectoryHistory,
+    history: TrajectoryHistory | ExactCloudHistory,
     observer_event: ObserverEvent,
     *,
     excluded_source_indices: Sequence[int] = (),
@@ -2537,7 +2597,7 @@ def evaluate_retarded_charge_response_gradient_native(
 
 
 def evaluate_retarded_charge_field_native(
-    history: TrajectoryHistory,
+    history: TrajectoryHistory | ExactCloudHistory,
     observer_event: ObserverEvent,
     *,
     excluded_source_indices: Sequence[int] = (),
@@ -2576,7 +2636,7 @@ def evaluate_retarded_charge_field_native(
 
 
 def evaluate_retarded_mutual_charge_field_matrix_native(
-    history: TrajectoryHistory,
+    history: TrajectoryHistory | ExactCloudHistory,
     observer_events: Sequence[ObserverEvent],
     *,
     require_complete_history: bool = True,
@@ -2619,7 +2679,13 @@ def evaluate_retarded_mutual_charge_field_matrix_native(
     events = tuple(observer_events)
     arrays = prepared.arrays
     exclude_diagonal = bool(exclude_matching_indices)
-    if exclude_diagonal and len(events) != arrays.n_sources:
+    parent_indices = (
+        np.arange(arrays.n_sources)
+        if prepared.parent_indices is None
+        else prepared.parent_indices
+    )
+    parent_count = int(parent_indices.max()) + 1 if parent_indices.size else 0
+    if exclude_diagonal and len(events) != parent_count:
         raise ValueError(
             "matching-index exclusion requires one observer event per source"
         )
@@ -2682,7 +2748,7 @@ def evaluate_retarded_mutual_charge_field_matrix_native(
                 raise
 
             for event_index in range(len(events)):
-                if exclude_diagonal and event_index == source_index:
+                if exclude_diagonal and event_index == parent_indices[source_index]:
                     continue
                 status = int(batch[0][event_index])
                 if status == _STATUS_TERMINATED_SOURCE:
@@ -2713,7 +2779,7 @@ def evaluate_retarded_mutual_charge_field_matrix_native(
         for source_index, source in prepared.sources.items():
             charge = float(arrays.charge_native[source_index])
             for event_index, event in enumerate(events):
-                if exclude_diagonal and event_index == source_index:
+                if exclude_diagonal and event_index == parent_indices[source_index]:
                     continue
                 observer_time = float(event.time_ns)
                 observer_position = np.asarray(event.position_mm, dtype=float)
@@ -2773,7 +2839,7 @@ def evaluate_retarded_mutual_charge_field_matrix_native(
 
 
 def evaluate_retarded_mutual_charge_fields_native(
-    history: TrajectoryHistory,
+    history: TrajectoryHistory | ExactCloudHistory,
     observer_events: Sequence[ObserverEvent],
     *,
     require_complete_history: bool = True,
@@ -2792,9 +2858,10 @@ def evaluate_retarded_mutual_charge_fields_native(
         source_acceleration_semantics=source_acceleration_semantics,
     )
     source_count = matrix.valid_sources.shape[1]
-    electric = np.zeros((source_count, 3))
+    event_count = matrix.valid_sources.shape[0]
+    electric = np.zeros((event_count, 3))
     magnetic = np.zeros_like(electric)
-    potential = np.zeros((source_count, 4))
+    potential = np.zeros((event_count, 4))
     for source_index in range(source_count):
         electric += matrix.electric_field_native[:, source_index]
         magnetic += matrix.magnetic_field_native[:, source_index]
@@ -2812,12 +2879,12 @@ def evaluate_retarded_mutual_charge_fields_native(
             valid_sources=matrix.valid_sources[index],
             four_potential=potential[index],
         )
-        for index in range(source_count)
+        for index in range(event_count)
     )
 
 
 def evaluate_retarded_charge_field_gradient_native(
-    history: TrajectoryHistory,
+    history: TrajectoryHistory | ExactCloudHistory,
     observer_event: ObserverEvent,
     *,
     excluded_source_indices: Sequence[int] = (),

@@ -861,6 +861,8 @@ class MagneticDipoleConfig:
     exact_retarded_backend: str = "python"
     exact_retarded_update: str = "first_order_endpoint"
     intrinsic_spin_self_reaction_mode: str = "off"
+    # Bound by the integration runner for persistent charge-only clouds.
+    exact_charge_cloud: MacroparticleSmearingConfig | None = None
     source: DipoleSourceConfig = field(default_factory=DipoleSourceConfig)
     rider: MagneticDipoleParticleConfig = field(
         default_factory=lambda: MagneticDipoleParticleConfig(species="electron")
@@ -872,6 +874,10 @@ class MagneticDipoleConfig:
     def __post_init__(self) -> None:
         self.enabled = bool(self.enabled)
         self.spin_precession_enabled = bool(self.spin_precession_enabled)
+        if isinstance(self.exact_charge_cloud, dict):
+            self.exact_charge_cloud = MacroparticleSmearingConfig(
+                **self.exact_charge_cloud
+            )
         self.stern_gerlach_force_enabled = bool(self.stern_gerlach_force_enabled)
         self.spin_model = str(self.spin_model).strip().lower()
         self.stern_gerlach_model = str(self.stern_gerlach_model).strip().lower()
