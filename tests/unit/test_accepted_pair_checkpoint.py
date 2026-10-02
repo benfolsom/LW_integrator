@@ -124,7 +124,7 @@ def test_variable_length_pair_checkpoint_round_trip(tmp_path: Path) -> None:
     restored_driver = GrowableTrajectoryBuilder(1, 1, magnetic_dipole=True)
     reopened.restore_pair(restored_rider, restored_driver)
 
-    assert reopened.manifest["schema_version"] == 4
+    assert reopened.manifest["schema_version"] == 5
     assert reopened.committed_knots == 7
     assert reopened.controller_state == {
         "current_lab_step_ns": 0.04,

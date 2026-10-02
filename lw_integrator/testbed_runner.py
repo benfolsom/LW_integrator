@@ -493,6 +493,7 @@ class SimulationOptions:
     driver_rest_spin: Tuple[float, float, float] = (0.0, 0.0, 1.0)
     driver_polarization: float = 1.0
 
+    source_history_representation: str = "light_cone_quintic"
     radiation_reaction_mode: str = "medina_lad"
 
     # Fixed-size physical particle-loss options
@@ -557,6 +558,11 @@ class SimulationOptions:
     log_file_path: Optional[str] = None  # If None, auto-generate in output_dir
 
     def __post_init__(self) -> None:
+        from core.proper_velocity_history import validate_source_history_representation
+
+        self.source_history_representation = validate_source_history_representation(
+            self.source_history_representation
+        )
         self.checkpoint_enabled = bool(
             self.checkpoint_enabled or self.checkpoint_resume_from is not None
         )
@@ -890,6 +896,7 @@ class SimulationOptions:
                 },
             },
             "radiation_reaction_mode": self.radiation_reaction_mode,
+            "source_history_representation": self.source_history_representation,
             "particle_loss": {
                 "enabled": self.particle_loss_enabled,
                 "loss_radius_mm": self.particle_loss_radius_mm,
@@ -1827,6 +1834,9 @@ class SimulationOptions:
             driver_rest_spin=_magnetic_spin("driver"),
             driver_polarization=float(
                 _magnetic_particle_value("driver", "polarization", 1.0)
+            ),
+            source_history_representation=_str(
+                "source_history_representation", "light_cone_quintic"
             ),
             radiation_reaction_mode=_str(
                 "radiation_reaction_mode", default_radiation_reaction_mode
@@ -3639,6 +3649,7 @@ def run_testbed(
             logger=log,
             use_numba=getattr(options, "use_numba", True),
             radiation_reaction_mode=options.radiation_reaction_mode,
+            source_history_representation=options.source_history_representation,
             pseudo_grid=pseudo_grid_config,
             driver_train=driver_train_config,
             cavity_exit=cavity_exit_config,

@@ -10,11 +10,12 @@ the six values and their directional derivatives directly.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Sequence
+from typing import Sequence, cast
 
 import numpy as np
 
 from .constants import C_MMNS
+from .precise_charge import precise_segment_jets, validated_precise_velocity
 from .rfs import electromagnetic_field_tensor_native
 
 
@@ -126,8 +127,65 @@ def quintic_charge_response_jet_native(
     segment_duration_ns: float,
     position_coefficients_mm: np.ndarray,
     retarded_time_ns: float,
+    source_proper_velocity: Sequence[float] | None = None,
 ) -> ChargeResponseJetResult:
-    """Return the stable charge response and its analytical spacetime derivative."""
+    """Return the charge response and its analytical spacetime derivative.
+
+    source_proper_velocity optionally supplies dimensionless u=gamma*beta at
+    the selected root. Position, acceleration, and jerk remain caller-owned
+    local kinematics. Omitting it preserves the original beta-only algebra.
+    """
+
+    if source_proper_velocity is not None:
+        (
+            precise_potential,
+            precise_electric,
+            precise_magnetic,
+            _root,
+            residual,
+            stable_kappa,
+        ) = precise_segment_jets(
+            np.asarray(observer_position_mm, dtype=float),
+            float(charge_native),
+            float(segment_start_time_ns),
+            float(segment_duration_ns),
+            np.asarray(position_coefficients_mm, dtype=float),
+            float(retarded_time_ns),
+            validated_precise_velocity(source_proper_velocity),
+        )
+        packed = np.stack(
+            (
+                -precise_electric[0],
+                -precise_electric[1],
+                -precise_electric[2],
+                -precise_magnetic[2],
+                precise_magnetic[1],
+                -precise_magnetic[0],
+            )
+        )
+        field = electromagnetic_field_tensor_native(
+            cast(Sequence[float], precise_electric[:, 0]),
+            cast(Sequence[float], precise_magnetic[:, 0]),
+        )
+        partial_f = np.stack(
+            [
+                electromagnetic_field_tensor_native(
+                    cast(Sequence[float], precise_electric[:, i]),
+                    cast(Sequence[float], precise_magnetic[:, i]),
+                )
+                for i in range(1, 5)
+            ]
+        )
+        return ChargeResponseJetResult(
+            four_potential=precise_potential[:, 0],
+            partial_a=precise_potential[:, 1:5].T,
+            antisymmetric_response=packed[:, 0],
+            partial_antisymmetric_response=packed[:, 1:5].T,
+            field_tensor=field,
+            partial_f=partial_f,
+            kappa=stable_kappa,
+            light_cone_residual_mm=float(residual[0]),
+        )
 
     observer_position = np.asarray(observer_position_mm, dtype=float)
     coefficients = np.asarray(position_coefficients_mm, dtype=float)

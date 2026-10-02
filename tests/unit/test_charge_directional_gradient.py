@@ -16,7 +16,6 @@ from core.retarded_potential_directional_jet import (
 )
 from tests.unit.test_analytic_charge_response_provider import _uniform_history
 
-
 RATE = "partial_antisymmetric_response_along_velocity"
 DIRECTION = np.array([500.0, 100.0, -70.0, 50.0])
 
@@ -130,7 +129,7 @@ def test_provider_preserves_ordinary_outputs_and_reuses_compiled_roots(monkeypat
     import core.charge_response_jet_numba as compiled
     import core.retarded_fields as fields
 
-    original = compiled.evaluate_charge_response_coefficients_one_event_strict_serial
+    original = fields.solve_null_quintic_numba
     calls = []
 
     def counted(*args):
@@ -145,12 +144,12 @@ def test_provider_preserves_ordinary_outputs_and_reuses_compiled_roots(monkeypat
     )
     event = ObserverEvent(-1e-5, (0.9, 1.1, -0.5))
     old = provider(history, event, relative_step=2.5e-6)
+    monkeypatch.setattr(fields, "solve_null_quintic_numba", counted)
     monkeypatch.setattr(
         compiled,
         "evaluate_charge_response_coefficients_one_event_strict_serial",
-        counted,
+        forbidden,
     )
-    monkeypatch.setattr(fields, "_solve_retarded_sample", forbidden)
     new = provider(
         history, event, relative_step=2.5e-6, observer_four_velocity_mm_ns=DIRECTION
     )

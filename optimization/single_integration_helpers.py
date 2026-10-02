@@ -368,6 +368,9 @@ def build_single_integration_setup(
         external_field_z_max=getattr(config, "external_field_z_max", None),
         external_field_t_min=getattr(config, "external_field_t_min", None),
         external_field_t_max=getattr(config, "external_field_t_max", None),
+        source_history_representation=getattr(
+            config, "source_history_representation", "light_cone_quintic"
+        ),
         radiation_reaction_mode=getattr(
             config,
             "radiation_reaction_mode",

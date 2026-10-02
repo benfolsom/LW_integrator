@@ -860,8 +860,29 @@ def _maximum_beta_magnitude(*states: ParticleState | None) -> float:
         if not np.all(np.isfinite(beta)):
             raise ValueError("inertial prehistory requires finite beta components")
         maximum = max(maximum, float(np.max(np.linalg.norm(beta, axis=-1))))
-    if not np.isfinite(maximum) or maximum >= 1.0:
+    if not np.isfinite(maximum) or maximum > 1.0 + 8 * np.finfo(float).eps:
         raise ValueError("inertial prehistory requires finite subluminal beta")
+    if maximum >= 1.0:
+        for state in states:
+            if state is None:
+                continue
+            from .resolved_knot import knot_proper_velocity
+
+            for index in range(len(state["x"])):
+                beta = np.array([state[f"b{axis}"][index] for axis in "xyz"])
+                if np.linalg.norm(beta) >= 1.0:
+                    if "gamma" not in state:
+                        raise ValueError(
+                            "rounded-luminal beta requires mechanical knot kinematics"
+                        )
+                    proper = knot_proper_velocity(state, index)
+                    expected = proper / np.hypot(1.0, np.linalg.norm(proper))
+                    if not np.allclose(
+                        beta, expected, rtol=0.0, atol=8 * np.finfo(float).eps
+                    ) or not np.all(np.isfinite(proper)):
+                        raise ValueError(
+                            "inertial prehistory beta disagrees with mechanical proper velocity"
+                        )
     return maximum
 
 
@@ -900,9 +921,25 @@ def _estimate_inertial_prehistory_duration_ns(
         relative_step = 1.0e-4
         minimum_step = 1.0e-15
     stencil_step = max(minimum_step, relative_step * separation)
-    beta_max = _maximum_beta_magnitude(rider, driver)
+    _maximum_beta_magnitude(rider, driver)
     causal_span_mm = separation + 3.0 * stencil_step
-    duration = safety * causal_span_mm / (C_MMNS * max(1.0e-15, 1.0 - beta_max))
+    deficit = 1.0
+    from .resolved_knot import knot_proper_velocity
+
+    for state in (rider, driver):
+        for index in range(len(state["x"])):
+            proper = knot_proper_velocity(state, index)
+            norm = float(np.linalg.norm(proper))
+            gamma = float(np.hypot(1.0, norm))
+            beta = np.array([state[f"b{axis}"][index] for axis in "xyz"])
+            if not np.allclose(
+                beta, proper / gamma, rtol=0.0, atol=8 * np.finfo(float).eps
+            ):
+                raise ValueError(
+                    "inertial prehistory requires consistent mechanical kinematics"
+                )
+            deficit = min(deficit, 1 / (gamma * (gamma + norm)))
+    duration = safety * causal_span_mm / (C_MMNS * deficit)
     if not np.isfinite(duration) or duration <= 0.0:
         raise ValueError("could not construct a finite positive inertial prehistory")
     return float(duration)
@@ -963,6 +1000,36 @@ def _build_inertial_coasting_history(
         _coast_state_by_coordinate_time(active_state, float(offset))
         for offset in offsets
     ]
+    # Initial P is mechanical before either canonical-ready flag is set.
+    # Keep its proper velocity and the short anchor position, rather than
+    # recovering gamma from rounded beta or a distant prehistory position.
+    canonical_ready = any(
+        np.any(active_state.get(key, False))
+        for key in ("charge_source_canonical_ready", "dipole_source_canonical_ready")
+    )
+    if canonical_ready:
+        raise ValueError("inertial prehistory requires initial mechanical momentum")
+    mass = np.asarray(active_state["m"], dtype=float)
+    from .resolved_knot import preserve_inertial_remainders
+
+    proper = np.stack(
+        [
+            np.asarray(active_state[f"P{axis}"], dtype=float) / (mass * C_MMNS)
+            for axis in "xyz"
+        ],
+        axis=-1,
+    )
+    for state, offset in zip(history, offsets):
+        preserve_inertial_remainders(state, active_state, float(offset), proper)
+        state["inertial_charge_boundary_ready"] = np.ones_like(mass)
+        state["inertial_charge_boundary_time_ns"] = np.copy(active_state["t"])
+        for axis in "xyz":
+            state[f"inertial_charge_boundary_position_{axis}"] = np.copy(
+                active_state[axis]
+            )
+            state[f"inertial_charge_boundary_u_{axis}"] = np.asarray(
+                active_state[f"P{axis}"], dtype=float
+            ) / (mass * C_MMNS)
     oldest = history[0]
     for state in history:
         for axis in ("x", "y", "z"):
@@ -1160,7 +1227,7 @@ def _preflight_inertial_exact_histories(
                 [observer_state[f"b{axis}"][particle_idx] for axis in "xyz"],
                 dtype=float,
             )
-            gamma = 1.0 / np.sqrt(1.0 - float(beta @ beta))
+            gamma = float(observer_state["gamma"][particle_idx])
             four_velocity = gamma * C_MMNS * np.concatenate(((1.0,), beta))
             observer_charge = float(
                 np.asarray(
@@ -1370,7 +1437,10 @@ def _slice_trajectory_arrays(
 ) -> TrajectoryArrays | None:
     if arrays is None:
         return None
+    from .resolved_knot import RESOLVED_KNOT_FIELDS
+
     return TrajectoryArrays(
+        **{name: getattr(arrays, name)[start:stop] for name in RESOLVED_KNOT_FIELDS},
         x=arrays.x[start:stop],
         y=arrays.y[start:stop],
         z=arrays.z[start:stop],
@@ -2853,6 +2923,7 @@ def retarded_integrator(
     magnetic_dipole: Optional[MagneticDipoleConfig] = None,
     checkpoint: Optional[CheckpointConfig] = None,
     adaptive_pair_return: Optional[AdaptivePairReturnConfig] = None,
+    source_history_representation: str = "light_cone_quintic",
 ) -> Tuple[
     Trajectory,
     Trajectory,
@@ -3000,6 +3071,27 @@ def retarded_integrator(
     particle_loss = particle_loss or ParticleLossConfig()
     macroparticle_smearing = macroparticle_smearing or MacroparticleSmearingConfig()
     magnetic_dipole = magnetic_dipole or MagneticDipoleConfig()
+    from .proper_velocity_history import validate_source_history_representation
+
+    source_history_representation = validate_source_history_representation(
+        source_history_representation
+    )
+    if source_history_representation == "proper_velocity":
+        if magnetic_dipole.exact_retarded_backend.startswith("metal"):
+            raise ValueError("proper_velocity does not support Metal kernels")
+        if magnetic_dipole.source.active:
+            raise ValueError(
+                "proper_velocity does not support magnetic-dipole/spin C5 histories"
+            )
+        if (
+            startup_mode is not StartupMode.INERTIAL_PREHISTORY
+            or sim_type is not SimulationType.BUNCH_TO_BUNCH
+            or not magnetic_dipole.enabled
+            or magnetic_dipole.spin_model != "rfs_minimal_2021"
+        ):
+            raise ValueError(
+                "proper_velocity requires the exact scalar BUNCH_TO_BUNCH path with INERTIAL_PREHISTORY"
+            )
     checkpoint = checkpoint or CheckpointConfig()
     adaptive_pair_return = adaptive_pair_return or AdaptivePairReturnConfig()
     if (
@@ -3346,6 +3438,17 @@ def retarded_integrator(
     _initialize_magnetic_dipole_state(
         init_driver, magnetic_dipole.driver, magnetic_dipole, role="driver"
     )
+    for state in (init_rider, init_driver):
+        if state is not None:
+            if source_history_representation == "proper_velocity" and np.any(
+                np.asarray(state.get("magnetic_moment_native", np.zeros(0))) != 0.0
+            ):
+                raise ValueError(
+                    "proper_velocity does not support magnetic-dipole/spin C5 histories"
+                )
+            state["source_history_mode"] = np.full_like(
+                state["t"], float(source_history_representation == "proper_velocity")
+            )
     driver_train_enabled = bool(driver_train.enabled)
     inertial_prehistory_enabled = startup_mode is StartupMode.INERTIAL_PREHISTORY
     if (
@@ -3731,6 +3834,11 @@ def retarded_integrator(
                 "external_field": external_field,
                 "use_numba": use_numba,
                 "radiation_reaction_mode": radiation_reaction_mode,
+                **(
+                    {"source_history_representation": source_history_representation}
+                    if source_history_representation == "proper_velocity"
+                    else {}
+                ),
                 "magnetic_dipole": magnetic_dipole,
                 "adaptive_pair_return": adaptive_pair_return,
                 "space_charge": space_charge,
@@ -4118,6 +4226,11 @@ def retarded_integrator(
                 "bunch_transv_mom": bunch_transv_mom,
                 "use_numba": use_numba,
                 "radiation_reaction_mode": radiation_reaction_mode,
+                **(
+                    {"source_history_representation": source_history_representation}
+                    if source_history_representation == "proper_velocity"
+                    else {}
+                ),
                 "particle_loss": particle_loss,
                 "macroparticle_smearing": macroparticle_smearing,
                 "beamline_geometry": beamline_geometry,
@@ -5123,6 +5236,7 @@ def run_integrator(
         image_subcharge_count=config.image_subcharge_count,
         use_conducting_image_weighting=config.use_image_weighting,
         radiation_reaction_mode=config.radiation_reaction_mode,
+        source_history_representation=config.source_history_representation,
         macroparticle_charge_multiplier=config.macroparticle_charge_multiplier,
         macroparticle_sigma_multiplier=config.macroparticle_sigma_multiplier,
         macroparticle_use_momentum_errors=config.macroparticle_use_momentum_errors,

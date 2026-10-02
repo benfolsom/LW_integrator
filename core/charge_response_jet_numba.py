@@ -6,6 +6,7 @@ import numpy as np
 from numba import njit
 
 from .constants import C_MMNS
+from .precise_charge import precise_segment_jets
 from .retarded_dipole_numba_roots import _STATUS_VALID, _solve_retarded_sample
 
 _SIZE = 5
@@ -99,6 +100,7 @@ def quintic_charge_response_coefficients_strict_serial(
     segment_duration_ns: float,
     position_coefficients_mm: np.ndarray,
     retarded_time_ns: float,
+    source_proper_velocity: np.ndarray | None = None,
 ) -> tuple[
     np.ndarray,
     np.ndarray,
@@ -107,7 +109,37 @@ def quintic_charge_response_coefficients_strict_serial(
     float,
     float,
 ]:
-    """Return ``A, partial_A, packed_F, partial_packed_F, kappa, residual``."""
+    """Return ``A, partial_A, packed_F, partial_packed_F, kappa, residual``.
+
+    Optional source_proper_velocity is dimensionless u at the selected root;
+    absent input retains the original beta-only arithmetic ordering.
+    """
+
+    if source_proper_velocity is not None:
+        potential, electric, magnetic, _root, residual, kappa = precise_segment_jets(
+            observer_position_mm,
+            charge_native,
+            segment_start_time_ns,
+            segment_duration_ns,
+            position_coefficients_mm,
+            retarded_time_ns,
+            source_proper_velocity,
+        )
+        packed_jets = np.empty((6, 21))
+        packed_jets[0] = -electric[0]
+        packed_jets[1] = -electric[1]
+        packed_jets[2] = -electric[2]
+        packed_jets[3] = -magnetic[2]
+        packed_jets[4] = magnetic[1]
+        packed_jets[5] = -magnetic[0]
+        return (
+            potential[:, 0].copy(),
+            potential[:, 1:5].T.copy(),
+            packed_jets[:, 0].copy(),
+            packed_jets[:, 1:5].T.copy(),
+            kappa,
+            residual[0],
+        )
 
     duration_coordinate = C_MMNS * segment_duration_ns
     root_coordinate = C_MMNS * retarded_time_ns
@@ -292,6 +324,7 @@ def quintic_charge_response_jet_strict_serial(
     segment_duration_ns: float,
     position_coefficients_mm: np.ndarray,
     retarded_time_ns: float,
+    source_proper_velocity: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, float, float]:
     """Compatibility oracle returning materialized ``A, F, partial_F``."""
 
@@ -304,6 +337,7 @@ def quintic_charge_response_jet_strict_serial(
             segment_duration_ns,
             position_coefficients_mm,
             retarded_time_ns,
+            source_proper_velocity,
         )
     )
     field, partial_f = _materialize_response_tensors(packed, partial_packed)

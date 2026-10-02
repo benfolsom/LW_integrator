@@ -550,6 +550,7 @@ def _prepare_dipole_history_uncached(
             arrays,
             source_index,
             reserve_capacity=reserve_capacity,
+            light_cone_enabled=False,
         )
         alive_count = int(worldline.time_ns.size)
         source_spin = spin[:alive_count, source_index]
