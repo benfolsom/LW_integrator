@@ -263,15 +263,52 @@ positive for the failing event, rather than opposite signs. This is a stencil
 coverage problem, not a high-gamma rounding failure. No stencil-sizing or
 future-extrapolation fix is included in stage 1.
 
-Remaining stage 2 work
-----------------------
+Stored charge worldlines (stage 2)
+----------------------------------
 
-The general quintic roots, position coefficients, reconstructed history beta,
-segment-margin proofs, and integrator beta clamp still have the limits
-identified in the audit. Dipole kernels and chrono matching are also unchanged.
-Stage 2 may supply resolved light-cone history coordinates and gamma to the
-local precise kernels, but it still needs a coherent acceleration/jerk
-contract, accepted/trial history handling, root-error accounting, and margin
-validation. No interpolation model, transition threshold, or stage 2 storage
-has been implemented here. Exact kinematics cannot recover observer event
-precision or source information already discarded before the kernel call.
+Each charge-source segment stores the existing quintic Hermite worldline in a
+local frame as $w=c(t-t_0)-\hat e\cdot(x-x_0)$ and two transverse displacements.
+The direction is the normalized sum of the endpoint mechanical proper
+velocities when available, otherwise the sum of their velocities. The fixed
+$x$ axis is used when the velocity sum has norm below $10^{-12}$ or the endpoint
+velocities have a negative dot product. The transverse basis starts with the
+coordinate axis least aligned with this direction.
+
+For proper velocity $u=\gamma\beta$, the knot speed deficit is evaluated as
+$\delta=1/[\gamma(\gamma+|u|)]$, with $\gamma=\sqrt{1+|u|^2}$. The exact identity
+$dw/d(ct)=\delta+(1-\delta)|\hat e-\hat\beta|^2/2$ avoids subtracting nearly
+unit velocities. Decimal arithmetic with 80 digits prepares the frame and
+knot transformations; interpolation and strict compiled kernels use binary64.
+This changes the coordinates of the quintic, rather than its polynomial degree
+or endpoint Hermite conditions. The established coasting roundoff rule is
+retained.
+
+Accepted knots carry mechanical proper velocity after removal of the
+canonical field term, the speed deficit, and two coordinate remainders beside
+each rounded position and coordinate time. The second remainder is needed to
+resolve a deficit of order $10^{-25}$ after macroscopic drift at
+$\gamma=10^{12}$. Decimal arithmetic with 90 digits preserves the same drift
+update before its coordinate accumulation discards this information. Public
+rounded positions remain the integrator's accepted positions.
+
+Retarded roots are solved in normalized segment time. The unrounded root
+fraction supplies the source derivatives and resolved separation to the
+precise charge potential, field, and response kernels. Acceleration, jerk,
+and the fourth position derivative come from the same quintic. The root test
+uses the light-cone residual divided by $\kappa$, and stops at adjacent
+representable fractions if a tighter location is unavailable. An absolute
+binary64 retarded time is a diagnostic; it must not be used to resample an
+ultrarelativistic root and discard its fraction.
+
+The Bernstein proof bounds $1-|\beta|^2$ directly in null coordinates,
+rather than subtracting a rounded velocity bound from one. Resolved knot scans
+use both coordinate remainders. Accelerator candidate certification retains a
+complete CPU scan when a rounded chord cannot prove monotonicity. Managed
+history caches, provisional trial tails, and adaptive append preserve the
+resolved coordinates and immutable segments.
+
+Fixed-history checkpoints use schema 2; accepted-pair checkpoints use schema 5.
+Readers also load schemas 1 and 4, respectively, initializing missing resolved
+channels to zero. Old files cannot restore precision that was never recorded.
+The magnetic-dipole worldline and its C5 history models retain their existing
+representation. Chrono matching remains unchanged.

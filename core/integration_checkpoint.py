@@ -19,14 +19,15 @@ from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
+from .resolved_knot import RESOLVED_KNOT_FIELDS
 from .types import INERTIAL_CHARGE_BOUNDARY_FIELDS, TrajectoryArrays, TrajectoryBuilder
 
 if TYPE_CHECKING:
     from .causal_c5_dipole_provider import AcceptedPairCausalC5SourceHistory
     from .causal_local_source_history import AcceptedPairCausalLocalSourceHistory
 
-SCHEMA_VERSION = 1
-ACCEPTED_PAIR_SCHEMA_VERSION = 4
+SCHEMA_VERSION = 2
+ACCEPTED_PAIR_SCHEMA_VERSION = 5
 
 
 class CheckpointError(RuntimeError):
@@ -237,7 +238,7 @@ class IntegrationCheckpointStore:
             manifest = json.loads(self.manifest_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             raise CheckpointError(f"cannot read checkpoint manifest: {exc}") from exc
-        if manifest.get("schema_version") != SCHEMA_VERSION:
+        if manifest.get("schema_version") not in {1, SCHEMA_VERSION}:
             raise CheckpointCompatibilityError(
                 "unsupported checkpoint schema "
                 f"{manifest.get('schema_version')!r}; expected {SCHEMA_VERSION}"
@@ -338,6 +339,8 @@ class IntegrationCheckpointStore:
         for role, trajectory in (("rider", rider), ("driver", driver)):
             for name in _ROW_ARRAY_FIELDS:
                 values = np.asarray(getattr(trajectory, name))
+                if name in RESOLVED_KNOT_FIELDS and values.size == 0:
+                    values = np.zeros_like(trajectory.t)
                 arrays[f"{role}__{name}"] = np.array(values[start:stop], copy=True)
         filename = f"rows_{start:09d}_{stop:09d}.npz"
         chunk_path = self.chunks_directory / filename
@@ -401,6 +404,7 @@ class IntegrationCheckpointStore:
                 row_arrays = {
                     name: np.array(archive[f"{role}__{name}"], copy=True)
                     for name in _ROW_ARRAY_FIELDS
+                    if name not in RESOLVED_KNOT_FIELDS or f"{role}__{name}" in archive
                 }
             builder.restore_checkpoint_rows(
                 start,
@@ -547,7 +551,7 @@ class AcceptedPairCheckpointStore:
         except (OSError, json.JSONDecodeError) as exc:
             raise CheckpointError(f"cannot read checkpoint manifest: {exc}") from exc
         if (
-            manifest.get("schema_version") != ACCEPTED_PAIR_SCHEMA_VERSION
+            manifest.get("schema_version") not in {4, ACCEPTED_PAIR_SCHEMA_VERSION}
             or manifest.get("checkpoint_kind") != "accepted_pair_history"
         ):
             raise CheckpointCompatibilityError(
@@ -788,6 +792,8 @@ class AcceptedPairCheckpointStore:
         for role, trajectory in (("rider", rider), ("driver", driver)):
             for name in _ACCEPTED_PAIR_ROW_ARRAY_FIELDS:
                 values = np.asarray(getattr(trajectory, name))
+                if name in RESOLVED_KNOT_FIELDS and values.size == 0:
+                    values = np.zeros_like(trajectory.t)
                 arrays[f"{role}__{name}"] = np.array(values[start:stop], copy=True)
         c5_metadata = self._append_causal_c5_arrays(
             arrays,
@@ -867,6 +873,7 @@ class AcceptedPairCheckpointStore:
                 row_arrays = {
                     name: np.array(archive[f"{role}__{name}"], copy=True)
                     for name in _ACCEPTED_PAIR_ROW_ARRAY_FIELDS
+                    if name not in RESOLVED_KNOT_FIELDS or f"{role}__{name}" in archive
                 }
             builder.restore_checkpoint_rows(
                 start,

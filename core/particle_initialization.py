@@ -143,6 +143,9 @@ def create_particle_state(
     }
     particle_state.update(charge_state)
 
+    from core.resolved_knot import initialize_mechanical_knots
+
+    initialize_mechanical_knots(particle_state)
     return particle_state, rest_energy_mev
 
 
@@ -236,8 +239,8 @@ def create_particle_state_3d(
     centroid = np.asarray(starting_position_mm, dtype=float)
 
     gamma = 1.0 + kinetic_energy_mev / rest_energy_mev
-    beta = np.sqrt(max(0.0, 1.0 - 1.0 / gamma**2))
-    p_long = gamma * particle_mass_amu * beta * C_MMNS
+    proper_speed = np.sqrt((gamma - 1.0) * (gamma + 1.0))
+    p_long = proper_speed * particle_mass_amu * C_MMNS
 
     if particle_count > 1:
         long_offsets, u_offsets, v_offsets = _bunch_3d_offsets(
@@ -314,6 +317,9 @@ def create_particle_state_3d(
     }
     particle_state.update(charge_state)
 
+    from core.resolved_knot import initialize_mechanical_knots
+
+    initialize_mechanical_knots(particle_state)
     return particle_state, rest_energy_mev
 
 

@@ -36,6 +36,10 @@ def ballistic_retarded_point(
     anchor_time_ns: float,
     anchor_position_mm: Sequence[float] | np.ndarray,
     source_proper_velocity: Sequence[float] | np.ndarray,
+    observer_time_low_ns: float = 0.0,
+    observer_position_low_mm: Sequence[float] | np.ndarray | None = None,
+    observer_time_tail_ns: float = 0.0,
+    observer_position_tail_mm: Sequence[float] | np.ndarray | None = None,
 ) -> BallisticRetardedPoint:
     """Solve the positive quadratic root, with a conservative rounding bound.
 
@@ -76,7 +80,31 @@ def ballistic_retarded_point(
             else [Decimal(1), Decimal(0), Decimal(0)]
         )
         displacement = [d(float(x)) - d(float(y)) for x, y in zip(observer, anchor)]
-        ct = c * (d(float(observer_time_ns)) - d(float(anchor_time_ns)))
+        if observer_position_low_mm is not None:
+            low = np.asarray(observer_position_low_mm, dtype=float)
+            if low.shape != (3,) or not np.all(np.isfinite(low)):
+                raise ValueError("ballistic observer remainders must be finite")
+            displacement = [
+                v + d(float(remainder)) for v, remainder in zip(displacement, low)
+            ]
+        if observer_position_tail_mm is not None:
+            tail_array = np.asarray(observer_position_tail_mm, dtype=float)
+            if tail_array.shape != (3,) or not np.all(np.isfinite(tail_array)):
+                raise ValueError("ballistic observer remainders must be finite")
+            displacement = [
+                value + d(float(tail))
+                for value, tail in zip(displacement, observer_position_tail_mm)
+            ]
+        if not np.isfinite(observer_time_low_ns) or not np.isfinite(
+            observer_time_tail_ns
+        ):
+            raise ValueError("ballistic observer time remainder must be finite")
+        ct = c * (
+            d(float(observer_time_ns))
+            + d(float(observer_time_low_ns))
+            + d(float(observer_time_tail_ns))
+            - d(float(anchor_time_ns))
+        )
         longitudinal = sum((x * y for x, y in zip(displacement, direction)), Decimal(0))
         perpendicular = [x - longitudinal * y for x, y in zip(displacement, direction)]
         transverse2 = sum((x * x for x in perpendicular), Decimal(0))

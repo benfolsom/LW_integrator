@@ -174,7 +174,7 @@ def test_initial_analytical_jit_failure_has_named_capability_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     numba = pytest.importorskip("numba")
-    import core.charge_response_jet_numba as compiled
+    import core.retarded_fields as compiled
 
     def failed_compilation(*args: object, **kwargs: object) -> None:
         del args, kwargs
@@ -183,7 +183,7 @@ def test_initial_analytical_jit_failure_has_named_capability_error(
     failed_compilation.signatures = ()
     monkeypatch.setattr(
         compiled,
-        "evaluate_charge_response_coefficients_one_event_strict_serial",
+        "solve_null_quintic_numba",
         failed_compilation,
     )
     with pytest.raises(

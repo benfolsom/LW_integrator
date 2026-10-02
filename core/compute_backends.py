@@ -62,6 +62,14 @@ class KnotScanBatch:
     source_time_ns: np.ndarray
     source_position_mm: np.ndarray
     alive_counts: np.ndarray
+    source_time_low_ns: np.ndarray | None = None
+    source_position_low_mm: np.ndarray | None = None
+    observer_time_low_ns: np.ndarray | None = None
+    observer_position_low_mm: np.ndarray | None = None
+    source_time_tail_ns: np.ndarray | None = None
+    source_position_tail_mm: np.ndarray | None = None
+    observer_time_tail_ns: np.ndarray | None = None
+    observer_position_tail_mm: np.ndarray | None = None
 
     def __post_init__(self) -> None:
         observer_time = np.asarray(self.observer_time_ns, dtype=np.float64)
@@ -69,6 +77,24 @@ class KnotScanBatch:
         source_time = np.asarray(self.source_time_ns, dtype=np.float64)
         source_position = np.asarray(self.source_position_mm, dtype=np.float64)
         alive_counts = np.asarray(self.alive_counts, dtype=np.int64)
+
+        for name, shape in (
+            ("source_time_low_ns", source_time.shape),
+            ("source_position_low_mm", source_position.shape),
+            ("observer_time_low_ns", observer_time.shape),
+            ("observer_position_low_mm", observer_position.shape),
+            ("source_time_tail_ns", source_time.shape),
+            ("source_position_tail_mm", source_position.shape),
+            ("observer_time_tail_ns", observer_time.shape),
+            ("observer_position_tail_mm", observer_position.shape),
+        ):
+            value = getattr(self, name)
+            if value is not None and (
+                np.asarray(value).shape != shape or not np.all(np.isfinite(value))
+            ):
+                raise ValueError(
+                    f"{name} must be finite and match its coordinate shape"
+                )
 
         if observer_time.ndim != 1:
             raise ValueError("observer_time_ns must have shape [events]")
@@ -103,6 +129,22 @@ class KnotScanBatch:
         object.__setattr__(self, "source_time_ns", source_time)
         object.__setattr__(self, "source_position_mm", source_position)
         object.__setattr__(self, "alive_counts", alive_counts)
+
+    @property
+    def has_resolved_coordinates(self) -> bool:
+        return any(
+            getattr(self, name) is not None
+            for name in (
+                "source_time_low_ns",
+                "source_position_low_mm",
+                "observer_time_low_ns",
+                "observer_position_low_mm",
+                "source_time_tail_ns",
+                "source_position_tail_mm",
+                "observer_time_tail_ns",
+                "observer_position_tail_mm",
+            )
+        )
 
     @property
     def event_count(self) -> int:
@@ -168,12 +210,66 @@ def _latest_bracket_from_residuals(residuals: np.ndarray) -> int:
     return int(brackets[-1]) if brackets.size else -1
 
 
+def _resolved_knot_scan_residual(
+    batch: KnotScanBatch, event_index: int, source_index: int, knot_index: int
+) -> float:
+    from decimal import Decimal, localcontext
+
+    with localcontext() as context:
+        context.prec = 80
+
+        def d(value: float) -> Decimal:
+            return Decimal.from_float(float(value))
+
+        source_t = d(batch.source_time_ns[knot_index, source_index])
+        observer_t = d(batch.observer_time_ns[event_index])
+        if batch.source_time_low_ns is not None:
+            source_t += d(batch.source_time_low_ns[knot_index, source_index])
+        if batch.observer_time_low_ns is not None:
+            observer_t += d(batch.observer_time_low_ns[event_index])
+        if batch.source_time_tail_ns is not None:
+            source_t += d(batch.source_time_tail_ns[knot_index, source_index])
+        if batch.observer_time_tail_ns is not None:
+            observer_t += d(batch.observer_time_tail_ns[event_index])
+        delta = []
+        for component in range(3):
+            value = d(batch.observer_position_mm[event_index, component]) - d(
+                batch.source_position_mm[knot_index, source_index, component]
+            )
+            if batch.source_position_low_mm is not None:
+                value -= d(
+                    batch.source_position_low_mm[knot_index, source_index, component]
+                )
+            if batch.observer_position_low_mm is not None:
+                value += d(batch.observer_position_low_mm[event_index, component])
+            if batch.source_position_tail_mm is not None:
+                value -= d(
+                    batch.source_position_tail_mm[knot_index, source_index, component]
+                )
+            if batch.observer_position_tail_mm is not None:
+                value += d(batch.observer_position_tail_mm[event_index, component])
+            delta.append(value)
+        ct = d(C_MMNS) * (observer_t - source_t)
+        squared = sum((value * value for value in delta), Decimal(0))
+        radius = squared.sqrt()
+        if ct >= 0 and ct + radius > 0:
+            return float((ct * ct - squared) / (ct + radius))
+        return float(ct - radius)
+
+
 def _source_residuals_float64(
     batch: KnotScanBatch, event_index: int, source_index: int
 ) -> np.ndarray:
     alive_count = int(batch.alive_counts[source_index])
     if alive_count == 0:
         return np.zeros(0, dtype=np.float64)
+    if batch.has_resolved_coordinates:
+        return np.array(
+            [
+                _resolved_knot_scan_residual(batch, event_index, source_index, knot)
+                for knot in range(alive_count)
+            ]
+        )
     displacement = (
         batch.observer_position_mm[event_index, np.newaxis, :]
         - batch.source_position_mm[:alive_count, source_index, :]
@@ -196,6 +292,10 @@ def _source_residual_at_float64(
     source_index: int,
     knot_index: int,
 ) -> float:
+    if batch.has_resolved_coordinates:
+        return _resolved_knot_scan_residual(
+            batch, event_index, source_index, knot_index
+        )
     separation = float(
         np.linalg.norm(
             batch.observer_position_mm[event_index]
@@ -227,6 +327,10 @@ def strictly_timelike_source_chords_float64(batch: KnotScanBatch) -> np.ndarray:
     for source_index in range(batch.source_count):
         alive_count = int(batch.alive_counts[source_index])
         if alive_count < 2:
+            continue
+        if batch.has_resolved_coordinates:
+            # The complete resolved scan remains authoritative. A rounded
+            # chord cannot supply the accelerator's constant-time proof.
             continue
         delta_time = np.diff(batch.source_time_ns[:alive_count, source_index])
         light_distance = C_MMNS * delta_time

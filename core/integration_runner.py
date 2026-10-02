@@ -860,8 +860,29 @@ def _maximum_beta_magnitude(*states: ParticleState | None) -> float:
         if not np.all(np.isfinite(beta)):
             raise ValueError("inertial prehistory requires finite beta components")
         maximum = max(maximum, float(np.max(np.linalg.norm(beta, axis=-1))))
-    if not np.isfinite(maximum) or maximum >= 1.0:
+    if not np.isfinite(maximum) or maximum > 1.0 + 8 * np.finfo(float).eps:
         raise ValueError("inertial prehistory requires finite subluminal beta")
+    if maximum >= 1.0:
+        for state in states:
+            if state is None:
+                continue
+            from .resolved_knot import knot_proper_velocity
+
+            for index in range(len(state["x"])):
+                beta = np.array([state[f"b{axis}"][index] for axis in "xyz"])
+                if np.linalg.norm(beta) >= 1.0:
+                    if "gamma" not in state:
+                        raise ValueError(
+                            "rounded-luminal beta requires mechanical knot kinematics"
+                        )
+                    proper = knot_proper_velocity(state, index)
+                    expected = proper / np.hypot(1.0, np.linalg.norm(proper))
+                    if not np.allclose(
+                        beta, expected, rtol=0.0, atol=8 * np.finfo(float).eps
+                    ) or not np.all(np.isfinite(proper)):
+                        raise ValueError(
+                            "inertial prehistory beta disagrees with mechanical proper velocity"
+                        )
     return maximum
 
 
@@ -900,9 +921,25 @@ def _estimate_inertial_prehistory_duration_ns(
         relative_step = 1.0e-4
         minimum_step = 1.0e-15
     stencil_step = max(minimum_step, relative_step * separation)
-    beta_max = _maximum_beta_magnitude(rider, driver)
+    _maximum_beta_magnitude(rider, driver)
     causal_span_mm = separation + 3.0 * stencil_step
-    duration = safety * causal_span_mm / (C_MMNS * max(1.0e-15, 1.0 - beta_max))
+    deficit = 1.0
+    from .resolved_knot import knot_proper_velocity
+
+    for state in (rider, driver):
+        for index in range(len(state["x"])):
+            proper = knot_proper_velocity(state, index)
+            norm = float(np.linalg.norm(proper))
+            gamma = float(np.hypot(1.0, norm))
+            beta = np.array([state[f"b{axis}"][index] for axis in "xyz"])
+            if not np.allclose(
+                beta, proper / gamma, rtol=0.0, atol=8 * np.finfo(float).eps
+            ):
+                raise ValueError(
+                    "inertial prehistory requires consistent mechanical kinematics"
+                )
+            deficit = min(deficit, 1 / (gamma * (gamma + norm)))
+    duration = safety * causal_span_mm / (C_MMNS * deficit)
     if not np.isfinite(duration) or duration <= 0.0:
         raise ValueError("could not construct a finite positive inertial prehistory")
     return float(duration)
@@ -973,7 +1010,17 @@ def _build_inertial_coasting_history(
     if canonical_ready:
         raise ValueError("inertial prehistory requires initial mechanical momentum")
     mass = np.asarray(active_state["m"], dtype=float)
-    for state in history:
+    from .resolved_knot import preserve_inertial_remainders
+
+    proper = np.stack(
+        [
+            np.asarray(active_state[f"P{axis}"], dtype=float) / (mass * C_MMNS)
+            for axis in "xyz"
+        ],
+        axis=-1,
+    )
+    for state, offset in zip(history, offsets):
+        preserve_inertial_remainders(state, active_state, float(offset), proper)
         state["inertial_charge_boundary_ready"] = np.ones_like(mass)
         state["inertial_charge_boundary_time_ns"] = np.copy(active_state["t"])
         for axis in "xyz":
@@ -1180,7 +1227,7 @@ def _preflight_inertial_exact_histories(
                 [observer_state[f"b{axis}"][particle_idx] for axis in "xyz"],
                 dtype=float,
             )
-            gamma = 1.0 / np.sqrt(1.0 - float(beta @ beta))
+            gamma = float(observer_state["gamma"][particle_idx])
             four_velocity = gamma * C_MMNS * np.concatenate(((1.0,), beta))
             observer_charge = float(
                 np.asarray(
