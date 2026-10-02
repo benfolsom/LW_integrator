@@ -63,6 +63,7 @@ from .resolved_knot import (
 from typing import Any, Optional, Sequence
 
 import numpy as np
+from math import fsum
 
 from .constants import C_MMNS
 from .distances import (
@@ -510,6 +511,38 @@ def _stable_kinetic_energy_native(
     rest_momentum = mass * C_MMNS
     total_momentum = float(np.hypot(rest_momentum, magnitude))
     return float(C_MMNS * magnitude**2 / (total_momentum + rest_momentum))
+
+
+def _mass_shell_projection_energy_increment_native(
+    start_momentum: np.ndarray,
+    end_momentum: np.ndarray,
+    particle_mass: float,
+    temporal_impulse: float,
+) -> float:
+    """Rationalize the shell-energy change and combine the temporal impulse.
+
+    With S(p) = sqrt((mc)^2 + p.p), delta K = c delta(p.p)/(S1+S0).
+    Factor each square difference before summation; no large kinetic energies
+    or squared momenta are subtracted. The physical diagnostic is unchanged.
+    """
+    start = np.asarray(start_momentum, dtype=float)
+    end = np.asarray(end_momentum, dtype=float)
+    if any(p.shape != (3,) or not np.all(np.isfinite(p)) for p in (start, end)):
+        raise ValueError("mechanical_momentum must be a finite three-vector")
+    mass = float(particle_mass)
+    if not np.isfinite(mass) or mass <= 0.0:
+        raise ValueError("particle_mass must be finite and positive")
+    if not np.isfinite(temporal_impulse):
+        raise ValueError("temporal_impulse must be finite")
+    rest = mass * C_MMNS
+    denominator = float(np.hypot(rest, np.hypot.reduce(start))) + float(
+        np.hypot(rest, np.hypot.reduce(end))
+    )
+    numerator = fsum(
+        [float((b - a) * (b + a)) for a, b in zip(start, end)]
+        + [-float(temporal_impulse) * denominator]
+    )
+    return float(C_MMNS * (numerator / denominator))
 
 
 def _canonical_pt_from_mechanical_mass_shell(
@@ -4475,18 +4508,13 @@ def retarded_equations_of_motion(
                         ),
                         dtype=float,
                     )
-                    start_kinetic_energy = _stable_kinetic_energy_native(
-                        start_mechanical_momentum,
-                        particle_mass,
-                    )
-                    end_kinetic_energy = _stable_kinetic_energy_native(
-                        on_shell_mechanical_momentum,
-                        particle_mass,
-                    )
-                    result["mass_shell_projection_energy"][particle_idx] = float(
-                        end_kinetic_energy
-                        - start_kinetic_energy
-                        - C_MMNS * exact_mechanical_temporal_impulse
+                    result["mass_shell_projection_energy"][particle_idx] = (
+                        _mass_shell_projection_energy_increment_native(
+                            start_mechanical_momentum,
+                            on_shell_mechanical_momentum,
+                            particle_mass,
+                            exact_mechanical_temporal_impulse,
+                        )
                     )
                 else:
                     result["mass_shell_projection_energy"][particle_idx] = float(
