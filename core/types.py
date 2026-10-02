@@ -8,6 +8,8 @@ and example notebooks.
 
 from __future__ import annotations
 
+from .resolved_knot import RESOLVED_KNOT_FIELDS
+
 import copy
 from dataclasses import dataclass, field, fields
 from enum import Enum, IntEnum, auto
@@ -1170,6 +1172,7 @@ class IntegratorConfig:
     z_cutoff_mode: str = "absolute"
     image_subcharge_count: int = 12
     use_image_weighting: bool = True
+    source_history_representation: str = "light_cone_quintic"
     radiation_reaction_mode: str = "medina_lad"
     macroparticle_charge_multiplier: float = 1.0
     macroparticle_sigma_multiplier: float = 1.0
@@ -1191,6 +1194,13 @@ class IntegratorConfig:
     adaptive_pair_return: AdaptivePairReturnConfig = field(
         default_factory=AdaptivePairReturnConfig
     )
+
+    def __post_init__(self) -> None:
+        from .proper_velocity_history import validate_source_history_representation
+
+        self.source_history_representation = validate_source_history_representation(
+            self.source_history_representation
+        )
 
 
 @dataclass
@@ -1491,6 +1501,45 @@ class TrajectoryArrays:
         default_factory=lambda: np.zeros(0), repr=False
     )
 
+    # Resolved charge-knot sidecars; empty on pre-stage-2 unmanaged histories.
+    source_u_x: np.ndarray = field(default_factory=lambda: np.zeros((0, 0)), repr=False)
+    source_u_y: np.ndarray = field(default_factory=lambda: np.zeros((0, 0)), repr=False)
+    source_u_z: np.ndarray = field(default_factory=lambda: np.zeros((0, 0)), repr=False)
+    source_kinematics_ready: np.ndarray = field(
+        default_factory=lambda: np.zeros((0, 0)), repr=False
+    )
+    source_position_low_x: np.ndarray = field(
+        default_factory=lambda: np.zeros((0, 0)), repr=False
+    )
+    source_position_low_y: np.ndarray = field(
+        default_factory=lambda: np.zeros((0, 0)), repr=False
+    )
+    source_position_low_z: np.ndarray = field(
+        default_factory=lambda: np.zeros((0, 0)), repr=False
+    )
+    source_time_low_ns: np.ndarray = field(
+        default_factory=lambda: np.zeros((0, 0)), repr=False
+    )
+
+    source_position_tail_x: np.ndarray = field(
+        default_factory=lambda: np.zeros((0, 0)), repr=False
+    )
+    source_position_tail_y: np.ndarray = field(
+        default_factory=lambda: np.zeros((0, 0)), repr=False
+    )
+    source_position_tail_z: np.ndarray = field(
+        default_factory=lambda: np.zeros((0, 0)), repr=False
+    )
+    source_time_tail_ns: np.ndarray = field(
+        default_factory=lambda: np.zeros((0, 0)), repr=False
+    )
+    source_history_mode: np.ndarray = field(
+        default_factory=lambda: np.empty((0, 0), dtype=float)
+    )
+    source_speed_deficit: np.ndarray = field(
+        default_factory=lambda: np.zeros((0, 0)), repr=False
+    )
+
     # Builder-owned live metadata. Manually constructed SOA objects deliberately
     # leave this unset and are therefore not eligible for persistent caches.
     _storage_state: _TrajectoryStorageState | None = field(
@@ -1614,6 +1663,10 @@ class TrajectoryArrays:
             "beta_samples": self.beta_samples[step],
             "_dead_particles": self.dead[step],
         }
+        for name in RESOLVED_KNOT_FIELDS:
+            values = getattr(self, name)
+            if values.shape == self.x.shape:
+                s[name] = values[step]
         if np.any(self.inertial_charge_boundary_ready):
             s.update(
                 {key: getattr(self, key) for key in INERTIAL_CHARGE_BOUNDARY_FIELDS}
@@ -1885,6 +1938,9 @@ class IndexedTrajectoryArrays:
                 self.particle_indices,
             ],
         }
+        for name in RESOLVED_KNOT_FIELDS:
+            if getattr(self.base, name).shape == self.base.x.shape:
+                state[name] = self.row(name, step)
         if np.any(self.base.inertial_charge_boundary_ready):
             state.update(
                 {key: self.constant(key) for key in INERTIAL_CHARGE_BOUNDARY_FIELDS}
@@ -1979,7 +2035,7 @@ class TrajectoryBuilder:
     """
 
     # Fields present in legacy state dicts that map to 2-D kinematic arrays
-    _KINEMATIC_FIELDS: tuple = (
+    _KINEMATIC_FIELDS: tuple = RESOLVED_KNOT_FIELDS + (
         "x",
         "y",
         "z",
@@ -2370,7 +2426,12 @@ class TrajectoryBuilder:
         optional_source_start_fields = set(
             self._SOURCE_START_FLOAT_FIELDS + self._MAGNETIC_BOOL_FIELDS
         )
-        missing = expected_row_fields - optional_source_start_fields - row_arrays.keys()
+        missing = (
+            expected_row_fields
+            - optional_source_start_fields
+            - set(RESOLVED_KNOT_FIELDS)
+            - row_arrays.keys()
+        )
         if missing:
             raise ValueError(
                 "checkpoint row block is missing fields: " + ", ".join(sorted(missing))
@@ -2466,6 +2527,7 @@ class TrajectoryBuilder:
             bx=self._arrays["bx"][:s],
             by=self._arrays["by"][:s],
             bz=self._arrays["bz"][:s],
+            **{name: self._arrays[name][:s] for name in RESOLVED_KNOT_FIELDS},
             bdotx=self._arrays["bdotx"][:s],
             bdoty=self._arrays["bdoty"][:s],
             bdotz=self._arrays["bdotz"][:s],
@@ -2574,6 +2636,7 @@ class TrajectoryBuilder:
             bx=self._arrays["bx"],
             by=self._arrays["by"],
             bz=self._arrays["bz"],
+            **{name: self._arrays[name] for name in RESOLVED_KNOT_FIELDS},
             bdotx=self._arrays["bdotx"],
             bdoty=self._arrays["bdoty"],
             bdotz=self._arrays["bdotz"],

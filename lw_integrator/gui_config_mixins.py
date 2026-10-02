@@ -1258,6 +1258,10 @@ class IntegratorGUIConfigMixin:
             )
         )
         self._update_max_substeps_display()
+        if hasattr(self, "source_history_representation_var"):
+            self.source_history_representation_var.set(
+                options.source_history_representation
+            )
         self.radiation_reaction_mode_var.set(
             getattr(options, "radiation_reaction_mode", "medina_lad")
         )
@@ -1839,6 +1843,11 @@ class IntegratorGUIConfigMixin:
             external_field_z_max=external_bounds["z_max"],
             external_field_t_min=external_bounds["t_min"],
             external_field_t_max=external_bounds["t_max"],
+            source_history_representation=(
+                str(self.source_history_representation_var.get())
+                if hasattr(self, "source_history_representation_var")
+                else self.options.source_history_representation
+            ),
             radiation_reaction_mode=(
                 str(self.radiation_reaction_mode_var.get())
                 if hasattr(self, "radiation_reaction_mode_var")

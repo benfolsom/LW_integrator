@@ -5,8 +5,9 @@ Audit of ``8d42ba6`` on ``feature/high-gamma-numerics``, 2026-10-02.
 The initial audit below records the design-decision boundary. Ben's
 2026-10-02 decision retains the production quintic position, beta, and
 beta-prime contract. Stage 1 is implemented for exact local kinematics and
-analytic inertial boundaries; stored high-gamma integrator histories remain
-stage 2. The implementation and validation limits follow the original audit.
+analytic inertial boundaries. Stage 2 now implements stored light-cone charge
+worldlines and optional endpoint-constrained proper velocity. The original
+audit is retained as historical context; current limits follow below.
 
 Precision requirements
 ----------------------
@@ -263,15 +264,140 @@ positive for the failing event, rather than opposite signs. This is a stencil
 coverage problem, not a high-gamma rounding failure. No stencil-sizing or
 future-extrapolation fix is included in stage 1.
 
-Remaining stage 2 work
-----------------------
+Stored charge worldlines (stage 2)
+----------------------------------
 
-The general quintic roots, position coefficients, reconstructed history beta,
-segment-margin proofs, and integrator beta clamp still have the limits
-identified in the audit. Dipole kernels and chrono matching are also unchanged.
-Stage 2 may supply resolved light-cone history coordinates and gamma to the
-local precise kernels, but it still needs a coherent acceleration/jerk
-contract, accepted/trial history handling, root-error accounting, and margin
-validation. No interpolation model, transition threshold, or stage 2 storage
-has been implemented here. Exact kinematics cannot recover observer event
-precision or source information already discarded before the kernel call.
+Each charge-source segment stores the existing quintic Hermite worldline in a
+local frame as $w=c(t-t_0)-\\hat e\\cdot(x-x_0)$ and two transverse displacements.
+The direction is the normalized sum of the endpoint mechanical proper
+velocities when available, otherwise the sum of their velocities. The fixed
+$x$ axis is used when the velocity sum has norm below $10^{-12}$ or the endpoint
+velocities have a negative dot product. The transverse basis starts with the
+coordinate axis least aligned with this direction.
+
+For proper velocity $u=\\gamma\\beta$, the knot speed deficit is evaluated as
+$\\delta=1/[\\gamma(\\gamma+\|u\|)]$, with $\\gamma=\\sqrt{1+\|u\|^2}$. The exact identity
+$dw/d(ct)=\\delta+(1-\\delta)\|\\hat e-\\hat\\beta\|^2/2$ avoids subtracting nearly
+unit velocities. Decimal arithmetic with 80 digits prepares the frame and
+knot transformations; interpolation and strict compiled kernels use binary64.
+This changes the coordinates of the quintic, rather than its polynomial degree
+or endpoint Hermite conditions. The established coasting roundoff rule is
+retained.
+
+Accepted knots carry mechanical proper velocity after removal of the
+canonical field term, the speed deficit, and two coordinate remainders beside
+each rounded position and coordinate time. The second remainder is needed to
+resolve a deficit of order $10^{-25}$ after macroscopic drift at
+$\\gamma=10^{12}$. Decimal arithmetic with 90 digits preserves the same drift
+update before its coordinate accumulation discards this information. Public
+rounded positions remain the integrator's accepted positions.
+
+Retarded roots are solved in normalized segment time. The unrounded root
+fraction supplies the source derivatives and resolved separation to the
+precise charge potential, field, and response kernels. Acceleration, jerk,
+and the fourth position derivative come from the same quintic. The root test
+uses the light-cone residual divided by $\\kappa$, and stops at adjacent
+representable fractions if a tighter location is unavailable. An absolute
+binary64 retarded time is a diagnostic; it must not be used to resample an
+ultrarelativistic root and discard its fraction.
+
+The Bernstein proof bounds $1-\|\\beta\|^2$ directly in null coordinates,
+rather than subtracting a rounded velocity bound from one. Resolved knot scans
+use both coordinate remainders. Accelerator candidate certification retains a
+complete CPU scan when a rounded chord cannot prove monotonicity. Managed
+history caches, provisional trial tails, and adaptive append preserve the
+resolved coordinates and immutable segments.
+
+Fixed-history checkpoints use schema 2; accepted-pair checkpoints use schema 5.
+Readers also load schemas 1 and 4, respectively, initializing missing resolved
+channels to zero. Old files cannot restore precision that was never recorded.
+The magnetic-dipole worldline and its C5 history models retain their existing
+representation. Chrono matching remains unchanged.
+
+Endpoint-constrained proper velocity (opt-in)
+---------------------------------------------
+
+Set ``source_history_representation`` to ``proper_velocity`` in JSON, select
+it in the GUI's Source interpolation control, or pass
+``--source-history-representation proper_velocity`` to the CLI. The default
+is ``light_cone_quintic``. Both settings round-trip through SimulationOptions,
+IntegratorConfig, GUI configuration, sweep conversion, and native checkpoints.
+Sweeps retain the selected mode, so unsupported sweep runner combinations raise
+the exact-path configuration error rather than discarding the choice.
+
+The interpolant is $u(\\tau)=u_H(\\tau)+a\\tau^2(1-\\tau)^2$, where $u_H$ is the
+cubic Hermite interpolant through endpoint mechanical proper velocities and
+$du/d(ct)$. The vector $a$ supplies one extra coefficient per component without
+changing either endpoint derivative. Newton iteration solves the three
+constraints $c\\Delta t\\int_0^1 u/\\sqrt{1+\|u\|^2}\\,d\\tau=\\Delta x$.
+Accepted endpoint positions and their coordinate remainders are authoritative;
+history preparation, trial overlays, and append never rewrite them.
+
+The integral is evaluated in the same resolved null frame as the default
+mode, with fixed 128-point Gauss–Legendre quadrature. A separate 256-point
+integral must agree at the endpoint. Each component's tolerance is
+$64\\epsilon\\max(\|D_i\|,\\int\|v_i\|\\,d(ct),c\\Delta t\\,10^{-300})$, with the
+smallest positive binary64 value as an underflow floor. Here $D$ and $v$ are
+the null displacement and its derivative. The longitudinal component is the
+small light-cone displacement, so its check never uses a large lab-position
+scale. Newton allows 24 iterations and 16 line-search halvings. Non-timelike
+accepted chords, singular Jacobians, failed convergence, and unresolved
+quadrature raise a clear error with source and segment context; there is no
+fallback to the default representation.
+
+Position accuracy holds at the accepted knots to this roundoff tolerance.
+Between them, $\\beta=u/\\sqrt{1+\|u\|^2}$ is mathematically subluminal by
+construction. Binary64 beta can still round to one; the positive invariant
+$1/\\gamma^2$, speed deficit, and resolved coordinates remain authoritative.
+Velocity, acceleration, jerk, and snap are analytic derivatives of this same
+interpolant. The resulting light-cone function is strictly monotone. A
+Bernstein bound on the quartic proper velocity supplies a conservative positive
+speed-deficit bound without subtracting rounded beta from one. Its control
+points and norms are resolved with Decimal arithmetic, with an allowance for
+Horner evaluation roundoff and outward rounding of the final bound.
+
+The currently supported integration entry point is the exact scalar
+``BUNCH_TO_BUNCH`` path with ``INERTIAL_PREHISTORY`` and zero intrinsic magnetic
+moments, using Python or strict Numba charge providers. Existing exact-path
+selection still requires enabled ``rfs_minimal_2021`` metadata; a custom species
+with zero moment selects a scalar charge run. Chrono/COLD_START integration,
+Metal, magnetic-dipole/spin C5 histories, higher potential derivatives, and
+source extrapolation are rejected for this opt-in mode. Stored histories from
+the ordinary coasting stepper can separately be tested by the charge providers.
+
+Persistent exact charge clouds currently require ``light_cone_quintic``.
+Their translated origins retain both coordinate remainders, while their local
+null displacements, mechanical proper velocities, and speed deficits remain
+unchanged. A cloud request with ``proper_velocity`` fails explicitly before
+integration; a zero-width single child still uses the original point history.
+
+Validation and limits
+---------------------
+
+Both representations pass stored accepted-history tests at every decade from
+$\\gamma=10^3$ to $10^{12}$, for head-on and $\\theta=1/\\gamma$ coasting rays,
+and counter-propagating crossings. Field values use a $2\\times10^{-13}$
+relative tolerance against immutable Decimal references; Python/Numba agreement
+uses $5\\times10^{-15}$. Integrated finite-window transverse impulses use
+$2\\times10^{-6}$ relative tolerance, with $6\\times10^{-5}$ against the
+infinite-window closed form. Normalized net longitudinal work uses
+$2\\times10^{-6}$. These are first-order force/work integrals along actual
+accepted coasting paths, rather than nonlinear coupled radiation-reaction
+validation. The largest tested gamma is $10^{12}$.
+
+A smooth independently integrated worldline shows local position convergence
+of approximately sixth order for both modes over step lengths 1–0.125 mm.
+The constrained mode's errors decrease from $7.75\\times10^{-6}$ mm to
+$7.43\\times10^{-12}$ mm, with measured orders 6.52–6.76. Differences from the
+default decrease at the same scale as interpolation error. This does not
+change the accepted integrator's global order. The 1,200-step moderate-speed
+exact-path comparison agrees at roundoff; runtime results and complete checks
+are recorded in ``codex_report_stage2.md``.
+
+Stage 2 reproduces the original Fig. 3 centered-stencil coverage failure.
+A short-window variant passes initialization with the existing analytic charge
+response provider, but reaches the existing adaptive minimum-step guard before
+an accepted crossing. The stencil and tolerances are unchanged. Independent
+first-order field-work diagnostics on accepted coasting trajectories recover
+the finite-window closed forms at 0.5–4 TeV; these establish neither a coupled
+transient maximum nor a nonlinear net energy result.

@@ -189,3 +189,67 @@ def test_inconsistent_cloud_requests_reject(changed, error):
         setattr(config, key, value)
     with pytest.raises(error):
         exact_cloud_history(history(), config)
+
+
+@pytest.mark.parametrize("backend", ["python", "numba_full_strict_serial"])
+def test_cloud_fails_closed_for_proper_velocity(backend):
+    source = history()
+    for state in source:
+        state["source_history_mode"] = np.ones_like(state["x"])
+    with pytest.raises(ValueError, match="clouds do not support.*proper_velocity"):
+        evaluate_retarded_charge_field_native(
+            exact_cloud_history(source, cloud_config()),
+            ObserverEvent(0, (2, 1, 0)),
+            backend=backend,
+        )
+
+
+@pytest.mark.parametrize("gamma", [1e3, 1e6, 1e9, 1e12])
+def test_cloud_preserves_resolved_translated_segments_and_knots(gamma):
+    from decimal import Decimal, localcontext
+
+    from core.retarded_fields import _prepare_history
+    from tests.unit.test_high_gamma_stored_history import _coast
+
+    source, _ = _coast(gamma, steps=5)
+    config = cloud_config()
+    centre = _prepare_history(source, ())
+    children = _prepare_history(exact_cloud_history(source, config), ())
+    offsets, _ = transverse_offsets(np.array([1, 0, 0]), config)
+    for child, offset in enumerate(offsets):
+        for original, translated in zip(
+            centre.sources[0].light_cone_segments,
+            children.sources[child].light_cone_segments,
+        ):
+            np.testing.assert_array_equal(
+                original.coefficients_mm, translated.coefficients_mm
+            )
+            np.testing.assert_array_equal(
+                original.speed_deficit, translated.speed_deficit
+            )
+            np.testing.assert_array_equal(
+                original.proper_velocity_knots, translated.proper_velocity_knots
+            )
+        with localcontext() as context:
+            context.prec = 90
+            d = lambda value: Decimal.from_float(float(value))
+            for knot in range(source.n_steps):
+                for axis in range(3):
+                    expected = sum(
+                        d(v)
+                        for v in (
+                            centre.arrays.position_mm[knot, 0, axis],
+                            centre.arrays.resolved_knots[knot, 0, 4 + axis],
+                            centre.arrays.resolved_knots[knot, 0, 8 + axis],
+                            offset[axis],
+                        )
+                    )
+                    actual = sum(
+                        d(v)
+                        for v in (
+                            children.arrays.position_mm[knot, child, axis],
+                            children.arrays.resolved_knots[knot, child, 4 + axis],
+                            children.arrays.resolved_knots[knot, child, 8 + axis],
+                        )
+                    )
+                    assert abs(actual - expected) <= Decimal("1e-45")

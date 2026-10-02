@@ -266,6 +266,7 @@ def _geometry(
     deficit: float,
     acceleration: np.ndarray,
     jerk: np.ndarray,
+    snap: np.ndarray,
 ) -> tuple[
     np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray
 ]:
@@ -286,7 +287,11 @@ def _geometry(
             coordinate += deficit * shift
             beta[axis][0] += 1.0 - deficit
         r[axis] = coordinate - motion
-        beta_prime[axis] = _constant(acceleration[axis]) + jerk[axis] * shift
+        beta_prime[axis] = (
+            _constant(acceleration[axis])
+            + jerk[axis] * shift
+            + 0.5 * snap[axis] * shift2
+        )
     radius = _norm(r)
     if r[0, 0] >= 0.0:
         chord = _divide(_multiply(r[1], r[1]) + _multiply(r[2], r[2]), radius + r[0])
@@ -339,6 +344,7 @@ def precise_charge_jets(
     acceleration_per_mm: np.ndarray,
     jerk_per_mm2: np.ndarray,
     separation_frame_mm: np.ndarray | None = None,
+    snap_per_mm3: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, float]:
     """Return second-order A jets, first-order E/B jets, and root jets.
 
@@ -379,24 +385,29 @@ def precise_charge_jets(
         acceleration_per_mm, proper_velocity, frame, magnitude
     )
     jerk = _project_vector(jerk_per_mm2, proper_velocity, frame, magnitude)
+    snap = np.zeros(3)
+    if snap_per_mm3 is not None:
+        if snap_per_mm3.shape != (3,) or not np.all(np.isfinite(snap_per_mm3)):
+            raise ValueError("precise charge snap must contain three finite values")
+        snap = _project_vector(snap_per_mm3, proper_velocity, frame, magnitude)
     observer = np.empty((4, _JET_SIZE))
     for index in range(4):
         observer[index] = _variable(0.0, index)
     shift = _constant(0.0)
     for iteration in range(3):
         radius, denominator, difference, invariant, beta_prime, residual, n = _geometry(
-            observer, shift, separation_frame, frame, deficit, acceleration, jerk
+            observer, shift, separation_frame, frame, deficit, acceleration, jerk, snap
         )
         if radius[0] <= 0.0 or denominator[0] <= 0.0:
             raise ValueError("precise charge kernel requires nondegenerate geometry")
         kappa = _divide(denominator, radius)
         shift += _divide(residual, kappa)
     radius, denominator, difference, invariant, beta_prime, residual, n = _geometry(
-        observer, shift, separation_frame, frame, deficit, acceleration, jerk
+        observer, shift, separation_frame, frame, deficit, acceleration, jerk, snap
     )
     kappa = _divide(denominator, radius)
-    # Only first field derivatives are used. Second-order radiation jets would
-    # additionally require the snap, which is outside this response contract.
+    # Second-order radiation jets are authoritative only when the caller
+    # supplies snap (or the source is uniform). Stored quintics supply it.
     beta = np.empty((3, _JET_SIZE))
     shift2 = _multiply(shift, shift)
     for axis in range(3):
@@ -430,7 +441,11 @@ def precise_charge_jets(
         for axis in range(3):
             electric_lab[component] += frame[axis, component] * electric[axis]
             magnetic_lab[component] += frame[axis, component] * magnetic[axis]
-    if np.all(acceleration_per_mm == 0.0) and np.all(jerk_per_mm2 == 0.0):
+    if (
+        np.all(acceleration_per_mm == 0.0)
+        and np.all(jerk_per_mm2 == 0.0)
+        and np.all(snap == 0.0)
+    ):
         # For uniform motion use the simultaneous-separation closed form.
         # This avoids cancellations between implicit-root derivatives at the
         # beaming-cone shoulder, where the longitudinal numerator is near zero.

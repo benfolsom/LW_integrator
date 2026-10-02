@@ -73,6 +73,7 @@ DEFAULT_SIMULATION: Dict[str, Any] = {
     "image_subcharge_count": 12,
     "use_image_weighting": True,
     "radiation_reaction_mode": "medina_lad",
+    "source_history_representation": "light_cone_quintic",
 }
 
 RADIATION_REACTION_MODE_CHOICES: Tuple[str, ...] = (
@@ -665,6 +666,12 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
             "light-cone solves; and "
             "'approximate-back-history' assumes constant source velocity."
         ),
+    )
+    parser.add_argument(
+        "--source-history-representation",
+        choices=("light_cone_quintic", "proper_velocity"),
+        default=None,
+        help="Source interpolation; proper_velocity preserves accepted knots and enforces timelike interpolation.",
     )
     parser.add_argument(
         "--radiation-reaction-mode",
@@ -1613,6 +1620,8 @@ def run_testbed_config(args: argparse.Namespace) -> int:
         from .testbed_runner import load_config, run_testbed
 
         options = load_config(config_path)
+        if args.source_history_representation is not None:
+            options.source_history_representation = args.source_history_representation
         if args.resume_from is not None:
             options.checkpoint_resume_from = args.resume_from
             options.checkpoint_directory = None
@@ -1838,6 +1847,7 @@ def _merge_simulation_payload(
         "chrono_mode",
         "startup_mode",
         "radiation_reaction_mode",
+        "source_history_representation",
         "image_subcharge_count",
         "use_image_weighting",
     )
@@ -2366,6 +2376,9 @@ def _build_integrator_config(payload: Mapping[str, Any]) -> IntegratorConfig:
         ),
         image_subcharge_count=image_subcharge_count,
         use_image_weighting=use_image_weighting,
+        source_history_representation=str(
+            payload.get("source_history_representation", "light_cone_quintic")
+        ),
         radiation_reaction_mode=str(
             payload.get(
                 "radiation_reaction_mode",
@@ -3475,6 +3488,7 @@ def run_simulation(request: SimulationRequest) -> tuple:
         image_subcharge_count=request.config.image_subcharge_count,
         use_conducting_image_weighting=request.config.use_image_weighting,
         radiation_reaction_mode=request.config.radiation_reaction_mode,
+        source_history_representation=request.config.source_history_representation,
         adaptive_timestep=request.adaptive_timestep,
         self_consistency=request.self_consistency,
         space_charge=request.space_charge,

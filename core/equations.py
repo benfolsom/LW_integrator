@@ -8,7 +8,7 @@ covariant updates for momentum, position, and acceleration for each particle.
 Physical Foundation
 -------------------
 
-The integrator evolves particles in coordinate time with step h = Δt, updating
+The integrator evolves particles in proper time with step h = Δτ, updating
 conjugate momentum from retarded electromagnetic forces, then deriving positions
 and velocities.
 
@@ -17,60 +17,48 @@ Conjugate vs. Kinetic Momentum
 
 The conjugate (canonical) momentum includes electromagnetic potentials::
 
-    P^μ = γ·m·V^μ + (e/c)·A^μ
+    P^μ = m·V^μ + (e/c)·A^μ,   V^μ = γ(c, v)
 
-For spatial components: P_i = γ·m·v_i + (e/c)·A_i
+and its update is dP^α/dτ = (e/c)·V_β·∂^α A^β (paper Eq. 9).  The kinetic
+(mechanical) momentum is P_kinetic = P - (e/c)·A = γ·m·v.
 
-The kinetic (mechanical) momentum is::
+Position and Time Updates
+~~~~~~~~~~~~~~~~~~~~~~~~~
 
-    P_kinetic = P - (e/c)·A = γ·m·v
+With proper-time steps, dx/dτ = γv = P_kinetic/m and dt/dτ = γ, so::
 
-Position Updates
-~~~~~~~~~~~~~~~~
+    Δx = (P_kinetic / m)·h,    Δt = γ·h
 
-Spatial positions are updated in coordinate time using the kinetic momentum::
+Velocity and Acceleration
+~~~~~~~~~~~~~~~~~~~~~~~~~
 
-    Δx = v·h = (P_kinetic / (γ·m))·h
-
-The 1/γ factor is **essential**: it ensures that velocity v = P_kinetic/(γ·m)
-remains subluminal even as momentum grows with γ.
-
-Velocity Calculation
-~~~~~~~~~~~~~~~~~~~~
-
-Velocity (beta) is computed from the coordinate-time displacement::
-
-    β = v/c = Δx/(c·h)
-
-Note: This does **not** include a γ factor in the denominator. The time dilation
-is already accounted for in the position update formula.
+β is Δx/(c·Δt) on the ordinary path, or P_kinetic/(γmc) on the on-shell
+kinematic boundary.  The stored acceleration ``bdot`` is dβ/d(ct) [1/mm]
+(dβ/dt = c·bdot).
 
 Self-Consistency Iterations
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-For ultra-relativistic particles (γ ≫ 1), forces depend strongly on γ through
-the retarded field geometry (k-factor, field Lorentz contraction). The integrator
-resolves the circular dependency γ → forces → P → γ through iterations:
-
-1. Use γ_n-1 to compute retarded forces
-2. Update conjugate momentum P_n from those forces
-3. Update positions using the **same** γ_n-1: Δx = (h/(γ_n-1·m))·P_kinetic
-4. Compute velocity: β = Δx/(c·h)
-5. Derive two independent γ estimates:
+Retarded forces depend on the observer's own γ.  When enabled, each particle
+update iterates: compute forces with the working γ, update P, positions and
+β, then compare two γ estimates:
 
    - From energy: γ_E = (Pt - e·Φ)/(mc)
    - From velocity: γ_V = 1/√(1-β²)
 
-6. Check convergence: |γ_E - γ_V|/γ_E < ε (typically ε = 10⁻⁶)
-
-If not converged, the next iteration uses γ_n = γ_E and repeats. Using a
-**consistent** γ throughout each iteration for both forces and positions ensures
-the velocity extracted from Δx corresponds physically to the computed momentum.
+and iterate until |γ_E - γ_V|/γ_E is below the configured tolerance or the
+iteration limit is reached.
 
 See :class:`core.self_consistency.SelfConsistencyConfig` for configuration.
 """
 
 from __future__ import annotations
+
+from .resolved_knot import (
+    initialize_resolved_result,
+    knot_proper_velocity,
+    preserve_drift_remainders,
+)
 
 from typing import Any, Optional, Sequence
 
@@ -550,13 +538,25 @@ def _canonical_pt_from_mechanical_mass_shell(
     return float(kinetic_pt), float(canonical_pt)
 
 
-def _four_velocity_native(beta: np.ndarray) -> np.ndarray:
+def _four_velocity_native(
+    beta: np.ndarray, *, mechanical_gamma: float | None = None
+) -> np.ndarray:
     """Return native contravariant ``u=(gamma*c, gamma*c*beta)``."""
 
     beta_squared = float(beta @ beta)
-    if beta_squared >= 1.0:
-        raise ValueError("beta magnitude must be less than one")
-    gamma = 1.0 / np.sqrt(1.0 - beta_squared)
+    if mechanical_gamma is not None:
+        gamma = float(mechanical_gamma)
+        if (
+            not np.isfinite(gamma)
+            or gamma < 1.0
+            or not np.all(np.isfinite(beta))
+            or beta_squared > 1.0 + 8 * np.finfo(float).eps
+        ):
+            raise ValueError("invalid mechanical four-velocity")
+    else:
+        if beta_squared >= 1.0:
+            raise ValueError("beta magnitude must be less than one")
+        gamma = 1.0 / np.sqrt(1.0 - beta_squared)
     return np.concatenate(([gamma * C_MMNS], gamma * C_MMNS * beta))
 
 
@@ -811,7 +811,16 @@ def _refresh_kinematics_from_canonical_momentum(
         beta_z = float(mechanical_pz / beta_denom)
     else:
         beta_x = beta_y = beta_z = 0.0
-    beta_x, beta_y, beta_z = _limit_beta_magnitude(beta_x, beta_y, beta_z)
+    mechanical_u = np.array([mechanical_px, mechanical_py, mechanical_pz]) / (
+        particle_mass * C_MMNS
+    )
+    beta_x, beta_y, beta_z = _limit_beta_magnitude(
+        beta_x,
+        beta_y,
+        beta_z,
+        mechanical_proper_velocity=mechanical_u,
+    )
+    preserve_drift_remainders(result, current_state, particle_idx, h, mechanical_u)
     result["bx"][particle_idx] = beta_x
     result["by"][particle_idx] = beta_y
     result["bz"][particle_idx] = beta_z
@@ -1191,7 +1200,11 @@ def _get_current_particle_gamma_and_beta(
 
 
 def _limit_beta_magnitude(
-    beta_x: float, beta_y: float, beta_z: float
+    beta_x: float,
+    beta_y: float,
+    beta_z: float,
+    *,
+    mechanical_proper_velocity: np.ndarray | None = None,
 ) -> tuple[float, float, float]:
     """Ensure beta magnitude stays below the speed of light.
 
@@ -1203,6 +1216,18 @@ def _limit_beta_magnitude(
     tuple[float, float, float]
         The (possibly scaled) beta components (βx, βy, βz).
     """
+    if mechanical_proper_velocity is not None:
+        u = np.asarray(mechanical_proper_velocity, dtype=float)
+        if u.shape != (3,) or not np.all(np.isfinite(u)):
+            raise ValueError(
+                "mechanical proper velocity must contain three finite values"
+            )
+        beta = np.array([beta_x, beta_y, beta_z], dtype=float)
+        expected = u / np.hypot(1.0, np.linalg.norm(u))
+        if not np.allclose(beta, expected, rtol=0.0, atol=8 * np.finfo(float).eps):
+            raise ValueError("beta is inconsistent with mechanical proper velocity")
+        return beta_x, beta_y, beta_z
+
     # Use float64 for high precision in beta calculations
     bx64 = np.float64(beta_x)
     by64 = np.float64(beta_y)
@@ -1605,9 +1630,13 @@ def _check_mass_shell_convergence(
     )
     P_spatial_sq = mechanical_px**2 + mechanical_py**2 + mechanical_pz**2
     mass_shell_rhs = (particle_mass * C_MMNS) ** 2
-    mass_shell_lhs = kinetic_pt**2 - P_spatial_sq
-
-    mass_shell_error_abs = abs(mass_shell_lhs - mass_shell_rhs)
+    # Compare with the same rounded shell energy used by the projection.
+    # Subtracting two squared TeV momenta invents an O(eps*gamma**2)
+    # invariant violation even for an exactly accepted on-shell state.
+    shell_energy = np.sqrt(P_spatial_sq + mass_shell_rhs)
+    mass_shell_error_abs = abs(
+        (kinetic_pt - shell_energy) * (kinetic_pt + shell_energy)
+    )
     mass_shell_error_rel = mass_shell_error_abs / max(mass_shell_rhs, 1e-40)
 
     has_converged = bool(mass_shell_error_rel < tolerance)
@@ -1839,6 +1868,7 @@ def retarded_equations_of_motion(
     # Initialize result state as a copy of current state
     current_state = trajectory[index_traj]
     result = _initialize_result_state(current_state)
+    initialize_resolved_result(result, current_state)
     radiation_mode = _canonicalize_radiation_reaction_mode(radiation_reaction_mode)
     if radiation_mode == "medina_lad":
         _initialize_medina_step_state(result)
@@ -3090,6 +3120,34 @@ def retarded_equations_of_motion(
                         charge_event = ObserverEvent(
                             time_ns=float(current_state["t"][particle_idx]),
                             position_mm=charge_source_position,
+                            time_low_ns=float(
+                                current_state.get(
+                                    "source_time_low_ns", np.zeros(num_particles)
+                                )[particle_idx]
+                            ),
+                            position_low_mm=tuple(
+                                float(
+                                    current_state.get(
+                                        f"source_position_low_{axis}",
+                                        np.zeros(num_particles),
+                                    )[particle_idx]
+                                )
+                                for axis in "xyz"
+                            ),
+                            time_tail_ns=float(
+                                current_state.get(
+                                    "source_time_tail_ns", np.zeros(num_particles)
+                                )[particle_idx]
+                            ),
+                            position_tail_mm=tuple(
+                                float(
+                                    current_state.get(
+                                        f"source_position_tail_{axis}",
+                                        np.zeros(num_particles),
+                                    )[particle_idx]
+                                )
+                                for axis in "xyz"
+                            ),
                         )
                         charge_relative_step = max(
                             1.0e-4,
@@ -3177,7 +3235,12 @@ def retarded_equations_of_motion(
                         charge_source_interaction_from_response_native(
                             exact_charge_field,
                             four_velocity_mm_ns=_four_velocity_native(
-                                exact_ordinary_response_beta
+                                exact_ordinary_response_beta,
+                                mechanical_gamma=(
+                                    float(current_state["gamma"][particle_idx])
+                                    if second_order_exact_source_selected
+                                    else float(working_gamma)
+                                ),
                             ),
                             observer_charge_native=float(force_particle_charge),
                             proper_time_step_ns=float(h),
@@ -3189,7 +3252,12 @@ def retarded_equations_of_motion(
                         charge_source_interaction_from_field_native(
                             exact_charge_field,
                             four_velocity_mm_ns=_four_velocity_native(
-                                exact_ordinary_response_beta
+                                exact_ordinary_response_beta,
+                                mechanical_gamma=(
+                                    float(current_state["gamma"][particle_idx])
+                                    if second_order_exact_source_selected
+                                    else float(working_gamma)
+                                ),
                             ),
                             observer_charge_native=float(force_particle_charge),
                             proper_time_step_ns=float(h),
@@ -3320,7 +3388,12 @@ def retarded_equations_of_motion(
                             charge_source_interaction_from_response_native(
                                 exact_same_bunch_field_cache,
                                 four_velocity_mm_ns=_four_velocity_native(
-                                    exact_ordinary_response_beta
+                                    exact_ordinary_response_beta,
+                                    mechanical_gamma=(
+                                        float(current_state["gamma"][particle_idx])
+                                        if second_order_exact_source_selected
+                                        else float(working_gamma)
+                                    ),
                                 ),
                                 observer_charge_native=float(force_particle_charge),
                                 proper_time_step_ns=float(h),
@@ -3332,7 +3405,12 @@ def retarded_equations_of_motion(
                             charge_source_interaction_from_field_native(
                                 exact_same_bunch_field_cache,
                                 four_velocity_mm_ns=_four_velocity_native(
-                                    exact_ordinary_response_beta
+                                    exact_ordinary_response_beta,
+                                    mechanical_gamma=(
+                                        float(current_state["gamma"][particle_idx])
+                                        if second_order_exact_source_selected
+                                        else float(working_gamma)
+                                    ),
                                 ),
                                 observer_charge_native=float(force_particle_charge),
                                 proper_time_step_ns=float(h),
@@ -3548,7 +3626,12 @@ def retarded_equations_of_motion(
                             dipole_source_interaction_from_response_native(
                                 dipole_source_field,
                                 four_velocity_mm_ns=_four_velocity_native(
-                                    exact_ordinary_response_beta
+                                    exact_ordinary_response_beta,
+                                    mechanical_gamma=(
+                                        float(current_state["gamma"][particle_idx])
+                                        if second_order_exact_source_selected
+                                        else float(working_gamma)
+                                    ),
                                 ),
                                 observer_charge_native=float(force_particle_charge),
                                 proper_time_step_ns=float(h),
@@ -3560,7 +3643,12 @@ def retarded_equations_of_motion(
                             dipole_source_interaction_from_field_native(
                                 dipole_source_field,
                                 four_velocity_mm_ns=_four_velocity_native(
-                                    exact_ordinary_response_beta
+                                    exact_ordinary_response_beta,
+                                    mechanical_gamma=(
+                                        float(current_state["gamma"][particle_idx])
+                                        if second_order_exact_source_selected
+                                        else float(working_gamma)
+                                    ),
                                 ),
                                 observer_charge_native=float(force_particle_charge),
                                 proper_time_step_ns=float(h),
@@ -3797,7 +3885,8 @@ def retarded_equations_of_motion(
                 )
 
                 start_four_velocity = _four_velocity_native(
-                    exact_ordinary_response_beta
+                    exact_ordinary_response_beta,
+                    mechanical_gamma=float(current_state["gamma"][particle_idx]),
                 )
                 ordinary_force_native = np.zeros(4, dtype=float)
                 for interaction in (
@@ -4297,6 +4386,25 @@ def retarded_equations_of_motion(
                             scaled_momentum[2] + accumulated_field_z * particle_mass
                         )
                         gamma_mass_shell = gamma_energy_boundary
+                if can_use_energy_boundary:
+                    _, boundary_error = _check_mass_shell_convergence(
+                        result["Pt"][particle_idx],
+                        result["Px"][particle_idx],
+                        result["Py"][particle_idx],
+                        result["Pz"][particle_idx],
+                        particle_mass,
+                        C_MMNS,
+                        sc_mass_shell_tolerance,
+                        scalar_potential_contribution=scalar_potential_contribution,
+                        field_x=accumulated_field_x,
+                        field_y=accumulated_field_y,
+                        field_z=accumulated_field_z,
+                    )
+                    # Normalize the rounded shell energy only when the energy
+                    # projection leaves a residual above the existing tolerance.
+                    spatial_momentum_authoritative = (
+                        boundary_error >= sc_mass_shell_tolerance
+                    )
                 if not can_use_energy_boundary:
                     # At the near-rest/roundoff boundary, an energy-derived
                     # target can be imaginary, zero for nonzero p, directionless
@@ -4433,17 +4541,9 @@ def retarded_equations_of_motion(
             # where v = P/(γ·m) and γ cancels in the product v·γ = P/m
             if second_order_exact_source_selected:
                 start_mechanical_momentum = (
-                    float(current_state["gamma"][particle_idx])
-                    * particle_mass
+                    particle_mass
                     * C_MMNS
-                    * np.asarray(
-                        (
-                            current_state["bx"][particle_idx],
-                            current_state["by"][particle_idx],
-                            current_state["bz"][particle_idx],
-                        ),
-                        dtype=float,
-                    )
+                    * knot_proper_velocity(current_state, particle_idx)
                 )
                 end_mechanical_momentum = np.asarray(
                     (
@@ -4481,6 +4581,23 @@ def retarded_equations_of_motion(
                 result["z"][particle_idx] = current_state["z"][particle_idx] + h / (
                     particle_mass
                 ) * (result["Pz"][particle_idx] - accumulated_field_z * particle_mass)
+
+            predictor_u = np.array(
+                [
+                    result["Px"][particle_idx] - accumulated_field_x * particle_mass,
+                    result["Py"][particle_idx] - accumulated_field_y * particle_mass,
+                    result["Pz"][particle_idx] - accumulated_field_z * particle_mass,
+                ]
+            ) / (particle_mass * C_MMNS)
+            preserve_drift_remainders(
+                result,
+                current_state,
+                particle_idx,
+                h,
+                predictor_u,
+                centered=second_order_exact_source_selected,
+                on_shell=on_shell_kinematic_boundary_selected,
+            )
 
             # ================================================================
             # STEP 6: Compute velocity (beta) from position changes
@@ -4530,6 +4647,9 @@ def retarded_equations_of_motion(
                 beta_x,
                 beta_y,
                 beta_z,
+                mechanical_proper_velocity=(
+                    predictor_u if on_shell_kinematic_boundary_selected else None
+                ),
             )
 
             result["bx"][particle_idx] = beta_x_limited
@@ -4538,8 +4658,12 @@ def retarded_equations_of_motion(
 
             # Compute gamma from the (possibly limited) beta
             # This is compared against gamma_from_energy for self-consistency
-            gamma_from_velocity = _calculate_gamma_from_beta(
-                beta_x_limited, beta_y_limited, beta_z_limited
+            gamma_from_velocity = (
+                float(np.hypot(1.0, np.linalg.norm(predictor_u)))
+                if on_shell_kinematic_boundary_selected
+                else _calculate_gamma_from_beta(
+                    beta_x_limited, beta_y_limited, beta_z_limited
+                )
             )
 
             # Debug: Print newly computed beta on all iterations when verbosity >= 3
@@ -4741,6 +4865,10 @@ def retarded_equations_of_motion(
                             beta_x_limited,
                             beta_y_limited,
                             beta_z_limited,
+                            mechanical_proper_velocity=np.array(
+                                [mechanical_px, mechanical_py, mechanical_pz]
+                            )
+                            / (particle_mass * C_MMNS),
                         )
                         result["bx"][particle_idx] = beta_x_limited
                         result["by"][particle_idx] = beta_y_limited
@@ -4969,6 +5097,10 @@ def retarded_equations_of_motion(
                                 beta_x_limited,
                                 beta_y_limited,
                                 beta_z_limited,
+                                mechanical_proper_velocity=np.array(
+                                    [mechanical_px, mechanical_py, mechanical_pz]
+                                )
+                                / (particle_mass * C_MMNS),
                             )
                             result["bx"][particle_idx] = beta_x_limited
                             result["by"][particle_idx] = beta_y_limited
@@ -5027,6 +5159,15 @@ def retarded_equations_of_motion(
                                 coordinate_dt = float(h * medina_gamma)
                             result["t"][particle_idx] = (
                                 current_state["t"][particle_idx] + coordinate_dt
+                            )
+                            preserve_drift_remainders(
+                                result,
+                                current_state,
+                                particle_idx,
+                                h,
+                                np.array([mechanical_px, mechanical_py, mechanical_pz])
+                                / (particle_mass * C_MMNS),
+                                centered=second_order_exact_source_selected,
                             )
                             time_factor = C_MMNS * coordinate_dt
                             result["bdotx"][particle_idx] = (
@@ -5165,7 +5306,22 @@ def retarded_equations_of_motion(
             # - Hard threshold (1e20 or NaN/Inf): less likely but still attempt recovery
             if sc_enabled:
                 is_nan_or_inf = np.isnan(working_gamma) or np.isinf(working_gamma)
-                gamma_soft_threshold = 1e8
+                initial_gamma = float(current_state["gamma"][particle_idx])
+                initial_beta = np.array(
+                    [current_state[f"b{axis}"][particle_idx] for axis in "xyz"]
+                )
+                initial_shell_gamma = float(
+                    np.hypot(1.0, np.linalg.norm(initial_gamma * initial_beta))
+                )
+                valid_initial_gamma = (
+                    np.isfinite(initial_gamma)
+                    and initial_gamma >= 1.0
+                    and abs(initial_shell_gamma - initial_gamma)
+                    <= 8 * np.finfo(float).eps * initial_gamma
+                )
+                gamma_soft_threshold = max(
+                    1e8, 100.0 * initial_gamma if valid_initial_gamma else 0.0
+                )
                 gamma_hard_threshold = 1e20
 
                 # Check for any gamma blowup
@@ -5277,6 +5433,15 @@ def retarded_equations_of_motion(
                     accumulated_field_y,
                     accumulated_field_z,
                 )
+
+        if on_shell_kinematic_boundary_selected:
+            for axis, contribution in zip(
+                "xyz", (accumulated_field_x, accumulated_field_y, accumulated_field_z)
+            ):
+                result[f"source_u_{axis}"][particle_idx] = (
+                    result[f"P{axis}"][particle_idx] - contribution * particle_mass
+                ) / (particle_mass * C_MMNS)
+            result["source_kinematics_ready"][particle_idx] = 1.0
 
         # Spin is advanced exactly once per accepted physical step, after all
         # self-consistency iterations. Reusing the start-of-step spin avoids

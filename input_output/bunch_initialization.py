@@ -174,7 +174,7 @@ def create_bunch_from_energy(
 
     random = np.random if rng is None else rng
     gamma = _compute_gamma(kinetic_energy_mev, mass_amu)
-    beta = math.sqrt(1.0 - 1.0 / (gamma**2)) if gamma > 1.0 else 0.0
+    proper_speed = math.sqrt((gamma - 1.0) * (gamma + 1.0)) if gamma > 1.0 else 0.0
     particle_mass = mass_amu
     charge_state = _build_charge_state(
         charge_sign=charge_sign,
@@ -210,7 +210,7 @@ def create_bunch_from_energy(
         Px = zeros.copy()
         Py = zeros.copy()
 
-    Pz = np.full(count, gamma * particle_mass * C_MMNS * beta, dtype=float)
+    Pz = np.full(count, proper_speed * particle_mass * C_MMNS, dtype=float)
     P_total = np.sqrt(Px**2 + Py**2 + Pz**2)
     Pt = np.sqrt(P_total**2 + (particle_mass * C_MMNS) ** 2)
     gamma_arr = Pt / (particle_mass * C_MMNS)
@@ -243,6 +243,9 @@ def create_bunch_from_energy(
     state.update(charge_state)
 
     rest_energy_mev = mass_amu * AMU_TO_MEV
+    from core.resolved_knot import initialize_mechanical_knots
+
+    initialize_mechanical_knots(state)
     return state, rest_energy_mev
 
 
@@ -326,4 +329,7 @@ def create_bunch_from_params(
     state.update(charge_state)
 
     rest_energy_mev = m_particle * AMU_TO_MEV
+    from core.resolved_knot import initialize_mechanical_knots
+
+    initialize_mechanical_knots(state)
     return state, rest_energy_mev
