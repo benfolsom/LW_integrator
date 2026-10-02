@@ -1,5 +1,9 @@
-Exact macroparticle sources: audit and decision boundary
+Exact macroparticle sources: audit and persistent clouds
 ========================================================
+
+The sections through "Many-particle full-spin runner" preserve the Part 1
+audit and its historical decisions. The Part 2 section at the end describes
+the decisions made on 2026-10-02 and the implementation in this worktree.
 
 This audit applies to ``feature/exact-macroparticle-sources`` at
 ``c8f57231a8b2aaed0e4c3268f271ead815f3c248``. The requested finite-source
@@ -175,7 +179,7 @@ exact-source requirement. Task 4 is stopped at this consistency boundary; its
 guard remains in place.
 
 Startup decision for Ben
--------------------------
+------------------------
 
 The requested ``AGENTS.md`` validation defaults specify ``COLD_START``. Exact
 same-bunch fields explicitly require ``INERTIAL_PREHISTORY``; otherwise fields
@@ -287,3 +291,125 @@ resume parity is tested with an explicit tighter value of ``1e-10``.
 The GUI launcher's Tk imports now occur only when opening a window. Command
 construction remains available for parity tests without a Tk installation.
 No graphical window was exercised with the specified interpreter.
+
+Part 2: persistent transverse charge clouds
+-------------------------------------------
+
+Exact charge-cloud runs explicitly use ``INERTIAL_PREHISTORY`` and the existing
+checkpointed shared-laboratory-time adaptive route, with
+``exact_retarded_update="second_order_start_taylor_endpoint"``. Every species
+retains its own inertial velocity. General startup defaults are unchanged.
+The particle-loss scheduler must be disabled because this adaptive route does
+not serialize that scheduler. Intrinsic dipole sources and full-spin dynamics
+are outside this extension.
+
+``MacroparticleSmearingConfig`` supplies the exact cloud count and width when
+passed to ``retarded_integrator`` on this route. For example::
+
+    MacroparticleSmearingConfig(
+        enabled=True,
+        subcharge_count=4,
+        position_sigma_mm=0.25,
+        longitudinal_sigma_mm=0.0,
+        momentum_sigma_amu_mm_ns=0.0,
+        use_momentum_errors=False,
+        refresh_policy="fixed_per_particle",
+    )
+
+The exact width is explicit and is not capped by estimated macro spacing.
+Automatic widths, nonzero longitudinal widths, momentum errors, and per-step
+refresh are rejected. The representative observer stays at the macro centre
+with its physical species charge and mass. The sampled-event smearing helper
+and pseudo-grid implementation are unchanged.
+
+The selected cloud model is rigid laboratory translation. Each macro has a
+fixed plane normal to its **initial** velocity. Subcharges have constant
+laboratory offsets in this plane; their continuous histories equal the
+reconstructed centre history plus those offsets. Transverse initial offsets
+need no Lorentz contraction. The plane stays fixed when the centre deflects;
+the model does not rotate the cloud into successive instantaneous rest frames
+or impose Born rigidity during acceleration. A zero-velocity macro uses the
+laboratory x–y plane. This is a specified source quadrature model, rather than
+a claim of resolved internal plasma dynamics.
+
+Square counts use tensor Gauss–Hermite quadrature for a transverse Gaussian,
+with positive charge fractions whose sum is one. For example, counts 4, 16,
+and 64 use 2 × 2, 4 × 4, and 8 × 8 nodes. Other configurable counts use fixed
+Gaussian quantile nodes and equal charge fractions. Those non-square rules
+are deterministic but have not received the square-rule convergence study.
+The width means the Gaussian rms width in each transverse direction;
+``sigma_multiplier`` scales it. One node cannot resolve a nonzero Gaussian
+width. The Gaussian is represented by a finite quadrature cloud, not a clipped
+Gaussian distribution.
+
+``core.exact_source_cloud.ExactCloudHistory`` wraps accepted or trial centre
+histories. ``core.retarded_fields`` prepares each child by translating every
+continuous position segment and its analytic inertial boundary, preserving
+the centre's time, velocity, and acceleration. Each child gets an independent
+retarded root. Fields, potentials, finite-difference gradients, and analytical
+charge-response gradients use these same histories. Parent-index exclusion
+removes the observer's entire own cloud before preparing child sources.
+Mutual matrices have one column per child and one row per macro observer.
+Source diagnostics likewise report child roots, with parent-major ordering.
+
+Initial canonical seeding, force evaluation, and accepted endpoint canonical
+recomposition all wrap their source histories. A zero-width, one-child request
+returns the original history object and follows identical point-source
+arithmetic. The centre histories and the cloud configuration are checkpointed;
+the deterministic rule reconstructs the same persistent children on resume.
+The configuration participates in the checkpoint compatibility fingerprint.
+
+The adaptive bunch clock solver evaluates several proper-step guesses at the
+same accepted-start event. A trial-local charge-field cache avoids re-solving
+those identical light cones. It is discarded when the observer event geometry or source
+context changes, and compares coordinates exactly even when clock queries
+copy their state dictionaries. The force, momentum update, and clock solution are still
+evaluated for every step guess. Own-bunch gradients are reused only if the
+centre and every derivative-stencil root lie entirely in the immutable
+current history prefix (accepted or a prior provisional midpoint);
+continued source events remain uncached because their allowed continuation
+depends on the guessed step. The cached and fresh EOM arrays agree bitwise in
+the weighted-cloud regression, including a complete adaptive slab. Output-only
+endpoint magnetic-field diagnostics are evaluated once at the solved vector
+of proper steps instead of during every clock query. Those final diagnostics
+also agree bitwise with the original calculation. Clock-query evaluation
+counts exclude that final diagnostic evaluation. No stepper equation,
+acceptance tolerance, or source continuation bound is changed by these changes.
+
+Pseudo-grid remains deferred. Its guard points here because current
+representative deposition rewrites historical source charge, as explained in
+"Pseudo-grid consistency boundary" above. The supported source sum retains
+every macro cloud; no reduced-source performance claim is made.
+
+``scripts/check_exact_macroparticle_startup.py --route adaptive`` repeats the
+Part 1 point probe, with a common lab-time target covering twice the initial
+inertial encounter time. ``scripts/check_exact_macroparticle_clouds.py`` uses
+the study populations, transverse size, RF phase duration, and seeded macro
+geometry for counts 4, 8, and 16. It reports common-time positions, mechanical
+momenta, weighted totals, and momentum changes for four initial proton
+longitudinal quartiles. These changes include same-bunch fields and Medina/LAD;
+they are not an electron-only compensation map or an energy-conservation test.
+The requested 1,200 states determine the initial step guess; adaptive internal
+knots differ, and public output corresponds to a 100-step lab-time cadence.
+Wall times and accepted/rejected counts are recorded in the JSON evidence.
+Detailed validation outcomes and any subsequent stop decision are recorded in
+``codex_report_exact_macroparticles.md``, Part 2.
+
+The prescribed-orbit convergence study holds physical width fixed while
+refining even-order tensor rules through 4, 16, 64, and 100 children. At a
+1.5 mm impact parameter, the 100-child result meets the inherited $10^{-7}$
+kick target for transverse widths 0.1, 0.2, and 0.25 mm. These are far-tail
+observer probes, not a uniform near-centre error bound. Odd-order rules have
+different point-kernel aliasing; an additional 121-child probe at 0.25 mm
+missed that target slightly. Four children resolve only a coarse Gaussian
+quadrature, so a successful coupled capability run would not by itself
+establish source-quadrature convergence or a precision compensation map.
+
+The adaptive inertial point probe completes, but the weighted 4 + 4 capability
+case rejects before its first accepted slab. Five smaller trial steps are
+controlled by a near-constant mass-shell projection-energy diagnostic error,
+approximately 6.82 times the unchanged acceptance bound. The 8 + 8 and 16 + 16
+sequence stops at that new diagnostic decision; no coupled slice kicks or
+source-count scaling result are claimed. Cancellation-resistant energy-increment
+bookkeeping is the recommended next investigation, with unchanged tolerances.
+The trace supports a roundoff-floor hypothesis but does not prove it.

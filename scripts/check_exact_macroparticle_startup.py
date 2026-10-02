@@ -18,8 +18,11 @@ from core.macroparticle_diagnostics import compare_species_at_lab_times
 from core.particle_initialization import create_particle_state_3d
 from core.self_consistency import SelfConsistencyConfig
 from core.types import (
+    AdaptivePairReturnConfig,
+    CheckpointConfig,
     MagneticDipoleConfig,
     MagneticDipoleParticleConfig,
+    ParticleLossConfig,
     SimulationType,
     SpaceChargeConfig,
     StartupMode,
@@ -30,7 +33,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--startup", choices=["cold", "inertial"], default="cold")
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--route", choices=["fixed", "adaptive"], default="fixed")
+    parser.add_argument("--checkpoint-directory", type=Path)
     args = parser.parse_args()
+    if args.route == "adaptive" and args.checkpoint_directory is None:
+        parser.error("the adaptive route requires --checkpoint-directory")
     states = []
     for mass, energy, direction in (
         (PROTON_MASS_AMU, 20.0, 1),
@@ -62,6 +69,11 @@ def main() -> int:
         driver=no_moment,
         spin_precession_enabled=True,
         stern_gerlach_force_enabled=False,
+        exact_retarded_update=(
+            "second_order_start_taylor_endpoint"
+            if args.route == "adaptive"
+            else "first_order_endpoint"
+        ),
     )
     sc = SelfConsistencyConfig()
     startup = (
@@ -70,6 +82,7 @@ def main() -> int:
         else StartupMode.INERTIAL_PREHISTORY
     )
     summary = {
+        "route": args.route,
         "startup": startup.value,
         "steps": steps,
         "initial_separation_mm": 1000,
@@ -85,6 +98,25 @@ def main() -> int:
     started = time.perf_counter()
     exit_code = 0
     try:
+        route_options = {}
+        if args.route == "adaptive":
+            closing_lab_speed = sum(float(abs(s["bz"][0]) * C_MMNS) for s in states)
+            target = 2000 / closing_lab_speed
+            adaptive = AdaptivePairReturnConfig(
+                enabled=True,
+                target_lab_time_ns=target,
+                public_sample_interval_ns=target * 100 / (steps - 1),
+            )
+            summary["adaptive"] = asdict(adaptive)
+            summary["checkpoint_directory"] = str(args.checkpoint_directory)
+            route_options = {
+                "adaptive_pair_return": adaptive,
+                "particle_loss": ParticleLossConfig(enabled=False),
+                "checkpoint": CheckpointConfig(
+                    enabled=True, directory=str(args.checkpoint_directory)
+                ),
+            }
+            summary["particle_loss_enabled"] = False
         rider, driver, *_ = retarded_integrator(
             steps=steps,
             h_step=h,
@@ -102,12 +134,19 @@ def main() -> int:
             space_charge=SpaceChargeConfig(enabled=True),
             magnetic_dipole=magnetic,
             radiation_reaction_mode="medina_lad",
+            **route_options,
         )
         summary["status"] = "returned"
         summary["common_lab_interval_ns"] = compare_species_at_lab_times(
             {"proton": rider, "electron": driver}
         )["common_lab_interval_ns"]
-        sampled = np.unique(np.r_[np.arange(0, steps, 100), steps - 1])
+        sampled = (
+            np.arange(len(rider))
+            if args.route == "adaptive"
+            else np.unique(np.r_[np.arange(0, steps, 100), steps - 1])
+        )
+        if args.route == "adaptive":
+            summary["adaptive_result"] = rider[-1]["_adaptive_pair_return"]
         np.savez_compressed(
             args.output.with_suffix(".npz"),
             **{
