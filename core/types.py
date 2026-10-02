@@ -1166,6 +1166,7 @@ class IntegratorConfig:
     z_cutoff_mode: str = "absolute"
     image_subcharge_count: int = 12
     use_image_weighting: bool = True
+    source_history_representation: str = "light_cone_quintic"
     radiation_reaction_mode: str = "medina_lad"
     macroparticle_charge_multiplier: float = 1.0
     macroparticle_sigma_multiplier: float = 1.0
@@ -1187,6 +1188,13 @@ class IntegratorConfig:
     adaptive_pair_return: AdaptivePairReturnConfig = field(
         default_factory=AdaptivePairReturnConfig
     )
+
+    def __post_init__(self) -> None:
+        from .proper_velocity_history import validate_source_history_representation
+
+        self.source_history_representation = validate_source_history_representation(
+            self.source_history_representation
+        )
 
 
 @dataclass
@@ -1518,6 +1526,9 @@ class TrajectoryArrays:
     )
     source_time_tail_ns: np.ndarray = field(
         default_factory=lambda: np.zeros((0, 0)), repr=False
+    )
+    source_history_mode: np.ndarray = field(
+        default_factory=lambda: np.empty((0, 0), dtype=float)
     )
     source_speed_deficit: np.ndarray = field(
         default_factory=lambda: np.zeros((0, 0)), repr=False

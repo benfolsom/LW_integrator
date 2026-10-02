@@ -367,6 +367,9 @@ def segment_speed_deficit_bound(segment: LightConeSegment) -> float:
     """
     from math import comb
 
+    proper_bound = getattr(segment, "speed_deficit_bound", None)
+    if proper_bound is not None:
+        return float(proper_bound())
     with localcontext() as context:
         context.prec = 80
         length = _decimal(C_MMNS * segment.duration_ns)

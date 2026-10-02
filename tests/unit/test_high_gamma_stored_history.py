@@ -35,7 +35,15 @@ def _split(value):
 
 
 def _coast(
-    gamma, *, position=None, time=None, sign=1, span_mm=2.0, steps=1200, charge=1.0
+    gamma,
+    *,
+    position=None,
+    time=None,
+    sign=1,
+    span_mm=2.0,
+    steps=1200,
+    charge=1.0,
+    representation="light_cone_quintic",
 ):
     """Run the real stepper; source charge is read by a later exact field probe.
 
@@ -52,6 +60,7 @@ def _coast(
     initialize_resolved_result(state, state)
     state["source_u_x"][:] = u
     state["source_kinematics_ready"][:] = 1.0
+    state["source_history_mode"][:] = float(representation == "proper_velocity")
     with localcontext() as context:
         context.prec = 90
         if position is not None:
@@ -112,9 +121,17 @@ def _event(row):
     )
 
 
-@pytest.fixture(scope="module", params=[10.0**n for n in range(3, 13)])
+@pytest.fixture(
+    scope="module",
+    params=[
+        (10.0**n, representation)
+        for representation in ("light_cone_quintic", "proper_velocity")
+        for n in range(3, 13)
+    ],
+)
 def coasting_source(request):
-    return request.param, _coast(request.param)[0]
+    gamma, representation = request.param
+    return gamma, _coast(gamma, representation=representation)[0]
 
 
 @pytest.mark.parametrize("factor", [0.0, 1.0])
@@ -171,7 +188,10 @@ def test_coasting_source_and_witness_against_decimal(
 
 
 @pytest.mark.parametrize("gamma", [10.0**n for n in range(3, 13)])
-def test_counter_propagating_first_order_impulse(gamma, record_property):
+@pytest.mark.parametrize("representation", ["light_cone_quintic", "proper_velocity"])
+def test_counter_propagating_first_order_impulse(
+    gamma, representation, record_property
+):
     """Integrate force/work on accepted coasting paths (first-order test particles)."""
     b = 1e-12
     source_charge = witness_charge = 1e-9
@@ -193,6 +213,7 @@ def test_counter_propagating_first_order_impulse(gamma, record_property):
         position=source_position,
         span_mm=1000.0,
         charge=source_charge,
+        representation=representation,
     )
     _, witness = _coast(
         gamma,
@@ -240,12 +261,15 @@ def test_counter_propagating_first_order_impulse(gamma, record_property):
     assert abs(work) / (abs(expected) * C_MMNS) < 2e-6
 
 
-def test_high_gamma_checkpoint_trial_and_append_preserve_fields(tmp_path):
+@pytest.mark.parametrize("representation", ["light_cone_quintic", "proper_velocity"])
+def test_high_gamma_checkpoint_trial_and_append_preserve_fields(
+    tmp_path, representation
+):
     from core.integration_checkpoint import IntegrationCheckpointStore
     from core.types import TrialTrajectoryHistory
     from core.resolved_knot import RESOLVED_KNOT_FIELDS
 
-    source, rows = _coast(1e12, steps=12)
+    source, rows = _coast(1e12, steps=12, representation=representation)
     builder = TrajectoryBuilder(12, 1)
     for step, row in enumerate(rows[:10]):
         builder.set_step(step, row)

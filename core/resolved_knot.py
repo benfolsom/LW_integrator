@@ -23,6 +23,7 @@ RESOLVED_KNOT_FIELDS = (
     "source_position_tail_z",
     "source_time_tail_ns",
     "source_speed_deficit",
+    "source_history_mode",
 )
 
 

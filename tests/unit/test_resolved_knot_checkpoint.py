@@ -79,3 +79,17 @@ def test_resolved_knots_checkpoint_round_trip(tmp_path, pair, legacy):
             getattr(output, name), 0.0 if legacy else getattr(trajectory, name)
         )
     np.testing.assert_array_equal(output.x, trajectory.x)
+
+
+def test_legacy_empty_channels_work_in_indexed_history():
+    from dataclasses import replace
+    from core.types import IndexedTrajectoryArrays
+    from core.retarded_fields import _prepare_history
+    from tests.unit.test_high_gamma_stored_history import _coast
+
+    history, _ = _coast(1e3, steps=12)
+    legacy = replace(
+        history, **{name: np.empty((0, 0)) for name in RESOLVED_KNOT_FIELDS}
+    )
+    indexed = IndexedTrajectoryArrays(legacy, np.array([0]))
+    assert len(_prepare_history(indexed, ()).sources[0].light_cone_segments) == 11

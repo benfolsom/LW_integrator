@@ -1086,6 +1086,16 @@ def evaluate_retarded_charge_potential_directional_jet_native(
         max_root_iterations,
     )
     prepared = _prepare_history(history, excluded_source_indices)
+    from .proper_velocity_history import ProperVelocitySegment
+
+    if any(
+        isinstance(segment, ProperVelocitySegment)
+        for source in prepared.sources.values()
+        for segment in source.light_cone_segments
+    ):
+        raise ValueError(
+            "proper_velocity does not support spin C5 or higher-potential derivative histories"
+        )
     arrays = prepared.arrays
     identities: tuple[Hashable, ...] = tuple(range(arrays.n_sources))
     valid_sources = np.zeros(arrays.n_sources, dtype=bool)

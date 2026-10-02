@@ -37,6 +37,13 @@ from .light_cone_history import (
     separation_in_velocity_frame,
     segment_speed_deficit_bound,
 )
+from .proper_velocity_history import (
+    ProperVelocitySegment,
+    constrain_proper_velocity_segment,
+    proper_residual,
+    solve_constrained_u,
+    solve_constrained_u_numba,
+)
 from .light_cone_roots import (
     null_residual,
     sample_null_quintic,
@@ -345,10 +352,15 @@ def _history_matrix(history: TrajectoryHistory, field_name: str) -> np.ndarray:
         raise TypeError("trial history must use the prepared overlay path")
     if isinstance(history, IndexedTrajectoryArrays):
         start = int(history.start_step)
-        values = np.asarray(getattr(history.base, field_name), dtype=float)[start:]
-        return np.asarray(values[:, history.particle_indices], dtype=float)
+        values = np.asarray(getattr(history.base, field_name), dtype=float)
+        if field_name in RESOLVED_KNOT_FIELDS and values.size == 0:
+            values = np.zeros_like(history.base.t)
+        return np.asarray(values[start:, history.particle_indices], dtype=float)
     if isinstance(history, TrajectoryArrays):
-        return np.asarray(getattr(history, field_name), dtype=float)
+        values = np.asarray(getattr(history, field_name), dtype=float)
+        if field_name in RESOLVED_KNOT_FIELDS and values.size == 0:
+            return np.zeros_like(history.t)
+        return values
     return _legacy_matrix(history, field_name)
 
 
@@ -454,21 +466,35 @@ def _build_null_segments(
             if history.resolved_knots is None
             else history.resolved_knots[sl, source_index]
         )
-        result.append(
-            build_light_cone_segment(
-                history.time_ns[sl, source_index],
-                history.position_mm[sl, source_index],
-                history.beta[sl, source_index],
-                beta_primes[sl],
-                proper_velocity=(
-                    data[:, :3] if data is not None and np.all(data[:, 3]) else None
-                ),
-                position_low=(data[:, 4:7] if data is not None else None),
-                time_low=(data[:, 7] if data is not None else None),
-                position_tail=(data[:, 8:11] if data is not None else None),
-                time_tail=(data[:, 11] if data is not None else None),
-            )
+        segment = build_light_cone_segment(
+            history.time_ns[sl, source_index],
+            history.position_mm[sl, source_index],
+            history.beta[sl, source_index],
+            beta_primes[sl],
+            proper_velocity=(
+                data[:, :3] if data is not None and np.all(data[:, 3]) else None
+            ),
+            position_low=(data[:, 4:7] if data is not None else None),
+            time_low=(data[:, 7] if data is not None else None),
+            position_tail=(data[:, 8:11] if data is not None else None),
+            time_tail=(data[:, 11] if data is not None else None),
         )
+        if data is not None:
+            modes = data[:, 13]
+            if np.any((modes != 0.0) & (modes != 1.0)) or modes[0] != modes[1]:
+                raise ValueError(
+                    "source history representation must be constant and recognized at the knots"
+                )
+            if modes[0] == 1.0:
+                try:
+                    segment = constrain_proper_velocity_segment(
+                        segment, beta_primes[sl]
+                    )
+                except ValueError as error:
+                    raise ValueError(
+                        f"proper_velocity constraint failed for source {source_index}, segment {knot}: {error}"
+                    ) from error
+        result.append(segment)
     return tuple(result)
 
 
@@ -579,12 +605,18 @@ def _history_matrix_slice(
         raise TypeError("trial history must use the prepared overlay path")
     if isinstance(history, IndexedTrajectoryArrays):
         global_start = int(history.start_step) + start
-        values = np.asarray(getattr(history.base, field_name), dtype=float)[
-            global_start : history.base.n_steps
-        ]
-        return np.asarray(values[:, history.particle_indices], dtype=float)
+        values = np.asarray(getattr(history.base, field_name), dtype=float)
+        if field_name in RESOLVED_KNOT_FIELDS and values.size == 0:
+            values = np.zeros_like(history.base.t)
+        return np.asarray(
+            values[global_start : history.base.n_steps, history.particle_indices],
+            dtype=float,
+        )
     if isinstance(history, TrajectoryArrays):
-        return np.asarray(getattr(history, field_name), dtype=float)[start:]
+        values = np.asarray(getattr(history, field_name), dtype=float)
+        if field_name in RESOLVED_KNOT_FIELDS and values.size == 0:
+            return np.zeros_like(history.t[start:])
+        return values[start:]
     return _legacy_matrix(history[start:], field_name)
 
 
@@ -1012,6 +1044,14 @@ def _prepare_source_history(
 ) -> _PreparedSourceHistory:
     """Validate and prepare one source's alive interpolation segments."""
 
+    if (
+        not light_cone_enabled
+        and history.resolved_knots is not None
+        and np.any(history.resolved_knots[:, source_index, 13] != 0)
+    ):
+        raise ValueError(
+            "proper_velocity does not support magnetic-dipole/spin C5 histories"
+        )
     alive_stop = _alive_prefix_length(history, source_index)
     times = history.time_ns[:alive_stop, source_index]
     positions = history.position_mm[:alive_stop, source_index]
@@ -1335,9 +1375,14 @@ def _prepare_history(
             acceleration_semantics,
         )
     excluded = tuple(sorted({int(index) for index in excluded_source_indices}))
+    try:
+        modes = _history_matrix(history, "source_history_mode")
+    except (KeyError, AttributeError):
+        modes = np.zeros((0, 0))
+    mode_key = tuple(modes[0]) if modes.size else ()
     return _CHARGE_PREPARED_HISTORY_CACHE.prepare(
         history,
-        variant=("charge", excluded, acceleration_semantics),
+        variant=("charge", excluded, acceleration_semantics, mode_key),
         prepare_full=lambda current: _prepare_history_uncached(
             current,
             excluded,
@@ -1435,9 +1480,19 @@ def _knot_light_cone_residual_mm(
             observer_time_tail_ns,
             observer_position_tail_mm,
         )
-        residual, kappa, _, _ = null_residual(
-            segment.coefficients_mm, C_MMNS * segment.duration_ns, tau, geometry
-        )
+        if isinstance(segment, ProperVelocitySegment):
+            residual, kappa, _, _ = proper_residual(
+                segment.u_coefficients,
+                C_MMNS * segment.duration_ns,
+                tau,
+                geometry,
+                segment.quadrature_nodes,
+                segment.quadrature_weights,
+            )
+        else:
+            residual, kappa, _, _ = null_residual(
+                segment.coefficients_mm, C_MMNS * segment.duration_ns, tau, geometry
+            )
         if kappa > 0.0 and abs(residual) / (C_MMNS * kappa) <= 0.5 * abs(
             np.spacing(source.time_ns[knot_index])
         ):
@@ -1619,8 +1674,23 @@ def _solve_null_history_sample(
         observer_time_tail_ns,
         observer_position_tail_mm,
     )
-    low_g = null_residual(segment.coefficients_mm, length, lower, geometry)[0]
-    high_g = null_residual(segment.coefficients_mm, length, upper, geometry)[0]
+
+    def residual_at(fraction: float) -> tuple[float, float, float, np.ndarray]:
+        if isinstance(segment, ProperVelocitySegment):
+            return proper_residual(
+                segment.u_coefficients,
+                length,
+                fraction,
+                geometry,
+                segment.quadrature_nodes,
+                segment.quadrature_weights,
+            )
+        return null_residual(segment.coefficients_mm, length, fraction, geometry)
+
+    if isinstance(segment, ProperVelocitySegment) and extrapolate_ns > 0:
+        raise ValueError("proper_velocity does not support history extrapolation")
+    low_g = residual_at(lower)[0]
+    high_g = residual_at(upper)[0]
     snapped_endpoint = None
     if low_g < 0.0:
         if (
@@ -1650,20 +1720,34 @@ def _solve_null_history_sample(
             return None
         snapped_endpoint = upper
     solver = solve_null_quintic_numba if compiled else solve_null_quintic
+    proper_solver = solve_constrained_u_numba if compiled else solve_constrained_u
     try:
         if snapped_endpoint is None:
-            tau, result = solver(
-                segment.coefficients_mm,
-                length,
-                geometry,
-                lower,
-                upper,
-                root_tolerance_mm,
-                max_root_iterations,
-            )
+            if isinstance(segment, ProperVelocitySegment):
+                tau, result = proper_solver(
+                    segment.u_coefficients,
+                    length,
+                    geometry,
+                    lower,
+                    upper,
+                    root_tolerance_mm,
+                    max_root_iterations,
+                    segment.quadrature_nodes,
+                    segment.quadrature_weights,
+                )
+            else:
+                tau, result = solver(
+                    segment.coefficients_mm,
+                    length,
+                    geometry,
+                    lower,
+                    upper,
+                    root_tolerance_mm,
+                    max_root_iterations,
+                )
         else:
             tau = snapped_endpoint
-            result = null_residual(segment.coefficients_mm, length, tau, geometry)
+            result = residual_at(tau)
     except Exception as error:
         from .exact_retarded_numba import NUMBA_COMPILATION_ERRORS
         from .exact_retarded_backend import ExactRetardedBackendUnavailableError
@@ -1679,12 +1763,21 @@ def _solve_null_history_sample(
         raise
     if snapped_endpoint is not None:
         tau = snapped_endpoint
-        result = null_residual(segment.coefficients_mm, length, tau, geometry)
+        result = residual_at(tau)
     residual, kappa, radius, separation_frame = result
-    values, first, second, third = sample_null_quintic(
-        segment.coefficients_mm, length, tau
-    )
-    invariant = first[0] * (2.0 - first[0]) - float(np.dot(first[1:], first[1:]))
+    proper_local = None
+    if isinstance(segment, ProperVelocitySegment):
+        values, first, second, third, fourth, proper_local, invariant = (
+            segment.null_sample(tau)
+        )
+    else:
+        values, first, second, third = sample_null_quintic(
+            segment.coefficients_mm, length, tau
+        )
+        invariant = first[0] * (2.0 - first[0]) - float(np.dot(first[1:], first[1:]))
+        fourth = (
+            24 * segment.coefficients_mm[4] + 120 * tau * segment.coefficients_mm[5]
+        ) / length**4
     if invariant <= 0.0 or not np.isfinite(invariant):
         raise ValueError(
             "light-cone quintic source is not timelike at the retarded root"
@@ -1692,13 +1785,18 @@ def _solve_null_history_sample(
     beta = np.array([1.0 - first[0], first[1], first[2]]) @ segment.frame
     prime = np.array([-second[0], second[1], second[2]]) @ segment.frame
     jerk = np.array([-third[0], third[1], third[2]]) @ segment.frame
-    fourth = (
-        24 * segment.coefficients_mm[4] + 120 * tau * segment.coefficients_mm[5]
-    ) / length**4
     snap = np.array([-fourth[0], fourth[1], fourth[2]]) @ segment.frame
-    proper = beta / np.sqrt(invariant)
+    proper = (
+        beta / np.sqrt(invariant)
+        if proper_local is None
+        else proper_local @ segment.frame
+    )
     if (
         segment.proper_velocity_knots is not None
+        and (
+            not isinstance(segment, ProperVelocitySegment)
+            or np.all(segment.u_coefficients[1:] == 0.0)
+        )
         and np.all(segment.coefficients_mm[2:] == 0.0)
         and np.array_equal(
             segment.proper_velocity_knots[0], segment.proper_velocity_knots[1]
@@ -3030,6 +3128,25 @@ def evaluate_retarded_charge_response_gradient_native(
     )
 
 
+def _reject_proper_metal(history: TrajectoryHistory, backend: str) -> None:
+    if not str(backend).lower().startswith("metal"):
+        return
+    if isinstance(history, TrialTrajectoryHistory):
+        _reject_proper_metal(history.base, backend)
+        if any(
+            np.any(row.get("source_history_mode", np.zeros(0)) == 1.0)
+            for row in history.tail
+        ):
+            raise ValueError("proper_velocity does not support Metal kernels")
+        return
+    try:
+        modes = _history_matrix(history, "source_history_mode")
+    except (KeyError, AttributeError):
+        return
+    if np.any(modes == 1.0):
+        raise ValueError("proper_velocity does not support Metal kernels")
+
+
 def evaluate_retarded_charge_field_native(
     history: TrajectoryHistory,
     observer_event: ObserverEvent,
@@ -3049,6 +3166,7 @@ def evaluate_retarded_charge_field_native(
     ``instantaneous`` when their supplied ``bdot`` is an exact knot derivative.
     """
 
+    _reject_proper_metal(history, backend)
     selected_backend = require_exact_retarded_backend(backend)
     tolerance, iterations = _validated_root_options(
         root_tolerance_mm, max_root_iterations
@@ -3093,6 +3211,7 @@ def evaluate_retarded_mutual_charge_field_matrix_native(
     while retaining the same source/event layout and Python-side validation.
     """
 
+    _reject_proper_metal(history, backend)
     selected_backend = require_exact_retarded_backend(backend)
     if selected_backend not in {"python", "numba_full_strict_serial"}:
         raise ValueError(
@@ -3253,6 +3372,7 @@ def evaluate_retarded_charge_field_gradient_native(
     every source light cone.
     """
 
+    _reject_proper_metal(history, backend)
     selected_backend = require_exact_retarded_backend(backend)
     relative = float(relative_step)
     minimum = float(minimum_step_mm)
