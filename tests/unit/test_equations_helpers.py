@@ -491,7 +491,8 @@ def test_retarded_space_charge_batches_same_bunch_sources(
         ),
     )
 
-    assert same_bunch_source_counts == [3, 3, 3]
+    # One accepted-event evaluation and one force evaluation per observer.
+    assert same_bunch_source_counts == [3, 3, 3, 3, 3, 3]
 
 
 def _build_soa(trajectory: list[dict[str, np.ndarray]]):
@@ -631,7 +632,8 @@ def test_retarded_space_charge_uses_soa_helpers_when_available(
         traj_soa=traj_soa,
     )
 
-    assert soa_calls == {"chrono": 2, "distance": 2, "gather": 2}
+    # Bookkeeping samples the accepted event in addition to the force trials.
+    assert soa_calls == {"chrono": 4, "distance": 4, "gather": 2}
 
 
 def test_gating_threshold_and_force_application_follow_travel_distance() -> None:

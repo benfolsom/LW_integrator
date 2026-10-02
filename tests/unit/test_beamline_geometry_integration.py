@@ -106,7 +106,7 @@ def test_beamline_geometry_parameter_is_accepted_disabled():
     )
 
     for key, value in updated.items():
-        if isinstance(value, np.ndarray):
+        if isinstance(value, np.ndarray) and value.dtype.kind not in "US":
             assert np.all(np.isfinite(value)), f"non-finite values in {key}"
 
 
@@ -143,7 +143,10 @@ def test_disabled_geometry_is_noop_relative_to_none():
         v_none = result_none[key]
         v_disabled = result_disabled[key]
         if isinstance(v_none, np.ndarray):
-            assert_allclose(v_disabled, v_none, err_msg=f"mismatch in {key}")
+            if v_none.dtype.kind in "US":
+                assert_array_equal(v_disabled, v_none, err_msg=f"mismatch in {key}")
+            else:
+                assert_allclose(v_disabled, v_none, err_msg=f"mismatch in {key}")
 
 
 def test_occlusion_mask_zeros_occluded_external_samples():

@@ -25,8 +25,8 @@ if TYPE_CHECKING:
     from .causal_c5_dipole_provider import AcceptedPairCausalC5SourceHistory
     from .causal_local_source_history import AcceptedPairCausalLocalSourceHistory
 
-SCHEMA_VERSION = 1
-ACCEPTED_PAIR_SCHEMA_VERSION = 4
+SCHEMA_VERSION = 2
+ACCEPTED_PAIR_SCHEMA_VERSION = 5
 
 
 class CheckpointError(RuntimeError):
