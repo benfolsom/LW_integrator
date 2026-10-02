@@ -254,6 +254,10 @@ class AdaptivePairAttemptDiagnostics:
     mechanical_momentum_error_index: tuple[int, ...]
     rest_spin_error_index: tuple[int, ...]
     diagnostics_error_index: tuple[int, ...]
+    projection_floor_applied: bool = False
+    projection_floor_changed_acceptance: bool = False
+    diagnostics_error_without_floor: float | None = None
+    maximum_projection_floor_native: float = 0.0
 
 
 def _accepted_pair_time_ns(
@@ -921,6 +925,16 @@ def run_exact_pair_adaptive_window(
                     ),
                     rest_spin_error_index=assessment.rest_spin_error_index,
                     diagnostics_error_index=assessment.diagnostics_error_index,
+                    projection_floor_applied=assessment.projection_floor_applied,
+                    projection_floor_changed_acceptance=(
+                        assessment.projection_floor_changed_acceptance
+                    ),
+                    diagnostics_error_without_floor=(
+                        assessment.diagnostics_error_without_floor
+                    ),
+                    maximum_projection_floor_native=(
+                        assessment.maximum_projection_floor_native
+                    ),
                 )
             )
         if not result.accepted:

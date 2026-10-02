@@ -780,10 +780,12 @@ def solve_exact_pair_step_doubling_trial(
     full_state = build_pair_step_doubling_state(
         rider_states=(full.pair.rider.state,),
         driver_states=(full.pair.driver.state,),
+        experimental_projection_ulp_floor=tolerances.experimental_projection_ulp_floor,
     )
     refined_state = build_pair_step_doubling_state(
         rider_states=(midpoint.pair.rider.state, refined.pair.rider.state),
         driver_states=(midpoint.pair.driver.state, refined.pair.driver.state),
+        experimental_projection_ulp_floor=tolerances.experimental_projection_ulp_floor,
     )
     assessment = assess_step_doubling(
         full_state,

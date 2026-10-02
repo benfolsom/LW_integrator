@@ -1002,6 +1002,9 @@ class AdaptivePairReturnConfig:
     target_lab_time_ns: float | None = None
     tolerance_scale: float = 1.0
     diagnostics_absolute_tolerance_native: float | None = None
+    experimental_projection_ulp_floor: bool = False
+    projection_ulp_multiplier: float = 4.0
+    position_momentum_tolerance_scale: float = 1.0
     minimum_step_factor: float = 1.0 / 64.0
     maximum_step_factor: float = 64.0
     public_sample_interval_ns: float | None = None
@@ -1012,6 +1015,13 @@ class AdaptivePairReturnConfig:
 
     def __post_init__(self) -> None:
         self.enabled = bool(self.enabled)
+        self.experimental_projection_ulp_floor = bool(
+            self.experimental_projection_ulp_floor
+        )
+        self.projection_ulp_multiplier = float(self.projection_ulp_multiplier)
+        self.position_momentum_tolerance_scale = float(
+            self.position_momentum_tolerance_scale
+        )
         if self.target_lab_time_ns is not None:
             self.target_lab_time_ns = float(self.target_lab_time_ns)
         if self.diagnostics_absolute_tolerance_native is not None:
@@ -1039,6 +1049,11 @@ class AdaptivePairReturnConfig:
 
         positive = (
             ("tolerance_scale", self.tolerance_scale),
+            ("projection_ulp_multiplier", self.projection_ulp_multiplier),
+            (
+                "position_momentum_tolerance_scale",
+                self.position_momentum_tolerance_scale,
+            ),
             ("minimum_step_factor", self.minimum_step_factor),
             ("maximum_step_factor", self.maximum_step_factor),
         )

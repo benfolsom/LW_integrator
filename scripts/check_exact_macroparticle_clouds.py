@@ -7,6 +7,7 @@ from dataclasses import asdict
 from enum import Enum
 import hashlib
 import json
+import os
 from pathlib import Path
 import sys
 import time
@@ -14,12 +15,14 @@ import traceback
 
 import numpy as np
 
+import core.adaptive_pair_return as adaptive_module
 from core.constants import C_MMNS, ELECTRON_MASS_AMU, PROTON_MASS_AMU
 from core.integration_runner import retarded_integrator
 from core.macroparticle_diagnostics import compare_species_at_lab_times
 from core.exact_source_cloud import transverse_gaussian_rule
 from core.particle_initialization import create_particle_state_3d
 from core.self_consistency import SelfConsistencyConfig
+from core.step_doubling import build_pair_step_doubling_state
 from core.types import (
     AdaptivePairReturnConfig,
     CheckpointConfig,
@@ -67,9 +70,30 @@ def main():
     parser.add_argument("--count", type=int, choices=[4, 8, 16], required=True)
     parser.add_argument("--subcharges", type=int, default=4)
     parser.add_argument("--width-mm", type=float, default=0.25)
+    parser.add_argument(
+        "--exact-retarded-backend",
+        default="python",
+        choices=["python", "numba_full_strict_serial"],
+        help="Existing exact-field implementation; strict Numba disables fast math",
+    )
     parser.add_argument("--checkpoint-directory", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--stop-file", type=Path)
+    parser.add_argument(
+        "--experimental-projection-ulp-floor",
+        action="store_true",
+        help="Experimental: floor only projection-energy atol at k ulps of endpoint kinetic energy",
+    )
+    parser.add_argument("--projection-ulp-multiplier", type=float, default=4.0)
+    parser.add_argument("--position-momentum-tolerance-scale", type=float, default=1.0)
+    parser.add_argument(
+        "--no-electron-driver",
+        action="store_true",
+        help="Retain neutral coasting clock markers in the driver role; remove all electron charges and radiation reaction",
+    )
     args = parser.parse_args()
+    if args.output.exists() or args.output.with_suffix(".attempts.jsonl").exists():
+        raise FileExistsError(f"Preserve existing capability evidence: {args.output}")
     proton_population = 0.0625 / (1.602176634e-19 * 352.21e6)
     gamma_e, gamma_p = 1 + 5 / 0.51099895, 1 + 20 / 938.27208816
     beta_e, beta_p = np.sqrt(1 - gamma_e**-2), np.sqrt(1 - gamma_p**-2)
@@ -86,6 +110,9 @@ def main():
         study_bunch(20, args.count, 1, proton_population),
         study_bunch(5, args.count, -1, electron_population),
     ]
+    if args.no_electron_driver:
+        for name in ("q", "q_source", "q_species", "q_observer", "char_time"):
+            states[1][name] = np.zeros(args.count)
     steps = 1200
     closing_proper = sum(
         float(s["gamma"][0] * abs(s["bz"][0]) * C_MMNS) for s in states
@@ -101,6 +128,7 @@ def main():
         driver=no_moment,
         stern_gerlach_force_enabled=False,
         exact_retarded_update="second_order_start_taylor_endpoint",
+        exact_retarded_backend=args.exact_retarded_backend,
     )
     cloud = MacroparticleSmearingConfig(
         enabled=True,
@@ -114,17 +142,24 @@ def main():
         enabled=True,
         target_lab_time_ns=target,
         public_sample_interval_ns=target * 100 / (steps - 1),
+        experimental_projection_ulp_floor=args.experimental_projection_ulp_floor,
+        projection_ulp_multiplier=args.projection_ulp_multiplier,
+        position_momentum_tolerance_scale=args.position_momentum_tolerance_scale,
     )
     sc = SelfConsistencyConfig()
     summary = {
         "status": "not_run",
         "interpreter": sys.executable,
+        "process_id": os.getpid(),
+        "wall_started_unix_seconds": time.time(),
         "active_counts": [args.count, args.count],
         "passive_counts": [0, 0],
         "cloud_source_counts": [args.count * args.subcharges] * 2,
         "proton_population": proton_population,
         "electron_population": electron_population,
         "electron_current_A": electron_current,
+        "no_electron_driver": args.no_electron_driver,
+        "control_definition": "neutral driver clock markers with unchanged initial geometry, mass, and bookkeeping weights; no electron charge or radiation reaction",
         "proper_step_ns": h,
         "steps": steps,
         "initial_separation_mm": 1000,
@@ -132,6 +167,7 @@ def main():
         "startup": "INERTIAL_PREHISTORY",
         "self_consistency": asdict(sc),
         "radiation_reaction_mode": "medina_lad",
+        "exact_retarded_backend": magnetic.exact_retarded_backend,
         "particle_loss_enabled": False,
         "cloud": asdict(cloud),
         "adaptive": asdict(adaptive),
@@ -153,6 +189,50 @@ def main():
     args.output.write_text(json.dumps(summary, indent=2, default=encode) + "\n")
     started = time.perf_counter()
     exit_code = 0
+    attempts = []
+    original_attempt = adaptive_module.attempt_exact_pair_adaptive_step
+    attempt_path = args.output.with_suffix(".attempts.jsonl")
+    if attempt_path.exists():
+        raise FileExistsError(f"Preserve existing attempt evidence: {attempt_path}")
+
+    def capture_attempt(**options):
+        result = original_attempt(**options)
+        trial = result.trial
+        full = build_pair_step_doubling_state(
+            rider_states=(trial.full.pair.rider.state,),
+            driver_states=(trial.full.pair.driver.state,),
+        )
+        refined = build_pair_step_doubling_state(
+            rider_states=(
+                trial.midpoint.pair.rider.state,
+                trial.refined.pair.rider.state,
+            ),
+            driver_states=(
+                trial.midpoint.pair.driver.state,
+                trial.refined.pair.driver.state,
+            ),
+        )
+        record = {
+            "attempted_step_ns": options["controller_state"].current_step_ns,
+            "accepted": result.accepted,
+            "assessment": asdict(trial.assessment),
+            "full_diagnostics_native": full.diagnostics_native,
+            "refined_diagnostics_native": refined.diagnostics_native,
+            "health_failures": trial.health_failures,
+        }
+        attempts.append(record)
+        with attempt_path.open("a") as stream:
+            stream.write(json.dumps(record, default=encode) + "\n")
+        print(
+            f"Attempt {len(attempts)}: accepted={result.accepted}, "
+            f"floor_changed_acceptance={trial.assessment.projection_floor_changed_acceptance}, "
+            f"error={trial.assessment.normalized_error:.6g}; "
+            f"wall {time.perf_counter() - started:.1f} s",
+            flush=True,
+        )
+        return result
+
+    adaptive_module.attempt_exact_pair_adaptive_step = capture_attempt
     try:
         rider, driver, *_ = retarded_integrator(
             steps=steps,
@@ -174,6 +254,7 @@ def main():
             radiation_reaction_mode="medina_lad",
             particle_loss=ParticleLossConfig(enabled=False),
             adaptive_pair_return=adaptive,
+            cancel_callback=(None if args.stop_file is None else args.stop_file.exists),
             checkpoint=CheckpointConfig(
                 enabled=True,
                 directory=str(args.checkpoint_directory),
@@ -237,12 +318,47 @@ def main():
                 if isinstance(value, np.ndarray)
             },
         )
-    except Exception as error:
+    except (Exception, KeyboardInterrupt) as error:
         summary.update(
             status="rejected_or_failed", exception=f"{type(error).__name__}: {error}"
         )
         args.output.with_suffix(".traceback.txt").write_text(traceback.format_exc())
-        exit_code = 2
+        exit_code = 130 if isinstance(error, KeyboardInterrupt) else 2
+    finally:
+        adaptive_module.attempt_exact_pair_adaptive_step = original_attempt
+    accepted = [record for record in attempts if record["accepted"]]
+    summary["attempt_counts"] = {
+        "accepted_slabs": len(accepted),
+        "rejected_trials": len(attempts) - len(accepted),
+        "floor_applied_trials": sum(
+            r["assessment"]["projection_floor_applied"] for r in attempts
+        ),
+        "floor_changed_acceptances": sum(
+            r["assessment"]["projection_floor_changed_acceptance"] for r in accepted
+        ),
+    }
+
+    def energy_totals(records):
+        values = (
+            np.stack([r["refined_diagnostics_native"] for r in records])
+            if records
+            else np.zeros((0, 2 * args.count, 4))
+        )
+        return {
+            "signed_sum_per_observer_native": values.sum(axis=0),
+            "absolute_sum_per_observer_native": np.abs(values).sum(axis=0),
+            "diagnostic_columns": [
+                "radiation_energy",
+                "radiation_reaction_work",
+                "medina_cross_field_energy_change",
+                "mass_shell_projection_energy",
+            ],
+        }
+
+    summary["energy_bookkeeping_all_acceptances"] = energy_totals(accepted)
+    summary["energy_bookkeeping_floor_changed_acceptances"] = energy_totals(
+        [r for r in accepted if r["assessment"]["projection_floor_changed_acceptance"]]
+    )
     summary.update(wall_seconds=time.perf_counter() - started, exit_code=exit_code)
     args.output.write_text(json.dumps(summary, indent=2, default=encode) + "\n")
     print(
