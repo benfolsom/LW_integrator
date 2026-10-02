@@ -368,6 +368,7 @@ def self_consistent_step(
     exact_source_history: Optional[Any] = None,
     exact_dipole_source_collection: Optional[Any] = None,
     exact_source_spin_interpolation_model: str = "centered_c1",
+    _sampled_inclusion_enabled: bool = True,
 ) -> ParticleState:
     """Execute a single integration step, optionally with self-consistency.
 
@@ -449,6 +450,12 @@ def self_consistent_step(
         step_idx,
         cancel_callback,
         **({"space_charge": space_charge} if space_charge is not None else {}),
+        **(
+            {"_sampled_inclusion_enabled": False}
+            if not _sampled_inclusion_enabled
+            and ("_sampled_inclusion_enabled" in _sig_params or _accepts_var_kwargs)
+            else {}
+        ),
         **(
             {
                 "pseudo_grid_space_charge_source_charges": (

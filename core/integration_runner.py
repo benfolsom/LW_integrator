@@ -1515,6 +1515,14 @@ def _slice_trajectory_arrays(
         halted_early=arrays.halted_early[start:stop],
         halt_step=arrays.halt_step[start:stop],
         halt_reason=arrays.halt_reason[start:stop],
+        potential_inclusion_delta_A_x=arrays.potential_inclusion_delta_A_x[start:stop],
+        potential_inclusion_delta_A_y=arrays.potential_inclusion_delta_A_y[start:stop],
+        potential_inclusion_delta_A_z=arrays.potential_inclusion_delta_A_z[start:stop],
+        potential_inclusion_delta_A_t=arrays.potential_inclusion_delta_A_t[start:stop],
+        sampled_source_canonical_ready=arrays.sampled_source_canonical_ready[
+            start:stop
+        ],
+        potential_inclusion_state=arrays.potential_inclusion_state[start:stop],
         particle_failure_info=arrays.particle_failure_info,
         pseudo_grid_schedule=arrays.pseudo_grid_schedule[start:stop],
     )
@@ -1629,6 +1637,40 @@ def _run_pseudo_grid_reduced_step(
     observer_active = np.asarray(observer_active_indices, dtype=int)
     source_active = np.asarray(source_active_indices, dtype=int)
     observer_field = np.asarray(observer_field_indices, dtype=int)
+    # With every particle active there is no reduction or remapping. Preserve
+    # full-history source identities, including canonical inclusion metadata.
+    observer_count = len(observer_history[-1]["x"])
+    source_count = len(source_history[-1]["x"])
+    source_charge = np.asarray(
+        source_history[-1].get("q_source", source_history[-1]["q"])
+    )
+    if (
+        np.array_equal(np.sort(observer_active), np.arange(observer_count))
+        and np.array_equal(np.sort(source_active), np.arange(source_count))
+        and np.array_equal(
+            np.asarray(source_effective_charges), source_charge[source_active]
+        )
+    ):
+        return self_consistent_step(
+            retarded_equations_of_motion,
+            h_step,
+            cast(Trajectory, observer_history),
+            cast(Trajectory, source_history),
+            len(observer_history) - 1,
+            aperture_radius,
+            sim_type,
+            self_consistency,
+            chrono_mode,
+            startup_mode,
+            step_idx=step_idx,
+            cancel_callback=cancel_callback,
+            space_charge=space_charge,
+            radiation_reaction_mode=radiation_reaction_mode,
+            external_field=external_field,
+            macroparticle_smearing=macroparticle_smearing,
+            beamline_geometry=beamline_geometry,
+            magnetic_dipole=magnetic_dipole,
+        )
     sc_source_indices = observer_field.copy()
     pseudo_grid_space_charge_source_charges = None
     pseudo_grid_space_charge_source_radii = None
@@ -1732,6 +1774,11 @@ def _run_pseudo_grid_reduced_step(
             cancel_callback=cancel_callback,
             space_charge=space_charge,
             radiation_reaction_mode=radiation_reaction_mode,
+            **(
+                {"_sampled_inclusion_enabled": False}
+                if _call_accepts_kw(self_consistent_step, "_sampled_inclusion_enabled")
+                else {}
+            ),
             pseudo_grid_space_charge_source_charges=(
                 pseudo_grid_space_charge_source_charges
             ),
@@ -1896,6 +1943,11 @@ def _run_pseudo_grid_reduced_step(
         cancel_callback=cancel_callback,
         space_charge=None,
         radiation_reaction_mode=radiation_reaction_mode,
+        **(
+            {"_sampled_inclusion_enabled": False}
+            if _call_accepts_kw(self_consistent_step, "_sampled_inclusion_enabled")
+            else {}
+        ),
         macroparticle_smearing=macroparticle_smearing,
         beamline_geometry=beamline_geometry,
         traj_soa=observer_passive_soa,

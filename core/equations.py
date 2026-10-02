@@ -65,6 +65,11 @@ from typing import Any, Optional, Sequence
 import numpy as np
 
 from .constants import C_MMNS
+from .potential_inclusion import (
+    LEDGER_FIELDS,
+    copy_inclusion_state,
+    sampled_inclusion_change,
+)
 from .distances import (
     ChronoMatchResult,
     chrono_match_indices,
@@ -371,6 +376,8 @@ def _initialize_result_state(current_state: ParticleState) -> ParticleState:
             dtype=bool,
             copy=True,
         )
+
+    copy_inclusion_state(current_state, result)
 
     # Preserve dead particle metadata to prevent redundant logging
     if "_dead_particles" in current_state:
@@ -1806,6 +1813,7 @@ def retarded_equations_of_motion(
     moment_radiation_force_native: Optional[Any] = None,
     _experimental_linear_spin_adapter: bool = False,
     _particle_proper_steps_ns: np.ndarray | None = None,
+    _sampled_inclusion_enabled: bool = True,
 ) -> ParticleState:
     """Core equations of motion preserving the validated reference behavior.
 
@@ -2152,6 +2160,38 @@ def retarded_equations_of_motion(
         # nonlinear trial.  It stays exactly zero for off, neutral, and
         # derivative-unprimed steps so their RFS spin update is unchanged.
         applied_medina_force_native = np.zeros(3, dtype=float)
+
+        inclusion_momentum_offset = np.zeros(4, dtype=float)
+        sampled_inclusion_supported = bool(
+            _sampled_inclusion_enabled
+            and not exact_charge_source_selected
+            and pseudo_grid_space_charge_source_trajectory is None
+            and pseudo_grid_sc_charge_matrix is None
+        )
+        if sampled_inclusion_supported:
+            inclusion_delta_A, inclusion_state = sampled_inclusion_change(
+                trajectory=trajectory,
+                trajectory_ext=trajectory_ext,
+                index=index_traj,
+                particle=particle_idx,
+                h=h,
+                startup_mode=startup_mode,
+                sim_type=sim_type,
+                chrono_mode=chrono_mode,
+                self_consistency=self_consistency,
+                space_charge=space_charge,
+                beamline_geometry=beamline_geometry,
+                traj_soa=traj_soa,
+                traj_ext_soa=traj_ext_soa,
+                macroparticle_smearing=macroparticle_smearing,
+            )
+            inclusion_momentum_offset = (
+                force_particle_charge / C_MMNS * inclusion_delta_A
+            )
+            for axis, name in enumerate(LEDGER_FIELDS):
+                result[name][particle_idx] += inclusion_delta_A[axis]
+            result["potential_inclusion_state"][particle_idx] = inclusion_state
+            result["sampled_source_canonical_ready"][particle_idx] = True
 
         # Self-consistency loop: iterate until gamma converges
         converged = False
@@ -4134,6 +4174,13 @@ def retarded_equations_of_motion(
             # ================================================================
             # STEP 4: Update momentum and derive gamma from Pt
             # ================================================================
+            # Canonical source-inclusion bookkeeping, evaluated once at the
+            # accepted event. Each nonlinear trial starts from the same offset.
+            accumulated_momentum_x += inclusion_momentum_offset[0]
+            accumulated_momentum_y += inclusion_momentum_offset[1]
+            accumulated_momentum_z += inclusion_momentum_offset[2]
+            accumulated_momentum_t += inclusion_momentum_offset[3]
+
             result["Px"][particle_idx] = accumulated_momentum_x
             result["Py"][particle_idx] = accumulated_momentum_y
             result["Pz"][particle_idx] = accumulated_momentum_z
@@ -4148,6 +4195,8 @@ def retarded_equations_of_motion(
             # paths ledger the correction from this raw value. The exact
             # accepted-on-shell path uses the stable mechanical energy balance
             # below so rest-scale subtraction cannot dominate atomic energies.
+            # Both this raw Pt and the projected Pt contain the same event
+            # potential offset, so inclusion bookkeeping is excluded from work.
             raw_canonical_pt_before_constraints = float(result["Pt"][particle_idx])
 
             if stern_gerlach_impulse_applied:
@@ -4856,6 +4905,9 @@ def retarded_equations_of_motion(
                     * C_MMNS
                     * current_state["bz"][particle_idx]
                 )
+                # Inclusion offsets enter canonical P and the subtracted
+                # potential together. This difference of mechanical momenta
+                # therefore contains no ledger impulse or ledger force sample.
                 if predictor_coordinate_dt > 0.0 and force_particle_charge != 0.0:
                     external_force = (
                         float(
@@ -5583,6 +5635,9 @@ def retarded_equations_of_motion(
             f"{particles_marked_dead_this_step}/{num_particles} particles marked dead in this step"
         )
 
+    result["potential_inclusion_state"] = np.asarray(
+        result["potential_inclusion_state"], dtype=str
+    )
     return result
 
 

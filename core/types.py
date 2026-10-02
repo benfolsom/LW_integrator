@@ -1547,6 +1547,28 @@ class TrajectoryArrays:
         compare=False,
     )
 
+    potential_inclusion_delta_A_x: np.ndarray = field(default=None, repr=False)
+    potential_inclusion_delta_A_y: np.ndarray = field(default=None, repr=False)
+    potential_inclusion_delta_A_z: np.ndarray = field(default=None, repr=False)
+    potential_inclusion_delta_A_t: np.ndarray = field(default=None, repr=False)
+    sampled_source_canonical_ready: np.ndarray = field(default=None, repr=False)
+    potential_inclusion_state: np.ndarray = field(default=None, repr=False)
+
+    def __post_init__(self) -> None:
+        shape = self.x.shape
+        if self.potential_inclusion_delta_A_x is None:
+            self.potential_inclusion_delta_A_x = np.zeros(shape, dtype=float)
+        if self.potential_inclusion_delta_A_y is None:
+            self.potential_inclusion_delta_A_y = np.zeros(shape, dtype=float)
+        if self.potential_inclusion_delta_A_z is None:
+            self.potential_inclusion_delta_A_z = np.zeros(shape, dtype=float)
+        if self.potential_inclusion_delta_A_t is None:
+            self.potential_inclusion_delta_A_t = np.zeros(shape, dtype=float)
+        if self.sampled_source_canonical_ready is None:
+            self.sampled_source_canonical_ready = np.zeros(shape, dtype=bool)
+        if self.potential_inclusion_state is None:
+            self.potential_inclusion_state = np.full(shape, "", dtype="U1")
+
     @property
     def n_steps(self) -> int:
         return int(self.x.shape[0])
@@ -1723,6 +1745,12 @@ class TrajectoryArrays:
                     "stern_gerlach_active": self.stern_gerlach_active,
                 }
             )
+        s.update(
+            {
+                name: getattr(self, name)[step]
+                for name in TrajectoryBuilder._INCLUSION_FIELDS
+            }
+        )
         return s
 
     def to_legacy(self) -> "Trajectory":
@@ -2015,6 +2043,9 @@ class IndexedTrajectoryArrays:
                     "stern_gerlach_active": self.constant("stern_gerlach_active"),
                 }
             )
+        state.update(
+            {name: self.row(name, step) for name in TrajectoryBuilder._INCLUSION_FIELDS}
+        )
         return state
 
     def to_legacy(self) -> "Trajectory":
@@ -2029,6 +2060,16 @@ class TrajectoryBuilder:
     """
 
     # Fields present in legacy state dicts that map to 2-D kinematic arrays
+    _INCLUSION_FLOAT_FIELDS: tuple = (
+        "potential_inclusion_delta_A_x",
+        "potential_inclusion_delta_A_y",
+        "potential_inclusion_delta_A_z",
+        "potential_inclusion_delta_A_t",
+    )
+    _INCLUSION_FIELDS: tuple = _INCLUSION_FLOAT_FIELDS + (
+        "sampled_source_canonical_ready",
+        "potential_inclusion_state",
+    )
     _KINEMATIC_FIELDS: tuple = RESOLVED_KNOT_FIELDS + (
         "x",
         "y",
@@ -2056,7 +2097,7 @@ class TrajectoryBuilder:
         "beta_avg_y",
         "beta_avg_z",
         "beta_samples",
-    )
+    ) + _INCLUSION_FLOAT_FIELDS
     _SOURCE_START_FLOAT_FIELDS: tuple = (
         "source_start_beta_prime_x_per_mm",
         "source_start_beta_prime_y_per_mm",
@@ -2149,6 +2190,12 @@ class TrajectoryBuilder:
                 (n_steps, n_particles),
             )
         self._arrays["dead"] = np.zeros((n_steps, n_particles), dtype=bool)
+        self._arrays["sampled_source_canonical_ready"] = np.zeros(
+            (n_steps, n_particles), dtype=bool
+        )
+        self._arrays["potential_inclusion_state"] = np.full(
+            (n_steps, n_particles), "", dtype="U1"
+        )
 
         for field_name in self._PARTICLE_CONST_FIELDS:
             self._arrays[field_name] = np.zeros(n_particles, dtype=np.float64)
@@ -2173,7 +2220,11 @@ class TrajectoryBuilder:
             raise ValueError("new trajectory capacity must exceed the old capacity")
 
         old_capacity = self._n_steps
-        always_allocated = set(self._KINEMATIC_FIELDS) | {"dead"}
+        always_allocated = set(self._KINEMATIC_FIELDS) | {
+            "dead",
+            "sampled_source_canonical_ready",
+            "potential_inclusion_state",
+        }
         magnetic_fields = set(self._MAGNETIC_KINEMATIC_FIELDS)
         magnetic_bool_fields = set(self._MAGNETIC_BOOL_FIELDS)
         medina_float_fields = set(self._MEDINA_FLOAT_FIELDS)
@@ -2235,6 +2286,16 @@ class TrajectoryBuilder:
         self._storage_state.rewrite_epoch += 1
         self._storage_state.array_revision += 1
 
+    def _ensure_inclusion_string_width(self, values: np.ndarray) -> None:
+        width = max(1, np.asarray(values, dtype=str).dtype.itemsize // 4)
+        target = self._arrays["potential_inclusion_state"]
+        if target.dtype.itemsize // 4 < width:
+            self._arrays["potential_inclusion_state"] = target.astype(
+                f"U{2 ** (width - 1).bit_length()}"
+            )
+            self._storage_state.array_revision += 1
+            self._storage_state.rewrite_epoch += 1
+
     def set_step(self, step: int, state: ParticleState) -> None:
         """Copy *state* fields into row *step* of the pre-allocated arrays."""
         step = int(step)
@@ -2293,6 +2354,16 @@ class TrajectoryBuilder:
             if field_name in state:
                 self._arrays[field_name][step] = state[field_name]
             # else leave as zero (already pre-allocated)
+
+        if "potential_inclusion_state" in state:
+            self._ensure_inclusion_string_width(state["potential_inclusion_state"])
+            self._arrays["potential_inclusion_state"][step] = state[
+                "potential_inclusion_state"
+            ]
+        if "sampled_source_canonical_ready" in state:
+            self._arrays["sampled_source_canonical_ready"][step] = state[
+                "sampled_source_canonical_ready"
+            ]
 
         dead = state.get("_dead_particles")
         if dead is not None:
@@ -2412,7 +2483,7 @@ class TrajectoryBuilder:
             + self._MAGNETIC_BOOL_FIELDS
             + self._MEDINA_FLOAT_FIELDS
             + self._MEDINA_BOOL_FIELDS
-            + ("dead",)
+            + ("dead", "sampled_source_canonical_ready", "potential_inclusion_state")
         )
         # Fixed-step checkpoint schema 1 predates the exact-pair source-start
         # acceleration sidecars. Those fields have a safe all-zero/unready
@@ -2420,6 +2491,9 @@ class TrajectoryBuilder:
         optional_source_start_fields = set(
             self._SOURCE_START_FLOAT_FIELDS + self._MAGNETIC_BOOL_FIELDS
         )
+        optional_source_start_fields.update(self._INCLUSION_FIELDS)
+        if "potential_inclusion_state" in row_arrays:
+            self._ensure_inclusion_string_width(row_arrays["potential_inclusion_state"])
         missing = (
             expected_row_fields
             - optional_source_start_fields
@@ -2610,6 +2684,22 @@ class TrajectoryBuilder:
             halt_reason=self._halt_reason,
             particle_failure_info=self._particle_failure_info,
             pseudo_grid_schedule=self._pseudo_grid_schedule[:s],
+            potential_inclusion_delta_A_x=self._arrays["potential_inclusion_delta_A_x"][
+                :s
+            ],
+            potential_inclusion_delta_A_y=self._arrays["potential_inclusion_delta_A_y"][
+                :s
+            ],
+            potential_inclusion_delta_A_z=self._arrays["potential_inclusion_delta_A_z"][
+                :s
+            ],
+            potential_inclusion_delta_A_t=self._arrays["potential_inclusion_delta_A_t"][
+                :s
+            ],
+            sampled_source_canonical_ready=self._arrays[
+                "sampled_source_canonical_ready"
+            ][:s],
+            potential_inclusion_state=self._arrays["potential_inclusion_state"][:s],
             _storage_state=self._storage_state,
             _storage_array_revision=self._storage_state.array_revision,
         )._make_managed_arrays_read_only()
@@ -2713,6 +2803,14 @@ class TrajectoryBuilder:
             halt_reason=self._halt_reason,
             particle_failure_info=self._particle_failure_info,
             pseudo_grid_schedule=self._pseudo_grid_schedule,
+            potential_inclusion_delta_A_x=self._arrays["potential_inclusion_delta_A_x"],
+            potential_inclusion_delta_A_y=self._arrays["potential_inclusion_delta_A_y"],
+            potential_inclusion_delta_A_z=self._arrays["potential_inclusion_delta_A_z"],
+            potential_inclusion_delta_A_t=self._arrays["potential_inclusion_delta_A_t"],
+            sampled_source_canonical_ready=self._arrays[
+                "sampled_source_canonical_ready"
+            ],
+            potential_inclusion_state=self._arrays["potential_inclusion_state"],
             _storage_state=self._storage_state,
             _storage_array_revision=self._storage_state.array_revision,
         )._make_managed_arrays_read_only()
