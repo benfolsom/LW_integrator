@@ -887,8 +887,20 @@ def test_window_writes_complete_checkpoint_with_public_cursor(tmp_path: Path) ->
     )
 
 
-def test_window_cancel_flushes_latest_joint_history(tmp_path: Path) -> None:
+@pytest.mark.parametrize("inside_trial", [False, True])
+def test_window_cancel_flushes_latest_joint_history(
+    tmp_path: Path, inside_trial: bool
+) -> None:
+    """Cancellation between slabs, or raised inside an endpoint solve, must
+    still flush the latest committed joint history."""
     rider, driver = _pair()
+    advance = _advance(2.0)
+
+    def cancel_trial(*args):
+        if rider.accepted_steps > 1:
+            raise IntegrationCancelled("cancel inside the endpoint solve")
+        return advance(*args)
+
     directory = tmp_path / "cancel.checkpoint"
     store = AcceptedPairCheckpointStore(
         directory,
@@ -902,12 +914,12 @@ def test_window_cancel_flushes_latest_joint_history(tmp_path: Path) -> None:
         run_exact_pair_adaptive_window(
             rider_builder=rider,
             driver_builder=driver,
-            advance_rider=_advance(2.0),
+            advance_rider=cancel_trial if inside_trial else _advance(2.0),
             advance_driver=_advance(4.0),
             controller_state=_controller(),
             controller_config=StepControllerConfig(method_order=1),
             tolerances=_tolerances(1.0),
-            target_time_ns=0.2,
+            target_time_ns=0.65 if inside_trial else 0.2,
             minimum_step_ns=0.001,
             maximum_step_ns=1.0,
             maximum_attempts=10,
@@ -916,7 +928,7 @@ def test_window_cancel_flushes_latest_joint_history(tmp_path: Path) -> None:
             magnetic_dipole=MagneticDipoleConfig(),
             include_dipole_source=False,
             checkpoint_store=store,
-            cancel_callback=lambda: True,
+            cancel_callback=lambda: not inside_trial,
         )
 
     reopened = AcceptedPairCheckpointStore(
@@ -927,11 +939,16 @@ def test_window_cancel_flushes_latest_joint_history(tmp_path: Path) -> None:
         resume=True,
     )
     assert reopened.manifest["status"] == "running"
-    assert reopened.committed_knots == 1
+    expected_knots = 3 if inside_trial else 1
+    assert reopened.committed_knots == expected_knots
     restored_rider = GrowableTrajectoryBuilder(1, 1)
     restored_driver = GrowableTrajectoryBuilder(1, 1)
     reopened.restore_pair(restored_rider, restored_driver)
-    assert restored_rider.accepted_steps == restored_driver.accepted_steps == 1
+    assert (
+        restored_rider.accepted_steps
+        == restored_driver.accepted_steps
+        == expected_knots
+    )
 
 
 def test_window_resume_reproduces_history_and_output_selection_bitwise(
