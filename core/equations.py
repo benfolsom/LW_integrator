@@ -63,6 +63,7 @@ from .resolved_knot import (
 from typing import Any, Optional, Sequence
 
 import numpy as np
+from math import fsum
 
 from .constants import C_MMNS
 from .potential_inclusion import (
@@ -85,6 +86,7 @@ from .external_fields import (
     evaluate_external_field_si,
 )
 from .macroparticle_smearing import smear_source_samples
+from .exact_source_cloud import exact_cloud_history
 from .medina_radiation_reaction import (
     MedinaRadiationReactionResult,
     compute_medina_radiation_reaction,
@@ -516,6 +518,38 @@ def _stable_kinetic_energy_native(
     rest_momentum = mass * C_MMNS
     total_momentum = float(np.hypot(rest_momentum, magnitude))
     return float(C_MMNS * magnitude**2 / (total_momentum + rest_momentum))
+
+
+def _mass_shell_projection_energy_increment_native(
+    start_momentum: np.ndarray,
+    end_momentum: np.ndarray,
+    particle_mass: float,
+    temporal_impulse: float,
+) -> float:
+    """Rationalize the shell-energy change and combine the temporal impulse.
+
+    With S(p) = sqrt((mc)^2 + p.p), delta K = c delta(p.p)/(S1+S0).
+    Factor each square difference before summation; no large kinetic energies
+    or squared momenta are subtracted. The physical diagnostic is unchanged.
+    """
+    start = np.asarray(start_momentum, dtype=float)
+    end = np.asarray(end_momentum, dtype=float)
+    if any(p.shape != (3,) or not np.all(np.isfinite(p)) for p in (start, end)):
+        raise ValueError("mechanical_momentum must be a finite three-vector")
+    mass = float(particle_mass)
+    if not np.isfinite(mass) or mass <= 0.0:
+        raise ValueError("particle_mass must be finite and positive")
+    if not np.isfinite(temporal_impulse):
+        raise ValueError("temporal_impulse must be finite")
+    rest = mass * C_MMNS
+    denominator = float(np.hypot(rest, np.hypot.reduce(start))) + float(
+        np.hypot(rest, np.hypot.reduce(end))
+    )
+    numerator = fsum(
+        [float((b - a) * (b + a)) for a, b in zip(start, end)]
+        + [-float(temporal_impulse) * denominator]
+    )
+    return float(C_MMNS * (numerator / denominator))
 
 
 def _canonical_pt_from_mechanical_mass_shell(
@@ -1814,6 +1848,8 @@ def retarded_equations_of_motion(
     _experimental_linear_spin_adapter: bool = False,
     _particle_proper_steps_ns: np.ndarray | None = None,
     _sampled_inclusion_enabled: bool = True,
+    _exact_trial_charge_fields: dict[tuple[str, int], Any] | None = None,
+    _skip_exact_endpoint_field_diagnostic: bool = False,
 ) -> ParticleState:
     """Core equations of motion preserving the validated reference behavior.
 
@@ -3150,6 +3186,10 @@ def retarded_equations_of_motion(
                                 else trajectory_ext
                             )
                         )
+                        charge_history = exact_cloud_history(
+                            charge_history,
+                            getattr(magnetic_dipole, "exact_charge_cloud", None),
+                        )
                         charge_event = ObserverEvent(
                             time_ns=float(current_state["t"][particle_idx]),
                             position_mm=charge_source_position,
@@ -3217,7 +3257,14 @@ def retarded_equations_of_motion(
                             if magnetic_dipole is not None
                             else "python"
                         )
-                        if charge_backend in {
+                        shared_cross_field = (
+                            None
+                            if _exact_trial_charge_fields is None
+                            else _exact_trial_charge_fields.get(("cross", particle_idx))
+                        )
+                        if shared_cross_field is not None:
+                            exact_charge_field = shared_cross_field
+                        elif charge_backend in {
                             "numba_analytic_charge_response_serial",
                             "numba_analytic_charge_dipole_response_serial",
                         }:
@@ -3245,6 +3292,10 @@ def retarded_equations_of_motion(
                             )
                         if sc_convergence_mode == "fixed_geometry":
                             exact_charge_field_cache = exact_charge_field
+                            if _exact_trial_charge_fields is not None:
+                                _exact_trial_charge_fields[("cross", particle_idx)] = (
+                                    exact_charge_field
+                                )
                 except RetardedHistoryError:
                     # INERTIAL_PREHISTORY preflights every displaced light cone.
                     # Missing history after that gate is a model failure, never a
@@ -3346,7 +3397,16 @@ def retarded_equations_of_motion(
                     # for every other particle in this bunch. Exclude only its
                     # own index; the provider retains the same exact backend.
                     if exact_same_bunch_field_cache is None:
+                        if _exact_trial_charge_fields is not None:
+                            exact_same_bunch_field_cache = (
+                                _exact_trial_charge_fields.get(("own", particle_idx))
+                            )
+                    if exact_same_bunch_field_cache is None:
                         own_history = traj_soa if traj_soa is not None else trajectory
+                        own_history = exact_cloud_history(
+                            own_history,
+                            getattr(magnetic_dipole, "exact_charge_cloud", None),
+                        )
                         # Bunch-mates closer than one light-step have their retarded
                         # point inside the step being solved: continue their last
                         # accepted quintic segment (python provider only).
@@ -3364,6 +3424,32 @@ def retarded_equations_of_motion(
                                 extrapolate_ns=2.0 * float(h) * gamma_now,
                             )
                         )
+                        if _exact_trial_charge_fields is not None:
+                            # A change in h changes the permitted continuation.
+                            # Reuse only roots entirely in accepted history,
+                            # including every derivative stencil. No continued
+                            # source event may cross clock-query boundaries.
+                            valid = exact_same_bunch_field_cache.field.valid_sources
+                            latest = float(np.min(current_state["t"]))
+                            centre_times = (
+                                exact_same_bunch_field_cache.field.retarded_time_ns[
+                                    valid
+                                ]
+                            )
+                            stencil_times = (
+                                exact_same_bunch_field_cache.stencil_retarded_time_ns[
+                                    ..., valid
+                                ]
+                            )
+                            if (
+                                np.all(np.isfinite(centre_times))
+                                and np.all(np.isfinite(stencil_times))
+                                and np.all(centre_times <= latest)
+                                and np.all(stencil_times <= latest)
+                            ):
+                                _exact_trial_charge_fields[("own", particle_idx)] = (
+                                    exact_same_bunch_field_cache
+                                )
                     if isinstance(
                         exact_same_bunch_field_cache,
                         RetardedChargeResponseGradientResult,
@@ -4471,18 +4557,13 @@ def retarded_equations_of_motion(
                         ),
                         dtype=float,
                     )
-                    start_kinetic_energy = _stable_kinetic_energy_native(
-                        start_mechanical_momentum,
-                        particle_mass,
-                    )
-                    end_kinetic_energy = _stable_kinetic_energy_native(
-                        on_shell_mechanical_momentum,
-                        particle_mass,
-                    )
-                    result["mass_shell_projection_energy"][particle_idx] = float(
-                        end_kinetic_energy
-                        - start_kinetic_energy
-                        - C_MMNS * exact_mechanical_temporal_impulse
+                    result["mass_shell_projection_energy"][particle_idx] = (
+                        _mass_shell_projection_energy_increment_native(
+                            start_mechanical_momentum,
+                            on_shell_mechanical_momentum,
+                            particle_mass,
+                            exact_mechanical_temporal_impulse,
+                        )
                     )
                 else:
                     result["mass_shell_projection_energy"][particle_idx] = float(
@@ -5482,6 +5563,7 @@ def retarded_equations_of_motion(
                 rfs_selected
                 and sim_type == SimulationType.BUNCH_TO_BUNCH
                 and len(trajectory_ext) > 0
+                and not _skip_exact_endpoint_field_diagnostic
             ):
                 from .retarded_fields import (
                     ObserverEvent,
@@ -5491,14 +5573,17 @@ def retarded_equations_of_motion(
 
                 try:
                     diagnostic_charge_field = evaluate_retarded_charge_field_native(
-                        (
-                            exact_source_history
-                            if exact_source_history is not None
-                            else (
-                                traj_ext_soa
-                                if traj_ext_soa is not None
-                                else trajectory_ext
-                            )
+                        exact_cloud_history(
+                            (
+                                exact_source_history
+                                if exact_source_history is not None
+                                else (
+                                    traj_ext_soa
+                                    if traj_ext_soa is not None
+                                    else trajectory_ext
+                                )
+                            ),
+                            getattr(magnetic_dipole, "exact_charge_cloud", None),
                         ),
                         ObserverEvent(
                             time_ns=float(result["t"][particle_idx]),

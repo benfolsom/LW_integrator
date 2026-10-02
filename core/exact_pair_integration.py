@@ -8,6 +8,7 @@ return shape used by the CLI and GUI.
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from typing import Any, Callable, Sequence, cast
 
 import numpy as np
@@ -66,18 +67,31 @@ def _step_controller_config(*, causal_c5_enabled: bool) -> StepControllerConfig:
 
 
 def _scaled_tolerances(
-    scale: float, diagnostics_absolute: float | None = None
+    scale: float,
+    diagnostics_absolute: float | None = None,
+    *,
+    position_momentum_scale: float = 1.0,
+    experimental_projection_ulp_floor: bool = False,
+    projection_ulp_multiplier: float = 4.0,
 ) -> StepDoublingTolerances:
     """Return the validated scale-1 first-pass error model."""
 
     return StepDoublingTolerances(
-        position_mm=ErrorScale(scale * 1.0e-15, scale * 1.0e-10),
-        mechanical_momentum_native=ErrorScale(scale * 1.0e-14, scale * 1.0e-10),
+        position_mm=ErrorScale(
+            scale * 1.0e-15 * position_momentum_scale,
+            scale * 1.0e-10 * position_momentum_scale,
+        ),
+        mechanical_momentum_native=ErrorScale(
+            scale * 1.0e-14 * position_momentum_scale,
+            scale * 1.0e-10 * position_momentum_scale,
+        ),
         rest_spin=ErrorScale(scale * 1.0e-13, scale * 1.0e-10),
         diagnostics_native=ErrorScale(
             scale * 1.0e-13 if diagnostics_absolute is None else diagnostics_absolute,
             scale * 1.0e-8,
         ),
+        experimental_projection_ulp_floor=experimental_projection_ulp_floor,
+        projection_ulp_multiplier=projection_ulp_multiplier,
     )
 
 
@@ -370,7 +384,11 @@ def run_exact_pair_adaptive_integrator(
             causal_c5_enabled=(causal_c5_enabled or causal_local_enabled)
         ),
         tolerances=_scaled_tolerances(
-            adaptive.tolerance_scale, adaptive.diagnostics_absolute_tolerance_native
+            adaptive.tolerance_scale,
+            adaptive.diagnostics_absolute_tolerance_native,
+            position_momentum_scale=adaptive.position_momentum_tolerance_scale,
+            experimental_projection_ulp_floor=adaptive.experimental_projection_ulp_floor,
+            projection_ulp_multiplier=adaptive.projection_ulp_multiplier,
         ),
         target_time_ns=adaptive.target_lab_time_ns,
         minimum_step_ns=initial_step_ns * adaptive.minimum_step_factor,
@@ -388,6 +406,7 @@ def run_exact_pair_adaptive_integrator(
         relative_time_tolerance=adaptive.shared_time_relative_tolerance,
         cancel_callback=cancel_callback,
         accepted_progress_callback=progress,
+        record_attempt_diagnostics=adaptive.experimental_projection_ulp_floor,
         intrinsic_spin_reduction_history=reduction_history,
         build_intrinsic_spin_reduction_candidate=reduction_candidate_builder,
         growable_causal_c5_source_history=growable_c5_history,
@@ -441,6 +460,19 @@ def run_exact_pair_adaptive_integrator(
             magnetic_dipole.intrinsic_spin_self_reaction_mode,
         ),
     }
+    if adaptive.experimental_projection_ulp_floor:
+        summary["experimental_projection_ulp_floor"] = {
+            "reference": "per-observer kinetic energy from endpoint mechanical momentum; maximum of full and refined endpoints",
+            "multiplier": adaptive.projection_ulp_multiplier,
+            "floor_applied_trials": sum(
+                d.projection_floor_applied for d in result.attempt_diagnostics
+            ),
+            "floor_changed_acceptances": sum(
+                d.accepted and d.projection_floor_changed_acceptance
+                for d in result.attempt_diagnostics
+            ),
+            "attempt_diagnostics": [asdict(d) for d in result.attempt_diagnostics],
+        }
     cast(dict[str, Any], rider_legacy[-1])["_adaptive_pair_return"] = dict(summary)
     cast(dict[str, Any], driver_legacy[-1])["_adaptive_pair_return"] = dict(summary)
     return rider_legacy, driver_legacy, rider, driver, []

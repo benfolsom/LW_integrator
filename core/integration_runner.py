@@ -1163,6 +1163,7 @@ def _preflight_inertial_exact_histories(
         evaluate_retarded_charge_source_interaction_native,
     )
     from .retarded_fields import ObserverEvent
+    from .exact_source_cloud import exact_cloud_history
 
     if dipole_field_required:
         from .dipole_source_interactions import (
@@ -1252,6 +1253,9 @@ def _preflight_inertial_exact_histories(
                 if same_bunch_fields and particle_count > 1:
                     charge_histories.append((own_history, (particle_idx,)))
                 for charge_history, excluded in charge_histories:
+                    charge_history = exact_cloud_history(
+                        charge_history, magnetic_dipole.exact_charge_cloud
+                    )
                     charge_interaction = (
                         evaluate_retarded_charge_source_interaction_native(
                             charge_history,
@@ -3129,6 +3133,16 @@ def retarded_integrator(
         source_history_representation
     )
     if source_history_representation == "proper_velocity":
+        if any(
+            cloud is not None
+            and cloud.enabled
+            and not (cloud.subcharge_count == 1 and cloud.position_sigma_mm == 0.0)
+            for cloud in (macroparticle_smearing, magnetic_dipole.exact_charge_cloud)
+        ):
+            raise ValueError(
+                "exact charge clouds do not support source_history_representation="
+                "'proper_velocity'; use 'light_cone_quintic' or point sources"
+            )
         if magnetic_dipole.exact_retarded_backend.startswith("metal"):
             raise ValueError("proper_velocity does not support Metal kernels")
         if magnetic_dipole.source.active:
@@ -3188,6 +3202,27 @@ def retarded_integrator(
         magnetic_dipole.enabled and magnetic_dipole.source.active
     )
     exact_magnetic_active = bool(rfs_active or dipole_source_active)
+    if magnetic_dipole.enabled and pseudo_grid.enabled:
+        raise NotImplementedError(
+            "Magnetic-dipole dynamics are not yet compatible with pseudo-grid "
+            "spin reconstruction or conserved persistent source histories; "
+            "disable pseudo_grid and use the direct macro-cloud sum. See "
+            "docs/source/exact_macroparticle_sources.rst, pseudo-grid consistency "
+            "boundary."
+        )
+    if magnetic_dipole.exact_charge_cloud is not None:
+        from .exact_source_cloud import validate_exact_cloud
+
+        validate_exact_cloud(magnetic_dipole.exact_charge_cloud)
+        if (
+            not adaptive_pair_return.enabled
+            or dipole_source_active
+            or not exact_magnetic_active
+        ):
+            raise NotImplementedError(
+                "Persistent exact charge clouds require the adaptive charge-only "
+                "shared-lab-time route with INERTIAL_PREHISTORY"
+            )
 
     if (
         dipole_source_active
@@ -3398,10 +3433,18 @@ def retarded_integrator(
                 macroparticle_smearing.momentum_sigma_amu_mm_ns,
             )
             if any(value is None or float(value) != 0.0 for value in smearing_widths):
-                raise NotImplementedError(
-                    "Exact RFS/dipole-source dynamics require zero-width point "
-                    "sources; each displaced source would need its own light-cone "
-                    "solve before nonzero smearing is supported."
+                if dipole_source_active or not adaptive_pair_return.enabled:
+                    raise NotImplementedError(
+                        "Exact fixed-step/dipole dynamics require zero-width point "
+                        "sources; persistent charge clouds require the adaptive "
+                        "shared-lab-time route. See exact_macroparticle_sources.rst."
+                    )
+            if adaptive_pair_return.enabled and not dipole_source_active:
+                from .exact_source_cloud import validate_exact_cloud
+
+                validate_exact_cloud(macroparticle_smearing)
+                magnetic_dipole = replace(
+                    magnetic_dipole, exact_charge_cloud=macroparticle_smearing
                 )
         for role, particle_config in (
             ("rider", magnetic_dipole.rider),
@@ -3479,11 +3522,6 @@ def retarded_integrator(
     init_rider = _copy_particle_state(init_rider)
     if init_driver is not None:
         init_driver = _copy_particle_state(init_driver)
-    if magnetic_dipole.enabled and pseudo_grid.enabled:
-        raise NotImplementedError(
-            "Magnetic-dipole dynamics are not yet compatible with pseudo-grid "
-            "spin reconstruction; disable pseudo_grid for this run."
-        )
     _initialize_magnetic_dipole_state(
         init_rider, magnetic_dipole.rider, magnetic_dipole, role="rider"
     )

@@ -365,6 +365,12 @@ Metal, magnetic-dipole/spin C5 histories, higher potential derivatives, and
 source extrapolation are rejected for this opt-in mode. Stored histories from
 the ordinary coasting stepper can separately be tested by the charge providers.
 
+Persistent exact charge clouds currently require ``light_cone_quintic``.
+Their translated origins retain both coordinate remainders, while their local
+null displacements, mechanical proper velocities, and speed deficits remain
+unchanged. A cloud request with ``proper_velocity`` fails explicitly before
+integration; a zero-width single child still uses the original point history.
+
 Validation and limits
 ---------------------
 

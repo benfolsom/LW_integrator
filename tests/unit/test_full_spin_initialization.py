@@ -59,6 +59,30 @@ def test_individual_particles_and_counterpropagating_bunch():
     assert all(h["velocity"][-1][2] < 0 for h in payload["histories"][1:])
 
 
+def test_source_position_tolerance_default_and_explicit_default_match():
+    spec = specification()
+    default = prepare_particles(spec)
+    assert all(h["position_tolerance"] == 1e-8 for h in default["histories"])
+    spec["source_history_position_tolerance_mm"] = 1e-8
+    assert prepare_particles(spec) == default
+
+
+@pytest.mark.parametrize("tolerance", [0, 1e-10])
+def test_source_position_tolerance_is_checkpointed(tolerance):
+    spec = specification()
+    spec["source_history_position_tolerance_mm"] = tolerance
+    result = prepare_particles(spec)
+    assert all(h["position_tolerance"] == tolerance for h in result["histories"])
+
+
+@pytest.mark.parametrize("tolerance", [-1, True, "1e-8", float("inf"), float("nan")])
+def test_source_position_tolerance_requires_finite_nonnegative_number(tolerance):
+    spec = specification()
+    spec["source_history_position_tolerance_mm"] = tolerance
+    with pytest.raises(ValueError, match="source_history_position_tolerance_mm"):
+        prepare_particles(spec)
+
+
 @pytest.mark.parametrize("mode", ["full_dipole_coupled", "charge_ll"])
 def test_fresh_reaction_input_can_take_a_step(mode):
     from core.momentum_center_particles import advance_particles
@@ -130,7 +154,6 @@ def test_invalid_particle_velocity_rejected(beta):
 
 
 def test_gui_generated_command_runs_fresh_input_and_preserves_restart(tmp_path):
-    pytest.importorskip("tkinter")
     from lw_integrator.nonlinear_pair_gui import build_command
     from lw_integrator.nonlinear_particles import main
     from core.momentum_center_particles import advance_particles
@@ -138,7 +161,9 @@ def test_gui_generated_command_runs_fresh_input_and_preserves_restart(tmp_path):
     source, first, second = [
         tmp_path / name for name in ("initial.json", "first.json", "second.json")
     ]
-    source.write_text(json.dumps(specification()))
+    spec = specification()
+    spec["source_history_position_tolerance_mm"] = 1e-10
+    source.write_text(json.dumps(spec))
     command = build_command(
         source,
         first,
@@ -153,6 +178,7 @@ def test_gui_generated_command_runs_fresh_input_and_preserves_restart(tmp_path):
     assert command[2] == "lw_integrator.nonlinear_particles"
     assert main(command[3:]) == 0
     accepted = json.loads(first.read_text())
+    assert all(h["position_tolerance"] == 1e-10 for h in accepted["histories"])
     assert all(
         h["geometry_reconstruction"] == "connected_single_fit"
         for h in accepted["histories"]
@@ -162,11 +188,10 @@ def test_gui_generated_command_runs_fresh_input_and_preserves_restart(tmp_path):
     assert main(resumed[3:]) == 0
     expected, _ = advance_particles(accepted, 0.01 / c)
     assert json.loads(second.read_text()) == expected
-    assert json.loads(source.read_text()) == specification()
+    assert json.loads(source.read_text()) == spec
 
 
 def test_gui_rejects_pair_only_and_incomplete_mixed_options():
-    pytest.importorskip("tkinter")
     from lw_integrator.nonlinear_pair_gui import build_command
 
     for options in (

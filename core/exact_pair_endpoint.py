@@ -45,6 +45,15 @@ def evaluate_exact_endpoint_four_potential(
     """
 
     from .retarded_fields import evaluate_retarded_charge_field_native
+    from .exact_source_cloud import exact_cloud_history
+
+    source_history = exact_cloud_history(
+        source_history, magnetic_dipole.exact_charge_cloud
+    )
+    if own_history is not None:
+        own_history = exact_cloud_history(
+            own_history, magnetic_dipole.exact_charge_cloud
+        )
 
     if include_dipole_source and dipole_source_collection is None:
         from .retarded_dipole_fields import (

@@ -85,6 +85,7 @@ class ExactPairEOMOptions:
     cancel_callback: Any = None
     spin_interpolation_model: str = "causal_frozen_c1"
     moment_impulse_diagnostic: Any = None
+    cache_start_charge_fields: bool = True
 
     def __post_init__(self) -> None:
         if (
@@ -156,12 +157,41 @@ def make_exact_role_eom_advance(options: ExactPairEOMOptions) -> AdvanceRoleTria
             moment_impulse_diagnostic=options.moment_impulse_diagnostic,
         )
 
+    cached_context: tuple[Any, tuple[np.ndarray, ...]] | None = None
+    cached_fields: dict[tuple[str, int], Any] = {}
+
     def advance(
         proper_step_ns: float | np.ndarray,
         observer_start: ParticleState,
         source_start: ParticleState,
         exact_source_history: Any,
+        *,
+        _skip_endpoint_diagnostic: bool = False,
     ) -> ParticleState:
+        nonlocal cached_context, cached_fields
+        cache_fields = bool(
+            options.cache_start_charge_fields
+            and len(observer_start.get("x", np.empty(0))) > 1
+            and not options.magnetic_dipole.source.active
+        )
+        if cache_fields:
+            geometry = tuple(
+                np.asarray(observer_start[key]) for key in ("t", "x", "y", "z")
+            )
+            if cached_context is None or (
+                cached_context[0] is not exact_source_history
+                or any(
+                    not np.array_equal(value, saved)
+                    for value, saved in zip(geometry, cached_context[1])
+                )
+            ):
+                # Clock queries deliberately detach the input dictionaries. Keep
+                # exact coordinate snapshots rather than keying on their identity.
+                cached_context = (
+                    exact_source_history,
+                    tuple(value.copy() for value in geometry),
+                )
+                cached_fields = {}
         charge_history = exact_source_history
         observer_history = None
         dipole_source_collection = None
@@ -191,6 +221,14 @@ def make_exact_role_eom_advance(options: ExactPairEOMOptions) -> AdvanceRoleTria
             scalar_step = cast(float, proper_step_ns)
 
         def run(bound_eom: Callable[..., ParticleState]) -> ParticleState:
+            if cache_fields:
+                from functools import partial
+
+                bound_eom = partial(bound_eom, _exact_trial_charge_fields=cached_fields)
+                if _skip_endpoint_diagnostic:
+                    bound_eom = partial(
+                        bound_eom, _skip_exact_endpoint_field_diagnostic=True
+                    )
             return cast(
                 ParticleState,
                 self_consistent_step(
@@ -248,6 +286,18 @@ def make_exact_role_eom_advance(options: ExactPairEOMOptions) -> AdvanceRoleTria
             )
         return result
 
+    if (
+        options.cache_start_charge_fields
+        and not options.magnetic_dipole.source.active
+        and options.magnetic_dipole.intrinsic_spin_self_reaction_mode == "off"
+    ):
+        from functools import partial
+
+        # Ordinary calls return complete diagnostics. Bunch clock queries are
+        # followed by one complete vector evaluation at the solved steps.
+        setattr(
+            advance, "_clock_query", partial(advance, _skip_endpoint_diagnostic=True)
+        )
     return advance
 
 
@@ -437,18 +487,37 @@ def solve_exact_pair_slab_trial(
     solve_pair = (
         solve_shared_lab_time_bunches if bunch_mode else solve_shared_lab_time_pair
     )
-    bunch_options = (
+    bunch_options: dict[str, Any] = (
         {"rider_start": rider_start, "driver_start": driver_start} if bunch_mode else {}
     )
+    rider_query = advance_rider
+    driver_query = advance_driver
+    if bunch_mode:
+        rider_query = getattr(advance_rider, "_clock_query", advance_rider)
+        driver_query = getattr(advance_driver, "_clock_query", advance_driver)
+        if rider_query is not advance_rider:
+            bunch_options["finalize_rider"] = lambda h: advance_rider(
+                h,
+                copy.deepcopy(rider_start),
+                copy.deepcopy(driver_start),
+                rider_source_history,
+            )
+        if driver_query is not advance_driver:
+            bunch_options["finalize_driver"] = lambda h: advance_driver(
+                h,
+                copy.deepcopy(driver_start),
+                copy.deepcopy(rider_start),
+                driver_source_history,
+            )
     provisional = solve_pair(
         **bunch_options,
-        advance_rider=lambda h: advance_rider(
+        advance_rider=lambda h: rider_query(
             h,
             copy.deepcopy(rider_start),
             copy.deepcopy(driver_start),
             rider_source_history,
         ),
-        advance_driver=lambda h: advance_driver(
+        advance_driver=lambda h: driver_query(
             h,
             copy.deepcopy(driver_start),
             copy.deepcopy(rider_start),
@@ -711,10 +780,12 @@ def solve_exact_pair_step_doubling_trial(
     full_state = build_pair_step_doubling_state(
         rider_states=(full.pair.rider.state,),
         driver_states=(full.pair.driver.state,),
+        experimental_projection_ulp_floor=tolerances.experimental_projection_ulp_floor,
     )
     refined_state = build_pair_step_doubling_state(
         rider_states=(midpoint.pair.rider.state, refined.pair.rider.state),
         driver_states=(midpoint.pair.driver.state, refined.pair.driver.state),
+        experimental_projection_ulp_floor=tolerances.experimental_projection_ulp_floor,
     )
     assessment = assess_step_doubling(
         full_state,

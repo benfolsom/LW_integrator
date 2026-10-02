@@ -129,3 +129,30 @@ def test_sweep_and_gui_conversion_retain_interpolation_choice(tmp_path, mode):
         driver_params=None,
     )
     assert converted.options.source_history_representation == mode
+
+
+def test_proper_velocity_cloud_rejected_before_checkpoint_creation(tmp_path):
+    from core.types import CheckpointConfig, MacroparticleSmearingConfig
+
+    checkpoint = tmp_path / "unused"
+    with pytest.raises(ValueError, match="clouds do not support.*proper_velocity"):
+        retarded_integrator(
+            steps=2,
+            h_step=1e-6,
+            wall_z=0.0,
+            aperture_radius=1e6,
+            sim_type=SimulationType.BUNCH_TO_BUNCH,
+            init_rider=_state(position_mm=(0.0, 0.0, 0.0)),
+            init_driver=_state(position_mm=(1.0, 0.0, 0.0)),
+            mean=1000.0,
+            cav_spacing=0.0,
+            z_cutoff=0.0,
+            startup_mode=StartupMode.INERTIAL_PREHISTORY,
+            source_history_representation="proper_velocity",
+            magnetic_dipole=MagneticDipoleConfig(enabled=True),
+            macroparticle_smearing=MacroparticleSmearingConfig(
+                enabled=True, subcharge_count=4, position_sigma_mm=0.25
+            ),
+            checkpoint=CheckpointConfig(enabled=True, directory=str(checkpoint)),
+        )
+    assert not checkpoint.exists()

@@ -300,6 +300,8 @@ def solve_shared_lab_time_bunches(
     advance_driver: Callable[[np.ndarray], ParticleState],
     rider_start: ParticleState,
     driver_start: ParticleState,
+    finalize_rider: Callable[[np.ndarray], ParticleState] | None = None,
+    finalize_driver: Callable[[np.ndarray], ParticleState] | None = None,
     **options: Any,
 ) -> SharedLabTimePair:
     """Solve every particle's proper increment against one common lab barrier.
@@ -318,6 +320,7 @@ def solve_shared_lab_time_bunches(
         advance: Callable[[np.ndarray], ParticleState],
         state: ParticleState,
         role: str,
+        finalize: Callable[[np.ndarray], ParticleState] | None,
     ) -> ProperTimeEndpoint:
         times = np.asarray(state["t"], dtype=float)
         count = len(times)
@@ -358,7 +361,9 @@ def solve_shared_lab_time_bunches(
                 maximum_proper_step_ns=options["maximum_proper_step_ns"],
             )
             steps[index] = endpoint.proper_step_ns
-        if np.array_equal(steps, cached_steps):
+        if finalize is not None:
+            result = finalize(steps)
+        elif np.array_equal(steps, cached_steps):
             result = cached_state
         else:
             result = advance(steps)
@@ -380,8 +385,8 @@ def solve_shared_lab_time_bunches(
     return SharedLabTimePair(
         start_time_ns=start,
         target_time_ns=target,
-        rider=solve_role(advance_rider, rider_start, "rider"),
-        driver=solve_role(advance_driver, driver_start, "driver"),
+        rider=solve_role(advance_rider, rider_start, "rider", finalize_rider),
+        driver=solve_role(advance_driver, driver_start, "driver", finalize_driver),
     )
 
 

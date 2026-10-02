@@ -71,6 +71,7 @@ def prepare_particles(specification: dict[str, Any]) -> dict[str, Any]:
             "history_samples",
             "startup_duration_ns",
             "reaction_mode",
+            "source_history_position_tolerance_mm",
         },
         "initial-condition",
     )
@@ -83,6 +84,11 @@ def prepare_particles(specification: dict[str, Any]) -> dict[str, Any]:
     samples = specification.get("history_samples", 41)
     if type(samples) is not int or samples < 12:
         raise ValueError("history_samples must be an integer of at least 12")
+    position_tolerance = _number(
+        specification.get("source_history_position_tolerance_mm", 1e-8),
+        "source_history_position_tolerance_mm",
+        0,
+    )
     mode = specification.get("reaction_mode")
     if mode not in ("off", "charge_ll", "full_dipole_coupled", "full_dipole_rr"):
         raise ValueError("Explicit supported reaction_mode required")
@@ -224,7 +230,7 @@ def prepare_particles(specification: dict[str, Any]) -> dict[str, Any]:
             np.broadcast_to(velocity, (samples, 3)),
             np.broadcast_to(dipole, (samples, 4, 4)),
             c,
-            position_tolerance=1e-8,
+            position_tolerance=position_tolerance,
             startup_fit="one_sided",
             inertial_until=0.0,
         ).completed()

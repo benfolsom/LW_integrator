@@ -10,6 +10,7 @@ per-half diagnostic increments before constructing the refined sample.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 from typing import Sequence, cast
 
 import numpy as np
@@ -46,6 +47,15 @@ class StepDoublingTolerances:
     mechanical_momentum_native: ErrorScale
     rest_spin: ErrorScale
     diagnostics_native: ErrorScale
+    experimental_projection_ulp_floor: bool = False
+    projection_ulp_multiplier: float = 4.0
+
+    def __post_init__(self) -> None:
+        if (
+            not np.isfinite(self.projection_ulp_multiplier)
+            or self.projection_ulp_multiplier <= 0.0
+        ):
+            raise ValueError("projection_ulp_multiplier must be finite and positive")
 
 
 @dataclass(frozen=True)
@@ -57,6 +67,7 @@ class StepDoublingState:
     rest_spin: np.ndarray
     diagnostics_native: np.ndarray
     particle_vector_scales: bool = False
+    projection_reference_energy_native: np.ndarray | None = None
 
 
 @dataclass(frozen=True)
@@ -73,6 +84,10 @@ class StepDoublingAssessment:
     mechanical_momentum_error_index: tuple[int, ...]
     rest_spin_error_index: tuple[int, ...]
     diagnostics_error_index: tuple[int, ...]
+    projection_floor_applied: bool = False
+    projection_floor_changed_acceptance: bool = False
+    diagnostics_error_without_floor: float | None = None
+    maximum_projection_floor_native: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -183,6 +198,7 @@ def build_pair_step_doubling_state(
     *,
     rider_states: Sequence[ParticleState],
     driver_states: Sequence[ParticleState],
+    experimental_projection_ulp_floor: bool = False,
 ) -> StepDoublingState:
     """Reduce one full or two-half $1+1$ path to acceptance quantities.
 
@@ -222,6 +238,11 @@ def build_pair_step_doubling_state(
             rest_spin=np.stack([value[2] for value in values]),
             diagnostics_native=np.stack([value[3] for value in values]),
             particle_vector_scales=True,
+            projection_reference_energy_native=(
+                _projection_reference_energies(rider_states, driver_states)
+                if experimental_projection_ulp_floor
+                else None
+            ),
         )
 
     include_spin_feedback = any(
@@ -240,6 +261,76 @@ def build_pair_step_doubling_state(
         mechanical_momentum_native=np.stack((rider[1], driver[1])),
         rest_spin=np.stack((rider[2], driver[2])),
         diagnostics_native=np.stack((rider[3], driver[3])),
+        projection_reference_energy_native=(
+            _projection_reference_energies(rider_states, driver_states)
+            if experimental_projection_ulp_floor
+            else None
+        ),
+    )
+
+
+def _projection_reference_energies(
+    *paths: Sequence[ParticleState],
+) -> np.ndarray:
+    """Endpoint kinetic energies, computed without subtracting rest energy.
+
+    K = c |p| (|p| / (hypot(mc, |p|) + mc)). The reference is per physical
+    observer, never population weighted, and does not change state bookkeeping.
+    """
+    energies = []
+    for states in paths:
+        state = states[-1]
+        masses = np.asarray(state.get("m_species", state["m"]), dtype=float)
+        gamma = np.asarray(state["gamma"], dtype=float)
+        for index, mass in enumerate(masses):
+            p = math.hypot(
+                *(gamma[index] * mass * C_MMNS * state[f"b{a}"][index] for a in "xyz")
+            )
+            mc = mass * C_MMNS
+            energies.append(C_MMNS * p * (p / (math.hypot(mc, p) + mc)))
+    return np.asarray(energies, dtype=np.float64)
+
+
+def _projection_floor_error(
+    full: StepDoublingState,
+    refined: StepDoublingState,
+    tolerances: StepDoublingTolerances,
+    richardson_denominator: float,
+) -> tuple[float, tuple[int, ...], bool, float]:
+    """Experimental per-observer floor for projection energy column only."""
+    f = _validated_array(full.diagnostics_native, "full diagnostics")
+    r = _validated_array(refined.diagnostics_native, "refined diagnostics")
+    column = _PAIR_INCREMENT_DIAGNOSTICS.index("mass_shell_projection_energy")
+    if f.ndim != 2 or f.shape[1] < len(_PAIR_INCREMENT_DIAGNOSTICS):
+        raise ValueError("projection floor requires named pair diagnostic columns")
+    references = []
+    for state in (full, refined):
+        if state.projection_reference_energy_native is None:
+            raise ValueError("projection floor requires endpoint kinetic energies")
+        reference = _validated_array(
+            state.projection_reference_energy_native, "projection reference energy"
+        )
+        if reference.shape != (f.shape[0],) or np.any(reference < 0.0):
+            raise ValueError("projection reference energy shape or sign is invalid")
+        references.append(reference)
+    reference = np.maximum(*references)
+    floor = tolerances.projection_ulp_multiplier * np.spacing(reference)
+    if not np.all(np.isfinite(floor)):
+        raise ValueError("projection floor must be finite")
+    scale = tolerances.diagnostics_native
+    absolute = np.full_like(f, scale.absolute)
+    absolute[:, column] = np.maximum(scale.absolute, floor)
+    denominator = absolute + scale.relative * np.maximum(np.abs(f), np.abs(r))
+    error = np.abs(r - f) / richardson_denominator
+    normalized = np.divide(
+        error, denominator, out=np.zeros_like(error), where=denominator > 0.0
+    )
+    index = tuple(int(v) for v in np.unravel_index(np.argmax(normalized), f.shape))
+    return (
+        float(normalized[index]),
+        index,
+        bool(np.any(floor > scale.absolute)),
+        float(np.max(floor)),
     )
 
 
@@ -345,6 +436,14 @@ def assess_step_doubling(
         richardson_denominator=richardson_denominator,
         name="diagnostics",
     )
+    without_floor = None
+    floor_applied = False
+    maximum_floor = 0.0
+    if tolerances.experimental_projection_ulp_floor:
+        without_floor = diagnostics_error
+        diagnostics_error, diagnostics_error_index, floor_applied, maximum_floor = (
+            _projection_floor_error(full, refined, tolerances, richardson_denominator)
+        )
     normalized_error = max(
         position_error,
         momentum_error,
@@ -362,6 +461,14 @@ def assess_step_doubling(
         mechanical_momentum_error_index=momentum_error_index,
         rest_spin_error_index=spin_error_index,
         diagnostics_error_index=diagnostics_error_index,
+        projection_floor_applied=floor_applied,
+        projection_floor_changed_acceptance=bool(
+            normalized_error <= 1.0
+            and without_floor is not None
+            and without_floor > 1.0
+        ),
+        diagnostics_error_without_floor=without_floor,
+        maximum_projection_floor_native=maximum_floor,
     )
 
 

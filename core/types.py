@@ -863,6 +863,8 @@ class MagneticDipoleConfig:
     exact_retarded_backend: str = "python"
     exact_retarded_update: str = "first_order_endpoint"
     intrinsic_spin_self_reaction_mode: str = "off"
+    # Bound by the integration runner for persistent charge-only clouds.
+    exact_charge_cloud: MacroparticleSmearingConfig | None = None
     source: DipoleSourceConfig = field(default_factory=DipoleSourceConfig)
     rider: MagneticDipoleParticleConfig = field(
         default_factory=lambda: MagneticDipoleParticleConfig(species="electron")
@@ -874,6 +876,10 @@ class MagneticDipoleConfig:
     def __post_init__(self) -> None:
         self.enabled = bool(self.enabled)
         self.spin_precession_enabled = bool(self.spin_precession_enabled)
+        if isinstance(self.exact_charge_cloud, dict):
+            self.exact_charge_cloud = MacroparticleSmearingConfig(
+                **self.exact_charge_cloud
+            )
         self.stern_gerlach_force_enabled = bool(self.stern_gerlach_force_enabled)
         self.spin_model = str(self.spin_model).strip().lower()
         self.stern_gerlach_model = str(self.stern_gerlach_model).strip().lower()
@@ -996,6 +1002,9 @@ class AdaptivePairReturnConfig:
     target_lab_time_ns: float | None = None
     tolerance_scale: float = 1.0
     diagnostics_absolute_tolerance_native: float | None = None
+    experimental_projection_ulp_floor: bool = False
+    projection_ulp_multiplier: float = 4.0
+    position_momentum_tolerance_scale: float = 1.0
     minimum_step_factor: float = 1.0 / 64.0
     maximum_step_factor: float = 64.0
     public_sample_interval_ns: float | None = None
@@ -1006,6 +1015,13 @@ class AdaptivePairReturnConfig:
 
     def __post_init__(self) -> None:
         self.enabled = bool(self.enabled)
+        self.experimental_projection_ulp_floor = bool(
+            self.experimental_projection_ulp_floor
+        )
+        self.projection_ulp_multiplier = float(self.projection_ulp_multiplier)
+        self.position_momentum_tolerance_scale = float(
+            self.position_momentum_tolerance_scale
+        )
         if self.target_lab_time_ns is not None:
             self.target_lab_time_ns = float(self.target_lab_time_ns)
         if self.diagnostics_absolute_tolerance_native is not None:
@@ -1033,6 +1049,11 @@ class AdaptivePairReturnConfig:
 
         positive = (
             ("tolerance_scale", self.tolerance_scale),
+            ("projection_ulp_multiplier", self.projection_ulp_multiplier),
+            (
+                "position_momentum_tolerance_scale",
+                self.position_momentum_tolerance_scale,
+            ),
             ("minimum_step_factor", self.minimum_step_factor),
             ("maximum_step_factor", self.maximum_step_factor),
         )
