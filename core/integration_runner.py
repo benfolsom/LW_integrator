@@ -963,6 +963,26 @@ def _build_inertial_coasting_history(
         _coast_state_by_coordinate_time(active_state, float(offset))
         for offset in offsets
     ]
+    # Initial P is mechanical before either canonical-ready flag is set.
+    # Keep its proper velocity and the short anchor position, rather than
+    # recovering gamma from rounded beta or a distant prehistory position.
+    canonical_ready = any(
+        np.any(active_state.get(key, False))
+        for key in ("charge_source_canonical_ready", "dipole_source_canonical_ready")
+    )
+    if canonical_ready:
+        raise ValueError("inertial prehistory requires initial mechanical momentum")
+    mass = np.asarray(active_state["m"], dtype=float)
+    for state in history:
+        state["inertial_charge_boundary_ready"] = np.ones_like(mass)
+        state["inertial_charge_boundary_time_ns"] = np.copy(active_state["t"])
+        for axis in "xyz":
+            state[f"inertial_charge_boundary_position_{axis}"] = np.copy(
+                active_state[axis]
+            )
+            state[f"inertial_charge_boundary_u_{axis}"] = np.asarray(
+                active_state[f"P{axis}"], dtype=float
+            ) / (mass * C_MMNS)
     oldest = history[0]
     for state in history:
         for axis in ("x", "y", "z"):

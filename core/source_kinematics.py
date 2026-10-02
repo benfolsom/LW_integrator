@@ -75,13 +75,18 @@ def _three_point_first_derivative_weights(
 def reconstruct_instantaneous_beta_prime_per_mm(
     time_ns: Sequence[float] | np.ndarray,
     beta: Sequence[Sequence[float]] | np.ndarray,
+    *,
+    inertial_prefix_stop: int = 0,
+    inertial_proper_velocity: Sequence[float] | np.ndarray | None = None,
 ) -> np.ndarray:
     """Return instantaneous ``d beta / d(c t)`` at accepted source knots.
 
     Three or more samples use the derivative of the local quadratic through
     the knot and its nearest accepted neighbours.  Two samples reduce to the
     common secant at both endpoints.  A single inertial seed has zero resolved
-    acceleration because no derivative can yet be inferred.
+    acceleration because no derivative can yet be inferred. An explicitly
+    analytic inertial prefix may supply its proper velocity when beta rounds
+    to one; accepted samples after that prefix retain the original checks.
     """
 
     times = np.asarray(time_ns, dtype=np.float64)
@@ -94,7 +99,27 @@ def reconstruct_instantaneous_beta_prime_per_mm(
         raise ValueError("source times and beta must contain only finite values")
     if times.size > 1 and np.any(np.diff(times) <= 0.0):
         raise ValueError("source times must increase strictly")
-    if times.size and np.any(np.sum(velocities * velocities, axis=1) >= 1.0):
+    prefix = int(inertial_prefix_stop)
+    if prefix < 0 or prefix > times.size:
+        raise ValueError("inertial prefix must lie within the supplied source samples")
+    if prefix:
+        if inertial_proper_velocity is None:
+            raise ValueError(
+                "an inertial prefix requires its mechanical proper velocity"
+            )
+        proper = np.asarray(inertial_proper_velocity, dtype=float)
+        if proper.shape != (3,) or not np.all(np.isfinite(proper)):
+            raise ValueError(
+                "inertial proper velocity must contain three finite values"
+            )
+        gamma = np.sqrt(1.0 + float(proper @ proper))
+        if not np.allclose(
+            velocities[:prefix], proper / gamma, rtol=0.0, atol=4 * np.finfo(float).eps
+        ):
+            raise ValueError("inertial prefix beta must agree with its proper velocity")
+    if times.size and np.any(
+        np.sum(velocities[prefix:] * velocities[prefix:], axis=1) >= 1.0
+    ):
         raise ValueError("source beta magnitude must remain below one")
 
     sample_count = int(times.size)

@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
-from .types import TrajectoryArrays, TrajectoryBuilder
+from .types import INERTIAL_CHARGE_BOUNDARY_FIELDS, TrajectoryArrays, TrajectoryBuilder
 
 if TYPE_CHECKING:
     from .causal_c5_dipole_provider import AcceptedPairCausalC5SourceHistory
@@ -37,7 +37,7 @@ class CheckpointCompatibilityError(CheckpointError):
     """Raised when a checkpoint belongs to different integration inputs."""
 
 
-_PARTICLE_CONSTANT_FIELDS = (
+_PARTICLE_CONSTANT_FIELDS = INERTIAL_CHARGE_BOUNDARY_FIELDS + (
     "q",
     "q_species",
     "q_observer",
@@ -54,6 +54,17 @@ _PARTICLE_CONSTANT_FIELDS = (
     "spin_precession_active",
     "stern_gerlach_active",
 )
+
+
+def _particle_constant(trajectory: TrajectoryArrays, name: str) -> np.ndarray:
+    values: np.ndarray = np.asarray(getattr(trajectory, name))
+    if name in INERTIAL_CHARGE_BOUNDARY_FIELDS and values.size == 0:
+        # Manually constructed legacy SOA objects use empty optional defaults.
+        # Their checkpoints represent an absent boundary as particle-sized zeros.
+        values = np.zeros(trajectory.n_particles)
+    return values
+
+
 _NON_ARRAY_FIELDS = {
     "halt_reason",
     "particle_failure_info",
@@ -287,7 +298,7 @@ class IntegrationCheckpointStore:
         for role, trajectory in (("rider", rider), ("driver", driver)):
             for name in _PARTICLE_CONSTANT_FIELDS:
                 arrays[f"{role}__{name}"] = np.array(
-                    getattr(trajectory, name), copy=True
+                    _particle_constant(trajectory, name), copy=True
                 )
         digest = _atomic_npz(self.constants_path, arrays)
         self.manifest["constants"] = {
@@ -375,6 +386,7 @@ class IntegrationCheckpointStore:
             constants = {
                 name: np.array(archive[f"{role}__{name}"], copy=True)
                 for name in _PARTICLE_CONSTANT_FIELDS
+                if f"{role}__{name}" in archive
             }
 
         expected_start = 0
@@ -641,8 +653,13 @@ class AcceptedPairCheckpointStore:
             ) as archive:
                 for role, trajectory in (("rider", rider), ("driver", driver)):
                     for name in _PARTICLE_CONSTANT_FIELDS:
+                        if (
+                            f"{role}__{name}" not in archive
+                            and name in INERTIAL_CHARGE_BOUNDARY_FIELDS
+                        ):
+                            continue
                         stored = np.asarray(archive[f"{role}__{name}"])
-                        current = np.asarray(getattr(trajectory, name))
+                        current = _particle_constant(trajectory, name)
                         if not np.array_equal(stored, current, equal_nan=True):
                             raise CheckpointCompatibilityError(
                                 f"{role} particle constant {name} changed after "
@@ -657,7 +674,7 @@ class AcceptedPairCheckpointStore:
         for role, trajectory in (("rider", rider), ("driver", driver)):
             for name in _PARTICLE_CONSTANT_FIELDS:
                 arrays[f"{role}__{name}"] = np.array(
-                    getattr(trajectory, name), copy=True
+                    _particle_constant(trajectory, name), copy=True
                 )
         digest = _atomic_npz(self.constants_path, arrays)
         return {
@@ -834,6 +851,7 @@ class AcceptedPairCheckpointStore:
             constants = {
                 name: np.array(archive[f"{role}__{name}"], copy=True)
                 for name in _PARTICLE_CONSTANT_FIELDS
+                if f"{role}__{name}" in archive
             }
 
         expected_start = 0

@@ -30,6 +30,12 @@ from typing import Sequence, cast
 import numpy as np
 
 from .constants import C_MMNS
+from .ballistic_charge import ballistic_retarded_point
+from .precise_charge import (
+    precise_charge_jets,
+    resolved_separation_frame,
+    validated_precise_velocity,
+)
 from .exact_retarded_backend import require_exact_retarded_backend
 from .prepared_history_cache import (
     AppendAwarePreparedHistoryCache,
@@ -105,6 +111,8 @@ class RetardedChargeFieldResult:
         default_factory=lambda: np.zeros(4, dtype=float)
     )
 
+    retarded_time_error_bound_ns: np.ndarray | None = None
+
 
 @dataclass(frozen=True)
 class RetardedMutualChargeFieldMatrix:
@@ -172,6 +180,8 @@ class RetardedChargeResponseGradientResult:
     directional_unavailable_reason: str | None = None
     directional_jet_residual: np.ndarray | None = None
 
+    retarded_time_error_bound_ns: np.ndarray | None = None
+
 
 @dataclass
 class _HistoryArrays:
@@ -206,6 +216,7 @@ class _PreparedSourceHistory:
     position_coefficients_mm: np.ndarray
     ended_by_loss: bool
     source_acceleration_semantics: str = "preceding_interval"
+    inertial_boundary: tuple[float, np.ndarray, np.ndarray] | None = None
     _duration_buffer: np.ndarray | None = dataclass_field(default=None, repr=False)
     _coefficient_buffer: np.ndarray | None = dataclass_field(default=None, repr=False)
     _beta_prime_buffer: np.ndarray | None = dataclass_field(default=None, repr=False)
@@ -236,6 +247,10 @@ class _RetardedSample:
     beta_prime_per_mm: np.ndarray
     residual_mm: float
     separation_mm: float
+    source_proper_velocity: np.ndarray | None = None
+    precise_separation_mm: np.ndarray | None = None
+    time_error_bound_ns: float | None = None
+    precise_separation_frame_mm: np.ndarray | None = None
 
 
 @dataclass(frozen=True)
@@ -783,12 +798,40 @@ def _quintic_position_coefficients_mm(
     return durations, coefficients
 
 
+def _source_beta_prime_samples(
+    times: np.ndarray,
+    betas: np.ndarray,
+    inertial_boundary: tuple[float, np.ndarray, np.ndarray] | None,
+) -> np.ndarray:
+    if inertial_boundary is None or np.all(np.sum(betas * betas, axis=1) < 1.0):
+        return reconstruct_instantaneous_beta_prime_per_mm(times, betas)
+    # Only rounded-luminal analytic prefixes need this preparation exception.
+    # Resolved beta histories retain the original derivative reconstruction.
+    # The analytic prefix has exactly zero acceleration. Do not differentiate
+    # distant artificial seed knots alongside short accepted intervals: their
+    # relative spacing can make even the derivative weights singular.
+    result = np.zeros_like(betas)
+    start = int(np.searchsorted(times, inertial_boundary[0], side="left"))
+    if start < times.size - 1:
+        includes_anchor = times[start] == inertial_boundary[0]
+        suffix = reconstruct_instantaneous_beta_prime_per_mm(
+            times[start:],
+            betas[start:],
+            inertial_prefix_stop=int(includes_anchor),
+            inertial_proper_velocity=inertial_boundary[2] if includes_anchor else None,
+        )
+        first_dynamic = start + int(includes_anchor)
+        result[first_dynamic:] = suffix[int(includes_anchor) :]
+    return result
+
+
 def _prepare_source_history(
     history: _HistoryArrays,
     source_index: int,
     *,
     reserve_capacity: int | None = None,
     source_acceleration_semantics: str = "preceding_interval",
+    inertial_boundary: tuple[float, np.ndarray, np.ndarray] | None = None,
 ) -> _PreparedSourceHistory:
     """Validate and prepare one source's alive interpolation segments."""
 
@@ -802,7 +845,7 @@ def _prepare_source_history(
     beta_primes = (
         history.beta_prime_per_mm[:alive_stop, source_index]
         if acceleration_semantics == "instantaneous"
-        else reconstruct_instantaneous_beta_prime_per_mm(times, betas)
+        else _source_beta_prime_samples(times, betas, inertial_boundary)
     )
     durations, coefficients = _quintic_position_coefficients_mm(
         times,
@@ -820,6 +863,7 @@ def _prepare_source_history(
         position_coefficients_mm=coefficients,
         ended_by_loss=alive_stop != history.time_ns.shape[0],
         source_acceleration_semantics=acceleration_semantics,
+        inertial_boundary=inertial_boundary,
         _maximum_capacity=history._maximum_capacity,
     )
     if reserve_capacity is None:
@@ -884,9 +928,10 @@ def _append_prepared_source_history(
         # the segment on either side of that knot; earlier segments are stable.
         derivative_update_start = 0 if old_alive_stop < 3 else old_alive_stop - 1
         derivative_context_start = max(0, derivative_update_start - 1)
-        local_beta_primes = reconstruct_instantaneous_beta_prime_per_mm(
+        local_beta_primes = _source_beta_prime_samples(
             history.time_ns[derivative_context_start:new_alive_stop, source_index],
             history.beta[derivative_context_start:new_alive_stop, source_index],
+            previous.inertial_boundary,
         )
         updated_beta_primes = local_beta_primes[
             derivative_update_start - derivative_context_start :
@@ -982,12 +1027,50 @@ def _prepare_history_uncached(
     excluded = {int(index) for index in excluded_source_indices}
     if any(index < 0 or index >= arrays.n_sources for index in excluded):
         raise IndexError("excluded source index is out of bounds")
+    if isinstance(history, TrialTrajectoryHistory):
+        raise TypeError("trial history must use the prepared overlay path")
+    boundaries: dict[int, tuple[float, np.ndarray, np.ndarray]] = {}
+    first_state = (
+        {}
+        if arrays.time_ns.shape[0] == 0
+        else (
+            history.state_at(0)
+            if isinstance(history, (TrajectoryArrays, IndexedTrajectoryArrays))
+            else history[0]
+        )
+    )
+    ready = first_state.get("inertial_charge_boundary_ready")
+    if ready is not None:
+        for source_index in range(arrays.n_sources):
+            if ready[source_index]:
+                boundaries[source_index] = (
+                    float(
+                        first_state["inertial_charge_boundary_time_ns"][source_index]
+                    ),
+                    np.asarray(
+                        [
+                            first_state[f"inertial_charge_boundary_position_{axis}"][
+                                source_index
+                            ]
+                            for axis in "xyz"
+                        ]
+                    ),
+                    np.asarray(
+                        [
+                            first_state[f"inertial_charge_boundary_u_{axis}"][
+                                source_index
+                            ]
+                            for axis in "xyz"
+                        ]
+                    ),
+                )
     sources = {
         source_index: _prepare_source_history(
             arrays,
             source_index,
             reserve_capacity=reserve_capacity,
             source_acceleration_semantics=source_acceleration_semantics,
+            inertial_boundary=boundaries.get(source_index),
         )
         for source_index in range(arrays.n_sources)
         if source_index not in excluded
@@ -1238,6 +1321,37 @@ def _solve_retarded_sample(
     max_root_iterations: int,
     extrapolate_ns: float = 0.0,
 ) -> _RetardedSample | None:
+    if source.inertial_boundary is not None and source.time_ns.size == 0:
+        return None
+    if source.inertial_boundary is not None:
+        anchor_time, anchor_position, proper_velocity = source.inertial_boundary
+        point = ballistic_retarded_point(
+            observer_time_ns=observer_time_ns,
+            observer_position_mm=observer_position_mm,
+            anchor_time_ns=anchor_time,
+            anchor_position_mm=anchor_position,
+            source_proper_velocity=proper_velocity,
+        )
+        if point.time_ns + point.time_error_bound_ns <= anchor_time:
+            if point.time_ns - point.time_error_bound_ns < source.time_ns[0]:
+                return None
+            gamma = np.hypot(1.0, np.linalg.norm(proper_velocity))
+            return _RetardedSample(
+                time_ns=point.time_ns,
+                position_mm=observer_position_mm - point.separation_vector_mm,
+                beta=proper_velocity / gamma,
+                beta_prime_per_mm=np.zeros(3),
+                residual_mm=point.residual_mm,
+                separation_mm=float(np.linalg.norm(point.separation_vector_mm)),
+                source_proper_velocity=proper_velocity,
+                precise_separation_mm=point.separation_vector_mm,
+                time_error_bound_ns=point.time_error_bound_ns,
+                precise_separation_frame_mm=resolved_separation_frame(
+                    point.longitudinal_separation_mm,
+                    point.transverse_separation_vector_mm,
+                    proper_velocity,
+                ),
+            )
     times = source.time_ns
     extrapolated = False
     segment = _find_retarded_knot_bracket(
@@ -1343,15 +1457,26 @@ def _source_terminated_before_light_cone(
 def lienard_wiechert_charge_field_native(
     *,
     charge_native: float,
-    separation_vector_mm: Sequence[float],
-    source_beta: Sequence[float],
-    source_beta_prime_per_mm: Sequence[float],
+    separation_vector_mm: Sequence[float] | np.ndarray,
+    source_beta: Sequence[float] | np.ndarray,
+    source_proper_velocity: Sequence[float] | np.ndarray | None = None,
+    source_beta_prime_per_mm: Sequence[float] | np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Return native scaled-Gaussian ``(E, B)`` for one retarded charge.
 
     ``source_beta_prime_per_mm`` is ``d beta / d(c t)``. The radiation term
     therefore has no additional factor of ``c``.
     """
+
+    if source_proper_velocity is not None:
+        _potential, electric, magnetic, _root, _residual, _kappa = precise_charge_jets(
+            float(charge_native),
+            np.asarray(separation_vector_mm, dtype=float),
+            validated_precise_velocity(source_proper_velocity),
+            np.asarray(source_beta_prime_per_mm, dtype=float),
+            np.zeros(3),
+        )
+        return electric[:, 0], magnetic[:, 0]
 
     charge = float(charge_native)
     separation_vector = np.asarray(separation_vector_mm, dtype=float)
@@ -1392,8 +1517,9 @@ def lienard_wiechert_charge_field_native(
 def lienard_wiechert_charge_potential_native(
     *,
     charge_native: float,
-    separation_vector_mm: Sequence[float],
-    source_beta: Sequence[float],
+    separation_vector_mm: Sequence[float] | np.ndarray,
+    source_beta: Sequence[float] | np.ndarray,
+    source_proper_velocity: Sequence[float] | np.ndarray | None = None,
 ) -> np.ndarray:
     """Return the native Gaussian retarded four-potential of one charge.
 
@@ -1406,6 +1532,16 @@ def lienard_wiechert_charge_potential_native(
     ordinary charge contribution to canonical momentum is therefore
     ``(q_observer/c) A^mu``.
     """
+
+    if source_proper_velocity is not None:
+        potential, _electric, _magnetic, _root, _residual, _kappa = precise_charge_jets(
+            float(charge_native),
+            np.asarray(separation_vector_mm, dtype=float),
+            validated_precise_velocity(source_proper_velocity),
+            np.zeros(3),
+            np.zeros(3),
+        )
+        return potential[:, 0]
 
     charge = float(charge_native)
     separation_vector = np.asarray(separation_vector_mm, dtype=float)
@@ -1470,6 +1606,7 @@ def _evaluate_prepared_charge_field_native(
     separation_mm = np.full(arrays.n_sources, np.nan, dtype=float)
     valid_sources = np.zeros(arrays.n_sources, dtype=bool)
     missing_sources: list[int] = []
+    time_error_bounds = np.full(arrays.n_sources, np.nan)
 
     for source_index, source in prepared.sources.items():
         sample = _solve_retarded_sample(
@@ -1489,23 +1626,41 @@ def _evaluate_prepared_charge_field_native(
                 continue
             missing_sources.append(source_index)
             continue
-        electric, magnetic = lienard_wiechert_charge_field_native(
-            charge_native=float(arrays.charge_native[source_index]),
-            separation_vector_mm=observer_position_mm - sample.position_mm,
-            source_beta=tuple(float(value) for value in sample.beta),
-            source_beta_prime_per_mm=tuple(
-                float(value) for value in sample.beta_prime_per_mm
-            ),
-        )
-        four_potential = lienard_wiechert_charge_potential_native(
-            charge_native=float(arrays.charge_native[source_index]),
-            separation_vector_mm=observer_position_mm - sample.position_mm,
-            source_beta=tuple(float(value) for value in sample.beta),
-        )
+        if sample.source_proper_velocity is not None:
+            assert sample.precise_separation_mm is not None
+            potential_jets, electric_jets, magnetic_jets, _root, _residual, _kappa = (
+                precise_charge_jets(
+                    float(arrays.charge_native[source_index]),
+                    sample.precise_separation_mm,
+                    sample.source_proper_velocity,
+                    sample.beta_prime_per_mm,
+                    np.zeros(3),
+                    sample.precise_separation_frame_mm,
+                )
+            )
+            electric = electric_jets[:, 0]
+            magnetic = magnetic_jets[:, 0]
+            four_potential = potential_jets[:, 0]
+        else:
+            electric, magnetic = lienard_wiechert_charge_field_native(
+                charge_native=float(arrays.charge_native[source_index]),
+                separation_vector_mm=observer_position_mm - sample.position_mm,
+                source_beta=tuple(float(value) for value in sample.beta),
+                source_beta_prime_per_mm=tuple(
+                    float(value) for value in sample.beta_prime_per_mm
+                ),
+            )
+            four_potential = lienard_wiechert_charge_potential_native(
+                charge_native=float(arrays.charge_native[source_index]),
+                separation_vector_mm=observer_position_mm - sample.position_mm,
+                source_beta=tuple(float(value) for value in sample.beta),
+            )
         electric_total += electric
         magnetic_total += magnetic
         four_potential_total += four_potential
         retarded_time_ns[source_index] = sample.time_ns
+        if sample.time_error_bound_ns is not None:
+            time_error_bounds[source_index] = sample.time_error_bound_ns
         residual_mm[source_index] = sample.residual_mm
         separation_mm[source_index] = sample.separation_mm
         valid_sources[source_index] = True
@@ -1528,6 +1683,9 @@ def _evaluate_prepared_charge_field_native(
         separation_mm=separation_mm,
         valid_sources=valid_sources,
         four_potential=four_potential_total,
+        retarded_time_error_bound_ns=(
+            time_error_bounds if np.any(np.isfinite(time_error_bounds)) else None
+        ),
     )
 
 
@@ -1821,6 +1979,10 @@ def _evaluate_prepared_charge_batch(
 ) -> tuple[RetardedChargeFieldResult, ...]:
     if extrapolate_ns > 0.0 and backend != "python":
         raise ValueError("source-history extrapolation requires the python backend")
+    if any(
+        source.inertial_boundary is not None for source in prepared.sources.values()
+    ):
+        backend = "python"
     if backend == "numba_roots_exact_serial":
         return _evaluate_prepared_charge_batch_numba_roots_exact_serial(
             prepared,
@@ -2123,6 +2285,7 @@ def evaluate_retarded_charge_response_gradient_native(
     kappa = np.full(arrays.n_sources, np.nan, dtype=float)
     segment_index = np.full(arrays.n_sources, -1, dtype=int)
     missing_sources: list[int] = []
+    time_error_bounds = np.full(arrays.n_sources, np.nan)
 
     compiling_initial_signature = not bool(
         getattr(
@@ -2131,7 +2294,62 @@ def evaluate_retarded_charge_response_gradient_native(
             (),
         )
     )
+    precise_packed_jets: dict[int, np.ndarray] = {}
     for source_index, source in prepared.sources.items():
+        if source.inertial_boundary is not None:
+            sample = _solve_retarded_sample(
+                source,
+                observer_time_ns=float(observer_event.time_ns),
+                observer_position_mm=np.asarray(observer_event.position_mm),
+                root_tolerance_mm=tolerance,
+                max_root_iterations=iterations,
+            )
+            if sample is None:
+                missing_sources.append(source_index)
+                continue
+            if sample.source_proper_velocity is not None:
+                assert sample.precise_separation_mm is not None
+                potential, electric, magnetic, _root, _residual, stable_kappa = (
+                    precise_charge_jets(
+                        float(arrays.charge_native[source_index]),
+                        sample.precise_separation_mm,
+                        sample.source_proper_velocity,
+                        np.zeros(3),
+                        np.zeros(3),
+                        sample.precise_separation_frame_mm,
+                    )
+                )
+                packed = np.stack(
+                    (
+                        -electric[0],
+                        -electric[1],
+                        -electric[2],
+                        -magnetic[2],
+                        magnetic[1],
+                        -magnetic[0],
+                    )
+                )
+                precise_packed_jets[source_index] = packed
+                potential_total += potential[:, 0]
+                partial_a_total += potential[:, 1:5].T
+                response_total += packed[:, 0]
+                partial_response_total += packed[:, 1:5].T
+                retarded_time_ns[source_index] = sample.time_ns
+                if sample.time_error_bound_ns is not None:
+                    time_error_bounds[source_index] = sample.time_error_bound_ns
+                residual_mm[source_index] = sample.residual_mm
+                separation_mm[source_index] = sample.separation_mm
+                kappa[source_index] = stable_kappa
+                segment_index[source_index] = int(
+                    np.clip(
+                        np.searchsorted(source.time_ns, sample.time_ns, side="right")
+                        - 1,
+                        0,
+                        source.segment_duration_ns.size - 1,
+                    )
+                )
+                valid_sources[source_index] = True
+                continue
         try:
             result = evaluate_charge_response_coefficients_one_event_strict_serial(
                 source.time_ns,
@@ -2201,6 +2419,10 @@ def evaluate_retarded_charge_response_gradient_native(
     for source_index, source in prepared.sources.items():
         if not valid_sources[source_index]:
             continue
+        if source_index in precise_packed_jets:
+            # The analytic boundary has no internal interpolation seams. Its
+            # root was already checked against the finite boundary interval.
+            continue
         margin_ratio, reason = _analytical_segment_margin_ratio(
             source=source,
             segment_index=int(segment_index[source_index]),
@@ -2265,6 +2487,15 @@ def evaluate_retarded_charge_response_gradient_native(
         for source_index, source in prepared.sources.items():
             if not valid_sources[source_index]:
                 continue
+            if source_index in precise_packed_jets:
+                packed_hessian = precise_packed_jets[source_index][:, 5:].reshape(
+                    6, 4, 4
+                )
+                directional_rate += np.einsum(
+                    "kij,j->ik", packed_hessian, observer_velocity
+                )
+                directional_residual[source_index] = 0.0
+                continue
             segment = int(segment_index[source_index])
             result = quintic_charge_response_directional_gradient_native(
                 observer_time_ns=float(observer_event.time_ns),
@@ -2299,6 +2530,9 @@ def evaluate_retarded_charge_response_gradient_native(
         fallback_stencil_step_mm=None,
         partial_antisymmetric_response_along_velocity=directional_rate,
         directional_jet_residual=directional_residual,
+        retarded_time_error_bound_ns=(
+            time_error_bounds if np.any(np.isfinite(time_error_bounds)) else None
+        ),
     )
 
 
@@ -2653,6 +2887,7 @@ def evaluate_retarded_charge_field_gradient_native(
                 separation_mm=response.separation_mm,
                 valid_sources=response.valid_sources,
                 four_potential=response.four_potential,
+                retarded_time_error_bound_ns=response.retarded_time_error_bound_ns,
             ),
             partial_f=materialize_partial_antisymmetric_response_native(
                 response.partial_antisymmetric_response
