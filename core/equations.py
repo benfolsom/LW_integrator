@@ -8,7 +8,7 @@ covariant updates for momentum, position, and acceleration for each particle.
 Physical Foundation
 -------------------
 
-The integrator evolves particles in coordinate time with step h = Δt, updating
+The integrator evolves particles in proper time with step h = Δτ, updating
 conjugate momentum from retarded electromagnetic forces, then deriving positions
 and velocities.
 
@@ -17,55 +17,37 @@ Conjugate vs. Kinetic Momentum
 
 The conjugate (canonical) momentum includes electromagnetic potentials::
 
-    P^μ = γ·m·V^μ + (e/c)·A^μ
+    P^μ = m·V^μ + (e/c)·A^μ,   V^μ = γ(c, v)
 
-For spatial components: P_i = γ·m·v_i + (e/c)·A_i
+and its update is dP^α/dτ = (e/c)·V_β·∂^α A^β (paper Eq. 9).  The kinetic
+(mechanical) momentum is P_kinetic = P - (e/c)·A = γ·m·v.
 
-The kinetic (mechanical) momentum is::
+Position and Time Updates
+~~~~~~~~~~~~~~~~~~~~~~~~~
 
-    P_kinetic = P - (e/c)·A = γ·m·v
+With proper-time steps, dx/dτ = γv = P_kinetic/m and dt/dτ = γ, so::
 
-Position Updates
-~~~~~~~~~~~~~~~~
+    Δx = (P_kinetic / m)·h,    Δt = γ·h
 
-Spatial positions are updated in coordinate time using the kinetic momentum::
+Velocity and Acceleration
+~~~~~~~~~~~~~~~~~~~~~~~~~
 
-    Δx = v·h = (P_kinetic / (γ·m))·h
-
-The 1/γ factor is **essential**: it ensures that velocity v = P_kinetic/(γ·m)
-remains subluminal even as momentum grows with γ.
-
-Velocity Calculation
-~~~~~~~~~~~~~~~~~~~~
-
-Velocity (beta) is computed from the coordinate-time displacement::
-
-    β = v/c = Δx/(c·h)
-
-Note: This does **not** include a γ factor in the denominator. The time dilation
-is already accounted for in the position update formula.
+β is Δx/(c·Δt) on the ordinary path, or P_kinetic/(γmc) on the on-shell
+kinematic boundary.  The stored acceleration ``bdot`` is dβ/d(ct) [1/mm]
+(dβ/dt = c·bdot).
 
 Self-Consistency Iterations
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-For ultra-relativistic particles (γ ≫ 1), forces depend strongly on γ through
-the retarded field geometry (k-factor, field Lorentz contraction). The integrator
-resolves the circular dependency γ → forces → P → γ through iterations:
-
-1. Use γ_n-1 to compute retarded forces
-2. Update conjugate momentum P_n from those forces
-3. Update positions using the **same** γ_n-1: Δx = (h/(γ_n-1·m))·P_kinetic
-4. Compute velocity: β = Δx/(c·h)
-5. Derive two independent γ estimates:
+Retarded forces depend on the observer's own γ.  When enabled, each particle
+update iterates: compute forces with the working γ, update P, positions and
+β, then compare two γ estimates:
 
    - From energy: γ_E = (Pt - e·Φ)/(mc)
    - From velocity: γ_V = 1/√(1-β²)
 
-6. Check convergence: |γ_E - γ_V|/γ_E < ε (typically ε = 10⁻⁶)
-
-If not converged, the next iteration uses γ_n = γ_E and repeats. Using a
-**consistent** γ throughout each iteration for both forces and positions ensures
-the velocity extracted from Δx corresponds physically to the computed momentum.
+and iterate until |γ_E - γ_V|/γ_E is below the configured tolerance or the
+iteration limit is reached.
 
 See :class:`core.self_consistency.SelfConsistencyConfig` for configuration.
 """
