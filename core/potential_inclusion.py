@@ -200,7 +200,19 @@ def sampled_inclusion_change(
             skip = travel < beta_avg * max_R / (1.0 + beta_avg)
         # Closed gates with no previously included sources need no sampling.
         if skip and not np.any(old.get("charges", [])):
-            charges = np.zeros(len(trajectory_ext[external_last]["x"]))
+            # Even a closed gate uses the same source identities as its open
+            # representation. Smearing expands every centroid into subcharges.
+            source_count = len(trajectory_ext[external_last]["x"])
+            if (
+                macroparticle_smearing is not None
+                and macroparticle_smearing.enabled
+                and (
+                    macroparticle_smearing.apply_to_active_sources
+                    or macroparticle_smearing.apply_to_passive_sources
+                )
+            ):
+                source_count *= max(1, int(macroparticle_smearing.subcharge_count))
+            charges = np.zeros(source_count)
             next_sets["external"] = {
                 "model": "retarded",
                 "charges": charges.tolist(),
