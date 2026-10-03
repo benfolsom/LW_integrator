@@ -49,6 +49,7 @@ If you are new to the project, start with the **Overview** and **Quick start** p
    radiation_flux_oracle
    spin_self_force_oracle
    self_consistency
+   same_bunch_energy
    adaptive_timestep
    recent_changes
 
