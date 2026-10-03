@@ -1,8 +1,6 @@
 """Retarded equations of motion for the Liénard–Wiechert solver.
 
-The implementation preserves the validated reference behavior so historical
-regression data remains applicable. The heavy lifting
-is performed inside :func:`retarded_equations_of_motion`, which calculates the
+The heavy lifting is performed inside :func:`retarded_equations_of_motion`, which calculates the
 covariant updates for momentum, position, and acceleration for each particle.
 
 Physical Foundation
@@ -32,8 +30,8 @@ With proper-time steps, dx/dτ = γv = P_kinetic/m and dt/dτ = γ, so::
 Velocity and Acceleration
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
-β is Δx/(c·Δt) on the ordinary path, or P_kinetic/(γmc) on the on-shell
-kinematic boundary.  The stored acceleration ``bdot`` is dβ/d(ct) [1/mm]
+β is P_kinetic/(γmc), with gamma derived from the same mechanical spatial
+momentum in every reaction mode.  The stored acceleration ``bdot`` is dβ/d(ct) [1/mm]
 (dβ/dt = c·bdot).
 
 Self-Consistency Iterations
@@ -1880,6 +1878,7 @@ def retarded_equations_of_motion(
         _initialize_medina_step_state(result)
 
     num_particles = len(current_state["x"])
+    instantaneous_endpoints = {}
     if moment_impulse_diagnostic is not None and radiation_mode == "medina_lad":
         moment_rr_force = np.asarray(moment_radiation_force_native, dtype=float)
         if moment_rr_force.shape != (num_particles, 3) or not np.all(
@@ -2773,14 +2772,7 @@ def retarded_equations_of_motion(
                                 indices_next=sc_chrono_result.indices_next,
                                 weights=sc_chrono_result.weights,
                                 needs_interpolation=sc_chrono_result.needs_interpolation,
-                                include_positions=bool(
-                                    macroparticle_smearing
-                                    and macroparticle_smearing.enabled
-                                    and (
-                                        macroparticle_smearing.apply_to_active_sources
-                                        or macroparticle_smearing.apply_to_passive_sources
-                                    )
-                                ),
+                                include_positions=True,
                             )
                         else:
                             sc_samples = gather_external_samples(
@@ -2792,41 +2784,20 @@ def retarded_equations_of_motion(
                                 indices_next2=sc_chrono_result.indices_next2,
                                 use_cubic=sc_chrono_result.use_cubic,
                                 interpolate_positions=chrono_high_precision,
-                                include_positions=bool(
-                                    macroparticle_smearing
-                                    and macroparticle_smearing.enabled
-                                    and (
-                                        macroparticle_smearing.apply_to_active_sources
-                                        or macroparticle_smearing.apply_to_passive_sources
-                                    )
-                                ),
+                                include_positions=True,
                             )
                     else:
                         if use_sc_soa:
                             sc_samples = gather_external_samples_soa(
                                 sc_source_soa,
                                 sc_indices,
-                                include_positions=bool(
-                                    macroparticle_smearing
-                                    and macroparticle_smearing.enabled
-                                    and (
-                                        macroparticle_smearing.apply_to_active_sources
-                                        or macroparticle_smearing.apply_to_passive_sources
-                                    )
-                                ),
+                                include_positions=True,
                             )
                         else:
                             sc_samples = gather_external_samples(
                                 sc_source_trajectory,
                                 sc_indices,
-                                include_positions=bool(
-                                    macroparticle_smearing
-                                    and macroparticle_smearing.enabled
-                                    and (
-                                        macroparticle_smearing.apply_to_active_sources
-                                        or macroparticle_smearing.apply_to_passive_sources
-                                    )
-                                ),
+                                include_positions=True,
                             )
 
                     if not use_retarded_sc:
@@ -2856,6 +2827,10 @@ def retarded_equations_of_motion(
                     if pseudo_grid_sc_charge_matrix is None:
                         sc_samples.valid_mask[particle_idx] = False
 
+                    if not use_retarded_sc:
+                        sc_start_positions = np.column_stack(
+                            [getattr(sc_samples, axis) for axis in "xyz"]
+                        )
                     sc_samples, smeared_sc_nhat = smear_source_samples(
                         samples=sc_samples,
                         observer_position=(
@@ -2875,41 +2850,72 @@ def retarded_equations_of_motion(
                             sc_nhat = dict(sc_nhat)
                             sc_nhat["R"] = sc_R
 
-                    (
-                        sc_dp_x,
-                        sc_dp_y,
-                        sc_dp_z,
-                        sc_dp_t,
-                        sc_df_x,
-                        sc_df_y,
-                        sc_df_z,
-                        sc_dscalar,
-                    ) = compute_vectorized_contributions(
-                        h=h,
-                        charge_i=float(force_particle_charge),
-                        mass_i=float(particle_mass),
-                        gamma_i=particle_gamma,
-                        beta_vec=particle_beta,
-                        nhat_nx=np.asarray(sc_nhat["nx"], dtype=float),
-                        nhat_ny=np.asarray(sc_nhat["ny"], dtype=float),
-                        nhat_nz=np.asarray(sc_nhat["nz"], dtype=float),
-                        R_separation=sc_R,
-                        samples=sc_samples,
-                        apply_external=True,
-                        verbosity=0,
-                    )
-                    if not use_retarded_sc:
+                    if use_retarded_sc:
+                        (
+                            sc_dp_x,
+                            sc_dp_y,
+                            sc_dp_z,
+                            sc_dp_t,
+                            sc_df_x,
+                            sc_df_y,
+                            sc_df_z,
+                            sc_dscalar,
+                        ) = compute_vectorized_contributions(
+                            h=h,
+                            charge_i=float(force_particle_charge),
+                            mass_i=float(particle_mass),
+                            gamma_i=particle_gamma,
+                            beta_vec=particle_beta,
+                            nhat_nx=np.asarray(sc_nhat["nx"], dtype=float),
+                            nhat_ny=np.asarray(sc_nhat["ny"], dtype=float),
+                            nhat_nz=np.asarray(sc_nhat["nz"], dtype=float),
+                            R_separation=sc_R,
+                            samples=sc_samples,
+                            apply_external=True,
+                            verbosity=0,
+                        )
+                    else:
                         displacement = sc_unsoftened_R[:, None] * np.column_stack(
                             [sc_nhat["n" + axis] for axis in "xyz"]
                         )
-                        charges = np.where(sc_samples.valid_mask, sc_samples.charge, 0.0)
+                        charges = np.where(
+                            sc_samples.valid_mask, sc_samples.charge, 0.0
+                        )
+                        subcharges = len(charges) // sc_source_count
+                        eps_squared = sc_softening**2 + np.repeat(
+                            np.broadcast_to(source_radius, (sc_source_count,)) ** 2,
+                            subcharges,
+                        )
                         force, sc_dscalar = plummer_force_potential(
-                            displacement, charges, float(force_particle_charge),
-                            sc_softening**2 + source_radius**2,
+                            displacement,
+                            charges,
+                            float(force_particle_charge),
+                            eps_squared,
                         )
                         sc_dp_x, sc_dp_y, sc_dp_z = h * particle_gamma * force
-                        sc_dp_t = 0.0
+                        # Mechanical energy/c changes by beta dot dp. Source
+                        # motion enters canonical energy through recomposition,
+                        # not a second copy of the reciprocal potential work.
+                        sc_dp_t = float(
+                            np.dot(particle_beta, (sc_dp_x, sc_dp_y, sc_dp_z))
+                        )
                         sc_df_x = sc_df_y = sc_df_z = 0.0
+                        observer_start = np.array(
+                            (working_x, working_y, working_z)
+                            if smeared_sc_nhat
+                            else [current_state[axis][particle_idx] for axis in "xyz"]
+                        )
+                        instantaneous_endpoints[particle_idx] = (
+                            displacement,
+                            charges,
+                            eps_squared,
+                            sc_dscalar,
+                            observer_start,
+                            sc_start_positions,
+                            subcharges,
+                            pseudo_grid_space_charge_source_trajectory is None,
+                            float(force_particle_charge),
+                        )
                     accumulated_momentum_x += sc_dp_x
                     accumulated_momentum_y += sc_dp_y
                     accumulated_momentum_z += sc_dp_z
@@ -4185,7 +4191,7 @@ def retarded_equations_of_motion(
                 exact_mechanical_temporal_impulse += float(second_order_correction[0])
 
             # ================================================================
-            # STEP 4: Update momentum and derive gamma from Pt
+            # STEP 4: Update momentum and derive gamma from the spatial shell
             # ================================================================
             # Canonical source-inclusion bookkeeping, evaluated once at the
             # accepted event. Each nonlinear trial starts from the same offset.
@@ -5470,6 +5476,44 @@ def retarded_equations_of_motion(
                 result["spin_x"][particle_idx] = spin_next[0]
                 result["spin_y"][particle_idx] = spin_next[1]
                 result["spin_z"][particle_idx] = spin_next[2]
+
+    # All observers have finished their mechanical updates. Recompose the
+    # instantaneous scalar sector at this accepted same-index endpoint. Keep
+    # the sampled source set frozen for the step: births, deaths, and switches
+    # continue to belong exclusively to the inclusion ledger at the next start.
+    endpoint_positions = np.column_stack([result[axis] for axis in "xyz"])
+    for particle_idx, endpoint in instantaneous_endpoints.items():
+        (
+            displacement,
+            charges,
+            eps_squared,
+            start_phi,
+            observer_start,
+            source_start,
+            subcharges,
+            reciprocal,
+            observer_charge,
+        ) = endpoint
+        source_shift = (
+            np.repeat(endpoint_positions - source_start, subcharges, axis=0)
+            if reciprocal
+            else np.zeros_like(displacement)
+        )
+        endpoint_displacement = (
+            displacement
+            + endpoint_positions[particle_idx]
+            - observer_start
+            - source_shift
+        )
+        _, endpoint_phi = plummer_force_potential(
+            endpoint_displacement,
+            charges,
+            observer_charge,
+            eps_squared,
+        )
+        result["Pt"][particle_idx] += (
+            observer_charge * (endpoint_phi - start_phi) / C_MMNS
+        )
 
     # Log summary if any particles died in this step
     if particles_marked_dead_this_step > 0:

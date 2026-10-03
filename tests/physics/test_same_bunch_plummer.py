@@ -21,8 +21,6 @@ EV = 931.49410242e6 / C**2
 DURATION = 10.0 / (0.4 * C / np.sqrt(1 - 0.4**2))
 
 
-
-
 def make_symmetric(count=2, close=False):
     state, driver = _make_bunch(pcount=count)
     positions = (
@@ -44,7 +42,6 @@ def make_symmetric(count=2, close=False):
     state["q"] = state["q_source"].copy()
     initialize_mechanical_knots(state)
     return state, driver
-
 
 
 def run_symmetric(
@@ -85,7 +82,6 @@ def run_symmetric(
     return tr
 
 
-
 def shell_gain(end, start):
     p, p0 = [np.column_stack([s["P" + a] for a in "xyz"]) for s in (end, start)]
     mc = start["m_species"] * C
@@ -93,13 +89,11 @@ def shell_gain(end, start):
     return np.sum((p - p0) * (p + p0), axis=1) / (e + e0) * C * EV
 
 
-
 def pair_potential(state, epsilon):
     r = np.column_stack([state[a] for a in "xyz"])
     rho = np.sqrt(np.sum((r[:, None] - r[None, :]) ** 2, axis=2) + epsilon**2)
     i, j = np.triu_indices(len(r), 1)
     return np.sum(state["q_source"][i] * state["q_source"][j] / rho[i, j]) * EV
-
 
 
 @pytest.mark.parametrize("epsilon", [0.0, 0.1])
@@ -126,7 +120,6 @@ def test_plummer_force_is_potential_gradient_and_weights_are_separate(epsilon):
     np.testing.assert_array_equal(coincident, 0)
 
 
-
 @pytest.mark.parametrize(
     "count,close,expected",
     [(2, False, 3.950105542125), (4, False, 14.466549260102), (2, True, 7.829072789)],
@@ -145,9 +138,24 @@ def test_symmetric_energy_oracles_and_reaction_work(count, close, expected):
             - pair_potential(tr[0], 0.1 if close else 0)
         ) / population
         assert abs(gain + du) < 0.002 * gain
+        # Canonical energy is rebuilt with Phi at the accepted endpoint.
+        last = tr[-1]
+        for i in range(count):
+            charges = last["q_source"].copy()
+            charges[i] = 0
+            _, phi = plummer_force_potential(
+                np.column_stack([last[a][i] - last[a] for a in "xyz"]),
+                charges,
+                last["q_observer"][i],
+                (0.1 if close else 0) ** 2,
+            )
+            assert last["Pt"][i] == pytest.approx(
+                last["m_species"][i] * C * last["gamma"][i]
+                + last["q_observer"][i] * phi / C,
+                rel=3e-16,
+            )
     work = sum(np.mean(s.get("radiation_reaction_work", 0)) for s in runs[1]) * EV
     assert abs(gains[1] - gains[0] - work) < 2e-9
-
 
 
 @pytest.mark.parametrize(
@@ -160,7 +168,6 @@ def test_relaxation_weight_does_not_change_mechanical_solution(mode):
     for tr in runs[1:]:
         for key in ("Px", "Py", "Pz", "gamma", "bx", "by", "bz", "t"):
             np.testing.assert_array_equal(tr[-1][key], runs[0][-1][key])
-
 
 
 @pytest.mark.parametrize(
@@ -207,3 +214,58 @@ def test_relativistic_coast_has_one_shell_and_proper_time_drift(mode):
         )
     assert np.all(end["mass_shell_projection_energy"] != 0)
 
+
+def test_prescribed_static_source_conserves_single_observer_hamiltonian():
+    state, driver = make_symmetric(close=True)
+    # Particle 1 supplies charge but observes none: its rest worldline stays fixed.
+    state["q_observer"][1] = 0
+    state["q_source"][0] = state["q"][0] = 0
+    for a in "xyz":
+        state["P" + a][1] = state["b" + a][1] = 0
+    state["gamma"][1] = 1
+    state["Pt"][1] = state["m_species"][1] * C
+    initialize_mechanical_knots(state)
+    initial = _copy_state(state)
+    residuals = []
+    for intervals in (160, 640):
+        tr = [_copy_state(initial)]
+        for _ in range(intervals):
+            tr.append(
+                retarded_equations_of_motion(
+                    0.0001 / intervals,
+                    tr,
+                    [driver],
+                    len(tr) - 1,
+                    aperture_radius=1e9,
+                    sim_type=SimulationType.BUNCH_TO_BUNCH,
+                    startup_mode=StartupMode.COLD_START,
+                    self_consistency=SelfConsistencyConfig(
+                        enabled=True, max_iterations=2
+                    ),
+                    space_charge=SpaceChargeConfig(
+                        enabled=True, retarded=False, softening_mm=0.1
+                    ),
+                    radiation_reaction_mode="diagnostic_only",
+                )
+            )
+        end = tr[-1]
+        phis = [
+            plummer_force_potential(
+                np.column_stack([s[a][0] - s[a] for a in "xyz"]),
+                s["q_source"],
+                s["q_observer"][0],
+                0.01,
+            )[1]
+            for s in (initial, end)
+        ]
+        gain = shell_gain(end, initial)[0]
+        du = initial["q_observer"][0] * (phis[1] - phis[0]) * EV
+        residuals.append(abs(gain + du))
+        assert np.array_equal(end["x"][1:], initial["x"][1:])
+        assert end["Pt"][0] == pytest.approx(
+            end["gamma"][0] * end["m_species"][0] * C
+            + initial["q_observer"][0] * phis[1] / C,
+            rel=3e-16,
+        )
+    assert residuals[1] < 0.3 * residuals[0]
+    assert residuals[1] < 0.01
