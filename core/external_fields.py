@@ -186,6 +186,7 @@ __all__ = [
     "NATIVE_FORCE_UNIT_NEWTON",
     "C_M_PER_S",
     "compute_uniform_external_field_impulse",
+    "boris_external_field_impulse",
     "electric_field_v_per_m_to_native",
     "electric_field_native_to_v_per_m",
     "evaluate_external_field_native",
@@ -193,3 +194,35 @@ __all__ = [
     "magnetic_field_native_to_tesla",
     "magnetic_field_tesla_to_native",
 ]
+
+
+def boris_external_field_impulse(
+    external_field: ExternalFieldConfig,
+    *,
+    charge: float,
+    mass: float,
+    gamma: float,
+    beta: Tuple[float, float, float],
+    h_step: float,
+    position: Tuple[float, float, float],
+    time: float,
+) -> np.ndarray:
+    """Symmetric electric kicks and a norm-preserving sampled magnetic rotation.
+
+    In proper time the rotation vector is q h B / (2 m c). The force
+    diagnostic continues to use the instantaneous Lorentz force.
+    """
+    from .constants import C_MMNS
+
+    electric, magnetic, _ = evaluate_external_field_native(
+        external_field, position_mm=position, time_ns=time
+    )
+    if not np.any(magnetic):
+        return h_step * charge * gamma * electric
+    start = mass * C_MMNS * gamma * np.asarray(beta)
+    half_kick = 0.5 * h_step * charge * gamma * electric
+    minus = start + half_kick
+    t = h_step * charge * magnetic / (2 * mass * C_MMNS)
+    prime = minus + np.cross(minus, t)
+    plus = minus + np.cross(prime, 2 * t / (1 + np.dot(t, t)))
+    return plus + half_kick - start

@@ -79,6 +79,7 @@ from .distances import (
 )
 from .beamline_geometry import compute_directional_visibility_mask
 from .external_fields import (
+    boris_external_field_impulse,
     compute_uniform_external_field_impulse,
     evaluate_external_field_native,
     evaluate_external_field_si,
@@ -2201,6 +2202,7 @@ def retarded_equations_of_motion(
         converged = False
         last_mass_shell_error = float("inf")
         for sc_iteration in range(sc_max_iterations):
+            magnetic_rotation_correction = np.zeros(3)
             # Only the final self-consistency trial feeds the once-per-step
             # spin update.  Resetting here prevents an earlier trial's Medina
             # force from leaking into it.
@@ -3007,6 +3009,24 @@ def retarded_equations_of_motion(
                     position=field_position,
                     time=float(current_state["t"][particle_idx]),
                 )
+                if not second_order_exact_source_selected and not rfs_selected:
+                    rotated_impulse = boris_external_field_impulse(
+                        external_field,
+                        charge=float(force_particle_charge),
+                        mass=float(particle_mass),
+                        gamma=float(current_state["gamma"][particle_idx]),
+                        beta=tuple(
+                            float(current_state["b" + a][particle_idx]) for a in "xyz"
+                        ),
+                        h_step=float(h),
+                        position=field_position,
+                        time=float(current_state["t"][particle_idx]),
+                    )
+                    magnetic_rotation_correction = np.asarray(rotated_impulse) - (
+                        ext_dp_x,
+                        ext_dp_y,
+                        ext_dp_z,
+                    )
                 accumulated_momentum_x += ext_dp_x
                 accumulated_momentum_y += ext_dp_y
                 accumulated_momentum_z += ext_dp_z
@@ -4219,6 +4239,9 @@ def retarded_equations_of_motion(
             # ================================================================
             # Canonical source-inclusion bookkeeping, evaluated once at the
             # accepted event. Each nonlinear trial starts from the same offset.
+            accumulated_momentum_x += magnetic_rotation_correction[0]
+            accumulated_momentum_y += magnetic_rotation_correction[1]
+            accumulated_momentum_z += magnetic_rotation_correction[2]
             accumulated_momentum_x += inclusion_momentum_offset[0]
             accumulated_momentum_y += inclusion_momentum_offset[1]
             accumulated_momentum_z += inclusion_momentum_offset[2]

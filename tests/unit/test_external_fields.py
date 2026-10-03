@@ -552,3 +552,29 @@ def test_magnetic_bend_radiated_energy_converges_with_timestep_refinement() -> N
     assert energy_400 > 0.0
     assert abs(energy_400 - energy_200) < abs(energy_200 - energy_100)
     assert energy_400 == pytest.approx(energy_200, rel=6.0e-3)
+
+
+def test_pure_magnetic_rotation_preserves_norm_during_self_consistency():
+    from core.self_consistency import SelfConsistencyConfig
+
+    initial = _single_particle_state(gamma=200.0)
+    trajectory, _, soa, *_ = retarded_integrator(
+        steps=40,
+        h_step=1e-6,
+        wall_z=0.0,
+        aperture_radius=1e9,
+        sim_type=SimulationType.BUNCH_TO_BUNCH,
+        init_rider=initial,
+        init_driver=_empty_driver_state(),
+        mean=0.0,
+        cav_spacing=0.0,
+        z_cutoff=1e9,
+        startup_mode=StartupMode.APPROXIMATE_BACK_HISTORY,
+        radiation_reaction_mode="off",
+        external_field=ExternalFieldConfig(magnetic_field_native=(0.0, 3e7, 0.0)),
+        self_consistency=SelfConsistencyConfig(enabled=True, max_iterations=2),
+    )
+    np.testing.assert_allclose(
+        soa.gamma[:, 0], initial["gamma"][0], rtol=0.0, atol=3e-12
+    )
+    assert abs(trajectory[-1]["Px"][0]) > 0.0
