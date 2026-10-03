@@ -290,3 +290,43 @@ def test_image_class_cold_start_gate_gets_one_rebase(mode):
     assert abs(opened["gamma"][0] - closed["gamma"][0]) < 1e-10
     evolved = image_step([initial, closed, opened], [source] * 3)
     np.testing.assert_array_equal(ledger(evolved), ledger(opened))
+
+
+def test_cold_start_smeared_gate_keeps_subcharge_identities_when_opened():
+    from core.types import MacroparticleSmearingConfig
+
+    initial, source = state(), state(x=3, z=20, beta=-0.2)
+    smear = MacroparticleSmearingConfig(
+        enabled=True,
+        subcharge_count=4,
+        seed=7,
+        use_momentum_errors=False,
+    )
+
+    def cold_step(history):
+        return equations.retarded_equations_of_motion(
+            1e-5,
+            history,
+            [source] * len(history),
+            len(history) - 1,
+            aperture_radius=5000,
+            sim_type=SimulationType.BUNCH_TO_BUNCH,
+            startup_mode=StartupMode.COLD_START,
+            radiation_reaction_mode="off",
+            self_consistency=SelfConsistencyConfig(enabled=True, max_iterations=2),
+            macroparticle_smearing=smear,
+        )
+
+    first = cold_step([initial])
+    closed = decode_inclusion_state(first["potential_inclusion_state"][0])["external"]
+    assert not closed["gate_open"]
+    assert closed["charges"] == [0.0] * 4
+    # Admit sources by moving the observer past the initial light-cone gate.
+    first["z"][:] = 15
+    second = cold_step([initial, first])
+    opened = decode_inclusion_state(second["potential_inclusion_state"][0])["external"]
+    assert opened["gate_open"]
+    assert len(opened["charges"]) == 4
+    assert np.any(opened["charges"])
+    with pytest.raises(ValueError, match="identities changed"):
+        sector_change(opened, "retarded", np.ones(1), lambda *_: np.zeros(4))
