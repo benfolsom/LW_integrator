@@ -46,7 +46,7 @@ $U_\Phi=\sum_{i<j}Q_iQ_j/\rho_{ij}$.
 A prescribed static-source control instead conserves the observer's
 $E+q\Phi$. Finite endpoint-kick drift introduces an energy residual that decreases
 with timestep. These balances do not assert field-energy closure for accelerating
-retarded sources or independently randomized source clouds.
+retarded sources or legacy centroid-sampled clouds.
 
 A simultaneous-laboratory-time alternative would sample every source at the
 observer's laboratory event. Ben must decide whether to adopt that model. The
@@ -55,3 +55,47 @@ gammas, compares states at equal laboratory times against an independent
 laboratory-time reference, and separately checks common-proper-time conservation.
 The two trajectories must be distinguished; a passing energy balance alone does
 not choose the source clock.
+
+Smearing now uses rigid reciprocal clouds by default (`fixed_per_particle`).
+The initial full source geometry, seed, population, and subcharge index determine
+an immutable offset $\boldsymbol\delta_{ia}$. Initial spacing caps the cloud only
+at initialization. Moving centroids, observer exclusion, source losses, and
+nonlinear trials do not resize it. A bounded in-memory cache retains the draws;
+eviction and checkpoint restart reconstruct the same offsets from the retained
+initial history. The cache is not part of the physics state.
+
+For $w_{ia}=1/n_i$, the pair energy is
+$U_{ij}=\sum_{a,b}Q_iw_{ia}Q_jw_{jb}/\sqrt{|\mathbf R_i+\boldsymbol\delta_{ia}-\mathbf R_j-\boldsymbol\delta_{jb}|^2+\epsilon^2}$.
+The species force is $\mathbf F_i=-\nabla_{\mathbf R_i}\sum_{j\ne i}U_{ij}/N_i$.
+Every observer subcharge samples every source subcharge. All intra-macro pairs
+remain excluded, and observer charge remains distinct from represented source
+charge. For instantaneous same-bunch interactions, reciprocal observer averaging
+is required even if the general `apply_to_active_observers` option is false.
+Source-radius softening remains available for prescribed pseudo-grid sources.
+
+This energy replaces the centroid pair potential in smeared-energy tests. The
+represented laboratory forces cancel pairwise; equal-gamma controls also verify
+momentum cancellation. Unequal-gamma particles still advance on the existing
+common proper-time clock, so their laboratory momentum increments carry different
+$\gamma_i$ factors. This change does not establish simultaneous-laboratory-time
+momentum conservation for that clock or field-energy closure for retarded clouds.
+
+`legacy_fixed_per_particle` explicitly retains centroid sampling and spacing
+resizing with fixed random draws. `legacy_per_step` also redraws each step.
+`per_step` remains a compatibility alias for the latter. These options are
+non-conservative diagnostics and are listed as legacy choices in the GUI and CLI.
+
+Prescribed sampled magnetic fields now use symmetric electric kicks and a Boris
+magnetic rotation in the ordinary stepping path. Rotation preserves mechanical
+momentum norm, so a pure magnetic field adds no kinetic energy. The instantaneous
+Lorentz-force helper remains available for force diagnostics; exact-source and
+RFS paths retain their existing second-order updates.
+
+A cold-start cross-bunch gate now primes the ordinary vector-potential difference
+on its first active step. Established sampled sources already receive that
+backward event difference through canonical-to-mechanical reconstruction. The
+newly admitted set uses the same counterfactual source identities at both events,
+preventing a full canonical impulse from being mistaken for mechanical work.
+The inclusion ledger still compares source sets at the accepted event; its offset
+is not counted as force work. Existing gate bounds and checkpoint tests apply
+unchanged.

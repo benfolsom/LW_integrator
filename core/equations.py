@@ -2167,6 +2167,7 @@ def retarded_equations_of_motion(
         applied_medina_force_native = np.zeros(3, dtype=float)
 
         inclusion_momentum_offset = np.zeros(4, dtype=float)
+        ordinary_gate_vector_change = np.zeros(3)
         sampled_inclusion_supported = bool(
             _sampled_inclusion_enabled
             and not exact_charge_source_selected
@@ -2189,6 +2190,7 @@ def retarded_equations_of_motion(
                 traj_soa=traj_soa,
                 traj_ext_soa=traj_ext_soa,
                 macroparticle_smearing=macroparticle_smearing,
+                ordinary_gate_vector_change=ordinary_gate_vector_change,
             )
             inclusion_momentum_offset = (
                 force_particle_charge / C_MMNS * inclusion_delta_A
@@ -4239,6 +4241,15 @@ def retarded_equations_of_motion(
             # ================================================================
             # Canonical source-inclusion bookkeeping, evaluated once at the
             # accepted event. Each nonlinear trial starts from the same offset.
+            # Established sampled sources already receive this backward
+            # vector-potential difference through canonical reconstruction.
+            # Apply it once when the cold-start gate first admits sources.
+            gate_evolution_impulse = (
+                force_particle_charge / C_MMNS * ordinary_gate_vector_change
+            )
+            accumulated_momentum_x -= gate_evolution_impulse[0]
+            accumulated_momentum_y -= gate_evolution_impulse[1]
+            accumulated_momentum_z -= gate_evolution_impulse[2]
             accumulated_momentum_x += magnetic_rotation_correction[0]
             accumulated_momentum_y += magnetic_rotation_correction[1]
             accumulated_momentum_z += magnetic_rotation_correction[2]
