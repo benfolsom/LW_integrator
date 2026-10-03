@@ -413,3 +413,35 @@ sequence stops at that new diagnostic decision; no coupled slice kicks or
 source-count scaling result are claimed. Cancellation-resistant energy-increment
 bookkeeping is the recommended next investigation, with unchanged tolerances.
 The trace supports a roundoff-floor hypothesis but does not prove it.
+
+Supported diagnostic resolution floor
+--------------------------------------
+
+``AdaptivePairReturnConfig.diagnostic_ulp_floor`` enables a supported,
+optional float64 resolution budget. Its default remains ``False``.
+``diagnostic_ulp_multiplier`` defaults to 4 and must be finite and positive.
+This supersedes the former experimental projection-only option and multiplier.
+
+Every diagnostic may supply a nonnegative, finite reference matrix through
+``StepDoublingState.diagnostic_reference_scales_native``, with matching
+``diagnostic_names``. Without that matrix, energy increments use their own
+magnitudes, and mass-shell projection uses per-observer endpoint kinetic energy.
+The full and refined references are combined by their elementwise maximum.
+Population weights never enlarge an observer's reference.
+
+Acceptance uses the larger of absolute tolerance and the ulp budget, plus
+relative tolerance. An entry is floor dominated when the ulp budget exceeds
+absolute tolerance and is at least as large as the relative term. Such entries
+participate in acceptance but are excluded from the next-step error estimate.
+Position, mechanical momentum, rest spin, and every other diagnostic entry
+still steer. An unfloored observer in an otherwise floored diagnostic remains
+eligible. A discrepancy above the floor still rejects; exclusion does not
+make it acceptable. Existing trial health guards remain active.
+
+Assessments record floor-dominated observer/column pairs, diagnostic names,
+``controller_error``, and ``step_size_group``. Enabled adaptive output records
+these for accepted and rejected trials. Ties use the existing group order;
+zero error selects position and permits bounded growth. A Medina impulse cap
+can override the numerical estimator and is identified in the adaptive trace.
+Diagnostic values and signed energy increments are preserved in the ledger.
+The floor is a resolution allowance, not a proof of energy conservation.

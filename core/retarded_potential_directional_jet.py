@@ -433,29 +433,27 @@ def _directional_potential_result(
 def sum_potential_directional_derivatives_native(
     *values: PotentialDirectionalDerivatives,
 ) -> PotentialDirectionalDerivatives:
-    """Add charge/dipole/source contributions without changing their ordering."""
+    """Compensate each component of the charge, dipole, and source jet sums."""
 
-    four_potential = np.zeros(4, dtype=float)
-    partial_a = np.zeros((4, 4), dtype=float)
-    partial2_a = np.zeros((4, 4, 4), dtype=float)
-    partial3_velocity = np.zeros((4, 4, 4), dtype=float)
-    partial3_acceleration = np.zeros((4, 4, 4), dtype=float)
-    partial4_velocity_twice = np.zeros((4, 4, 4), dtype=float)
-    for value in values:
-        four_potential += value.four_potential
-        partial_a += value.partial_a
-        partial2_a += value.partial2_a
-        partial3_velocity += value.partial3_a_along_velocity
-        partial3_acceleration += value.partial3_a_along_acceleration
-        partial4_velocity_twice += value.partial4_a_along_velocity_twice
-    return PotentialDirectionalDerivatives(
-        four_potential=four_potential,
-        partial_a=partial_a,
-        partial2_a=partial2_a,
-        partial3_a_along_velocity=partial3_velocity,
-        partial3_a_along_acceleration=partial3_acceleration,
-        partial4_a_along_velocity_twice=partial4_velocity_twice,
-    )
+    from .retarded_fields import _sum_source_terms
+
+    shapes = {
+        "four_potential": (4,),
+        "partial_a": (4, 4),
+        "partial2_a": (4, 4, 4),
+        "partial3_a_along_velocity": (4, 4, 4),
+        "partial3_a_along_acceleration": (4, 4, 4),
+        "partial4_a_along_velocity_twice": (4, 4, 4),
+    }
+    summed = {
+        name: _sum_source_terms(
+            np.asarray([getattr(value, name) for value in values]).reshape(
+                (len(values),) + shape
+            )
+        )
+        for name, shape in shapes.items()
+    }
+    return PotentialDirectionalDerivatives(**summed)
 
 
 def _quintic_charge_potential_taylor_native(

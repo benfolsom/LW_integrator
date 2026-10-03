@@ -80,11 +80,11 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--stop-file", type=Path)
     parser.add_argument(
-        "--experimental-projection-ulp-floor",
+        "--diagnostic-ulp-floor",
         action="store_true",
-        help="Experimental: floor only projection-energy atol at k ulps of endpoint kinetic energy",
+        help="Floor diagnostic acceptance at k ulps of its reference; floored entries do not steer",
     )
-    parser.add_argument("--projection-ulp-multiplier", type=float, default=4.0)
+    parser.add_argument("--diagnostic-ulp-multiplier", type=float, default=4.0)
     parser.add_argument("--position-momentum-tolerance-scale", type=float, default=1.0)
     parser.add_argument(
         "--no-electron-driver",
@@ -142,8 +142,8 @@ def main():
         enabled=True,
         target_lab_time_ns=target,
         public_sample_interval_ns=target * 100 / (steps - 1),
-        experimental_projection_ulp_floor=args.experimental_projection_ulp_floor,
-        projection_ulp_multiplier=args.projection_ulp_multiplier,
+        diagnostic_ulp_floor=args.diagnostic_ulp_floor,
+        diagnostic_ulp_multiplier=args.diagnostic_ulp_multiplier,
         position_momentum_tolerance_scale=args.position_momentum_tolerance_scale,
     )
     sc = SelfConsistencyConfig()
@@ -219,13 +219,14 @@ def main():
             "full_diagnostics_native": full.diagnostics_native,
             "refined_diagnostics_native": refined.diagnostics_native,
             "health_failures": trial.health_failures,
+            "next_step_ns": result.controller_state.current_step_ns,
         }
         attempts.append(record)
         with attempt_path.open("a") as stream:
             stream.write(json.dumps(record, default=encode) + "\n")
         print(
             f"Attempt {len(attempts)}: accepted={result.accepted}, "
-            f"floor_changed_acceptance={trial.assessment.projection_floor_changed_acceptance}, "
+            f"floor_changed_acceptance={trial.assessment.diagnostic_floor_changed_acceptance}, "
             f"error={trial.assessment.normalized_error:.6g}; "
             f"wall {time.perf_counter() - started:.1f} s",
             flush=True,
@@ -331,10 +332,10 @@ def main():
         "accepted_slabs": len(accepted),
         "rejected_trials": len(attempts) - len(accepted),
         "floor_applied_trials": sum(
-            r["assessment"]["projection_floor_applied"] for r in attempts
+            bool(r["assessment"]["floored_groups"]) for r in attempts
         ),
         "floor_changed_acceptances": sum(
-            r["assessment"]["projection_floor_changed_acceptance"] for r in accepted
+            r["assessment"]["diagnostic_floor_changed_acceptance"] for r in accepted
         ),
     }
 
@@ -357,7 +358,7 @@ def main():
 
     summary["energy_bookkeeping_all_acceptances"] = energy_totals(accepted)
     summary["energy_bookkeeping_floor_changed_acceptances"] = energy_totals(
-        [r for r in accepted if r["assessment"]["projection_floor_changed_acceptance"]]
+        [r for r in accepted if r["assessment"]["diagnostic_floor_changed_acceptance"]]
     )
     summary.update(wall_seconds=time.perf_counter() - started, exit_code=exit_code)
     args.output.write_text(json.dumps(summary, indent=2, default=encode) + "\n")

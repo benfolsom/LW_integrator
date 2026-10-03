@@ -21,6 +21,7 @@ from core.exact_retarded_backend import ExactRetardedBackendUnavailableError
 from core.retarded_fields import (
     ObserverEvent,
     evaluate_retarded_charge_field_gradient_native,
+    evaluate_retarded_charge_field_gradient_stencil_native,
     evaluate_retarded_charge_response_gradient_native,
 )
 
@@ -64,7 +65,7 @@ def test_analytical_provider_matches_fine_stencil_and_avoids_fallback() -> None:
         event,
         relative_step=2.5e-6,
     )
-    stencil = evaluate_retarded_charge_field_gradient_native(
+    stencil = evaluate_retarded_charge_field_gradient_stencil_native(
         history,
         event,
         relative_step=2.5e-6,
@@ -89,7 +90,7 @@ def test_analytical_provider_matches_fine_stencil_and_avoids_fallback() -> None:
     )
 
 
-def test_root_on_interpolation_knot_uses_maintained_fallback() -> None:
+def test_root_on_interpolation_knot_uses_local_analytic_jet() -> None:
     pytest.importorskip("numba")
     radius_mm = 1.0
     history = _uniform_history(
@@ -101,13 +102,16 @@ def test_root_on_interpolation_knot_uses_maintained_fallback() -> None:
     reset_analytic_charge_response_diagnostics()
     analytical = evaluate_retarded_charge_response_gradient_native(history, event)
 
-    assert analytical.fallback_used is True
-    assert analytical.fallback_reason == "source_0:retarded_root_near_segment_boundary"
-    assert analytical.fallback_stencil_step_mm is not None
+    assert analytical.fallback_used is False
+    assert analytical.fallback_reason is None
+    assert analytical.fallback_stencil_step_mm is None
+    gradient = evaluate_retarded_charge_field_gradient_native(history, event)
+    assert gradient.stencil_step_mm == 0.0
+    np.testing.assert_allclose(gradient.partial_f[0], 0.0, atol=1e-14)
     diagnostics = analytic_charge_response_diagnostics()
-    assert diagnostics.calls == 1
-    assert diagnostics.fallback_calls == 1
-    assert diagnostics.fallback_segment_boundary == 1
+    assert diagnostics.calls == 2
+    assert diagnostics.fallback_calls == 0
+    assert diagnostics.fallback_segment_boundary == 0
 
 
 def test_analytical_interaction_contracts_without_field_tensor() -> None:

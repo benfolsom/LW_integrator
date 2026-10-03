@@ -1357,3 +1357,38 @@ def test_window_resume_reproduces_diagnostic_route_trace_exactly(
     ):
         np.testing.assert_array_equal(restored.x, expected.x)
         np.testing.assert_array_equal(restored.t, expected.t)
+
+
+def test_floor_acceptance_uses_separate_error_in_production_controller(monkeypatch):
+    from dataclasses import replace
+
+    import core.adaptive_pair_return as adaptive
+
+    original = adaptive.solve_exact_pair_step_doubling_trial
+
+    def trial_with_floor(**options):
+        trial = original(**options)
+        # A large admitted resolution residual must not overwrite the supplied
+        # truncation-error estimator at the orchestration boundary.
+        return replace(
+            trial,
+            assessment=replace(
+                trial.assessment,
+                accepted=True,
+                normalized_error=0.95,
+                controller_error=0.01,
+                step_size_group="mechanical_momentum",
+                floored_groups=("mass_shell_projection_energy",),
+            ),
+        )
+
+    monkeypatch.setattr(
+        adaptive, "solve_exact_pair_step_doubling_trial", trial_with_floor
+    )
+    rider, driver = _pair()
+    result = _attempt(
+        rider, driver, rider_advance=_advance(2.0), tolerances=_tolerances(1.0)
+    )
+    assert result.accepted
+    assert result.controller_state.current_step_ns == 0.4
+    assert rider.accepted_steps == driver.accepted_steps == 3

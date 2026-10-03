@@ -165,16 +165,34 @@ def test_provider_preserves_ordinary_outputs_and_reuses_compiled_roots(monkeypat
     assert new.directional_unavailable_reason is None
 
 
-def test_boundary_fallback_explicitly_withholds_directional_gradient():
+def test_stationary_knot_keeps_analytic_directional_gradient():
     history = _uniform_history(times_ns=np.array([-0.01, 0, 0.01]), beta=np.zeros(3))
     response = provider(
         history,
         ObserverEvent(1 / C_MMNS, (1, 0, 0)),
         observer_four_velocity_mm_ns=DIRECTION,
     )
-    assert response.fallback_used
-    assert getattr(response, RATE) is None
-    assert "fallback" in response.directional_unavailable_reason
+    assert not response.fallback_used
+    assert response.directional_unavailable_reason is None
+    # Identical stationary segments have a smooth Coulomb field at the knot.
+    # Differentiate its spatial Jacobian independently of the source jet.
+    radius = np.array([1.0, 0.0, 0.0])
+    velocity = DIRECTION[1:]
+    expected = np.zeros((4, 6))
+    for i in range(3):
+        for j in range(3):
+            expected[i + 1, j] = 1.3 * (
+                -3.0
+                * (
+                    float(i == j) * (radius @ velocity)
+                    + velocity[i] * radius[j]
+                    + velocity[j] * radius[i]
+                )
+                + 15.0 * radius[i] * radius[j] * (radius @ velocity)
+            )
+    np.testing.assert_allclose(
+        getattr(response, RATE), expected, rtol=3e-14, atol=1e-12
+    )
 
 
 def test_excluded_and_missing_sources_remain_distinct():

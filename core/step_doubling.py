@@ -18,6 +18,13 @@ import numpy as np
 from .constants import C_MMNS
 from .types import ParticleState
 
+_PAIR_INCREMENT_DIAGNOSTICS = (
+    "radiation_energy",
+    "radiation_reaction_work",
+    "medina_cross_field_energy_change",
+    "mass_shell_projection_energy",
+)
+
 
 @dataclass(frozen=True)
 class ErrorScale:
@@ -47,15 +54,15 @@ class StepDoublingTolerances:
     mechanical_momentum_native: ErrorScale
     rest_spin: ErrorScale
     diagnostics_native: ErrorScale
-    experimental_projection_ulp_floor: bool = False
-    projection_ulp_multiplier: float = 4.0
+    diagnostic_ulp_floor: bool = False
+    diagnostic_ulp_multiplier: float = 4.0
 
     def __post_init__(self) -> None:
         if (
-            not np.isfinite(self.projection_ulp_multiplier)
-            or self.projection_ulp_multiplier <= 0.0
+            not np.isfinite(self.diagnostic_ulp_multiplier)
+            or self.diagnostic_ulp_multiplier <= 0.0
         ):
-            raise ValueError("projection_ulp_multiplier must be finite and positive")
+            raise ValueError("diagnostic_ulp_multiplier must be finite and positive")
 
 
 @dataclass(frozen=True)
@@ -68,6 +75,8 @@ class StepDoublingState:
     diagnostics_native: np.ndarray
     particle_vector_scales: bool = False
     projection_reference_energy_native: np.ndarray | None = None
+    diagnostic_reference_scales_native: np.ndarray | None = None
+    diagnostic_names: tuple[str, ...] = _PAIR_INCREMENT_DIAGNOSTICS
 
 
 @dataclass(frozen=True)
@@ -88,6 +97,11 @@ class StepDoublingAssessment:
     projection_floor_changed_acceptance: bool = False
     diagnostics_error_without_floor: float | None = None
     maximum_projection_floor_native: float = 0.0
+    diagnostic_floor_changed_acceptance: bool = False
+    floored_diagnostic_entries: tuple[tuple[int, ...], ...] = ()
+    floored_groups: tuple[str, ...] = ()
+    controller_error: float | None = None
+    step_size_group: str = ""
 
 
 @dataclass(frozen=True)
@@ -113,14 +127,6 @@ class StepControllerConfig:
             raise ValueError("minimum_factor must not exceed one")
         if self.maximum_growth_factor < 1.0:
             raise ValueError("maximum_growth_factor must be at least one")
-
-
-_PAIR_INCREMENT_DIAGNOSTICS = (
-    "radiation_energy",
-    "radiation_reaction_work",
-    "medina_cross_field_energy_change",
-    "mass_shell_projection_energy",
-)
 
 
 def _single_particle_vector(
@@ -198,7 +204,7 @@ def build_pair_step_doubling_state(
     *,
     rider_states: Sequence[ParticleState],
     driver_states: Sequence[ParticleState],
-    experimental_projection_ulp_floor: bool = False,
+    diagnostic_ulp_floor: bool = False,
 ) -> StepDoublingState:
     """Reduce one full or two-half $1+1$ path to acceptance quantities.
 
@@ -240,7 +246,7 @@ def build_pair_step_doubling_state(
             particle_vector_scales=True,
             projection_reference_energy_native=(
                 _projection_reference_energies(rider_states, driver_states)
-                if experimental_projection_ulp_floor
+                if diagnostic_ulp_floor
                 else None
             ),
         )
@@ -261,9 +267,15 @@ def build_pair_step_doubling_state(
         mechanical_momentum_native=np.stack((rider[1], driver[1])),
         rest_spin=np.stack((rider[2], driver[2])),
         diagnostics_native=np.stack((rider[3], driver[3])),
+        diagnostic_names=_PAIR_INCREMENT_DIAGNOSTICS
+        + (
+            ("spin_feedback_work", "spin_feedback_energy_residual")
+            if include_spin_feedback
+            else ()
+        ),
         projection_reference_energy_native=(
             _projection_reference_energies(rider_states, driver_states)
-            if experimental_projection_ulp_floor
+            if diagnostic_ulp_floor
             else None
         ),
     )
@@ -291,46 +303,76 @@ def _projection_reference_energies(
     return np.asarray(energies, dtype=np.float64)
 
 
-def _projection_floor_error(
+def _diagnostic_floor_errors(
     full: StepDoublingState,
     refined: StepDoublingState,
     tolerances: StepDoublingTolerances,
     richardson_denominator: float,
-) -> tuple[float, tuple[int, ...], bool, float]:
-    """Experimental per-observer floor for projection energy column only."""
+) -> tuple[float, tuple[int, ...], float, tuple[int, ...], np.ndarray, np.ndarray]:
+    """Apply per-entry resolution budgets, excluding dominated entries from control.
+
+    Explicit reference matrices support any diagnostic, including cancellation
+    diagnostics whose operands have a larger scale than the final increment.
+    Otherwise increment magnitudes are the reference, with the established
+    endpoint kinetic-energy reference for mass-shell projection.
+    """
     f = _validated_array(full.diagnostics_native, "full diagnostics")
     r = _validated_array(refined.diagnostics_native, "refined diagnostics")
-    column = _PAIR_INCREMENT_DIAGNOSTICS.index("mass_shell_projection_energy")
-    if f.ndim != 2 or f.shape[1] < len(_PAIR_INCREMENT_DIAGNOSTICS):
-        raise ValueError("projection floor requires named pair diagnostic columns")
+    if f.ndim != 2 or len(full.diagnostic_names) != f.shape[1]:
+        raise ValueError("diagnostic floor requires named diagnostic columns")
+    if full.diagnostic_names != refined.diagnostic_names:
+        raise ValueError("full and refined diagnostic names must match")
     references = []
-    for state in (full, refined):
-        if state.projection_reference_energy_native is None:
-            raise ValueError("projection floor requires endpoint kinetic energies")
-        reference = _validated_array(
-            state.projection_reference_energy_native, "projection reference energy"
-        )
-        if reference.shape != (f.shape[0],) or np.any(reference < 0.0):
-            raise ValueError("projection reference energy shape or sign is invalid")
+    for state, values in ((full, f), (refined, r)):
+        if state.diagnostic_reference_scales_native is not None:
+            reference = _validated_array(
+                state.diagnostic_reference_scales_native, "diagnostic reference"
+            )
+            if reference.shape != f.shape or np.any(reference < 0.0):
+                raise ValueError("diagnostic reference shape or sign is invalid")
+        else:
+            reference = np.abs(values).copy()
+            if "mass_shell_projection_energy" in state.diagnostic_names:
+                if state.projection_reference_energy_native is None:
+                    raise ValueError(
+                        "projection floor requires endpoint kinetic energies"
+                    )
+                kinetic = _validated_array(
+                    state.projection_reference_energy_native,
+                    "projection reference energy",
+                )
+                if kinetic.shape != (f.shape[0],) or np.any(kinetic < 0.0):
+                    raise ValueError(
+                        "projection reference energy shape or sign is invalid"
+                    )
+                reference[
+                    :, state.diagnostic_names.index("mass_shell_projection_energy")
+                ] = kinetic
         references.append(reference)
-    reference = np.maximum(*references)
-    floor = tolerances.projection_ulp_multiplier * np.spacing(reference)
+    floor = tolerances.diagnostic_ulp_multiplier * np.spacing(np.maximum(*references))
     if not np.all(np.isfinite(floor)):
-        raise ValueError("projection floor must be finite")
+        raise ValueError("diagnostic floor must be finite")
     scale = tolerances.diagnostics_native
-    absolute = np.full_like(f, scale.absolute)
-    absolute[:, column] = np.maximum(scale.absolute, floor)
-    denominator = absolute + scale.relative * np.maximum(np.abs(f), np.abs(r))
+    relative = scale.relative * np.maximum(np.abs(f), np.abs(r))
+    denominator = np.maximum(scale.absolute, floor) + relative
     error = np.abs(r - f) / richardson_denominator
     normalized = np.divide(
         error, denominator, out=np.zeros_like(error), where=denominator > 0.0
     )
+    # A large relative tolerance remains a truncation-error budget and can steer.
+    floored = (floor > scale.absolute) & (floor >= relative)
+    steering = np.where(floored, 0.0, normalized)
     index = tuple(int(v) for v in np.unravel_index(np.argmax(normalized), f.shape))
+    steering_index = tuple(
+        int(v) for v in np.unravel_index(np.argmax(steering), f.shape)
+    )
     return (
         float(normalized[index]),
         index,
-        bool(np.any(floor > scale.absolute)),
-        float(np.max(floor)),
+        float(steering[steering_index]),
+        steering_index,
+        floored,
+        floor,
     )
 
 
@@ -439,11 +481,45 @@ def assess_step_doubling(
     without_floor = None
     floor_applied = False
     maximum_floor = 0.0
-    if tolerances.experimental_projection_ulp_floor:
+    floored_entries = ()
+    floored_groups = ()
+    steering_diagnostics = diagnostics_error
+    steering_index = diagnostics_error_index
+    if tolerances.diagnostic_ulp_floor:
         without_floor = diagnostics_error
-        diagnostics_error, diagnostics_error_index, floor_applied, maximum_floor = (
-            _projection_floor_error(full, refined, tolerances, richardson_denominator)
+        (
+            diagnostics_error,
+            diagnostics_error_index,
+            steering_diagnostics,
+            steering_index,
+            floored,
+            floors,
+        ) = _diagnostic_floor_errors(full, refined, tolerances, richardson_denominator)
+        floored_entries = tuple(
+            tuple(int(v) for v in row) for row in np.argwhere(floored)
         )
+        floored_groups = tuple(
+            name
+            for i, name in enumerate(full.diagnostic_names)
+            if np.any(floored[:, i])
+        )
+        if "mass_shell_projection_energy" in full.diagnostic_names:
+            column = full.diagnostic_names.index("mass_shell_projection_energy")
+            floor_applied = bool(
+                np.any(floors[:, column] > tolerances.diagnostics_native.absolute)
+            )
+            maximum_floor = float(np.max(floors[:, column]))
+    steering_errors = (position_error, momentum_error, spin_error, steering_diagnostics)
+    controller_error = max(steering_errors)
+    group = ("position", "mechanical_momentum", "rest_spin", "diagnostics")[
+        steering_errors.index(controller_error)
+    ]
+    if (
+        group == "diagnostics"
+        and len(steering_index) == 2
+        and steering_index[1] < len(full.diagnostic_names)
+    ):
+        group = full.diagnostic_names[steering_index[1]]
     normalized_error = max(
         position_error,
         momentum_error,
@@ -469,6 +545,15 @@ def assess_step_doubling(
         ),
         diagnostics_error_without_floor=without_floor,
         maximum_projection_floor_native=maximum_floor,
+        diagnostic_floor_changed_acceptance=bool(
+            normalized_error <= 1.0
+            and without_floor is not None
+            and without_floor > 1.0
+        ),
+        floored_diagnostic_entries=floored_entries,
+        floored_groups=floored_groups,
+        controller_error=controller_error,
+        step_size_group=group,
     )
 
 
