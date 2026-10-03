@@ -206,14 +206,14 @@ def test_full_strict_charge_provider_is_deterministic_with_reference_center() ->
     )
 
 
-def test_charge_backends_preserve_first_displaced_history_failure() -> None:
+def test_named_charge_stencil_preserves_first_displaced_history_failure() -> None:
     pytest.importorskip("numba")
     history = _first_displaced_failure_history()
     event = ObserverEvent(0.0, (0.0, 0.0, 0.0))
 
     def capture(backend: str) -> tuple[type[Exception], str]:
         try:
-            evaluate_retarded_charge_field_gradient_native(
+            retarded_fields.evaluate_retarded_charge_field_gradient_stencil_native(
                 history,
                 event,
                 relative_step=0.04,
