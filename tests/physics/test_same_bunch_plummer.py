@@ -134,7 +134,7 @@ def test_plummer_force_is_potential_gradient_and_weights_are_separate(epsilon):
 def test_symmetric_energy_oracles_and_reaction_work(count, close, expected):
     runs = [
         run_symmetric(count, close, mode=mode)
-        for mode in ("diagnostic_only",)
+        for mode in ("diagnostic_only", "medina_lad")
     ]
     gains = [float(np.mean(shell_gain(tr[-1], tr[0]))) for tr in runs]
     for gain, tr in zip(gains, runs):
@@ -145,3 +145,65 @@ def test_symmetric_energy_oracles_and_reaction_work(count, close, expected):
             - pair_potential(tr[0], 0.1 if close else 0)
         ) / population
         assert abs(gain + du) < 0.002 * gain
+    work = sum(np.mean(s.get("radiation_reaction_work", 0)) for s in runs[1]) * EV
+    assert abs(gains[1] - gains[0] - work) < 2e-9
+
+
+
+@pytest.mark.parametrize(
+    "mode", ["off", "diagnostic_only", "medina_lad", "power_matched_damping"]
+)
+def test_relaxation_weight_does_not_change_mechanical_solution(mode):
+    runs = [
+        run_symmetric(intervals=40, mode=mode, relaxation=w) for w in (0.1, 0.7, 1.0)
+    ]
+    for tr in runs[1:]:
+        for key in ("Px", "Py", "Pz", "gamma", "bx", "by", "bz", "t"):
+            np.testing.assert_array_equal(tr[-1][key], runs[0][-1][key])
+
+
+
+@pytest.mark.parametrize(
+    "mode", ["off", "diagnostic_only", "medina_lad", "power_matched_damping"]
+)
+def test_relativistic_coast_has_one_shell_and_proper_time_drift(mode):
+    state, _ = make_symmetric()
+    gamma = 100.0
+    u = np.array([1e-8, -2e-8, np.sqrt(gamma**2 - 1 - 5e-16)])
+    for k, a in enumerate("xyz"):
+        state["P" + a] = state["m_species"] * C * u[k]
+        state["b" + a][:] = u[k] / gamma
+    state["gamma"][:] = gamma
+    # The raw temporal predictor deliberately disagrees with spatial momentum.
+    state["Pt"] = state["m_species"] * C * (gamma + 0.01)
+    initialize_mechanical_knots(state)
+    h = 1e-4
+    end = retarded_equations_of_motion(
+        h,
+        [state],
+        [],
+        0,
+        aperture_radius=1e9,
+        sim_type=SimulationType.BUNCH_TO_BUNCH,
+        startup_mode=StartupMode.COLD_START,
+        self_consistency=SelfConsistencyConfig(enabled=True, max_iterations=2),
+        radiation_reaction_mode=mode,
+    )
+    p = np.column_stack([end["P" + a] for a in "xyz"])
+    beta = np.column_stack([end["b" + a] for a in "xyz"])
+    np.testing.assert_allclose(
+        p, end["m_species"][:, None] * C * end["gamma"][:, None] * beta, rtol=3e-16
+    )
+    np.testing.assert_allclose(
+        end["Pt"] ** 2 - np.sum(p * p, axis=1), (end["m_species"] * C) ** 2, rtol=4e-12
+    )
+    np.testing.assert_allclose(end["t"] - state["t"], h * end["gamma"], rtol=2e-16)
+    for a in "xyz":
+        np.testing.assert_allclose(
+            end[a] - state[a],
+            h * end["P" + a] / end["m_species"],
+            rtol=1e-6,
+            atol=1e-16,
+        )
+    assert np.all(end["mass_shell_projection_energy"] != 0)
+

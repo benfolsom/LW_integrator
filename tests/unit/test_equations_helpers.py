@@ -395,9 +395,7 @@ def test_self_consistency_nonconvergence_raises(
         )
 
 
-def test_retarded_space_charge_uses_pseudo_grid_source_charge_overrides(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_instantaneous_space_charge_uses_pseudo_grid_source_charge_overrides() -> None:
     trajectory = [
         _make_state(x=[0.0, 10.0], charge=[1.0, 1.0]),
         _make_state(x=[1.0, 11.0], t=[1.0, 1.0], charge=[1.0, 1.0]),
@@ -406,17 +404,7 @@ def test_retarded_space_charge_uses_pseudo_grid_source_charge_overrides(
         _make_state(x=[100.0], charge=[0.0]),
         _make_state(x=[101.0], t=[1.0], charge=[0.0]),
     ]
-    seen_nonzero_charges: list[float] = []
-
-    def fake_contrib(**kwargs: object) -> tuple[float, ...]:
-        charges = np.asarray(kwargs["samples"].charge, dtype=float)
-        nonzero = charges[np.abs(charges) > 1.0e-30]
-        seen_nonzero_charges.extend(nonzero.tolist())
-        return (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
-
-    monkeypatch.setattr(equations, "compute_vectorized_contributions", fake_contrib)
-
-    equations.retarded_equations_of_motion(
+    result = equations.retarded_equations_of_motion(
         0.1,
         trajectory,
         driver,
@@ -436,7 +424,12 @@ def test_retarded_space_charge_uses_pseudo_grid_source_charge_overrides(
         ),
     )
 
-    assert seen_nonzero_charges == pytest.approx([2.0, 2.0])
+    # Each observer sees the independently supplied source charge 2, rather
+    # than the trajectory's source charge 1. Test the physical impulse instead
+    # of requiring instantaneous sources to pass through the retarded kernel.
+    epsilon = SpaceChargeConfig().softening_mm
+    impulse = 0.1 * 2.0 * 10.0 / (10.0**2 + epsilon**2) ** 1.5
+    assert result["Px"] == pytest.approx([-impulse, impulse])
 
 
 def test_retarded_space_charge_batches_same_bunch_sources(
@@ -1125,7 +1118,10 @@ def test_retarded_equations_of_motion_skips_already_dead_particles() -> None:
 
 
 def test_retarded_equations_of_motion_raises_gamma_blowup_for_sc_runs() -> None:
+    # A divergent spatial shell must trigger recovery; an inconsistent Pt
+    # alone is now retained only as a temporal diagnostic.
     state = _make_state(gamma=[1e9])
+    state["Px"] = np.array([1e9 * C_MMNS])
 
     with pytest.raises(equations.GammaBlowupError):
         equations.retarded_equations_of_motion(

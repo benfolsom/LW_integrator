@@ -2142,9 +2142,7 @@ def retarded_equations_of_motion(
             and magnetic_dipole.source.active
         )
         exact_charge_source_selected = exact_endpoint_recomposition_selected
-        on_shell_kinematic_boundary_selected = bool(
-            exact_charge_source_selected or radiation_mode == "medina_lad"
-        )
+        on_shell_kinematic_boundary_selected = True
         exact_charge_field_cache = None
         exact_same_bunch_field_cache = None
         dipole_source_field_cache = None
@@ -4234,79 +4232,8 @@ def retarded_equations_of_motion(
                 )
                 result["Pt"][particle_idx] = sg_projected_pt
 
-            # ================================================================
-            # STEP 4a: Correct Pt during SC iterations based on mode
-            # ================================================================
-            # CRITICAL: Enforce constraints at each iteration
-            # Mode determines HOW we correct Pt, but both modes check both errors
-            if sc_enabled and sc_iteration > 0:
-                kinetic_pt_from_mass_shell, Pt_from_mass_shell = (
-                    _canonical_pt_from_mechanical_mass_shell(
-                        px=result["Px"][particle_idx],
-                        py=result["Py"][particle_idx],
-                        pz=result["Pz"][particle_idx],
-                        particle_mass=particle_mass,
-                        scalar_potential_contribution=scalar_potential_contribution,
-                        field_x=accumulated_field_x,
-                        field_y=accumulated_field_y,
-                        field_z=accumulated_field_z,
-                    )
-                )
-
-                Pt_before_correction = np.float64(result["Pt"][particle_idx])
-
-                # Determine Pt and P correction based on mode
-                if sc_convergence_mode in ("fixed_geometry", "variable_geometry"):
-                    # Modes 1 & 2: Project Pt onto mass-shell (asymmetric relaxation)
-                    Pt_corrected = Pt_from_mass_shell
-
-                    if sc_verbosity >= 3:
-                        print(
-                            f"      Mode: {sc_convergence_mode}, Pt_ms={Pt_from_mass_shell:.6e}"
-                        )
-
-                    # Apply relaxation to Pt only (asymmetric)
-                    relaxation_weight = sc_mass_shell_relaxation
-                    Pt_final = (
-                        relaxation_weight * Pt_corrected
-                        + (1.0 - relaxation_weight) * Pt_before_correction
-                    )
-
-                    result["Pt"][particle_idx] = float(Pt_final)
-                    # P_xyz unchanged (from forces)
-
-                else:
-                    raise ValueError(f"Unknown convergence_mode: {sc_convergence_mode}")
-
-                # Log relaxation details
-                if sc_verbosity >= 3:
-                    correction_magnitude = abs(Pt_final - Pt_before_correction)
-                    print(
-                        f"      After relaxation (α={relaxation_weight}): "
-                        f"Pt {Pt_before_correction:.6e} → {Pt_final:.6e} "
-                        f"(Δ={correction_magnitude:.6e})"
-                    )
-
-                if sc_verbosity >= 3:
-                    correction_magnitude = abs(Pt_final - Pt_before_correction)
-                    print(
-                        f"      After relaxation (α={relaxation_weight}): "
-                        f"Pt {Pt_before_correction:.6e} → {Pt_final:.6e} "
-                        f"(Δ={correction_magnitude:.6e})"
-                    )
-
-            # ================================================================
-            # STEP 4b: Compute gamma from energy
-            # ================================================================
-            # Gamma from relativistic energy with scalar potential correction:
-            # γ = (Pt - q·Φ/c) / (mc), where Φ = Σ(q_j / (R_sep_j * k_factor_j)).
-            # Pt is energy-over-c, so qΦ is converted to momentum units.
-            kinetic_energy = (
-                np.float64(result["Pt"][particle_idx]) - scalar_potential_contribution
-            )
-            gamma_from_energy = kinetic_energy / np.float64(particle_mass * C_MMNS)
-            result["gamma"][particle_idx] = gamma_from_energy
-
+            # The force-updated mechanical spatial momentum determines the
+            # shell in every reaction mode. Temporal relaxation is not a force.
             kinetic_pt_from_mass_shell, Pt_from_mass_shell = (
                 _canonical_pt_from_mechanical_mass_shell(
                     px=result["Px"][particle_idx],
@@ -4319,110 +4246,11 @@ def retarded_equations_of_motion(
                     field_z=accumulated_field_z,
                 )
             )
-            Pt_before_projection = np.float64(result["Pt"][particle_idx])
-
-            gamma_mass_shell = kinetic_pt_from_mass_shell / (particle_mass * C_MMNS)
-
-            spatial_momentum_authoritative = exact_charge_source_selected
-            if radiation_mode == "medina_lad" and not exact_charge_source_selected:
-                # The maintained non-exact Medina path historically treats
-                # canonical temporal energy as authoritative.  Put its spatial
-                # mechanical momentum on that shell *before* predictor drift,
-                # beta, and force sampling.  The exact charge/RFS path instead
-                # remains spatial-momentum-authoritative so its RR-off and
-                # RR-on capture controls share one boundary.
-                energy_boundary_momentum = np.asarray(
-                    _mechanical_momentum_components(
-                        px=result["Px"][particle_idx],
-                        py=result["Py"][particle_idx],
-                        pz=result["Pz"][particle_idx],
-                        particle_mass=particle_mass,
-                        field_x=accumulated_field_x,
-                        field_y=accumulated_field_y,
-                        field_z=accumulated_field_z,
-                    ),
-                    dtype=float,
-                )
-                gamma_energy_boundary = float(result["gamma"][particle_idx])
-                momentum_is_finite = bool(np.all(np.isfinite(energy_boundary_momentum)))
-                mechanical_magnitude = float(
-                    np.hypot(
-                        np.hypot(
-                            abs(float(energy_boundary_momentum[0])),
-                            abs(float(energy_boundary_momentum[1])),
-                        ),
-                        abs(float(energy_boundary_momentum[2])),
-                    )
-                )
-                with np.errstate(over="ignore", invalid="ignore"):
-                    target_factor = float(
-                        np.sqrt(
-                            (gamma_energy_boundary - 1.0)
-                            * (gamma_energy_boundary + 1.0)
-                        )
-                    )
-                    target_mechanical_magnitude = float(
-                        particle_mass * C_MMNS * target_factor
-                    )
-                valid_rest_boundary = bool(
-                    gamma_energy_boundary == 1.0 and mechanical_magnitude == 0.0
-                )
-                valid_moving_boundary = bool(
-                    gamma_energy_boundary > 1.0
-                    and mechanical_magnitude > 0.0
-                    and target_mechanical_magnitude > 0.0
-                )
-                can_use_energy_boundary = bool(
-                    np.isfinite(gamma_energy_boundary)
-                    and momentum_is_finite
-                    and np.isfinite(mechanical_magnitude)
-                    and np.isfinite(target_mechanical_magnitude)
-                    and (valid_rest_boundary or valid_moving_boundary)
-                )
-                if can_use_energy_boundary and valid_moving_boundary:
-                    scale = target_mechanical_magnitude / mechanical_magnitude
-                    scaled_momentum = energy_boundary_momentum * scale
-                    if not np.isfinite(scale) or not np.all(
-                        np.isfinite(scaled_momentum)
-                    ):
-                        can_use_energy_boundary = False
-                    else:
-                        result["Px"][particle_idx] = float(
-                            scaled_momentum[0] + accumulated_field_x * particle_mass
-                        )
-                        result["Py"][particle_idx] = float(
-                            scaled_momentum[1] + accumulated_field_y * particle_mass
-                        )
-                        result["Pz"][particle_idx] = float(
-                            scaled_momentum[2] + accumulated_field_z * particle_mass
-                        )
-                        gamma_mass_shell = gamma_energy_boundary
-                if can_use_energy_boundary:
-                    _, boundary_error = _check_mass_shell_convergence(
-                        result["Pt"][particle_idx],
-                        result["Px"][particle_idx],
-                        result["Py"][particle_idx],
-                        result["Pz"][particle_idx],
-                        particle_mass,
-                        C_MMNS,
-                        sc_mass_shell_tolerance,
-                        scalar_potential_contribution=scalar_potential_contribution,
-                        field_x=accumulated_field_x,
-                        field_y=accumulated_field_y,
-                        field_z=accumulated_field_z,
-                    )
-                    # Normalize the rounded shell energy only when the energy
-                    # projection leaves a residual above the existing tolerance.
-                    spatial_momentum_authoritative = (
-                        boundary_error >= sc_mass_shell_tolerance
-                    )
-                if not can_use_energy_boundary:
-                    # At the near-rest/roundoff boundary, an energy-derived
-                    # target can be imaginary, zero for nonzero p, directionless
-                    # for p=0, or nonfinite.  Falling back to finite spatial p
-                    # prevents the old sqrt(max(gamma**2-1, 0)) zeroing bug.
-                    spatial_momentum_authoritative = True
-
+            Pt_before_projection = raw_canonical_pt_before_constraints
+            gamma_from_energy = (
+                raw_canonical_pt_before_constraints - scalar_potential_contribution
+            ) / (particle_mass * C_MMNS)
+            spatial_momentum_authoritative = True
             if spatial_momentum_authoritative:
                 # Reconstruct the complete physical state from spatial
                 # p = P - q A / c.  Near rest this avoids cancellation in
