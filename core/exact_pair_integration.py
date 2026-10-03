@@ -71,8 +71,8 @@ def _scaled_tolerances(
     diagnostics_absolute: float | None = None,
     *,
     position_momentum_scale: float = 1.0,
-    experimental_projection_ulp_floor: bool = False,
-    projection_ulp_multiplier: float = 4.0,
+    diagnostic_ulp_floor: bool = False,
+    diagnostic_ulp_multiplier: float = 4.0,
 ) -> StepDoublingTolerances:
     """Return the validated scale-1 first-pass error model."""
 
@@ -90,8 +90,8 @@ def _scaled_tolerances(
             scale * 1.0e-13 if diagnostics_absolute is None else diagnostics_absolute,
             scale * 1.0e-8,
         ),
-        experimental_projection_ulp_floor=experimental_projection_ulp_floor,
-        projection_ulp_multiplier=projection_ulp_multiplier,
+        diagnostic_ulp_floor=diagnostic_ulp_floor,
+        diagnostic_ulp_multiplier=diagnostic_ulp_multiplier,
     )
 
 
@@ -387,8 +387,8 @@ def run_exact_pair_adaptive_integrator(
             adaptive.tolerance_scale,
             adaptive.diagnostics_absolute_tolerance_native,
             position_momentum_scale=adaptive.position_momentum_tolerance_scale,
-            experimental_projection_ulp_floor=adaptive.experimental_projection_ulp_floor,
-            projection_ulp_multiplier=adaptive.projection_ulp_multiplier,
+            diagnostic_ulp_floor=adaptive.diagnostic_ulp_floor,
+            diagnostic_ulp_multiplier=adaptive.diagnostic_ulp_multiplier,
         ),
         target_time_ns=adaptive.target_lab_time_ns,
         minimum_step_ns=initial_step_ns * adaptive.minimum_step_factor,
@@ -406,7 +406,7 @@ def run_exact_pair_adaptive_integrator(
         relative_time_tolerance=adaptive.shared_time_relative_tolerance,
         cancel_callback=cancel_callback,
         accepted_progress_callback=progress,
-        record_attempt_diagnostics=adaptive.experimental_projection_ulp_floor,
+        record_attempt_diagnostics=adaptive.diagnostic_ulp_floor,
         intrinsic_spin_reduction_history=reduction_history,
         build_intrinsic_spin_reduction_candidate=reduction_candidate_builder,
         growable_causal_c5_source_history=growable_c5_history,
@@ -460,15 +460,16 @@ def run_exact_pair_adaptive_integrator(
             magnetic_dipole.intrinsic_spin_self_reaction_mode,
         ),
     }
-    if adaptive.experimental_projection_ulp_floor:
-        summary["experimental_projection_ulp_floor"] = {
-            "reference": "per-observer kinetic energy from endpoint mechanical momentum; maximum of full and refined endpoints",
-            "multiplier": adaptive.projection_ulp_multiplier,
+    if adaptive.diagnostic_ulp_floor:
+        summary["diagnostic_ulp_floor"] = {
+            "reference": "per-diagnostic increment magnitude; projection uses endpoint kinetic energy; maximum of full and refined",
+            "controller_policy": "exclude floor-dominated diagnostic entries",
+            "multiplier": adaptive.diagnostic_ulp_multiplier,
             "floor_applied_trials": sum(
-                d.projection_floor_applied for d in result.attempt_diagnostics
+                bool(d.floored_groups) for d in result.attempt_diagnostics
             ),
             "floor_changed_acceptances": sum(
-                d.accepted and d.projection_floor_changed_acceptance
+                d.accepted and d.diagnostic_floor_changed_acceptance
                 for d in result.attempt_diagnostics
             ),
             "attempt_diagnostics": [asdict(d) for d in result.attempt_diagnostics],

@@ -1,4 +1,4 @@
-"""Experimental diagnostic floor: isolation, quantization, and default parity."""
+"""Supported diagnostic floors: acceptance, controller isolation, and parity."""
 
 from dataclasses import replace
 
@@ -36,7 +36,7 @@ def _assess(full, refined, **options):
 def test_floor_changes_only_projection_and_records_the_changed_decision():
     full, refined = _state(), _state(projection=4.3293e-13)
     ordinary = _assess(full, refined)
-    experimental = _assess(full, refined, experimental_projection_ulp_floor=True)
+    experimental = _assess(full, refined, diagnostic_ulp_floor=True)
     assert not ordinary.accepted
     assert experimental.accepted
     assert experimental.projection_floor_applied
@@ -44,7 +44,7 @@ def test_floor_changes_only_projection_and_records_the_changed_decision():
     assert experimental.maximum_projection_floor_native == 4 * np.spacing(1929.7068553)
     assert experimental.diagnostics_error_without_floor == ordinary.diagnostics_error
     assert not _assess(
-        full, _state(radiation=4.3293e-13), experimental_projection_ulp_floor=True
+        full, _state(radiation=4.3293e-13), diagnostic_ulp_floor=True
     ).accepted
 
 
@@ -54,7 +54,7 @@ def test_floor_preserves_float64_scaling_for_integer_diagnostic_inputs():
     changed[0, 0] = 1  # Radiation must retain its original absolute tolerance.
     refined = replace(full, diagnostics_native=changed)
     tolerances = replace(
-        _scaled_tolerances(1, experimental_projection_ulp_floor=True),
+        _scaled_tolerances(1, diagnostic_ulp_floor=True),
         diagnostics_native=ErrorScale(1e-13, 0),
     )
     result = assess_step_doubling(full, refined, method_order=1, tolerances=tolerances)
@@ -64,51 +64,92 @@ def test_floor_preserves_float64_scaling_for_integer_diagnostic_inputs():
 
 def test_atol_stays_authoritative_for_small_reference_and_k_is_configurable():
     full, refined = _state(reference=0), _state(projection=2e-13, reference=0)
-    result = _assess(full, refined, experimental_projection_ulp_floor=True)
+    result = _assess(full, refined, diagnostic_ulp_floor=True)
     assert not result.accepted
     assert not result.projection_floor_applied
     assert not result.projection_floor_changed_acceptance
     assert not _assess(
         _state(),
         _state(projection=4.3293e-13),
-        experimental_projection_ulp_floor=True,
-        projection_ulp_multiplier=1,
+        diagnostic_ulp_floor=True,
+        diagnostic_ulp_multiplier=1,
     ).accepted
 
 
 def test_floor_cannot_hide_position_or_momentum_failure():
     for group in ("position_mm", "mechanical_momentum_native"):
         refined = replace(_state(projection=4.3293e-13), **{group: np.ones((2, 3))})
-        result = _assess(_state(), refined, experimental_projection_ulp_floor=True)
+        result = _assess(_state(), refined, diagnostic_ulp_floor=True)
         assert not result.accepted
         assert not result.projection_floor_changed_acceptance
 
 
-def test_accepted_rounding_floor_can_still_shrink_the_existing_controller():
-    # Two proton momentum ulps expressed as energy are about 0.952 of the
-    # four-kinetic-energy-ulp floor. A fixed representational residual does
-    # not decrease with slab width; this tests the existing policy, not a fix.
+def test_accepted_rounding_floor_cannot_shrink_the_controller():
     result = _assess(
-        _state(),
-        _state(projection=2 * 4.3293088652e-13),
-        experimental_projection_ulp_floor=True,
+        _state(), _state(projection=2 * 4.3293088652e-13), diagnostic_ulp_floor=True
     )
     assert result.accepted
     assert result.normalized_error > 0.9**2
+    assert result.controller_error == 0
+    assert result.floored_groups == ("mass_shell_projection_energy",)
     h = 1e-3
-    minimum = h / 64
-    for _ in range(100):
-        proposed = propose_next_step_ns(
-            h,
-            result.normalized_error,
-            accepted=True,
-            config=StepControllerConfig(method_order=1),
-            minimum_step_ns=minimum,
-            maximum_step_ns=0.064,
-        )
-        assert proposed <= h
-        h = proposed
-    assert h == minimum
+    proposed = propose_next_step_ns(
+        h,
+        result.controller_error,
+        accepted=True,
+        config=StepControllerConfig(method_order=1),
+        minimum_step_ns=h / 64,
+        maximum_step_ns=0.064,
+    )
+    assert proposed == 2 * h
+
+
+@pytest.mark.parametrize("column", range(4))
+def test_every_diagnostic_can_use_an_explicit_reference_and_not_steer(column):
+    full = replace(
+        _state(), diagnostic_reference_scales_native=np.full((2, 4), 1929.7068553)
+    )
+    values = full.diagnostics_native.copy()
+    values[0, column] = 4.3293e-13
+    result = _assess(
+        full, replace(full, diagnostics_native=values), diagnostic_ulp_floor=True
+    )
+    assert result.accepted
+    assert result.controller_error == 0
+    assert result.diagnostic_floor_changed_acceptance
+    assert (0, column) in result.floored_diagnostic_entries
+
+
+def test_unfloored_observer_in_same_diagnostic_still_steers():
+    full = _state()
+    values = full.diagnostics_native.copy()
+    values[0, 3] = 8e-13
+    values[1, 3] = 5e-14
+    full = replace(full, projection_reference_energy_native=np.array([1929.7068553, 0]))
+    result = _assess(
+        full, replace(full, diagnostics_native=values), diagnostic_ulp_floor=True
+    )
+    assert result.accepted
+    assert result.controller_error == pytest.approx(0.5, rel=1e-8)
+    assert result.step_size_group == "mass_shell_projection_energy"
+    assert result.floored_diagnostic_entries == ((0, 3),)
+
+
+def test_relative_budget_can_still_steer_when_larger_than_floor():
+    full = _state(projection=1)
+    result = _assess(full, _state(projection=1 + 1e-9), diagnostic_ulp_floor=True)
+    assert result.accepted
+    assert (0, 3) not in result.floored_diagnostic_entries
+    assert result.controller_error == result.diagnostics_error
+
+
+def test_nonfloored_position_sets_step_with_large_floored_diagnostic():
+    full = replace(_state(), position_mm=np.ones((2, 3)))
+    refined = replace(_state(projection=8e-13), position_mm=np.ones((2, 3)) + 5e-11)
+    result = _assess(full, refined, diagnostic_ulp_floor=True)
+    assert result.accepted
+    assert result.controller_error == result.position_error
+    assert result.step_size_group == "position"
 
 
 def test_default_off_is_bit_identical_to_original_error_formula():
@@ -125,7 +166,7 @@ def test_default_off_is_bit_identical_to_original_error_formula():
         normalized = np.divide(
             error, denominator, out=np.zeros_like(error), where=denominator > 0
         )
-        result = _assess(full, refined, projection_ulp_multiplier=1000)
+        result = _assess(full, refined, diagnostic_ulp_multiplier=1000)
         assert (
             np.float64(result.diagnostics_error).tobytes()
             == np.max(normalized).tobytes()
@@ -136,16 +177,16 @@ def test_default_off_is_bit_identical_to_original_error_formula():
 
 
 def test_tighter_control_changes_only_position_and_momentum_scales():
-    baseline = _scaled_tolerances(1, experimental_projection_ulp_floor=True)
+    baseline = _scaled_tolerances(1, diagnostic_ulp_floor=True)
     tight = _scaled_tolerances(
-        1, position_momentum_scale=0.1, experimental_projection_ulp_floor=True
+        1, position_momentum_scale=0.1, diagnostic_ulp_floor=True
     )
     for name in ("position_mm", "mechanical_momentum_native"):
         assert getattr(tight, name).absolute == getattr(baseline, name).absolute * 0.1
         assert getattr(tight, name).relative == getattr(baseline, name).relative * 0.1
     assert tight.rest_spin == baseline.rest_spin
     assert tight.diagnostics_native == baseline.diagnostics_native
-    assert tight.projection_ulp_multiplier == baseline.projection_ulp_multiplier
+    assert tight.diagnostic_ulp_multiplier == baseline.diagnostic_ulp_multiplier
 
 
 def test_pair_reference_uses_physical_mass_and_default_reducer_skips_it():
@@ -162,7 +203,7 @@ def test_pair_reference_uses_physical_mass_and_default_reducer_skips_it():
     floored = build_pair_step_doubling_state(
         rider_states=(state,),
         driver_states=(state,),
-        experimental_projection_ulp_floor=True,
+        diagnostic_ulp_floor=True,
     )
     assert ordinary.projection_reference_energy_native is None
     np.testing.assert_allclose(
@@ -182,11 +223,11 @@ def test_pair_reference_uses_physical_mass_and_default_reducer_skips_it():
 @pytest.mark.parametrize("value", [0, -1, np.nan, np.inf])
 def test_invalid_multiplier_and_control_scale_fail_early(value):
     with pytest.raises(ValueError):
-        AdaptivePairReturnConfig(projection_ulp_multiplier=value)
+        AdaptivePairReturnConfig(diagnostic_ulp_multiplier=value)
     with pytest.raises(ValueError):
         AdaptivePairReturnConfig(position_momentum_tolerance_scale=value)
     with pytest.raises(ValueError):
-        _scaled_tolerances(1, projection_ulp_multiplier=value)
+        _scaled_tolerances(1, diagnostic_ulp_multiplier=value)
 
 
 def test_floor_fails_closed_without_a_reference_or_with_an_invalid_reference():
@@ -195,5 +236,5 @@ def test_floor_fails_closed_without_a_reference_or_with_an_invalid_reference():
             _assess(
                 replace(_state(), projection_reference_energy_native=reference),
                 _state(),
-                experimental_projection_ulp_floor=True,
+                diagnostic_ulp_floor=True,
             )

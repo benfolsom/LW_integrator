@@ -995,15 +995,20 @@ class AdaptivePairReturnConfig:
     below bound the adaptive shared-lab-time slab relative to that value.
     ``diagnostics_absolute_tolerance_native`` optionally supplies an absolute
     native-energy budget for radiation, recoil work, and mass-shell projection.
-    None preserves the original scaled tolerance.
+    None preserves the original scaled tolerance. ``diagnostic_ulp_floor`` is
+    default-off. When enabled, diagnostic acceptance uses at least
+    ``diagnostic_ulp_multiplier`` ulps of its reference, and entries dominated
+    by that budget are excluded from the step-size estimator. Projection uses
+    per-observer endpoint kinetic energy; other increments use their magnitudes.
+    Position, momentum, spin, and health guards retain their original scales.
     """
 
     enabled: bool = False
     target_lab_time_ns: float | None = None
     tolerance_scale: float = 1.0
     diagnostics_absolute_tolerance_native: float | None = None
-    experimental_projection_ulp_floor: bool = False
-    projection_ulp_multiplier: float = 4.0
+    diagnostic_ulp_floor: bool = False
+    diagnostic_ulp_multiplier: float = 4.0
     position_momentum_tolerance_scale: float = 1.0
     minimum_step_factor: float = 1.0 / 64.0
     maximum_step_factor: float = 64.0
@@ -1015,10 +1020,8 @@ class AdaptivePairReturnConfig:
 
     def __post_init__(self) -> None:
         self.enabled = bool(self.enabled)
-        self.experimental_projection_ulp_floor = bool(
-            self.experimental_projection_ulp_floor
-        )
-        self.projection_ulp_multiplier = float(self.projection_ulp_multiplier)
+        self.diagnostic_ulp_floor = bool(self.diagnostic_ulp_floor)
+        self.diagnostic_ulp_multiplier = float(self.diagnostic_ulp_multiplier)
         self.position_momentum_tolerance_scale = float(
             self.position_momentum_tolerance_scale
         )
@@ -1049,7 +1052,7 @@ class AdaptivePairReturnConfig:
 
         positive = (
             ("tolerance_scale", self.tolerance_scale),
-            ("projection_ulp_multiplier", self.projection_ulp_multiplier),
+            ("diagnostic_ulp_multiplier", self.diagnostic_ulp_multiplier),
             (
                 "position_momentum_tolerance_scale",
                 self.position_momentum_tolerance_scale,
@@ -2091,34 +2094,38 @@ class TrajectoryBuilder:
         "sampled_source_canonical_ready",
         "potential_inclusion_state",
     )
-    _KINEMATIC_FIELDS: tuple = RESOLVED_KNOT_FIELDS + (
-        "x",
-        "y",
-        "z",
-        "t",
-        "Px",
-        "Py",
-        "Pz",
-        "Pt",
-        "gamma",
-        "bx",
-        "by",
-        "bz",
-        "bdotx",
-        "bdoty",
-        "bdotz",
-        "radiation_power",
-        "radiation_energy",
-        "radiation_energy_applied",
-        "mass_shell_projection_energy",
-        "origin_x",
-        "origin_y",
-        "origin_z",
-        "beta_avg_x",
-        "beta_avg_y",
-        "beta_avg_z",
-        "beta_samples",
-    ) + _INCLUSION_FLOAT_FIELDS
+    _KINEMATIC_FIELDS: tuple = (
+        RESOLVED_KNOT_FIELDS
+        + (
+            "x",
+            "y",
+            "z",
+            "t",
+            "Px",
+            "Py",
+            "Pz",
+            "Pt",
+            "gamma",
+            "bx",
+            "by",
+            "bz",
+            "bdotx",
+            "bdoty",
+            "bdotz",
+            "radiation_power",
+            "radiation_energy",
+            "radiation_energy_applied",
+            "mass_shell_projection_energy",
+            "origin_x",
+            "origin_y",
+            "origin_z",
+            "beta_avg_x",
+            "beta_avg_y",
+            "beta_avg_z",
+            "beta_samples",
+        )
+        + _INCLUSION_FLOAT_FIELDS
+    )
     _SOURCE_START_FLOAT_FIELDS: tuple = (
         "source_start_beta_prime_x_per_mm",
         "source_start_beta_prime_y_per_mm",
