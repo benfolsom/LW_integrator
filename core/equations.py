@@ -64,6 +64,7 @@ from typing import Any, Optional, Sequence
 
 import numpy as np
 
+from .instantaneous_space_charge import plummer_force_potential
 from .constants import C_MMNS
 from .potential_inclusion import (
     LEDGER_FIELDS,
@@ -2756,6 +2757,7 @@ def retarded_equations_of_motion(
                             sc_indices,
                         )
                     sc_R = np.asarray(sc_nhat["R"], dtype=float)
+                    sc_unsoftened_R = sc_R.copy()
                     source_radius = (
                         pseudo_grid_sc_source_radii
                         if pseudo_grid_sc_source_radii is not None
@@ -2869,6 +2871,7 @@ def retarded_equations_of_motion(
                     if smeared_sc_nhat:
                         sc_nhat = smeared_sc_nhat
                         sc_R = np.asarray(sc_nhat["R"], dtype=float)
+                        sc_unsoftened_R = sc_R.copy()
                         if sc_softening > 0.0:
                             sc_R = np.sqrt(sc_R**2 + sc_softening**2)
                             sc_nhat = dict(sc_nhat)
@@ -2897,6 +2900,18 @@ def retarded_equations_of_motion(
                         apply_external=True,
                         verbosity=0,
                     )
+                    if not use_retarded_sc:
+                        displacement = sc_unsoftened_R[:, None] * np.column_stack(
+                            [sc_nhat["n" + axis] for axis in "xyz"]
+                        )
+                        charges = np.where(sc_samples.valid_mask, sc_samples.charge, 0.0)
+                        force, sc_dscalar = plummer_force_potential(
+                            displacement, charges, float(force_particle_charge),
+                            sc_softening**2 + source_radius**2,
+                        )
+                        sc_dp_x, sc_dp_y, sc_dp_z = h * particle_gamma * force
+                        sc_dp_t = 0.0
+                        sc_df_x = sc_df_y = sc_df_z = 0.0
                     accumulated_momentum_x += sc_dp_x
                     accumulated_momentum_y += sc_dp_y
                     accumulated_momentum_z += sc_dp_z
