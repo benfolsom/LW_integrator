@@ -301,6 +301,20 @@ representable fractions if a tighter location is unavailable. An absolute
 binary64 retarded time is a diagnostic; it must not be used to resample an
 ultrarelativistic root and discard its fraction.
 
+Accepted endpoint coordinates are retained beside each local segment. A knot
+scan can select a valid interval while subtraction from its earlier anchor
+reverses the sign of a nearly zero upper-endpoint residual. In that case the
+root evaluator resolves geometry from the accepted upper endpoint and factors
+the quintic displacement difference by the distance from that endpoint. The
+proper-velocity representation integrates the corresponding short interval
+from the upper endpoint. Polynomial derivatives, root tolerances, and history
+coverage remain unchanged. Persistent charge-cloud translations preserve both
+endpoint origins and their coordinate remainders.
+Adjacent segments can also use different frames, whose rounded norms assign
+different signs to the same knot. The reanchored solve therefore starts from
+the scan's identical shared-knot residual and evaluates its change within the
+selected frame. This avoids a sign gap without enlarging the root interval.
+
 The Bernstein proof bounds $1-\|\\beta\|^2$ directly in null coordinates,
 rather than subtracting a rounded velocity bound from one. Resolved knot scans
 use both coordinate remainders. Accelerator candidate certification retains a

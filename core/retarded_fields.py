@@ -1541,11 +1541,18 @@ def _translate_light_cone_segment(
     )
     # Local displacements, w, speed deficits, and derivatives are invariant
     # under a persistent laboratory translation.
+    endpoint = segment.endpoint_coordinates
+    if endpoint is not None:
+        endpoint = endpoint.copy()
+        endpoint[:3] = np.array(
+            _translate_resolved_position(endpoint[0], endpoint[1], endpoint[2], offset)
+        )
     return replace(
         segment,
         origin_position_mm=high,
         origin_position_low_mm=low,
         origin_position_tail_mm=tail,
+        endpoint_coordinates=endpoint,
     )
 
 
@@ -1629,6 +1636,7 @@ def _knot_light_cone_residual_mm(
             observer_position_low_mm,
             observer_time_tail_ns,
             observer_position_tail_mm,
+            include_endpoint=tau == 1.0,
         )
         if isinstance(segment, ProperVelocitySegment):
             residual, kappa, _, _ = proper_residual(
@@ -1841,6 +1849,50 @@ def _solve_null_history_sample(
         raise ValueError("proper_velocity does not support history extrapolation")
     low_g = residual_at(lower)[0]
     high_g = residual_at(upper)[0]
+    if (
+        high_g > 0.0
+        and upper == 1.0
+        and segment.endpoint_coordinates is not None
+        and _knot_light_cone_residual_mm(
+            source,
+            index + 1,
+            observer_time_ns=observer_time_ns,
+            observer_position_mm=observer_position_mm,
+            **observer_remainders,
+        )
+        <= 0.0
+    ):
+        # The accepted knot scan proves a bracket, but evaluating the same
+        # knot from the earlier anchor can reverse a tiny residual's sign.
+        # Reanchor near the upper endpoint, without changing the interval,
+        # root tolerance, or polynomial derivatives.
+        geometry = endpoint_geometry(
+            segment,
+            observer_time_ns,
+            observer_position_mm,
+            observer_time_low_ns,
+            observer_position_low_mm,
+            observer_time_tail_ns,
+            observer_position_tail_mm,
+            include_endpoint=True,
+        )
+        # Use the identical endpoint residuals as the bracket scan, even
+        # when adjacent segments use different velocity-aligned frames.
+        geometry = np.append(
+            geometry,
+            [
+                _knot_light_cone_residual_mm(
+                    source,
+                    knot,
+                    observer_time_ns=observer_time_ns,
+                    observer_position_mm=observer_position_mm,
+                    **observer_remainders,
+                )
+                for knot in (index, index + 1)
+            ],
+        )
+        low_g = residual_at(lower)[0]
+        high_g = residual_at(upper)[0]
     snapped_endpoint = None
     if low_g < 0.0:
         if (

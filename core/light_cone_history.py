@@ -48,6 +48,8 @@ class LightConeSegment:
     origin_position_tail_mm: np.ndarray | None = None
     origin_time_tail_ns: float = 0.0
     endpoint_null_mm: np.ndarray | None = None
+    # Rows 0–2 are upper position high/low/tail (mm); row 3 is time (ns).
+    endpoint_coordinates: np.ndarray | None = None
 
     def __post_init__(self) -> None:
         for value in (
@@ -60,6 +62,7 @@ class LightConeSegment:
             self.proper_velocity_knots,
             self.origin_position_tail_mm,
             self.endpoint_null_mm,
+            self.endpoint_coordinates,
         ):
             if value is not None:
                 value.flags.writeable = False
@@ -250,6 +253,18 @@ def build_light_cone_segment(
             ),
             0.0 if time_tail is None else float(time_tail[0]),
             np.array([float(value) for value in end]),
+            np.array(
+                [
+                    positions[1],
+                    np.zeros(3) if position_low is None else position_low[1],
+                    np.zeros(3) if position_tail is None else position_tail[1],
+                    [
+                        times[1],
+                        0.0 if time_low is None else time_low[1],
+                        0.0 if time_tail is None else time_tail[1],
+                    ],
+                ]
+            ),
         )
 
 
@@ -261,8 +276,14 @@ def endpoint_geometry(
     observer_position_low_mm: np.ndarray | None = None,
     observer_time_tail_ns: float = 0.0,
     observer_position_tail_mm: np.ndarray | None = None,
+    *,
+    include_endpoint: bool = False,
 ) -> np.ndarray:
-    """Resolve observer minus segment anchor before any norm subtraction."""
+    """Resolve anchor geometry, optionally at both accepted endpoints.
+
+    The second anchor keeps evaluation near the upper knot consistent with
+    the next segment's lower knot, including at a zero coordinate time.
+    """
     with localcontext() as context:
         context.prec = 80
         dt = (
@@ -301,15 +322,52 @@ def endpoint_geometry(
         ]
         parallel = _dot(axes[0], displacement)
         coordinate = _decimal(C_MMNS) * dt
-        return np.array(
-            [
-                float(coordinate - parallel),
-                float(parallel),
-                float(_dot(axes[1], displacement)),
-                float(_dot(axes[2], displacement)),
-                float(coordinate + parallel),
+        geometry = [
+            float(coordinate - parallel),
+            float(parallel),
+            float(_dot(axes[1], displacement)),
+            float(_dot(axes[2], displacement)),
+            float(coordinate + parallel),
+        ]
+        endpoint = segment.endpoint_coordinates
+        if include_endpoint and endpoint is not None:
+            dt += (
+                _decimal(segment.time_ns)
+                + _decimal(segment.origin_time_low_ns)
+                + _decimal(segment.origin_time_tail_ns)
+                - sum((_decimal(v) for v in endpoint[3]), Decimal(0))
+            )
+            displacement = [
+                value
+                + _decimal(high)
+                + _decimal(low)
+                + _decimal(tail)
+                - sum((_decimal(v) for v in endpoint[:3, axis]), Decimal(0))
+                for axis, (value, high, low, tail) in enumerate(
+                    zip(
+                        displacement,
+                        segment.origin_position_mm,
+                        segment.origin_position_low_mm,
+                        (
+                            np.zeros(3)
+                            if segment.origin_position_tail_mm is None
+                            else segment.origin_position_tail_mm
+                        ),
+                    )
+                )
             ]
-        )
+            parallel = _dot(axes[0], displacement)
+            coordinate = _decimal(C_MMNS) * dt
+            geometry.extend(
+                [
+                    float(coordinate - parallel),
+                    float(parallel),
+                    float(_dot(axes[1], displacement)),
+                    float(_dot(axes[2], displacement)),
+                    float(coordinate + parallel),
+                ]
+            )
+        return np.array(geometry)
 
 
 def separation_in_velocity_frame(

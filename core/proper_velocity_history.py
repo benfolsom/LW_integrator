@@ -16,7 +16,7 @@ from numba import njit  # type: ignore[import-untyped]
 
 from .constants import C_MMNS
 from .light_cone_history import LightConeSegment
-from .light_cone_roots import register_jitable
+from .light_cone_roots import geometry_anchor_residual, register_jitable
 
 _NODES, _WEIGHTS = np.polynomial.legendre.leggauss(128)
 _CHECK_NODES, _CHECK_WEIGHTS = np.polynomial.legendre.leggauss(256)
@@ -54,16 +54,18 @@ def integrate_null_u(
     tau: float,
     nodes: np.ndarray,
     weights: np.ndarray,
+    start: float = 0.0,
 ) -> np.ndarray:
-    if tau == 0.0:
+    span = tau - start
+    if span == 0.0:
         return np.zeros(3)
     if np.all(coefficients[1:] == 0.0):
-        return length * tau * _null_beta(coefficients[0])
+        return length * span * _null_beta(coefficients[0])
     value = np.zeros(3)
     for index in range(nodes.size):
-        fraction = 0.5 * tau * (nodes[index] + 1)
+        fraction = start + 0.5 * span * (nodes[index] + 1)
         value += weights[index] * _null_beta(_u_at(coefficients, fraction))
-    return value * (0.5 * length * tau)
+    return value * (0.5 * length * span)
 
 
 @register_jitable
@@ -153,9 +155,19 @@ def proper_residual(
     nodes: np.ndarray,
     weights: np.ndarray,
 ) -> tuple[float, float, float, np.ndarray]:
-    value = integrate_null_u(coefficients, length, tau, nodes, weights)
+    offset = tau
+    start = 0.0
+    anchored = geometry.size >= 12
+    anchor_residual = geometry[10] if anchored else 0.0
+    if tau > 0.5 and geometry.size >= 10:
+        start = 1.0
+        offset = tau - start
+        if anchored:
+            anchor_residual = geometry[11]
+        geometry = geometry[5:10]
+    value = integrate_null_u(coefficients, length, tau, nodes, weights, start)
     velocity = _null_beta(_u_at(coefficients, tau))
-    parallel = geometry[1] - length * tau + value[0]
+    parallel = geometry[1] - length * offset + value[0]
     transverse = geometry[2:4] - value[1:]
     transverse_squared = np.dot(transverse, transverse)
     radius = np.sqrt(parallel**2 + transverse_squared)
@@ -165,10 +177,16 @@ def proper_residual(
     residual = geometry[0] - value[0] - difference
     if parallel <= 0:
         a = geometry[0] - value[0]
-        b = geometry[4] - 2 * length * tau + value[0]
+        b = geometry[4] - 2 * length * offset + value[0]
         denominator = a + parallel + radius
         if denominator > 0:
             residual = (a * b - transverse_squared) / denominator
+    if anchored:
+        residual = (
+            anchor_residual
+            if offset == 0.0
+            else anchor_residual + (residual - geometry_anchor_residual(geometry))
+        )
     kappa = (
         (difference + parallel * velocity[0] - np.dot(transverse, velocity[1:]))
         / radius

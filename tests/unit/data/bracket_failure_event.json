@@ -1,0 +1,31 @@
+{
+  "error": "source history does not bracket the observer light cone for source indices [0]",
+  "observer_time_ns": 0.0017793358961725506,
+  "observer_position_mm": [
+    0.014522296148321803,
+    0.0,
+    0.46676623435942294
+  ],
+  "source_endpoints": [
+    {
+      "time_ns": -323676.65330572583,
+      "position_mm": [
+        0.0,
+        0.0,
+        84908832.96284544
+      ],
+      "light_cone_residual_ns": 40451.27622620063
+    },
+    {
+      "time_ns": 0.0051149768481540715,
+      "position_mm": [
+        0.0,
+        0.0,
+        -0.34179189403425525
+      ],
+      "light_cone_residual_ns": -0.006033135541438479
+    }
+  ],
+  "source_beta": -0.8750256596748323,
+  "history_count": 168
+}

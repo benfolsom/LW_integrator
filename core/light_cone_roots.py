@@ -45,11 +45,44 @@ def sample_null_quintic(
 
 
 @register_jitable
+def geometry_anchor_residual(geometry: np.ndarray) -> float:
+    """Evaluate the zero-displacement residual in one rounded local frame."""
+    parallel = geometry[1]
+    transverse_squared = np.dot(geometry[2:4], geometry[2:4])
+    radius = np.sqrt(parallel * parallel + transverse_squared)
+    difference = (
+        transverse_squared / (radius + parallel) if parallel > 0 else radius - parallel
+    )
+    residual = geometry[0] - difference
+    if parallel <= 0.0:
+        denominator = geometry[0] + parallel + radius
+        if denominator > 0.0:
+            residual = (geometry[0] * geometry[4] - transverse_squared) / denominator
+    return residual
+
+
+@register_jitable
 def null_residual(
     coefficients: np.ndarray, length: float, tau: float, geometry: np.ndarray
 ) -> tuple[float, float, float, np.ndarray]:
     value, beta_data, _, _ = sample_null_quintic(coefficients, length, tau)
-    parallel = geometry[1] - length * tau + value[0]
+    offset = tau
+    anchored = geometry.size >= 12
+    anchor_residual = geometry[10] if anchored else 0.0
+    if tau > 0.5 and geometry.size >= 10:
+        # Factor p(tau)-p(1) by tau-1 rather than subtracting two nearly
+        # equal displacements. Derivatives still come from the same quintic.
+        offset = tau - 1.0
+        if anchored:
+            anchor_residual = geometry[11]
+        value = np.zeros(3)
+        for component in range(3):
+            power_sum = 0.0
+            for order in range(5, 0, -1):
+                power_sum = power_sum * tau + np.sum(coefficients[order:, component])
+            value[component] = offset * power_sum
+        geometry = geometry[5:10]
+    parallel = geometry[1] - length * offset + value[0]
     transverse = geometry[2:4] - value[1:]
     transverse_squared = np.dot(transverse, transverse)
     radius = np.sqrt(parallel * parallel + transverse_squared)
@@ -61,10 +94,19 @@ def null_residual(
         # Behind the source, the opposite null coordinate is the small one.
         # Resolve it at the anchor before any large lab-coordinate subtraction.
         a = geometry[0] - value[0]
-        b = geometry[4] - 2.0 * length * tau + value[0]
+        b = geometry[4] - 2.0 * length * offset + value[0]
         denominator = a + parallel + radius
         if denominator > 0.0:
             residual = (a * b - transverse_squared) / denominator
+    if anchored:
+        # Adjacent segments can round the same ray differently in their
+        # distinct frames. Start from the scan's shared-knot residual and
+        # evaluate only its change in this frame; do not invent a sign gap.
+        residual = (
+            anchor_residual
+            if offset == 0.0
+            else anchor_residual + (residual - geometry_anchor_residual(geometry))
+        )
     kappa = float("nan")
     if radius > 0.0:
         kappa = (
