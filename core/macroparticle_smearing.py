@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict
+from functools import lru_cache
+from typing import Any, cast
+
 import numpy as np
 
 from .constants import C_MMNS, ELEMENTARY_CHARGE, NUMERICAL_EPSILON
-from .types import MacroparticleSmearingConfig
+from .types import MacroparticleSmearingConfig, TrajectoryView
 from .vectorized_interactions import ExternalSampleBatch
-
 
 _HASH_MASK = (1 << 64) - 1
 
@@ -29,7 +32,11 @@ def _rng_for(
     step_index: int,
     stream: int,
 ) -> np.random.Generator:
-    step_component = int(step_index) if config.refresh_policy == "per_step" else 0
+    step_component = (
+        int(step_index)
+        if config.refresh_policy in {"per_step", "legacy_per_step"}
+        else 0
+    )
     return np.random.default_rng(
         _mix_seed(
             int(config.seed),
@@ -143,12 +150,16 @@ def smear_source_samples(
     observer_position: tuple[float, float, float],
     config: MacroparticleSmearingConfig | None,
     step_index: int,
+    fixed_offsets: np.ndarray | None = None,
 ) -> tuple[ExternalSampleBatch, dict[str, np.ndarray]]:
     """Return source samples expanded into bounded smeared subcharges.
 
     The default scale is tied to source macro population but capped so a 3-sigma
     transverse draw is no larger than half an estimated inter-macroparticle
-    spacing. Draws are deterministic for a fixed seed and refresh policy.
+    initial spacing. Run callers supply ``fixed_offsets`` from
+    ``fixed_cloud_offsets``; these are reused irrespective of event spacing
+    and masks. Omitting them constructs an initial cloud or requests legacy
+    centroid sampling. Legacy refresh policies are non-conservative.
     """
     if (
         config is None
@@ -161,6 +172,15 @@ def smear_source_samples(
 
     if samples.x is None or samples.y is None or samples.z is None:
         return samples, {}
+
+    if (
+        config.refresh_policy == "fixed_per_particle"
+        and step_index > 0
+        and fixed_offsets is None
+    ):
+        raise ValueError(
+            "fixed_per_particle requires retained initial cloud offsets after initialization"
+        )
 
     subcharge_count = int(config.subcharge_count)
     source_count = int(samples.charge.size)
@@ -180,8 +200,10 @@ def smear_source_samples(
     charge = np.repeat(samples.charge / subcharge_count, subcharge_count)
     mass = None if samples.m is None else np.repeat(samples.m, subcharge_count)
 
-    spacing_mm = _estimate_spacing_mm(
-        samples.x, samples.y, samples.z, samples.valid_mask
+    spacing_mm = (
+        _estimate_spacing_mm(samples.x, samples.y, samples.z, samples.valid_mask)
+        if fixed_offsets is None
+        else 0.0
     )
     if samples.macro_population is not None:
         populations = np.asarray(samples.macro_population, dtype=float)
@@ -199,7 +221,11 @@ def smear_source_samples(
             spacing_mm=spacing_mm,
         )
         momentum_sigma = _resolve_momentum_sigma(config=config, population=population)
-        if config.use_centroid_errors and config.use_position_errors:
+        if (
+            fixed_offsets is None
+            and config.use_centroid_errors
+            and config.use_position_errors
+        ):
             centroid_rng = _rng_for(
                 config,
                 source_index=source_idx,
@@ -216,7 +242,8 @@ def smear_source_samples(
         for sub_idx in range(subcharge_count):
             row = source_idx * subcharge_count + sub_idx
             if (
-                config.use_position_errors
+                fixed_offsets is None
+                and config.use_position_errors
                 and config.use_internal_cloud
                 and subcharge_count > 1
             ):
@@ -273,6 +300,11 @@ def smear_source_samples(
                 if radius > max_radius and radius > 0.0:
                     source_displacements[row] *= max_radius / radius
 
+    if fixed_offsets is not None:
+        source_displacements = np.asarray(fixed_offsets, dtype=float).reshape(
+            total_count, 3
+        )
+
     x += source_displacements[:, 0]
     y += source_displacements[:, 1]
     z += source_displacements[:, 2]
@@ -309,4 +341,79 @@ def smear_source_samples(
     return smeared, nhat
 
 
-__all__ = ["effective_observer_charge", "smear_source_samples"]
+__all__ = ["effective_observer_charge", "smear_source_samples", "fixed_cloud_offsets"]
+
+
+@lru_cache(maxsize=32)
+def _initial_cloud(
+    config_items: tuple[tuple[str, Any], ...],
+    position_bytes: bytes,
+    charge_bytes: bytes,
+    population_bytes: bytes,
+) -> np.ndarray:
+    """Retain one immutable cloud per initial geometry and configuration."""
+    config = MacroparticleSmearingConfig(**dict(config_items))
+    positions = np.frombuffer(position_bytes, dtype=float).reshape(-1, 3)
+    charge = np.frombuffer(charge_bytes, dtype=float)
+    populations = np.frombuffer(population_bytes, dtype=float)
+    count = len(charge)
+    zero = np.zeros(count)
+    samples = ExternalSampleBatch(
+        charge=charge,
+        gamma=np.ones(count),
+        bx=zero,
+        by=zero,
+        bz=zero,
+        bdotx=zero,
+        bdoty=zero,
+        bdotz=zero,
+        valid_mask=np.ones(count, dtype=bool),
+        x=positions[:, 0],
+        y=positions[:, 1],
+        z=positions[:, 2],
+        macro_population=populations,
+    )
+    expanded, _ = smear_source_samples(
+        samples=samples, observer_position=(0.0, 0.0, 0.0), config=config, step_index=0
+    )
+    expanded_positions = np.column_stack([getattr(expanded, a) for a in "xyz"])
+    subcharges = len(expanded.charge) // count
+    offsets = (expanded_positions - np.repeat(positions, subcharges, axis=0)).reshape(
+        count, subcharges, 3
+    )
+    offsets.setflags(write=False)
+    return cast(np.ndarray, offsets)
+
+
+def fixed_cloud_offsets(
+    history: TrajectoryView, config: MacroparticleSmearingConfig | None
+) -> np.ndarray | None:
+    """Return the retained cloud defined by the initial full source history.
+
+    The seed, initial spacing, population, and source index define the cloud.
+    Checkpoints retain that initial row, so restarts reconstruct identical
+    offsets without mutable RNG state. Event masks never enter the geometry.
+    The bounded cache is only an optimization; eviction cannot change offsets.
+    """
+    if (
+        config is None
+        or not config.enabled
+        or config.refresh_policy != "fixed_per_particle"
+        or not len(history)
+    ):
+        return None
+    initial = history[0]
+    if not len(initial["x"]):
+        return None
+    positions = np.column_stack([initial[a] for a in "xyz"]).astype(float)
+    charges = np.asarray(initial.get("q_source", initial["q"]), dtype=float)
+    populations = np.asarray(
+        initial.get("macro_population", [_macro_population(q) for q in charges]),
+        dtype=float,
+    )
+    return _initial_cloud(
+        tuple(asdict(config).items()),
+        positions.tobytes(),
+        charges.tobytes(),
+        populations.tobytes(),
+    )

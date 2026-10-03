@@ -175,7 +175,8 @@ def create_bunch_uniform_distribution(
     Py = np.random.normal(0, momentum_magnitude * emittance_scale, pcount)
 
     # Calculate total momentum and derived quantities
-    Pt = np.sqrt(Px**2 + Py**2 + Pz**2)
+    # A massive particle has E²/c² = p² + m²c², including in this fixture.
+    Pt = np.sqrt(Px**2 + Py**2 + Pz**2 + (mass_integrator * C_MMNS) ** 2)
     mass = np.full(pcount, mass_integrator)  # Use integrator mass units
     charge = np.full(
         pcount, particle_species.charge * ELEMENTARY_CHARGE

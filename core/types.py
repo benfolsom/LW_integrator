@@ -277,9 +277,16 @@ class MacroparticleSmearingConfig:
         ):
             if value is not None and value < 0.0:
                 raise ValueError(f"macroparticle smearing {name} must be non-negative")
-        if self.refresh_policy not in {"fixed_per_particle", "per_step"}:
+        if self.refresh_policy not in {
+            "fixed_per_particle",
+            "legacy_fixed_per_particle",
+            "legacy_per_step",
+            "per_step",
+        }:
             raise ValueError(
-                "macroparticle smearing refresh_policy must be fixed_per_particle or per_step"
+                "macroparticle smearing refresh_policy must be fixed_per_particle, "
+                "legacy_fixed_per_particle, or legacy_per_step "
+                "(per_step is a compatibility alias)"
             )
         if self.apply_to_passive_updates:
             raise ValueError(

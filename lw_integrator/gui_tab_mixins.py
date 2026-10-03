@@ -728,7 +728,11 @@ class IntegratorGUITabMixin:
         self.macroparticle_smearing_refresh_policy_combo = ttk.Combobox(
             particle_frame,
             textvariable=self.macroparticle_smearing_refresh_policy_var,
-            values=("fixed_per_particle", "per_step"),
+            values=(
+                "fixed_per_particle",
+                "legacy_fixed_per_particle",
+                "legacy_per_step",
+            ),
             state="readonly",
             width=18,
         )

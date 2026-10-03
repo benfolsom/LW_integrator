@@ -1,8 +1,6 @@
 """Retarded equations of motion for the Liénard–Wiechert solver.
 
-The implementation preserves the validated reference behavior so historical
-regression data remains applicable. The heavy lifting
-is performed inside :func:`retarded_equations_of_motion`, which calculates the
+The heavy lifting is performed inside :func:`retarded_equations_of_motion`, which calculates the
 covariant updates for momentum, position, and acceleration for each particle.
 
 Physical Foundation
@@ -32,8 +30,8 @@ With proper-time steps, dx/dτ = γv = P_kinetic/m and dt/dτ = γ, so::
 Velocity and Acceleration
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
-β is Δx/(c·Δt) on the ordinary path, or P_kinetic/(γmc) on the on-shell
-kinematic boundary.  The stored acceleration ``bdot`` is dβ/d(ct) [1/mm]
+β is P_kinetic/(γmc), with gamma derived from the same mechanical spatial
+momentum in every reaction mode.  The stored acceleration ``bdot`` is dβ/d(ct) [1/mm]
 (dβ/dt = c·bdot).
 
 Self-Consistency Iterations
@@ -65,6 +63,7 @@ from typing import Any, Optional, Sequence
 import numpy as np
 from math import fsum
 
+from .instantaneous_space_charge import plummer_force_potential
 from .constants import C_MMNS
 from .potential_inclusion import (
     LEDGER_FIELDS,
@@ -81,11 +80,12 @@ from .distances import (
 )
 from .beamline_geometry import compute_directional_visibility_mask
 from .external_fields import (
+    boris_external_field_impulse,
     compute_uniform_external_field_impulse,
     evaluate_external_field_native,
     evaluate_external_field_si,
 )
-from .macroparticle_smearing import smear_source_samples
+from .macroparticle_smearing import fixed_cloud_offsets, smear_source_samples
 from .exact_source_cloud import exact_cloud_history
 from .medina_radiation_reaction import (
     MedinaRadiationReactionResult,
@@ -1915,6 +1915,13 @@ def retarded_equations_of_motion(
         _initialize_medina_step_state(result)
 
     num_particles = len(current_state["x"])
+    instantaneous_endpoints = {}
+    observer_cloud = fixed_cloud_offsets(trajectory, macroparticle_smearing)
+    external_cloud = (
+        fixed_cloud_offsets(trajectory_ext, macroparticle_smearing)
+        if len(trajectory_ext)
+        else None
+    )
     if moment_impulse_diagnostic is not None and radiation_mode == "medina_lad":
         moment_rr_force = np.asarray(moment_radiation_force_native, dtype=float)
         if moment_rr_force.shape != (num_particles, 3) or not np.all(
@@ -2177,9 +2184,7 @@ def retarded_equations_of_motion(
             and magnetic_dipole.source.active
         )
         exact_charge_source_selected = exact_endpoint_recomposition_selected
-        on_shell_kinematic_boundary_selected = bool(
-            exact_charge_source_selected or radiation_mode == "medina_lad"
-        )
+        on_shell_kinematic_boundary_selected = True
         exact_charge_field_cache = None
         exact_same_bunch_field_cache = None
         dipole_source_field_cache = None
@@ -2198,6 +2203,7 @@ def retarded_equations_of_motion(
         applied_medina_force_native = np.zeros(3, dtype=float)
 
         inclusion_momentum_offset = np.zeros(4, dtype=float)
+        ordinary_gate_vector_change = np.zeros(3)
         sampled_inclusion_supported = bool(
             _sampled_inclusion_enabled
             and not exact_charge_source_selected
@@ -2220,6 +2226,7 @@ def retarded_equations_of_motion(
                 traj_soa=traj_soa,
                 traj_ext_soa=traj_ext_soa,
                 macroparticle_smearing=macroparticle_smearing,
+                ordinary_gate_vector_change=ordinary_gate_vector_change,
             )
             inclusion_momentum_offset = (
                 force_particle_charge / C_MMNS * inclusion_delta_A
@@ -2233,6 +2240,7 @@ def retarded_equations_of_motion(
         converged = False
         last_mass_shell_error = float("inf")
         for sc_iteration in range(sc_max_iterations):
+            magnetic_rotation_correction = np.zeros(3)
             # Only the final self-consistency trial feeds the once-per-step
             # spin update.  Resetting here prevents an earlier trial's Medina
             # force from leaking into it.
@@ -2583,6 +2591,7 @@ def retarded_equations_of_motion(
                     ),
                     config=macroparticle_smearing,
                     step_index=index_traj,
+                    fixed_offsets=external_cloud,
                 )
                 if smeared_nhat:
                     nhat = smeared_nhat
@@ -2792,6 +2801,7 @@ def retarded_equations_of_motion(
                             sc_indices,
                         )
                     sc_R = np.asarray(sc_nhat["R"], dtype=float)
+                    sc_unsoftened_R = sc_R.copy()
                     source_radius = (
                         pseudo_grid_sc_source_radii
                         if pseudo_grid_sc_source_radii is not None
@@ -2809,14 +2819,7 @@ def retarded_equations_of_motion(
                                 indices_next=sc_chrono_result.indices_next,
                                 weights=sc_chrono_result.weights,
                                 needs_interpolation=sc_chrono_result.needs_interpolation,
-                                include_positions=bool(
-                                    macroparticle_smearing
-                                    and macroparticle_smearing.enabled
-                                    and (
-                                        macroparticle_smearing.apply_to_active_sources
-                                        or macroparticle_smearing.apply_to_passive_sources
-                                    )
-                                ),
+                                include_positions=True,
                             )
                         else:
                             sc_samples = gather_external_samples(
@@ -2828,41 +2831,20 @@ def retarded_equations_of_motion(
                                 indices_next2=sc_chrono_result.indices_next2,
                                 use_cubic=sc_chrono_result.use_cubic,
                                 interpolate_positions=chrono_high_precision,
-                                include_positions=bool(
-                                    macroparticle_smearing
-                                    and macroparticle_smearing.enabled
-                                    and (
-                                        macroparticle_smearing.apply_to_active_sources
-                                        or macroparticle_smearing.apply_to_passive_sources
-                                    )
-                                ),
+                                include_positions=True,
                             )
                     else:
                         if use_sc_soa:
                             sc_samples = gather_external_samples_soa(
                                 sc_source_soa,
                                 sc_indices,
-                                include_positions=bool(
-                                    macroparticle_smearing
-                                    and macroparticle_smearing.enabled
-                                    and (
-                                        macroparticle_smearing.apply_to_active_sources
-                                        or macroparticle_smearing.apply_to_passive_sources
-                                    )
-                                ),
+                                include_positions=True,
                             )
                         else:
                             sc_samples = gather_external_samples(
                                 sc_source_trajectory,
                                 sc_indices,
-                                include_positions=bool(
-                                    macroparticle_smearing
-                                    and macroparticle_smearing.enabled
-                                    and (
-                                        macroparticle_smearing.apply_to_active_sources
-                                        or macroparticle_smearing.apply_to_passive_sources
-                                    )
-                                ),
+                                include_positions=True,
                             )
 
                     if not use_retarded_sc:
@@ -2892,47 +2874,112 @@ def retarded_equations_of_motion(
                     if pseudo_grid_sc_charge_matrix is None:
                         sc_samples.valid_mask[particle_idx] = False
 
+                    if not use_retarded_sc:
+                        sc_start_positions = np.column_stack(
+                            [getattr(sc_samples, axis) for axis in "xyz"]
+                        )
                     sc_samples, smeared_sc_nhat = smear_source_samples(
                         samples=sc_samples,
                         observer_position=(
-                            float(working_x),
-                            float(working_y),
-                            float(working_z),
+                            float(current_state["x"][particle_idx]),
+                            float(current_state["y"][particle_idx]),
+                            float(current_state["z"][particle_idx]),
                         ),
                         config=macroparticle_smearing,
                         step_index=index_traj,
+                        fixed_offsets=(
+                            fixed_cloud_offsets(
+                                sc_source_trajectory, macroparticle_smearing
+                            )
+                            if pseudo_grid_space_charge_source_trajectory is not None
+                            else observer_cloud
+                        ),
                     )
                     if smeared_sc_nhat:
                         sc_nhat = smeared_sc_nhat
                         sc_R = np.asarray(sc_nhat["R"], dtype=float)
+                        sc_unsoftened_R = sc_R.copy()
                         if sc_softening > 0.0:
                             sc_R = np.sqrt(sc_R**2 + sc_softening**2)
                             sc_nhat = dict(sc_nhat)
                             sc_nhat["R"] = sc_R
 
-                    (
-                        sc_dp_x,
-                        sc_dp_y,
-                        sc_dp_z,
-                        sc_dp_t,
-                        sc_df_x,
-                        sc_df_y,
-                        sc_df_z,
-                        sc_dscalar,
-                    ) = compute_vectorized_contributions(
-                        h=h,
-                        charge_i=float(force_particle_charge),
-                        mass_i=float(particle_mass),
-                        gamma_i=particle_gamma,
-                        beta_vec=particle_beta,
-                        nhat_nx=np.asarray(sc_nhat["nx"], dtype=float),
-                        nhat_ny=np.asarray(sc_nhat["ny"], dtype=float),
-                        nhat_nz=np.asarray(sc_nhat["nz"], dtype=float),
-                        R_separation=sc_R,
-                        samples=sc_samples,
-                        apply_external=True,
-                        verbosity=0,
-                    )
+                    if use_retarded_sc:
+                        (
+                            sc_dp_x,
+                            sc_dp_y,
+                            sc_dp_z,
+                            sc_dp_t,
+                            sc_df_x,
+                            sc_df_y,
+                            sc_df_z,
+                            sc_dscalar,
+                        ) = compute_vectorized_contributions(
+                            h=h,
+                            charge_i=float(force_particle_charge),
+                            mass_i=float(particle_mass),
+                            gamma_i=particle_gamma,
+                            beta_vec=particle_beta,
+                            nhat_nx=np.asarray(sc_nhat["nx"], dtype=float),
+                            nhat_ny=np.asarray(sc_nhat["ny"], dtype=float),
+                            nhat_nz=np.asarray(sc_nhat["nz"], dtype=float),
+                            R_separation=sc_R,
+                            samples=sc_samples,
+                            apply_external=True,
+                            verbosity=0,
+                        )
+                    else:
+                        displacement = sc_unsoftened_R[:, None] * np.column_stack(
+                            [sc_nhat["n" + axis] for axis in "xyz"]
+                        )
+                        charges = np.where(
+                            sc_samples.valid_mask, sc_samples.charge, 0.0
+                        )
+                        subcharges = len(charges) // sc_source_count
+                        eps_squared = sc_softening**2 + np.repeat(
+                            np.broadcast_to(source_radius, (sc_source_count,)) ** 2,
+                            subcharges,
+                        )
+                        # Average over the observer cloud as well as the source
+                        # cloud. q_observer stays a species charge; source
+                        # charges retain the represented macro population.
+                        observer_count = 1
+                        if observer_cloud is not None and smeared_sc_nhat:
+                            offsets = observer_cloud[particle_idx]
+                            observer_count = len(offsets)
+                            displacement = (
+                                displacement[None, :, :] + offsets[:, None, :]
+                            ).reshape(-1, 3)
+                            charges = np.tile(charges / observer_count, observer_count)
+                            eps_squared = np.tile(eps_squared, observer_count)
+                        force, sc_dscalar = plummer_force_potential(
+                            displacement,
+                            charges,
+                            float(force_particle_charge),
+                            eps_squared,
+                        )
+                        sc_dp_x, sc_dp_y, sc_dp_z = h * particle_gamma * force
+                        # Mechanical energy/c changes by beta dot dp. Source
+                        # motion enters canonical energy through recomposition,
+                        # not a second copy of the reciprocal potential work.
+                        sc_dp_t = float(
+                            np.dot(particle_beta, (sc_dp_x, sc_dp_y, sc_dp_z))
+                        )
+                        sc_df_x = sc_df_y = sc_df_z = 0.0
+                        observer_start = np.array(
+                            [current_state[axis][particle_idx] for axis in "xyz"]
+                        )
+                        instantaneous_endpoints[particle_idx] = (
+                            displacement,
+                            charges,
+                            eps_squared,
+                            sc_dscalar,
+                            observer_start,
+                            sc_start_positions,
+                            subcharges,
+                            pseudo_grid_space_charge_source_trajectory is None,
+                            float(force_particle_charge),
+                        )
                     accumulated_momentum_x += sc_dp_x
                     accumulated_momentum_y += sc_dp_y
                     accumulated_momentum_z += sc_dp_z
@@ -3000,6 +3047,24 @@ def retarded_equations_of_motion(
                     position=field_position,
                     time=float(current_state["t"][particle_idx]),
                 )
+                if not second_order_exact_source_selected and not rfs_selected:
+                    rotated_impulse = boris_external_field_impulse(
+                        external_field,
+                        charge=float(force_particle_charge),
+                        mass=float(particle_mass),
+                        gamma=float(current_state["gamma"][particle_idx]),
+                        beta=tuple(
+                            float(current_state["b" + a][particle_idx]) for a in "xyz"
+                        ),
+                        h_step=float(h),
+                        position=field_position,
+                        time=float(current_state["t"][particle_idx]),
+                    )
+                    magnetic_rotation_correction = np.asarray(rotated_impulse) - (
+                        ext_dp_x,
+                        ext_dp_y,
+                        ext_dp_z,
+                    )
                 accumulated_momentum_x += ext_dp_x
                 accumulated_momentum_y += ext_dp_y
                 accumulated_momentum_z += ext_dp_z
@@ -4258,10 +4323,22 @@ def retarded_equations_of_motion(
                 exact_mechanical_temporal_impulse += float(second_order_correction[0])
 
             # ================================================================
-            # STEP 4: Update momentum and derive gamma from Pt
+            # STEP 4: Update momentum and derive gamma from the spatial shell
             # ================================================================
             # Canonical source-inclusion bookkeeping, evaluated once at the
             # accepted event. Each nonlinear trial starts from the same offset.
+            # Established sampled sources already receive this backward
+            # vector-potential difference through canonical reconstruction.
+            # Apply it once when the cold-start gate first admits sources.
+            gate_evolution_impulse = (
+                force_particle_charge / C_MMNS * ordinary_gate_vector_change
+            )
+            accumulated_momentum_x -= gate_evolution_impulse[0]
+            accumulated_momentum_y -= gate_evolution_impulse[1]
+            accumulated_momentum_z -= gate_evolution_impulse[2]
+            accumulated_momentum_x += magnetic_rotation_correction[0]
+            accumulated_momentum_y += magnetic_rotation_correction[1]
+            accumulated_momentum_z += magnetic_rotation_correction[2]
             accumulated_momentum_x += inclusion_momentum_offset[0]
             accumulated_momentum_y += inclusion_momentum_offset[1]
             accumulated_momentum_z += inclusion_momentum_offset[2]
@@ -4305,79 +4382,8 @@ def retarded_equations_of_motion(
                 )
                 result["Pt"][particle_idx] = sg_projected_pt
 
-            # ================================================================
-            # STEP 4a: Correct Pt during SC iterations based on mode
-            # ================================================================
-            # CRITICAL: Enforce constraints at each iteration
-            # Mode determines HOW we correct Pt, but both modes check both errors
-            if sc_enabled and sc_iteration > 0:
-                kinetic_pt_from_mass_shell, Pt_from_mass_shell = (
-                    _canonical_pt_from_mechanical_mass_shell(
-                        px=result["Px"][particle_idx],
-                        py=result["Py"][particle_idx],
-                        pz=result["Pz"][particle_idx],
-                        particle_mass=particle_mass,
-                        scalar_potential_contribution=scalar_potential_contribution,
-                        field_x=accumulated_field_x,
-                        field_y=accumulated_field_y,
-                        field_z=accumulated_field_z,
-                    )
-                )
-
-                Pt_before_correction = np.float64(result["Pt"][particle_idx])
-
-                # Determine Pt and P correction based on mode
-                if sc_convergence_mode in ("fixed_geometry", "variable_geometry"):
-                    # Modes 1 & 2: Project Pt onto mass-shell (asymmetric relaxation)
-                    Pt_corrected = Pt_from_mass_shell
-
-                    if sc_verbosity >= 3:
-                        print(
-                            f"      Mode: {sc_convergence_mode}, Pt_ms={Pt_from_mass_shell:.6e}"
-                        )
-
-                    # Apply relaxation to Pt only (asymmetric)
-                    relaxation_weight = sc_mass_shell_relaxation
-                    Pt_final = (
-                        relaxation_weight * Pt_corrected
-                        + (1.0 - relaxation_weight) * Pt_before_correction
-                    )
-
-                    result["Pt"][particle_idx] = float(Pt_final)
-                    # P_xyz unchanged (from forces)
-
-                else:
-                    raise ValueError(f"Unknown convergence_mode: {sc_convergence_mode}")
-
-                # Log relaxation details
-                if sc_verbosity >= 3:
-                    correction_magnitude = abs(Pt_final - Pt_before_correction)
-                    print(
-                        f"      After relaxation (α={relaxation_weight}): "
-                        f"Pt {Pt_before_correction:.6e} → {Pt_final:.6e} "
-                        f"(Δ={correction_magnitude:.6e})"
-                    )
-
-                if sc_verbosity >= 3:
-                    correction_magnitude = abs(Pt_final - Pt_before_correction)
-                    print(
-                        f"      After relaxation (α={relaxation_weight}): "
-                        f"Pt {Pt_before_correction:.6e} → {Pt_final:.6e} "
-                        f"(Δ={correction_magnitude:.6e})"
-                    )
-
-            # ================================================================
-            # STEP 4b: Compute gamma from energy
-            # ================================================================
-            # Gamma from relativistic energy with scalar potential correction:
-            # γ = (Pt - q·Φ/c) / (mc), where Φ = Σ(q_j / (R_sep_j * k_factor_j)).
-            # Pt is energy-over-c, so qΦ is converted to momentum units.
-            kinetic_energy = (
-                np.float64(result["Pt"][particle_idx]) - scalar_potential_contribution
-            )
-            gamma_from_energy = kinetic_energy / np.float64(particle_mass * C_MMNS)
-            result["gamma"][particle_idx] = gamma_from_energy
-
+            # The force-updated mechanical spatial momentum determines the
+            # shell in every reaction mode. Temporal relaxation is not a force.
             kinetic_pt_from_mass_shell, Pt_from_mass_shell = (
                 _canonical_pt_from_mechanical_mass_shell(
                     px=result["Px"][particle_idx],
@@ -4390,110 +4396,11 @@ def retarded_equations_of_motion(
                     field_z=accumulated_field_z,
                 )
             )
-            Pt_before_projection = np.float64(result["Pt"][particle_idx])
-
-            gamma_mass_shell = kinetic_pt_from_mass_shell / (particle_mass * C_MMNS)
-
-            spatial_momentum_authoritative = exact_charge_source_selected
-            if radiation_mode == "medina_lad" and not exact_charge_source_selected:
-                # The maintained non-exact Medina path historically treats
-                # canonical temporal energy as authoritative.  Put its spatial
-                # mechanical momentum on that shell *before* predictor drift,
-                # beta, and force sampling.  The exact charge/RFS path instead
-                # remains spatial-momentum-authoritative so its RR-off and
-                # RR-on capture controls share one boundary.
-                energy_boundary_momentum = np.asarray(
-                    _mechanical_momentum_components(
-                        px=result["Px"][particle_idx],
-                        py=result["Py"][particle_idx],
-                        pz=result["Pz"][particle_idx],
-                        particle_mass=particle_mass,
-                        field_x=accumulated_field_x,
-                        field_y=accumulated_field_y,
-                        field_z=accumulated_field_z,
-                    ),
-                    dtype=float,
-                )
-                gamma_energy_boundary = float(result["gamma"][particle_idx])
-                momentum_is_finite = bool(np.all(np.isfinite(energy_boundary_momentum)))
-                mechanical_magnitude = float(
-                    np.hypot(
-                        np.hypot(
-                            abs(float(energy_boundary_momentum[0])),
-                            abs(float(energy_boundary_momentum[1])),
-                        ),
-                        abs(float(energy_boundary_momentum[2])),
-                    )
-                )
-                with np.errstate(over="ignore", invalid="ignore"):
-                    target_factor = float(
-                        np.sqrt(
-                            (gamma_energy_boundary - 1.0)
-                            * (gamma_energy_boundary + 1.0)
-                        )
-                    )
-                    target_mechanical_magnitude = float(
-                        particle_mass * C_MMNS * target_factor
-                    )
-                valid_rest_boundary = bool(
-                    gamma_energy_boundary == 1.0 and mechanical_magnitude == 0.0
-                )
-                valid_moving_boundary = bool(
-                    gamma_energy_boundary > 1.0
-                    and mechanical_magnitude > 0.0
-                    and target_mechanical_magnitude > 0.0
-                )
-                can_use_energy_boundary = bool(
-                    np.isfinite(gamma_energy_boundary)
-                    and momentum_is_finite
-                    and np.isfinite(mechanical_magnitude)
-                    and np.isfinite(target_mechanical_magnitude)
-                    and (valid_rest_boundary or valid_moving_boundary)
-                )
-                if can_use_energy_boundary and valid_moving_boundary:
-                    scale = target_mechanical_magnitude / mechanical_magnitude
-                    scaled_momentum = energy_boundary_momentum * scale
-                    if not np.isfinite(scale) or not np.all(
-                        np.isfinite(scaled_momentum)
-                    ):
-                        can_use_energy_boundary = False
-                    else:
-                        result["Px"][particle_idx] = float(
-                            scaled_momentum[0] + accumulated_field_x * particle_mass
-                        )
-                        result["Py"][particle_idx] = float(
-                            scaled_momentum[1] + accumulated_field_y * particle_mass
-                        )
-                        result["Pz"][particle_idx] = float(
-                            scaled_momentum[2] + accumulated_field_z * particle_mass
-                        )
-                        gamma_mass_shell = gamma_energy_boundary
-                if can_use_energy_boundary:
-                    _, boundary_error = _check_mass_shell_convergence(
-                        result["Pt"][particle_idx],
-                        result["Px"][particle_idx],
-                        result["Py"][particle_idx],
-                        result["Pz"][particle_idx],
-                        particle_mass,
-                        C_MMNS,
-                        sc_mass_shell_tolerance,
-                        scalar_potential_contribution=scalar_potential_contribution,
-                        field_x=accumulated_field_x,
-                        field_y=accumulated_field_y,
-                        field_z=accumulated_field_z,
-                    )
-                    # Normalize the rounded shell energy only when the energy
-                    # projection leaves a residual above the existing tolerance.
-                    spatial_momentum_authoritative = (
-                        boundary_error >= sc_mass_shell_tolerance
-                    )
-                if not can_use_energy_boundary:
-                    # At the near-rest/roundoff boundary, an energy-derived
-                    # target can be imaginary, zero for nonzero p, directionless
-                    # for p=0, or nonfinite.  Falling back to finite spatial p
-                    # prevents the old sqrt(max(gamma**2-1, 0)) zeroing bug.
-                    spatial_momentum_authoritative = True
-
+            Pt_before_projection = raw_canonical_pt_before_constraints
+            gamma_from_energy = (
+                raw_canonical_pt_before_constraints - scalar_potential_contribution
+            ) / (particle_mass * C_MMNS)
+            spatial_momentum_authoritative = True
             if spatial_momentum_authoritative:
                 # Reconstruct the complete physical state from spatial
                 # p = P - q A / c.  Near rest this avoids cancellation in
@@ -5712,6 +5619,47 @@ def retarded_equations_of_motion(
                 result["spin_x"][particle_idx] = spin_next[0]
                 result["spin_y"][particle_idx] = spin_next[1]
                 result["spin_z"][particle_idx] = spin_next[2]
+
+    # All observers have finished their mechanical updates. Recompose the
+    # instantaneous scalar sector at this accepted same-index endpoint. Keep
+    # the sampled source set frozen for the step: births, deaths, and switches
+    # continue to belong exclusively to the inclusion ledger at the next start.
+    endpoint_positions = np.column_stack([result[axis] for axis in "xyz"])
+    for particle_idx, endpoint in instantaneous_endpoints.items():
+        (
+            displacement,
+            charges,
+            eps_squared,
+            start_phi,
+            observer_start,
+            source_start,
+            subcharges,
+            reciprocal,
+            observer_charge,
+        ) = endpoint
+        source_shift = (
+            np.tile(
+                np.repeat(endpoint_positions - source_start, subcharges, axis=0),
+                (len(displacement) // (len(source_start) * subcharges), 1),
+            )
+            if reciprocal
+            else np.zeros_like(displacement)
+        )
+        endpoint_displacement = (
+            displacement
+            + endpoint_positions[particle_idx]
+            - observer_start
+            - source_shift
+        )
+        _, endpoint_phi = plummer_force_potential(
+            endpoint_displacement,
+            charges,
+            observer_charge,
+            eps_squared,
+        )
+        result["Pt"][particle_idx] += (
+            observer_charge * (endpoint_phi - start_phi) / C_MMNS
+        )
 
     # Log summary if any particles died in this step
     if particles_marked_dead_this_step > 0:

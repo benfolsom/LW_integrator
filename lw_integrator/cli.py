@@ -1153,9 +1153,16 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--macroparticle-smearing-refresh-policy",
-        choices=("fixed-per-particle", "fixed_per_particle", "per-step", "per_step"),
+        choices=(
+            "fixed-per-particle",
+            "fixed_per_particle",
+            "legacy_fixed_per_particle",
+            "legacy_per_step",
+            "per-step",
+            "per_step",
+        ),
         dest="macroparticle_smearing_refresh_policy",
-        help="Use persistent per-particle offsets or refresh them each step.",
+        help="Use fixed reciprocal clouds, or an explicitly non-conservative legacy cloud policy.",
     )
 
     parser.add_argument(

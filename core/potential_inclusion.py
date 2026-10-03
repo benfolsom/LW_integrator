@@ -147,6 +147,7 @@ def sampled_inclusion_change(
     traj_soa,
     traj_ext_soa,
     macroparticle_smearing,
+    ordinary_gate_vector_change=None,
 ):
     """Return one trial's offset and detached next inclusion state.
 
@@ -157,7 +158,7 @@ def sampled_inclusion_change(
     # Lazy import avoids an equations/module import cycle.
     from . import equations as eq
     from .distances import compute_retarded_distance, compute_retarded_distance_soa
-    from .macroparticle_smearing import smear_source_samples
+    from .macroparticle_smearing import fixed_cloud_offsets, smear_source_samples
     from .beamline_geometry import compute_directional_visibility_mask
 
     state = trajectory[index]
@@ -249,6 +250,9 @@ def sampled_inclusion_change(
                 observer_position=position,
                 config=macroparticle_smearing,
                 step_index=index,
+                fixed_offsets=fixed_cloud_offsets(
+                    trajectory_ext, macroparticle_smearing
+                ),
             )
             if smeared:
                 nhat = smeared
@@ -283,6 +287,67 @@ def sampled_inclusion_change(
                     # image set; never subtract yesterday's image potential.
                     counterfactual = np.where(old_charges != 0, samples.charge, 0)
                     delta_A -= _potential(samples, nhat, counterfactual)
+            # Canonical P retains the preceding step's sampled vector
+            # potential. Established sources therefore subtract its ordinary
+            # event-to-event change during mechanical reconstruction. On the
+            # first open-gate step that preceding sample is absent: inclusion
+            # initializes A at this event, leaving a full canonical impulse
+            # where subsequent steps receive the mechanical impulse. Prime
+            # the missing ordinary change using the same source set at both
+            # events. This is separate from the event-local inclusion ledger.
+            if (
+                ordinary_gate_vector_change is not None
+                and ready
+                and index > 0
+                and startup_mode is StartupMode.COLD_START
+                and sim_type is SimulationType.BUNCH_TO_BUNCH
+                and gate_open
+                and not old.get("gate_open", False)
+            ):
+                old_charges = np.asarray(old.get("charges", np.zeros_like(charges)))
+                admitted = np.where(old_charges == 0.0, charges, 0.0)
+                if np.any(admitted):
+                    prior_nhat, prior_indices, prior_chrono = (
+                        eq._compute_full_retarded_distance(
+                            trajectory,
+                            trajectory_ext,
+                            index - 1,
+                            particle,
+                            chrono_mode,
+                            self_consistency,
+                            timestep_h=h,
+                            traj_soa=traj_soa,
+                            traj_ext_soa=traj_ext_soa,
+                        )
+                    )
+                    prior_samples = _gather(
+                        trajectory_ext,
+                        traj_ext_soa,
+                        prior_indices,
+                        prior_chrono,
+                        high_precision,
+                    )
+                    prior_position = (
+                        float(trajectory[index - 1]["x"][particle]),
+                        float(trajectory[index - 1]["y"][particle]),
+                        float(trajectory[index - 1]["z"][particle]),
+                    )
+                    prior_samples, prior_smeared = smear_source_samples(
+                        samples=prior_samples,
+                        observer_position=prior_position,
+                        config=macroparticle_smearing,
+                        step_index=index - 1,
+                        fixed_offsets=fixed_cloud_offsets(
+                            trajectory_ext, macroparticle_smearing
+                        ),
+                    )
+                    if prior_smeared:
+                        prior_nhat = prior_smeared
+                    ordinary_gate_vector_change[:] = (
+                        _potential(samples, nhat, admitted)[:3]
+                        - _potential(prior_samples, prior_nhat, admitted)[:3]
+                    )
+
             next_sets["external"] = {
                 "model": "retarded",
                 "charges": charges.tolist(),
@@ -341,6 +406,7 @@ def sampled_inclusion_change(
                 observer_position=position,
                 config=macroparticle_smearing,
                 step_index=index,
+                fixed_offsets=fixed_cloud_offsets(trajectory, macroparticle_smearing),
             )
             if smeared:
                 nhat = dict(smeared)
@@ -351,9 +417,27 @@ def sampled_inclusion_change(
 
         samples, _ = same_bunch_event(model)
         charges = np.where(samples.valid_mask, samples.charge, 0.0)
-        delta_A += sector_change(
-            old, model, charges, lambda rep, q: _potential(*same_bunch_event(rep), q)
-        )
+
+        def same_potential(rep: str, q: np.ndarray) -> np.ndarray:
+            event_samples, event_nhat = same_bunch_event(rep)
+            cloud = fixed_cloud_offsets(trajectory, macroparticle_smearing)
+            if rep != "stationary" or cloud is None:
+                return _potential(event_samples, event_nhat, q)
+            from .instantaneous_space_charge import plummer_force_potential
+
+            sources = np.column_stack([getattr(event_samples, a) for a in "xyz"])
+            phi = 0.0
+            for offset in cloud[particle]:
+                _, value = plummer_force_potential(
+                    np.asarray(position) + offset - sources,
+                    q,
+                    observer_charge,
+                    float(space_charge.softening_mm) ** 2,
+                )
+                phi += value / len(cloud[particle])
+            return np.asarray((0.0, 0.0, 0.0, phi))
+
+        delta_A += sector_change(old, model, charges, same_potential)
         next_sets["same_bunch"] = {"model": model, "charges": charges.tolist()}
 
     # A source class cannot silently disappear: disabled classes with prior
