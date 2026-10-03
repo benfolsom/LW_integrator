@@ -83,7 +83,7 @@ from .external_fields import (
     evaluate_external_field_native,
     evaluate_external_field_si,
 )
-from .macroparticle_smearing import smear_source_samples
+from .macroparticle_smearing import fixed_cloud_offsets, smear_source_samples
 from .medina_radiation_reaction import (
     MedinaRadiationReactionResult,
     compute_medina_radiation_reaction,
@@ -1879,6 +1879,12 @@ def retarded_equations_of_motion(
 
     num_particles = len(current_state["x"])
     instantaneous_endpoints = {}
+    observer_cloud = fixed_cloud_offsets(trajectory, macroparticle_smearing)
+    external_cloud = (
+        fixed_cloud_offsets(trajectory_ext, macroparticle_smearing)
+        if len(trajectory_ext)
+        else None
+    )
     if moment_impulse_diagnostic is not None and radiation_mode == "medina_lad":
         moment_rr_force = np.asarray(moment_radiation_force_native, dtype=float)
         if moment_rr_force.shape != (num_particles, 3) or not np.all(
@@ -2545,6 +2551,7 @@ def retarded_equations_of_motion(
                     ),
                     config=macroparticle_smearing,
                     step_index=index_traj,
+                    fixed_offsets=external_cloud,
                 )
                 if smeared_nhat:
                     nhat = smeared_nhat
@@ -2834,12 +2841,19 @@ def retarded_equations_of_motion(
                     sc_samples, smeared_sc_nhat = smear_source_samples(
                         samples=sc_samples,
                         observer_position=(
-                            float(working_x),
-                            float(working_y),
-                            float(working_z),
+                            float(current_state["x"][particle_idx]),
+                            float(current_state["y"][particle_idx]),
+                            float(current_state["z"][particle_idx]),
                         ),
                         config=macroparticle_smearing,
                         step_index=index_traj,
+                        fixed_offsets=(
+                            fixed_cloud_offsets(
+                                sc_source_trajectory, macroparticle_smearing
+                            )
+                            if pseudo_grid_space_charge_source_trajectory is not None
+                            else observer_cloud
+                        ),
                     )
                     if smeared_sc_nhat:
                         sc_nhat = smeared_sc_nhat
@@ -2886,6 +2900,18 @@ def retarded_equations_of_motion(
                             np.broadcast_to(source_radius, (sc_source_count,)) ** 2,
                             subcharges,
                         )
+                        # Average over the observer cloud as well as the source
+                        # cloud. q_observer stays a species charge; source
+                        # charges retain the represented macro population.
+                        observer_count = 1
+                        if observer_cloud is not None and smeared_sc_nhat:
+                            offsets = observer_cloud[particle_idx]
+                            observer_count = len(offsets)
+                            displacement = (
+                                displacement[None, :, :] + offsets[:, None, :]
+                            ).reshape(-1, 3)
+                            charges = np.tile(charges / observer_count, observer_count)
+                            eps_squared = np.tile(eps_squared, observer_count)
                         force, sc_dscalar = plummer_force_potential(
                             displacement,
                             charges,
@@ -2901,9 +2927,7 @@ def retarded_equations_of_motion(
                         )
                         sc_df_x = sc_df_y = sc_df_z = 0.0
                         observer_start = np.array(
-                            (working_x, working_y, working_z)
-                            if smeared_sc_nhat
-                            else [current_state[axis][particle_idx] for axis in "xyz"]
+                            [current_state[axis][particle_idx] for axis in "xyz"]
                         )
                         instantaneous_endpoints[particle_idx] = (
                             displacement,
@@ -5495,7 +5519,10 @@ def retarded_equations_of_motion(
             observer_charge,
         ) = endpoint
         source_shift = (
-            np.repeat(endpoint_positions - source_start, subcharges, axis=0)
+            np.tile(
+                np.repeat(endpoint_positions - source_start, subcharges, axis=0),
+                (len(displacement) // (len(source_start) * subcharges), 1),
+            )
             if reciprocal
             else np.zeros_like(displacement)
         )

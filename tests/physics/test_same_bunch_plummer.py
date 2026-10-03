@@ -269,3 +269,92 @@ def test_prescribed_static_source_conserves_single_observer_hamiltonian():
         )
     assert residuals[1] < 0.3 * residuals[0]
     assert residuals[1] < 0.01
+
+
+def test_rigid_cloud_production_force_is_pair_energy_gradient():
+    from core.macroparticle_smearing import fixed_cloud_offsets
+    from core.types import MacroparticleSmearingConfig
+
+    state, driver = make_symmetric(4)
+    state["x"] += np.array([0.13, -0.31, 0.27, 0.41])
+    state["macro_population"] *= np.array([1.0, 2.0, 3.0, 4.0])
+    state["q_source"] = state["q_observer"] * state["macro_population"]
+    state["q"] = state["q_source"].copy()
+    config = MacroparticleSmearingConfig(
+        enabled=True,
+        subcharge_count=4,
+        seed=42,
+        position_sigma_mm=0.5,
+        use_momentum_errors=False,
+    )
+    offsets = fixed_cloud_offsets([state], config)
+    centres = np.column_stack([state[a] for a in "xyz"])
+    charges = state["q_source"]
+    eps = 0.1
+
+    def energy(r):
+        points = r[:, None, :] + offsets
+        value = 0.0
+        for i in range(len(r)):
+            for j in range(i + 1, len(r)):
+                d = points[i, :, None, :] - points[j, None, :, :]
+                value += (
+                    charges[i]
+                    * charges[j]
+                    * np.mean(1 / np.sqrt(np.sum(d * d, axis=-1) + eps**2))
+                )
+        return value
+
+    h = 1e-9
+    end = retarded_equations_of_motion(
+        h,
+        [state],
+        [driver],
+        0,
+        aperture_radius=5000,
+        sim_type=SimulationType.BUNCH_TO_BUNCH,
+        startup_mode=StartupMode.COLD_START,
+        radiation_reaction_mode="off",
+        space_charge=SpaceChargeConfig(enabled=True, retarded=False, softening_mm=eps),
+        macroparticle_smearing=config,
+        self_consistency=SelfConsistencyConfig(enabled=True, max_iterations=2),
+    )
+    species_force = np.column_stack([end["P" + a] - state["P" + a] for a in "xyz"]) / (
+        h * state["gamma"][:, None]
+    )
+    represented_force = state["macro_population"][:, None] * species_force
+    # Independent double-cloud force, with unequal macro populations. Both
+    # weighting and self-source exclusion matter for this roundoff cancellation.
+    reference = np.zeros_like(centres)
+    for i in range(len(centres)):
+        for j in range(i + 1, len(centres)):
+            d = (
+                centres[i]
+                + offsets[i, :, None, :]
+                - centres[j]
+                - offsets[j, None, :, :]
+            )
+            rho2 = np.sum(d * d, axis=-1) + eps**2
+            pair = (
+                charges[i]
+                * charges[j]
+                * np.mean(d / (rho2 * np.sqrt(rho2))[..., None], axis=(0, 1))
+            )
+            reference[i] += pair
+            reference[j] -= pair
+    # The longitudinal kick is zero for planar clouds and equal longitudinal
+    # centroid positions; avoid subtracting rest-scale longitudinal momenta.
+    np.testing.assert_allclose(represented_force[:, :2], reference[:, :2], rtol=4e-14)
+    np.testing.assert_allclose(
+        np.sum(represented_force[:, :2], axis=0),
+        0.0,
+        atol=1e-13 * np.sum(np.linalg.norm(reference, axis=1)),
+    )
+    delta = 1e-5
+    for i in range(len(centres)):
+        for axis in range(2):
+            plus, minus = centres.copy(), centres.copy()
+            plus[i, axis] += delta
+            minus[i, axis] -= delta
+            gradient = -(energy(plus) - energy(minus)) / (2 * delta)
+            assert represented_force[i, axis] == pytest.approx(gradient, rel=2e-9)
