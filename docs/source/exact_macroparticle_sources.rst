@@ -432,11 +432,17 @@ Population weights never enlarge an observer's reference.
 Acceptance uses the larger of absolute tolerance and the ulp budget, plus
 relative tolerance. An entry is floor dominated when the ulp budget exceeds
 absolute tolerance and is at least as large as the relative term. Such entries
-participate in acceptance but are excluded from the next-step error estimate.
+participate in acceptance but are excluded from accepted-step proposals.
+On a rejected trial, a floor-dominated entry whose Richardson-scaled discrepancy
+exceeds its floor contributes only that excess, divided by the unchanged
+physical diagnostic budget (absolute plus relative tolerance), to the shrink
+estimate. Its contribution is bounded below by one, so even a small above-floor
+excess requests a smaller step. Entries below their floor never steer. The
+acceptance budget, floor reference, multiplier, and default-off path are unchanged.
 Position, mechanical momentum, rest spin, and every other diagnostic entry
 still steer. An unfloored observer in an otherwise floored diagnostic remains
-eligible. A discrepancy above the floor still rejects; exclusion does not
-make it acceptable. Existing trial health guards remain active.
+eligible. A discrepancy exceeding the complete acceptance budget still rejects;
+the floor does not suppress it. Existing trial health guards remain active.
 
 Assessments record floor-dominated observer/column pairs, diagnostic names,
 ``controller_error``, and ``step_size_group``. Enabled adaptive output records

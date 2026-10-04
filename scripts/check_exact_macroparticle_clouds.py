@@ -82,7 +82,7 @@ def main():
     parser.add_argument(
         "--diagnostic-ulp-floor",
         action="store_true",
-        help="Floor diagnostic acceptance at k ulps of its reference; floored entries do not steer",
+        help="Floor diagnostic acceptance at k ulps of its reference; only rejected above-floor excess can steer",
     )
     parser.add_argument("--diagnostic-ulp-multiplier", type=float, default=4.0)
     parser.add_argument("--position-momentum-tolerance-scale", type=float, default=1.0)
