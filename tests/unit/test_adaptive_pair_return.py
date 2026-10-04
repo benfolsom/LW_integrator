@@ -1392,3 +1392,90 @@ def test_floor_acceptance_uses_separate_error_in_production_controller(monkeypat
     assert result.accepted
     assert result.controller_state.current_step_ns == 0.4
     assert rider.accepted_steps == driver.accepted_steps == 3
+
+
+@pytest.mark.parametrize("minimum_step", [0.001, 0.2])
+def test_no_shrink_rejection_flushes_latest_accepted_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, minimum_step: float
+) -> None:
+    import core.adaptive_pair_return as module
+
+    rider, driver = _pair()
+    original_proposal = module.propose_next_step_ns
+
+    def no_rejected_growth(step, error, *, accepted, **options):
+        if not accepted:
+            return step
+        return original_proposal(step, error, accepted=accepted, **options)
+
+    monkeypatch.setattr(module, "propose_next_step_ns", no_rejected_growth)
+    ordinary = _advance(2.0)
+
+    def reject_after_first_slab(step, start, *args):
+        result = ordinary(step, start, *args)
+        if start["t"][0] >= 0.2 - 1e-12:
+            result["radiation_energy"] = np.array([1e6 * step**2])
+        return result
+
+    directory = tmp_path / "no-shrink.checkpoint"
+    compatibility = {"physics": "no-shrink-regression"}
+    store = AcceptedPairCheckpointStore(
+        directory,
+        compatibility_payload=compatibility,
+        interval_knots=100,
+        interval_seconds=3600.0,
+        resume=False,
+    )
+    with pytest.raises(
+        SharedLabTimeError, match="without a shrinking proposal"
+    ) as caught:
+        run_exact_pair_adaptive_window(
+            rider_builder=rider,
+            driver_builder=driver,
+            advance_rider=reject_after_first_slab,
+            advance_driver=_advance(4.0),
+            controller_state=_controller(),
+            controller_config=StepControllerConfig(method_order=1),
+            tolerances=_tolerances(1.0),
+            target_time_ns=0.65,
+            minimum_step_ns=minimum_step,
+            maximum_step_ns=0.2,
+            maximum_attempts=10,
+            maximum_accepted_slabs=10,
+            public_sample_interval_ns=0.1,
+            magnetic_dipole=MagneticDipoleConfig(),
+            include_dipole_source=False,
+            checkpoint_store=store,
+        )
+    message = str(caught.value)
+    assert "minimum usable step" not in message
+    assert "attempted step=2.000000e-01" in message
+    assert "proposed step=2.000000e-01" in message
+    assert f"minimum step={minimum_step:.6e}" in message
+    assert "maximum step=2.000000e-01" in message
+    reopened = AcceptedPairCheckpointStore(
+        directory,
+        compatibility_payload=compatibility,
+        interval_knots=100,
+        interval_seconds=3600.0,
+        resume=True,
+    )
+    assert (
+        reopened.committed_knots == rider.accepted_steps == driver.accepted_steps == 3
+    )
+    controller = AdaptivePairControllerState.from_checkpoint_state(
+        reopened.controller_state
+    )
+    assert controller.accepted_slabs == controller.rejected_trials == 1
+    restored_rider = GrowableTrajectoryBuilder(1, 1)
+    restored_driver = GrowableTrajectoryBuilder(1, 1)
+    reopened.restore_pair(restored_rider, restored_driver)
+    for expected, restored in ((rider, restored_rider), (driver, restored_driver)):
+        for name in ("t", "x", "radiation_energy", "mass_shell_projection_energy"):
+            a = np.asarray(getattr(expected.build_current(), name))
+            b = np.asarray(getattr(restored.build_current(), name))
+            assert a.tobytes() == b.tobytes()
+    public = AdaptivePairPublicOutputState.from_checkpoint_state(
+        reopened.public_output_state
+    )
+    assert max(public.selected_rows) < reopened.committed_knots

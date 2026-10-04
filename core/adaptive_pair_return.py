@@ -852,10 +852,12 @@ def run_exact_pair_adaptive_window(
             flush_interrupted_checkpoint()
             raise IntegrationCancelled("Integration cancelled by caller.")
         if attempts >= maximum_attempts:
+            flush_interrupted_checkpoint()
             raise SharedLabTimeError(
                 "adaptive pair window exhausted its maximum trial attempts"
             )
         if accepted_slabs >= maximum_accepted_slabs:
+            flush_interrupted_checkpoint()
             raise SharedLabTimeError(
                 "adaptive pair window exhausted its maximum accepted slabs"
             )
@@ -909,7 +911,7 @@ def run_exact_pair_adaptive_window(
                     growable_causal_local_source_history
                 ),
             )
-        except IntegrationCancelled:
+        except (IntegrationCancelled, SharedLabTimeError):
             flush_interrupted_checkpoint()
             raise
         attempts += 1
@@ -965,8 +967,13 @@ def run_exact_pair_adaptive_window(
             )
             if state.current_step_ns >= attempted_step - shrink_tolerance:
                 assessment = result.trial.assessment
+                flush_interrupted_checkpoint()
                 raise SharedLabTimeError(
-                    "adaptive pair trial was rejected at the minimum usable step; "
+                    "adaptive pair trial was rejected without a shrinking proposal; "
+                    f"attempted step={attempted_step:.6e} ns, "
+                    f"proposed step={state.current_step_ns:.6e} ns, "
+                    f"minimum step={attempt_minimum:.6e} ns, "
+                    f"maximum step={maximum_step_ns:.6e} ns; "
                     f"normalized error={assessment.normalized_error:.6e} "
                     f"(position={assessment.position_error:.6e}, "
                     f"momentum={assessment.mechanical_momentum_error:.6e}, "
