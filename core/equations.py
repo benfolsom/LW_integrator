@@ -1848,6 +1848,7 @@ def retarded_equations_of_motion(
     _experimental_linear_spin_adapter: bool = False,
     _particle_proper_steps_ns: np.ndarray | None = None,
     _sampled_inclusion_enabled: bool = True,
+    _pseudo_grid_potential_context: Optional[Any] = None,
     _exact_trial_charge_fields: dict[tuple[str, int], Any] | None = None,
     _skip_exact_endpoint_field_diagnostic: bool = False,
 ) -> ParticleState:
@@ -1908,6 +1909,29 @@ def retarded_equations_of_motion(
 
     # Initialize result state as a copy of current state
     current_state = trajectory[index_traj]
+    if _pseudo_grid_potential_context is not None:
+        promoted = np.asarray(
+            _pseudo_grid_potential_context.get(
+                "promoted_mask", np.zeros(len(current_state["x"]), dtype=bool)
+            ),
+            dtype=bool,
+        )
+        if promoted.shape != (len(current_state["x"]),):
+            raise ValueError("promoted mask must match active observer count")
+        if np.any(promoted):
+            canonical_start = np.asarray(
+                _pseudo_grid_potential_context["canonical_start_momentum"], dtype=float
+            )
+            if canonical_start.shape != (len(promoted), 4) or not np.all(
+                np.isfinite(canonical_start[promoted])
+            ):
+                raise ValueError("promoted canonical start momentum must be finite")
+            current_state = dict(current_state)
+            for axis, name in enumerate(("Pt", "Px", "Py", "Pz")):
+                current_state[name] = np.asarray(
+                    current_state[name], dtype=float
+                ).copy()
+                current_state[name][promoted] = canonical_start[promoted, axis]
     result = _initialize_result_state(current_state)
     initialize_resolved_result(result, current_state)
     radiation_mode = _canonicalize_radiation_reaction_mode(radiation_reaction_mode)
@@ -1922,6 +1946,9 @@ def retarded_equations_of_motion(
         if len(trajectory_ext)
         else None
     )
+    if _pseudo_grid_potential_context is not None:
+        observer_cloud = _pseudo_grid_potential_context["observer_cloud"]
+        external_cloud = _pseudo_grid_potential_context["external_cloud"]
     if moment_impulse_diagnostic is not None and radiation_mode == "medina_lad":
         moment_rr_force = np.asarray(moment_radiation_force_native, dtype=float)
         if moment_rr_force.shape != (num_particles, 3) or not np.all(
@@ -2210,7 +2237,11 @@ def retarded_equations_of_motion(
             and pseudo_grid_space_charge_source_trajectory is None
             and pseudo_grid_sc_charge_matrix is None
         )
-        if sampled_inclusion_supported:
+        if _pseudo_grid_potential_context is not None:
+            inclusion_delta_A, inclusion_state = _pseudo_grid_potential_context[
+                "inclusion"
+            ](particle_idx, ordinary_gate_vector_change)
+        elif sampled_inclusion_supported:
             inclusion_delta_A, inclusion_state = sampled_inclusion_change(
                 trajectory=trajectory,
                 trajectory_ext=trajectory_ext,
@@ -2228,6 +2259,7 @@ def retarded_equations_of_motion(
                 macroparticle_smearing=macroparticle_smearing,
                 ordinary_gate_vector_change=ordinary_gate_vector_change,
             )
+        if sampled_inclusion_supported or _pseudo_grid_potential_context is not None:
             inclusion_momentum_offset = (
                 force_particle_charge / C_MMNS * inclusion_delta_A
             )
@@ -2705,7 +2737,9 @@ def retarded_equations_of_motion(
                     if sc_source_soa is not None
                     else len(sc_source_trajectory[-1]["x"])
                 )
-                if n_particles > 1 and sc_source_count > 0:
+                if (
+                    n_particles > 1 or pseudo_grid_sc_charge_matrix is not None
+                ) and sc_source_count > 0:
                     sc_softening = float(space_charge.softening_mm)
                     observer_sc_charge_row = None
                     if pseudo_grid_sc_charge_matrix is not None:
@@ -2888,8 +2922,12 @@ def retarded_equations_of_motion(
                         config=macroparticle_smearing,
                         step_index=index_traj,
                         fixed_offsets=(
-                            fixed_cloud_offsets(
-                                sc_source_trajectory, macroparticle_smearing
+                            (
+                                _pseudo_grid_potential_context["same_bunch_cloud"]
+                                if _pseudo_grid_potential_context is not None
+                                else fixed_cloud_offsets(
+                                    sc_source_trajectory, macroparticle_smearing
+                                )
                             )
                             if pseudo_grid_space_charge_source_trajectory is not None
                             else observer_cloud
