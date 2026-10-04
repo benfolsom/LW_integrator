@@ -323,6 +323,50 @@ def test_finite_trial_fields_and_response_derivatives_match_clone_oracle(
                 assert value == reference, field_spec.name
 
 
+@pytest.mark.parametrize("continuation", [0.0, 0.004])
+def test_resolved_finite_fields_and_jets_match_python_by_bytes(continuation):
+    builder = TrajectoryBuilder(12, 1, magnetic_dipole=True)
+    for step in range(8):
+        builder.set_step(step, _magnetic_state(step))
+    history = ExactCloudHistory(builder.build_partial(8), cloud_config())
+    position = np.array([3.5, 1.0, 1.0])
+    if continuation:
+        position = np.array([1.6, -0.6, 0.3])
+    event = rf.ObserverEvent(0.07 + continuation, position)
+    for function, backend_key in (
+        (rf.evaluate_retarded_charge_field_native, "backend"),
+        (rf.evaluate_retarded_charge_field_gradient_native, "backend"),
+        (rf.evaluate_retarded_charge_response_gradient_native, "fallback_backend"),
+    ):
+        expected = function(
+            history, event, extrapolate_ns=continuation, **{backend_key: "python"}
+        )
+        actual = function(
+            history,
+            event,
+            extrapolate_ns=continuation,
+            **{backend_key: "numba_full_strict_serial"},
+        )
+        if continuation and function is rf.evaluate_retarded_charge_field_native:
+            assert np.all(actual.retarded_time_ns > 0.07)
+        for field_spec in fields(expected):
+            left, right = getattr(expected, field_spec.name), getattr(
+                actual, field_spec.name
+            )
+            if isinstance(left, np.ndarray):
+                assert left.dtype == right.dtype and left.shape == right.shape
+                assert left.tobytes() == right.tobytes(), field_spec.name
+            elif hasattr(left, "__dataclass_fields__"):
+                for child in fields(left):
+                    a, b = getattr(left, child.name), getattr(right, child.name)
+                    if isinstance(a, np.ndarray):
+                        assert a.tobytes() == b.tobytes(), child.name
+                    else:
+                        assert a == b, child.name
+            else:
+                assert left == right, field_spec.name
+
+
 @pytest.mark.parametrize(
     "backend", ["python", "numba_roots_exact_serial", "numba_full_strict_serial"]
 )

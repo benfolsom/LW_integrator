@@ -302,6 +302,8 @@ def solve_shared_lab_time_bunches(
     driver_start: ParticleState,
     finalize_rider: Callable[[np.ndarray], ParticleState] | None = None,
     finalize_driver: Callable[[np.ndarray], ParticleState] | None = None,
+    query_rider_observer: Callable[[np.ndarray, int], ParticleState] | None = None,
+    query_driver_observer: Callable[[np.ndarray, int], ParticleState] | None = None,
     **options: Any,
 ) -> SharedLabTimePair:
     """Solve every particle's proper increment against one common lab barrier.
@@ -321,7 +323,12 @@ def solve_shared_lab_time_bunches(
         state: ParticleState,
         role: str,
         finalize: Callable[[np.ndarray], ParticleState] | None,
+        query_observer: Callable[[np.ndarray, int], ParticleState] | None,
     ) -> ProperTimeEndpoint:
+        if query_observer is not None and finalize is None:
+            raise ValueError(
+                "observer-only clock queries require a full final evaluation"
+            )
         times = np.asarray(state["t"], dtype=float)
         count = len(times)
         tolerance = absolute + relative * abs(target - start)
@@ -335,6 +342,9 @@ def solve_shared_lab_time_bunches(
         evaluations = 0
         cached_steps = steps.copy()
         cached_state = advance(steps)
+        if query_observer is not None:
+            cached_state = dict(cached_state)
+            cached_state["t"] = np.asarray(cached_state["t"]).copy()
         evaluations += 1
         for index in range(count):
 
@@ -343,7 +353,14 @@ def solve_shared_lab_time_bunches(
                 proposal = steps.copy()
                 proposal[index] = h
                 if not np.array_equal(proposal, cached_steps):
-                    cached_state = advance(proposal)
+                    if query_observer is None:
+                        cached_state = advance(proposal)
+                    else:
+                        # Keep full source histories and original observer indices.
+                        # Only this row's time is consumed by the scalar clock.
+                        # The final vector call supplies every diagnostic and state.
+                        queried = query_observer(proposal, index)
+                        cached_state["t"][index] = queried["t"][index]
                     evaluations += 1
                     cached_steps = proposal
                 return {"t": np.asarray(cached_state["t"])[index : index + 1]}
@@ -385,8 +402,16 @@ def solve_shared_lab_time_bunches(
     return SharedLabTimePair(
         start_time_ns=start,
         target_time_ns=target,
-        rider=solve_role(advance_rider, rider_start, "rider", finalize_rider),
-        driver=solve_role(advance_driver, driver_start, "driver", finalize_driver),
+        rider=solve_role(
+            advance_rider, rider_start, "rider", finalize_rider, query_rider_observer
+        ),
+        driver=solve_role(
+            advance_driver,
+            driver_start,
+            "driver",
+            finalize_driver,
+            query_driver_observer,
+        ),
     )
 
 

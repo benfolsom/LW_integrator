@@ -105,7 +105,7 @@ def test_clock_query_cache_matches_fresh_fields_bitwise_and_resets(monkeypatch):
         for key, value in reference.items():
             if isinstance(value, np.ndarray):
                 np.testing.assert_array_equal(result[key], value)
-    # A different immutable source context cannot inherit prior field results.
+    # A role wrapper around identical immutable histories retains start fields.
     before = calls
     cached(
         np.array([1e-5, 0.9e-5]),
@@ -113,7 +113,51 @@ def test_clock_query_cache_matches_fresh_fields_bitwise_and_resets(monkeypatch):
         driver,
         ExactRoleSourceHistory(driver_history, rider_history),
     )
+    assert calls == before
+    # A different history view must invalidate the fields, even with equal values.
+    before = calls
+    cached(
+        np.array([1e-5, 0.9e-5]),
+        rider,
+        driver,
+        ExactRoleSourceHistory(copy.copy(driver_history), rider_history),
+    )
     assert calls > before
+    # Observer queries retain original bunch indices and process one row only.
+    import core.equations as equations
+
+    original_medina = equations.compute_medina_radiation_reaction
+    medina_calls = 0
+
+    def count_medina(*args, **kwargs):
+        nonlocal medina_calls
+        medina_calls += 1
+        return original_medina(*args, **kwargs)
+
+    monkeypatch.setattr(equations, "compute_medina_radiation_reaction", count_medina)
+    steps = np.array([1e-5, 0.9e-5])
+    full = cached._clock_query(
+        steps, copy.deepcopy(rider), copy.deepcopy(driver), source
+    )
+    full_calls = medina_calls
+    medina_calls = 0
+    selected = cached._clock_observer_query(
+        steps, 1, copy.deepcopy(rider), copy.deepcopy(driver), source
+    )
+    assert 0 < medina_calls < full_calls
+    for key, value in full.items():
+        if isinstance(value, np.ndarray) and value.shape and value.shape[0] == 2:
+            assert selected[key][1:2].tobytes() == value[1:2].tobytes(), key
+    # High coordinates alone cannot identify a resolved observer event.
+    shifted = copy.deepcopy(rider)
+    shifted["source_position_tail_x"][1] += 1e-5
+    before = calls
+    result = cached(steps, copy.deepcopy(shifted), copy.deepcopy(driver), source)
+    assert calls > before
+    reference = fresh(steps, copy.deepcopy(shifted), copy.deepcopy(driver), source)
+    for key, value in reference.items():
+        if isinstance(value, np.ndarray):
+            assert result[key].tobytes() == value.tobytes(), key
     # Exercise the production adapter, including its detached clock queries
     # and the complete diagnostic pass before returning the slab.
     common = dict(
