@@ -1243,6 +1243,18 @@ def test_passive_velocity_matches_captured_timelike_segment():
     assert np.linalg.norm(beta) < 1
     np.testing.assert_allclose(beta, expected, rtol=0, atol=2e-9)
     assert np.linalg.norm(beta) == pytest.approx(0.9981412648308462, abs=2e-9)
+    expected_gamma = 1 / np.sqrt(1 - np.dot(beta, beta))
+    assert rebuilt["gamma"][p] == pytest.approx(expected_gamma, rel=1e-14)
+    assert rebuilt["gamma"][p] == pytest.approx(16.408850094013708, rel=1e-14)
+    mass = rebuilt.get("m_species", rebuilt["m"])[p]
+    np.testing.assert_allclose(
+        [rebuilt[k][p] for k in ("Px", "Py", "Pz")],
+        mass * C_MMNS * expected_gamma * beta,
+        rtol=1e-14,
+        atol=0,
+    )
+    assert rebuilt["Pt"][p] == pytest.approx(mass * C_MMNS * expected_gamma, rel=1e-14)
+
     for axis, b in zip("xyz", ("bx", "by", "bz")):
         assert rebuilt["bdot" + axis][p] == pytest.approx(
             (rebuilt[b][p] - previous[b][p]) / dt,

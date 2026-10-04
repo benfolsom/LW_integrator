@@ -122,6 +122,15 @@ def sector_change(
 ) -> np.ndarray:
     """Compare inclusion at one event, cancelling unchanged sources exactly."""
     old_charges = np.asarray(old.get("charges", np.zeros_like(charges)), dtype=float)
+    if "ids" in old:
+        dense = np.zeros_like(charges, dtype=float)
+        ids = np.asarray(old["ids"], dtype=int)
+        if np.any(ids >= len(dense)):
+            raise ValueError(
+                "reduced source identity is outside the full source history"
+            )
+        dense[ids] = old_charges
+        old_charges = dense
     if old_charges.shape != charges.shape:
         raise ValueError("sampled source identities changed; use a full stable history")
     old_model = old.get("model", model)

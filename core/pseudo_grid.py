@@ -946,6 +946,19 @@ def build_hybrid_space_charge_sources(
 
         field_local_idx = field_lookup.get(int(observer_particle_idx))
         if field_local_idx is None:
+            # A passive observer's physical charge is deposited across reps.
+            # Remove that deposit as well as the direct self source.
+            own_weights = _field_deposition_weights_for_particles(
+                state,
+                alive,
+                np.array([observer_particle_idx]),
+                field,
+                neighbor_count=field_deposition_neighbor_count,
+                weighting_mode=weighting_mode,
+            )[0]
+            charge_matrix[observer_local_idx, : field.size] -= (
+                charges[int(observer_particle_idx)] * own_weights
+            )
             continue
         self_location_charge = float(charge_matrix[observer_local_idx, field_local_idx])
         own_charge = float(charges[int(observer_particle_idx)])
@@ -1237,6 +1250,11 @@ def reconstruct_full_state_from_active_result(
 ) -> ParticleState:
     """Rebuild a full bunch state from an active-only solve result."""
     full_state = _copy_particle_state(previous_full_state)
+    # Publishing small accepted increments into integer input arrays would
+    # truncate the path while retaining its untruncated segment velocity.
+    for name in PSEUDO_GRID_PASSIVE_DELTA_FIELDS:
+        if name in full_state:
+            full_state[name] = np.asarray(full_state[name], dtype=float).copy()
     active = np.asarray(active_indices, dtype=int)
     if active.size == 0:
         if passive_update_mode != "frozen":
@@ -1257,6 +1275,30 @@ def reconstruct_full_state_from_active_result(
     )
 
     full_particle_count = len(np.asarray(previous_full_state.get("x", [])))
+    if "potential_inclusion_state" in active_result_state:
+        from .potential_inclusion import LEDGER_FIELDS
+
+        for name in LEDGER_FIELDS:
+            full_state[name] = np.array(
+                previous_full_state.get(name, np.zeros(full_particle_count)), copy=True
+            )
+        full_state["sampled_source_canonical_ready"] = np.array(
+            previous_full_state.get(
+                "sampled_source_canonical_ready", np.zeros(full_particle_count)
+            ),
+            dtype=bool,
+            copy=True,
+        )
+        # Widen before assignment; NumPy's fixed-width strings otherwise
+        # silently truncate accepted metadata after a source-set change.
+        old = list(
+            previous_full_state.get(
+                "potential_inclusion_state", [""] * full_particle_count
+            )
+        )
+        new = list(active_result_state["potential_inclusion_state"])
+        width = max([1] + [len(v) for v in old + new])
+        full_state["potential_inclusion_state"] = np.asarray(old, dtype=f"U{width}")
     if any(field_name in active_result_state for field_name in MEDINA_STEP_FIELDS):
         for field_name in MEDINA_STEP_FIELDS:
             if field_name in full_state:
@@ -1317,7 +1359,20 @@ def reconstruct_full_state_from_active_result(
         field_name: np.asarray(active_result_state[field_name], dtype=float)
         - np.asarray(previous_full_state[field_name], dtype=float)[active]
         for field_name in PSEUDO_GRID_PASSIVE_DELTA_FIELDS
-        if field_name not in {"bx", "by", "bz", "bdotx", "bdoty", "bdotz"}
+        if field_name
+        not in {
+            "bx",
+            "by",
+            "bz",
+            "bdotx",
+            "bdoty",
+            "bdotz",
+            "gamma",
+            "Px",
+            "Py",
+            "Pz",
+            "Pt",
+        }
         if field_name in active_result_state and field_name in previous_full_state
     }
 
@@ -1443,6 +1498,7 @@ def reconstruct_full_state_from_active_result(
                     beta - previous_full_state[beta_field][valid_passive_indices]
                 ) / dt
 
+    set_passive_on_shell_state(full_state, valid_passive_indices)
     _validate_reconstructed_particles(
         previous_full_state, full_state, passive_indices, step_index
     )
@@ -1478,6 +1534,42 @@ def reconstruct_full_state_from_active_result(
             ) / updated_sample_counts
 
     return full_state
+
+
+def set_passive_on_shell_state(
+    state: ParticleState,
+    passive_indices: np.ndarray,
+    four_potential: np.ndarray | None = None,
+) -> None:
+    """Recompose accepted passive momentum; potentials use (Phi, Ax, Ay, Az)."""
+    indices = np.asarray(passive_indices, dtype=int)
+    beta = np.column_stack([state["b" + axis][indices] for axis in "xyz"])
+    speed_squared = np.sum(beta * beta, axis=1)
+    if not np.all(np.isfinite(speed_squared)) or np.any(speed_squared >= 1):
+        raise PseudoGridStateError("passive on-shell state requires |beta| < 1")
+    gamma = 1.0 / np.sqrt(1.0 - speed_squared)
+    mass = np.asarray(state.get("m_species", state["m"]), dtype=float)[indices]
+    charge = np.asarray(state.get("q_observer", state["q"]), dtype=float)[indices]
+    potential = (
+        np.zeros((indices.size, 4))
+        if four_potential is None
+        else np.asarray(four_potential, dtype=float)
+    )
+    if potential.shape != (indices.size, 4) or not np.all(np.isfinite(potential)):
+        raise ValueError(
+            "passive four-potential must be finite with shape [passives, 4]"
+        )
+    if not np.all(np.isfinite(mass)) or np.any(mass <= 0):
+        raise ValueError("passive species mass must be finite and positive")
+    if not np.all(np.isfinite(charge)):
+        raise ValueError("passive observer charge must be finite")
+    state["gamma"][indices] = gamma
+    mc_gamma = mass * C_MMNS * gamma
+    state["Pt"][indices] = mc_gamma + charge * potential[:, 0] / C_MMNS
+    for axis, name in enumerate(("Px", "Py", "Pz"), 1):
+        state[name][indices] = (
+            mc_gamma * beta[:, axis - 1] + charge * potential[:, axis] / C_MMNS
+        )
 
 
 def _slow_rotating_active_indices(

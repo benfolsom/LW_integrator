@@ -1648,12 +1648,26 @@ def _run_pseudo_grid_reduced_step(
     source_charge = np.asarray(
         source_history[-1].get("q_source", source_history[-1]["q"])
     )
+    from .potential_inclusion import decode_inclusion_state
+
+    endpoint_roles = np.array(
+        [
+            decode_inclusion_state(encoded)
+            .get("external", {})
+            .get("passive_endpoint", False)
+            for encoded in observer_history[-1].get(
+                "potential_inclusion_state", [""] * observer_count
+            )
+        ],
+        dtype=bool,
+    )
     if (
         np.array_equal(np.sort(observer_active), np.arange(observer_count))
         and np.array_equal(np.sort(source_active), np.arange(source_count))
         and np.array_equal(
             np.asarray(source_effective_charges), source_charge[source_active]
         )
+        and not np.any(endpoint_roles[observer_active])
     ):
         return self_consistent_step(
             retarded_equations_of_motion,
@@ -1678,22 +1692,57 @@ def _run_pseudo_grid_reduced_step(
     sc_source_indices = observer_field.copy()
     pseudo_grid_space_charge_source_charges = None
     pseudo_grid_space_charge_source_radii = None
+    # Use the same observer-specific source rule for active and passive events.
+    from .pseudo_grid_potential import ReducedPotentialEvaluator
+    from .pseudo_grid import set_passive_on_shell_state
+    from .potential_inclusion import LEDGER_FIELDS, copy_inclusion_state
+
+    observer_all = np.arange(observer_count, dtype=int)
+    same_indices = sc_source_indices
+    same_rows = np.zeros((observer_count, len(same_indices)))
+    same_radii = np.zeros(len(same_indices))
     if _space_charge_enabled(space_charge):
-        observer_alive = get_alive_particle_indices(observer_history[-1])
-        (
-            sc_source_indices,
-            pseudo_grid_space_charge_source_charges,
-            pseudo_grid_space_charge_source_radii,
-        ) = build_hybrid_space_charge_sources(
+        same_indices, same_rows, same_radii = build_hybrid_space_charge_sources(
             observer_history[-1],
-            observer_alive,
-            observer_active,
+            get_alive_particle_indices(observer_history[-1]),
+            observer_all,
             observer_field,
             observer_field_source_charges,
             field_deposition_neighbor_count=field_deposition_neighbor_count,
             near_neighbor_count=space_charge_near_neighbor_count,
             weighting_mode=pseudo_grid_weighting_mode,
         )
+        sc_source_indices = same_indices
+        pseudo_grid_space_charge_source_charges = same_rows[observer_active]
+        pseudo_grid_space_charge_source_radii = same_radii
+    # Full identity views retain removed representatives for counterfactual
+    # evaluations while each event samples only nonzero source rows.
+    evaluator_observer_soa = _indexed_active_history(
+        observer_soa, observer_all, start_step=observer_history_base_index
+    )
+    evaluator_source_soa = _indexed_active_history(
+        source_soa, np.arange(source_count), start_step=source_history_base_index
+    )
+    potential_evaluator = ReducedPotentialEvaluator(
+        observer_history=observer_history,
+        source_history=source_history,
+        observer_soa=evaluator_observer_soa,
+        source_soa=evaluator_source_soa,
+        source_indices=source_active,
+        source_charges=source_effective_charges,
+        same_indices=same_indices,
+        same_charges=same_rows,
+        same_radii=same_radii,
+        h=h_step,
+        startup_mode=startup_mode,
+        sim_type=sim_type,
+        chrono_mode=chrono_mode,
+        self_consistency=self_consistency,
+        space_charge=space_charge,
+        macroparticle_smearing=macroparticle_smearing,
+        beamline_geometry=beamline_geometry,
+    )
+
     source_local_start = _resolve_history_start_index(
         source_history,
         source_history_start_index,
@@ -1762,6 +1811,95 @@ def _run_pseudo_grid_reduced_step(
 
     local_index = len(observer_active_history) - 1
 
+    promoted = endpoint_roles[observer_active]
+    inclusion_cache = {}
+    canonical_start = np.full((len(observer_active), 4), np.nan)
+    for local_particle in np.flatnonzero(promoted):
+        particle = int(observer_active[local_particle])
+        value, delta, encoded = potential_evaluator.evaluate(particle)
+        inclusion_cache[int(local_particle)] = (value, delta, encoded)
+        state = observer_history[-1]
+        mass = np.asarray(state.get("m_species", state["m"]))[particle]
+        charge = np.asarray(state.get("q_observer", state["q"]))[particle]
+        beta = np.array([state["b" + axis][particle] for axis in "xyz"])
+        # The accepted passive segment defines mechanical p. Align its
+        # potential basis at this event before the inclusion delta is added.
+        mechanical = mass * C_MMNS * state["gamma"][particle] * np.r_[1.0, beta]
+        canonical_start[local_particle] = (
+            mechanical + charge / C_MMNS * (value - delta)[[3, 0, 1, 2]]
+        )
+
+    def inclusion(local_particle, gate_change):
+        particle = int(observer_active[local_particle])
+        if local_particle not in inclusion_cache:
+            inclusion_cache[local_particle] = potential_evaluator.evaluate(particle)
+        _, delta, encoded = inclusion_cache[local_particle]
+        # The ordinary backward vector-potential difference is absent on the
+        # first open-gate step. Match the established sampled startup treatment.
+        from .potential_inclusion import decode_inclusion_state
+
+        old = decode_inclusion_state(
+            observer_history[-1].get(
+                "potential_inclusion_state", [""] * observer_count
+            )[particle]
+        )
+        current = decode_inclusion_state(encoded)
+        if (
+            startup_mode is StartupMode.COLD_START
+            and len(observer_history) > 1
+            and not promoted[local_particle]
+            and current.get("external", {}).get("gate_open", False)
+            and not old.get("external", {}).get("gate_open", False)
+        ):
+            ext = current["external"]
+            ids = np.asarray(ext["ids"], dtype=int)
+            q = np.asarray(ext["charges"])
+            r = np.asarray(ext["radii"])
+            now = potential_evaluator._event(
+                observer_history,
+                particle,
+                "external",
+                ids,
+                q,
+                "retarded",
+                r,
+                gate=False,
+                visibility_mask=ext.get("visibility_mask"),
+            )[0]
+            before = potential_evaluator._event(
+                observer_history[:-1],
+                particle,
+                "external",
+                ids,
+                q,
+                "retarded",
+                r,
+                gate=False,
+                visibility_mask=ext.get("visibility_mask"),
+            )[0]
+            gate_change[:] = now[:3] - before[:3]
+        return delta, encoded
+
+    potential_context = {
+        "inclusion": inclusion,
+        "promoted_mask": promoted,
+        "canonical_start_momentum": canonical_start,
+        "observer_cloud": (
+            None
+            if potential_evaluator.observer_cloud is None
+            else potential_evaluator.observer_cloud[observer_active]
+        ),
+        "external_cloud": (
+            None
+            if potential_evaluator.source_cloud is None
+            else potential_evaluator.source_cloud[source_active]
+        ),
+        "same_bunch_cloud": (
+            None
+            if potential_evaluator.observer_cloud is None
+            else potential_evaluator.observer_cloud[same_indices]
+        ),
+    }
     try:
         active_result_state = self_consistent_step(
             retarded_equations_of_motion,
@@ -1781,6 +1919,13 @@ def _run_pseudo_grid_reduced_step(
             **(
                 {"_sampled_inclusion_enabled": False}
                 if _call_accepts_kw(self_consistent_step, "_sampled_inclusion_enabled")
+                else {}
+            ),
+            **(
+                {"_pseudo_grid_potential_context": potential_context}
+                if _call_accepts_kw(
+                    self_consistent_step, "_pseudo_grid_potential_context"
+                )
                 else {}
             ),
             pseudo_grid_space_charge_source_charges=(
@@ -1912,6 +2057,32 @@ def _run_pseudo_grid_reduced_step(
     )
 
     passive_indices = np.asarray(passive_map.passive_indices, dtype=int)
+    if passive_update_mode in {"weighted_delta", "ballistic"} and passive_indices.size:
+        live = ~np.asarray(
+            active_reconstructed.get(
+                "_dead_particles", np.zeros(observer_count, dtype=bool)
+            )
+        )[passive_indices]
+        passive_indices = passive_indices[live]
+        # Endpoint bookkeeping is a canonical offset, never a force or work.
+        # Retain the source set and instantaneous/retarded model of this step.
+        endpoint_potential = np.zeros((len(passive_indices), 4))
+        copy_inclusion_state(active_reconstructed, active_reconstructed)
+        for row, particle in enumerate(passive_indices):
+            value, delta, encoded = potential_evaluator.evaluate(
+                int(particle), endpoint=active_reconstructed
+            )
+            endpoint_potential[row] = value[[3, 0, 1, 2]]
+            for axis, name in enumerate(LEDGER_FIELDS):
+                active_reconstructed[name][particle] += delta[axis]
+            active_reconstructed["potential_inclusion_state"][particle] = encoded
+            active_reconstructed["sampled_source_canonical_ready"][particle] = True
+        set_passive_on_shell_state(
+            active_reconstructed, passive_indices, endpoint_potential
+        )
+        active_reconstructed["potential_inclusion_state"] = np.asarray(
+            active_reconstructed["potential_inclusion_state"], dtype=str
+        )
     if passive_update_mode != "external_interbunch" or passive_indices.size == 0:
         return active_reconstructed
 
