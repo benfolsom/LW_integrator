@@ -69,6 +69,65 @@ def preserve_drift_remainders(
     centered: bool = False,
     on_shell: bool = True,
 ) -> None:
+    """Store compiled drift parts only when every Decimal rounding is certified."""
+    from .certified_drift import drift_remainders_certified
+
+    if any(name not in result for name in RESOLVED_KNOT_FIELDS):
+        initialize_resolved_result(result, current)
+    end_u = np.asarray(mechanical_u, dtype=float)
+    start_u = knot_proper_velocity(current, index) if centered else end_u
+    coordinates = np.empty((4, 3))
+    rounded = np.empty(4)
+    for i, axis in enumerate(("t", "x", "y", "z")):
+        prefix, suffix = (
+            ("source_time", "ns") if axis == "t" else ("source_position", axis)
+        )
+        coordinates[i, 0] = current[axis][index]
+        for j, part in enumerate(("low", "tail"), start=1):
+            values = current.get(f"{prefix}_{part}_{suffix}")
+            coordinates[i, j] = 0.0 if values is None else values[index]
+        rounded[i] = result[axis][index]
+    values, certified = drift_remainders_certified(
+        coordinates,
+        rounded,
+        start_u,
+        end_u,
+        h,
+        current["gamma"][index],
+        result["gamma"][index],
+        centered,
+        on_shell,
+    )
+    if not certified:
+        return preserve_drift_remainders_decimal(
+            result,
+            current,
+            index,
+            h,
+            mechanical_u,
+            centered=centered,
+            on_shell=on_shell,
+        )
+    result["source_speed_deficit"][index] = values[0]
+    result["source_time_low_ns"][index] = values[1]
+    result["source_time_tail_ns"][index] = values[5]
+    for i, axis in enumerate("xyz", start=1):
+        result[f"source_position_low_{axis}"][index] = values[1 + i]
+        result[f"source_position_tail_{axis}"][index] = values[5 + i]
+        result[f"source_u_{axis}"][index] = end_u[i - 1]
+    result["source_kinematics_ready"][index] = float(on_shell)
+
+
+def preserve_drift_remainders_decimal(
+    result: dict[str, Any],
+    current: dict[str, Any],
+    index: int,
+    h: float,
+    mechanical_u: np.ndarray,
+    *,
+    centered: bool = False,
+    on_shell: bool = True,
+) -> None:
     """Keep the low parts of the drift beside its existing rounded endpoints.
 
     The shell energy is resolved only on a mechanical mass-shell path. Other

@@ -23,10 +23,8 @@ import numpy as np
 
 from .canonical_momentum import (
     canonical_four_force_from_potential_gradient_native,
-    canonical_four_impulse_from_potential_gradient_native,
     canonical_potential_momentum_native,
     mechanical_lorentz_four_force_native,
-    mechanical_lorentz_four_impulse_native,
 )
 from .retarded_fields import (
     ObserverEvent,
@@ -65,6 +63,109 @@ class RetardedChargeSourceInteraction:
         return bool(self.response is not None and self.response.fallback_used)
 
 
+def cached_charge_source_interaction(
+    field: RetardedChargeFieldGradientResult | RetardedChargeResponseGradientResult,
+    *,
+    four_velocity_mm_ns: np.ndarray,
+    observer_charge_native: float,
+    proper_time_step_ns: float,
+    cache: dict | None,
+    key: tuple[str, int],
+) -> RetardedChargeSourceInteraction:
+    """Reuse a contraction only for the identical field, velocity, and charge.
+
+    The two impulses retain their original multiplication order when h changes.
+    Field identity prevents reuse after continuation or provisional replacement.
+    Byte snapshots distinguish signed zeros and changed observer velocities.
+    """
+    signature = (four_velocity_mm_ns.tobytes(), float(observer_charge_native).hex())
+    saved = None if cache is None else cache.get(key)
+    if saved is not None and saved[0] is field and saved[1] == signature:
+        step = float(proper_time_step_ns)
+        if not np.isfinite(step):
+            raise ValueError("proper_time_step_ns must be finite")
+        previous = saved[2]
+        return RetardedChargeSourceInteraction(
+            field=previous.field,
+            response=previous.response,
+            canonical_potential_momentum=previous.canonical_potential_momentum,
+            canonical_four_force=previous.canonical_four_force,
+            canonical_four_impulse=step * previous.canonical_four_force,
+            mechanical_four_force=previous.mechanical_four_force,
+            mechanical_four_impulse=step * previous.mechanical_four_force,
+        )
+    if isinstance(field, RetardedChargeResponseGradientResult):
+        interaction = charge_source_interaction_from_response_native(
+            field,
+            four_velocity_mm_ns=four_velocity_mm_ns,
+            observer_charge_native=observer_charge_native,
+            proper_time_step_ns=proper_time_step_ns,
+            contraction_backend="numba_strict_serial",
+        )
+    else:
+        interaction = charge_source_interaction_from_field_native(
+            field,
+            four_velocity_mm_ns=four_velocity_mm_ns,
+            observer_charge_native=observer_charge_native,
+            proper_time_step_ns=proper_time_step_ns,
+        )
+    if cache is not None:
+        cache[key] = (field, signature, interaction)
+    return interaction
+
+
+def cached_ordinary_force_derivative(
+    interaction,
+    *,
+    four_velocity_mm_ns: np.ndarray,
+    four_acceleration_mm_ns2: np.ndarray,
+    charge_native: float,
+    cache: dict | None,
+    key: tuple[str, int],
+) -> np.ndarray:
+    """Retain a start derivative while its complete contraction inputs agree."""
+    from .antisymmetric_response_rfs import (
+        antisymmetric_response_charge_force_derivative_native,
+    )
+    from .canonical_momentum import mechanical_lorentz_four_force_derivative_native
+
+    payload = (
+        interaction.response if interaction.response is not None else interaction.field
+    )
+    signature = (
+        four_velocity_mm_ns.tobytes(),
+        four_acceleration_mm_ns2.tobytes(),
+        float(charge_native).hex(),
+    )
+    saved = None if cache is None else cache.get(key)
+    if saved is not None and saved[0] is payload and saved[1] == signature:
+        return saved[2]
+    if interaction.response is not None:
+        derivative = antisymmetric_response_charge_force_derivative_native(
+            four_velocity_mm_ns=four_velocity_mm_ns,
+            four_acceleration_mm_ns2=four_acceleration_mm_ns2,
+            antisymmetric_response=payload.antisymmetric_response,
+            partial_antisymmetric_response=payload.partial_antisymmetric_response,
+            charge_native=charge_native,
+        )
+    else:
+        field_tensor = (
+            payload.field.field_tensor
+            if hasattr(payload, "field")
+            else payload.field_tensor
+        )
+        derivative = mechanical_lorentz_four_force_derivative_native(
+            four_velocity_mm_ns=four_velocity_mm_ns,
+            four_acceleration_mm_ns2=four_acceleration_mm_ns2,
+            field_tensor=field_tensor,
+            partial_f=payload.partial_f,
+            charge_native=charge_native,
+        )
+    if cache is not None:
+        cache[key] = (payload, signature, derivative)
+    return derivative
+
+
 def charge_source_interaction_from_field_native(
     field: RetardedChargeFieldGradientResult,
     *,
@@ -90,23 +191,16 @@ def charge_source_interaction_from_field_native(
         partial_a=field.partial_a,
         charge_native=observer_charge_native,
     )
-    canonical_impulse = canonical_four_impulse_from_potential_gradient_native(
-        four_velocity_mm_ns=four_velocity_mm_ns,
-        partial_a=field.partial_a,
-        charge_native=observer_charge_native,
-        proper_time_step_ns=proper_time_step_ns,
-    )
+    step = float(proper_time_step_ns)
+    if not np.isfinite(step):
+        raise ValueError("proper_time_step_ns must be finite")
+    canonical_impulse = step * canonical_force
     mechanical_force = mechanical_lorentz_four_force_native(
         four_velocity_mm_ns=four_velocity_mm_ns,
         field_tensor=field.field.field_tensor,
         charge_native=observer_charge_native,
     )
-    mechanical_impulse = mechanical_lorentz_four_impulse_native(
-        four_velocity_mm_ns=four_velocity_mm_ns,
-        field_tensor=field.field.field_tensor,
-        charge_native=observer_charge_native,
-        proper_time_step_ns=proper_time_step_ns,
-    )
+    mechanical_impulse = step * mechanical_force
     return RetardedChargeSourceInteraction(
         field=field,
         canonical_potential_momentum=potential_momentum,

@@ -9,6 +9,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal, localcontext
+from functools import lru_cache
+from math import isfinite
+from struct import pack, unpack
 from typing import Sequence
 
 import numpy as np
@@ -29,7 +32,118 @@ class BallisticRetardedPoint:
     transverse_separation_vector_mm: np.ndarray
 
 
+def _compiled_velocity_constants(proper: tuple[float, ...]) -> np.ndarray | None:
+    # Tuple equality merges +0.0 and -0.0. A byte key retains every input bit.
+    return _cached_velocity_constants(pack("!3d", *proper))
+
+
+@lru_cache(maxsize=256)
+def _cached_velocity_constants(key: bytes) -> np.ndarray | None:
+    """Resolve immutable velocity constants once, retaining their Decimal values."""
+    proper = unpack("!3d", key)
+    if not all(isfinite(x) for x in proper):
+        return None
+    if max(abs(x) for x in proper) > 5e11 and np.linalg.norm(proper) > 1e12:
+        return None
+    with localcontext() as context:
+        context.prec = 90
+        values = [Decimal.from_float(x) for x in proper]
+        magnitude = sum((x * x for x in values), Decimal(0)).sqrt()
+        gamma = (1 + magnitude * magnitude).sqrt()
+        deficit = 1 / (gamma * (gamma + magnitude))
+        direction = (
+            [x / magnitude for x in values]
+            if magnitude
+            else [Decimal(1), Decimal(0), Decimal(0)]
+        )
+        values_to_split = [deficit, 1 - deficit, *direction]
+        context.prec = 400
+        constants = np.zeros((5, 5))
+        for row, value in enumerate(values_to_split):
+            remainder = value
+            for column in range(4):
+                part = float(remainder)
+                constants[row, column] = part
+                remainder -= Decimal.from_float(part)
+            constants[row, 4] = (
+                float(np.nextafter(float(abs(remainder)), np.inf)) if remainder else 0.0
+            )
+        constants.flags.writeable = False
+        return constants
+
+
 def ballistic_retarded_point(
+    *,
+    observer_time_ns: float,
+    observer_position_mm: Sequence[float] | np.ndarray,
+    anchor_time_ns: float,
+    anchor_position_mm: Sequence[float] | np.ndarray,
+    source_proper_velocity: Sequence[float] | np.ndarray,
+    observer_time_low_ns: float = 0.0,
+    observer_position_low_mm: Sequence[float] | np.ndarray | None = None,
+    observer_time_tail_ns: float = 0.0,
+    observer_position_tail_mm: Sequence[float] | np.ndarray | None = None,
+) -> BallisticRetardedPoint:
+    """Certify every rounded diagnostic, falling back to the Decimal oracle."""
+    from .certified_ballistic import ballistic_geometry_certified
+
+    u = np.asarray(source_proper_velocity, dtype=float)
+    observer = np.asarray(observer_position_mm, dtype=float)
+    anchor = np.asarray(anchor_position_mm, dtype=float)
+    low = (
+        None
+        if observer_position_low_mm is None
+        else np.asarray(observer_position_low_mm, dtype=float)
+    )
+    tail = (
+        None
+        if observer_position_tail_mm is None
+        else np.asarray(observer_position_tail_mm, dtype=float)
+    )
+    # The existing public validation and exception text remain in the oracle.
+    if (
+        u.shape == observer.shape == anchor.shape == (3,)
+        and (low is None or low.shape == (3,))
+        and (tail is None or tail.shape == (3,))
+    ):
+        constants = _compiled_velocity_constants(tuple(float(x) for x in u))
+        certified = False
+        if constants is not None:
+            values, certified = ballistic_geometry_certified(
+                observer_time_ns,
+                observer,
+                anchor_time_ns,
+                anchor,
+                u,
+                observer_time_low_ns,
+                low,
+                observer_time_tail_ns,
+                tail,
+                constants,
+            )
+        if certified:
+            return BallisticRetardedPoint(
+                time_ns=float(values[0]),
+                separation_vector_mm=values[1:4].copy(),
+                residual_mm=float(values[4]),
+                time_error_bound_ns=float(values[5]),
+                longitudinal_separation_mm=float(values[6]),
+                transverse_separation_vector_mm=values[7:10].copy(),
+            )
+    return ballistic_retarded_point_decimal(
+        observer_time_ns=observer_time_ns,
+        observer_position_mm=observer_position_mm,
+        anchor_time_ns=anchor_time_ns,
+        anchor_position_mm=anchor_position_mm,
+        source_proper_velocity=source_proper_velocity,
+        observer_time_low_ns=observer_time_low_ns,
+        observer_position_low_mm=observer_position_low_mm,
+        observer_time_tail_ns=observer_time_tail_ns,
+        observer_position_tail_mm=observer_position_tail_mm,
+    )
+
+
+def ballistic_retarded_point_decimal(
     *,
     observer_time_ns: float,
     observer_position_mm: Sequence[float] | np.ndarray,

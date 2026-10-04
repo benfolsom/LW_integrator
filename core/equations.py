@@ -3261,8 +3261,7 @@ def retarded_equations_of_motion(
                 and len(trajectory_ext) > 0
             ):
                 from .charge_source_interactions import (
-                    charge_source_interaction_from_field_native,
-                    charge_source_interaction_from_response_native,
+                    cached_charge_source_interaction,
                 )
                 from .retarded_fields import (
                     ObserverEvent,
@@ -3418,38 +3417,21 @@ def retarded_equations_of_motion(
 
                 if isinstance(exact_charge_field, RetardedChargeResponseGradientResult):
                     exact_charge_analytic_response = exact_charge_field
-                    exact_charge_source_interaction = (
-                        charge_source_interaction_from_response_native(
-                            exact_charge_field,
-                            four_velocity_mm_ns=_four_velocity_native(
-                                exact_ordinary_response_beta,
-                                mechanical_gamma=(
-                                    float(current_state["gamma"][particle_idx])
-                                    if second_order_exact_source_selected
-                                    else float(working_gamma)
-                                ),
-                            ),
-                            observer_charge_native=float(force_particle_charge),
-                            proper_time_step_ns=float(h),
-                            contraction_backend="numba_strict_serial",
-                        )
-                    )
-                else:
-                    exact_charge_source_interaction = (
-                        charge_source_interaction_from_field_native(
-                            exact_charge_field,
-                            four_velocity_mm_ns=_four_velocity_native(
-                                exact_ordinary_response_beta,
-                                mechanical_gamma=(
-                                    float(current_state["gamma"][particle_idx])
-                                    if second_order_exact_source_selected
-                                    else float(working_gamma)
-                                ),
-                            ),
-                            observer_charge_native=float(force_particle_charge),
-                            proper_time_step_ns=float(h),
-                        )
-                    )
+                exact_charge_source_interaction = cached_charge_source_interaction(
+                    exact_charge_field,
+                    four_velocity_mm_ns=_four_velocity_native(
+                        exact_ordinary_response_beta,
+                        mechanical_gamma=(
+                            float(current_state["gamma"][particle_idx])
+                            if second_order_exact_source_selected
+                            else float(working_gamma)
+                        ),
+                    ),
+                    observer_charge_native=float(force_particle_charge),
+                    proper_time_step_ns=float(h),
+                    cache=_exact_trial_charge_fields,
+                    key=("cross_response", particle_idx),
+                )
 
                 # Evolve the gauge-invariant mechanical momentum.  The
                 # accepted canonical state is rebuilt from A at the endpoint
@@ -3576,38 +3558,22 @@ def retarded_equations_of_motion(
                         exact_same_bunch_analytic_response = (
                             exact_same_bunch_field_cache
                         )
-                        exact_same_bunch_interaction = (
-                            charge_source_interaction_from_response_native(
-                                exact_same_bunch_field_cache,
-                                four_velocity_mm_ns=_four_velocity_native(
-                                    exact_ordinary_response_beta,
-                                    mechanical_gamma=(
-                                        float(current_state["gamma"][particle_idx])
-                                        if second_order_exact_source_selected
-                                        else float(working_gamma)
-                                    ),
-                                ),
-                                observer_charge_native=float(force_particle_charge),
-                                proper_time_step_ns=float(h),
-                                contraction_backend="numba_strict_serial",
-                            )
-                        )
-                    else:
-                        exact_same_bunch_interaction = (
-                            charge_source_interaction_from_field_native(
-                                exact_same_bunch_field_cache,
-                                four_velocity_mm_ns=_four_velocity_native(
-                                    exact_ordinary_response_beta,
-                                    mechanical_gamma=(
-                                        float(current_state["gamma"][particle_idx])
-                                        if second_order_exact_source_selected
-                                        else float(working_gamma)
-                                    ),
-                                ),
-                                observer_charge_native=float(force_particle_charge),
-                                proper_time_step_ns=float(h),
-                            )
-                        )
+                    exact_same_bunch_interaction = cached_charge_source_interaction(
+                        exact_same_bunch_field_cache,
+                        four_velocity_mm_ns=_four_velocity_native(
+                            exact_ordinary_response_beta,
+                            mechanical_gamma=(
+                                float(current_state["gamma"][particle_idx])
+                                if second_order_exact_source_selected
+                                else float(working_gamma)
+                            ),
+                        ),
+                        observer_charge_native=float(force_particle_charge),
+                        proper_time_step_ns=float(h),
+                        cache=_exact_trial_charge_fields,
+                        key=("own_response", particle_idx),
+                    )
+
                     own_impulse = exact_same_bunch_interaction.mechanical_four_impulse
                     accumulated_momentum_t += float(own_impulse[0])
                     exact_mechanical_temporal_impulse += float(own_impulse[0])
@@ -4069,9 +4035,6 @@ def retarded_equations_of_motion(
                         accumulated_momentum_z += float(dipole_impulse_native[3])
 
             if second_order_exact_source_selected:
-                from .antisymmetric_response_rfs import (
-                    antisymmetric_response_charge_force_derivative_native,
-                )
                 from .canonical_momentum import (
                     mechanical_lorentz_four_force_derivative_native,
                 )
@@ -4278,42 +4241,25 @@ def retarded_equations_of_motion(
                             charge_native=float(force_particle_charge),
                         )
                     )
-                for interaction in (
-                    exact_charge_source_interaction,
-                    exact_same_bunch_interaction,
-                    dipole_source_interaction,
+                from .charge_source_interactions import cached_ordinary_force_derivative
+
+                for role, interaction in (
+                    ("cross_derivative", exact_charge_source_interaction),
+                    ("own_derivative", exact_same_bunch_interaction),
+                    ("dipole_derivative", dipole_source_interaction),
                 ):
                     if interaction is None:
                         continue
-                    if interaction.response is not None:
-                        ordinary_force_derivative += (
-                            antisymmetric_response_charge_force_derivative_native(
-                                four_velocity_mm_ns=start_four_velocity,
-                                four_acceleration_mm_ns2=start_four_acceleration,
-                                antisymmetric_response=(
-                                    interaction.response.antisymmetric_response
-                                ),
-                                partial_antisymmetric_response=(
-                                    interaction.response.partial_antisymmetric_response
-                                ),
-                                charge_native=float(force_particle_charge),
-                            )
-                        )
-                    elif interaction.field is not None:
-                        interaction_field = interaction.field
-                        if hasattr(interaction_field, "field"):
-                            field_tensor = interaction_field.field.field_tensor
-                        else:
-                            field_tensor = interaction_field.field_tensor
-                        ordinary_force_derivative += (
-                            mechanical_lorentz_four_force_derivative_native(
-                                four_velocity_mm_ns=start_four_velocity,
-                                four_acceleration_mm_ns2=start_four_acceleration,
-                                field_tensor=field_tensor,
-                                partial_f=interaction_field.partial_f,
-                                charge_native=float(force_particle_charge),
-                            )
-                        )
+                    if interaction.response is None and interaction.field is None:
+                        continue
+                    ordinary_force_derivative += cached_ordinary_force_derivative(
+                        interaction,
+                        four_velocity_mm_ns=start_four_velocity,
+                        four_acceleration_mm_ns2=start_four_acceleration,
+                        charge_native=float(force_particle_charge),
+                        cache=_exact_trial_charge_fields,
+                        key=(role, particle_idx),
+                    )
                 second_order_correction = (
                     0.5 * float(h) * float(h) * ordinary_force_derivative
                 )
