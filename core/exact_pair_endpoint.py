@@ -41,7 +41,7 @@ def evaluate_exact_endpoint_four_potential(
     bunches advance in proper time, so their final lab times differ; when an
     observer is closer to a source than c times that spread, the source's
     retarded point lies after its last accepted knot and its last segment is
-    continued (python backend) instead of failing.
+    continued with the selected strict charge provider instead of failing.
     """
 
     from .retarded_fields import evaluate_retarded_charge_field_native
@@ -75,6 +75,11 @@ def evaluate_exact_endpoint_four_potential(
         raise ValueError("exact endpoint rebase mask must match particle count")
 
     source_options = magnetic_dipole.source
+    continuation_backend = (
+        "python"
+        if magnetic_dipole.exact_retarded_backend == "python"
+        else "numba_full_strict_serial"
+    )
     charge_root_tolerance_mm = (
         float(source_options.root_tolerance_mm) if include_dipole_source else 1.0e-21
     )
@@ -108,7 +113,7 @@ def evaluate_exact_endpoint_four_potential(
                 require_complete_history=require_complete_history,
                 root_tolerance_mm=charge_root_tolerance_mm,
                 max_root_iterations=charge_max_root_iterations,
-                backend="python",
+                backend=continuation_backend,
                 extrapolate_ns=cross_extrapolate_ns,
             )
         potentials[particle_idx] += charge_field.four_potential
@@ -123,7 +128,7 @@ def evaluate_exact_endpoint_four_potential(
                 require_complete_history=require_complete_history,
                 root_tolerance_mm=charge_root_tolerance_mm,
                 max_root_iterations=charge_max_root_iterations,
-                backend="python",
+                backend=continuation_backend,
                 extrapolate_ns=2.0 * float(np.ptp(own_times)),
             )
             potentials[particle_idx] += own_field.four_potential

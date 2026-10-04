@@ -157,7 +157,14 @@ def make_exact_role_eom_advance(options: ExactPairEOMOptions) -> AdvanceRoleTria
             moment_impulse_diagnostic=options.moment_impulse_diagnostic,
         )
 
-    cached_context: tuple[Any, tuple[np.ndarray, ...]] | None = None
+    cached_contexts: list[
+        tuple[
+            tuple[Any, ...],
+            tuple[np.ndarray, ...],
+            dict[tuple[str, int], Any],
+            tuple[Any, ...],
+        ]
+    ] = []
     cached_fields: dict[tuple[str, int], Any] = {}
 
     def advance(
@@ -167,31 +174,83 @@ def make_exact_role_eom_advance(options: ExactPairEOMOptions) -> AdvanceRoleTria
         exact_source_history: Any,
         *,
         _skip_endpoint_diagnostic: bool = False,
+        _clock_observer_index: int | None = None,
     ) -> ParticleState:
-        nonlocal cached_context, cached_fields
+        nonlocal cached_fields
         cache_fields = bool(
             options.cache_start_charge_fields
             and len(observer_start.get("x", np.empty(0))) > 1
             and not options.magnetic_dipole.source.active
         )
         if cache_fields:
-            geometry = tuple(
-                np.asarray(observer_start[key]) for key in ("t", "x", "y", "z")
+            # Full and first-half slabs wrap the same immutable histories in
+            # separate role objects. Their start fields have identical inputs.
+            histories = (
+                (
+                    exact_source_history.charge_history,
+                    exact_source_history.observer_history,
+                )
+                if isinstance(exact_source_history, ExactRoleSourceHistory)
+                else (exact_source_history,)
             )
-            if cached_context is None or (
-                cached_context[0] is not exact_source_history
-                or any(
-                    not np.array_equal(value, saved)
-                    for value, saved in zip(geometry, cached_context[1])
+            geometry = tuple(
+                np.asarray(
+                    observer_start[key]
+                    if key in observer_start
+                    else np.zeros_like(observer_start["x"])
                 )
-            ):
-                # Clock queries deliberately detach the input dictionaries. Keep
-                # exact coordinate snapshots rather than keying on their identity.
-                cached_context = (
-                    exact_source_history,
-                    tuple(value.copy() for value in geometry),
+                for key in (
+                    "t",
+                    "x",
+                    "y",
+                    "z",
+                    "source_time_low_ns",
+                    "source_time_tail_ns",
+                    *(
+                        f"source_position_{part}_{axis}"
+                        for part in ("low", "tail")
+                        for axis in "xyz"
+                    ),
                 )
+            )
+            revisions = []
+            for history in histories:
+                base = (
+                    history.base
+                    if isinstance(history, TrialTrajectoryHistory)
+                    else history
+                )
+                if isinstance(base, TrajectoryArrays):
+                    base.require_current_storage()
+                revisions.append(getattr(base, "storage_generation", None))
+            revision_key = tuple(revisions)
+            for index, context in enumerate(cached_contexts):
+                if (
+                    len(context[0]) == len(histories)
+                    and all(a is b for a, b in zip(context[0], histories))
+                    and context[3] == revision_key
+                    and all(
+                        np.array_equal(value, saved)
+                        for value, saved in zip(geometry, context[1])
+                    )
+                ):
+                    cached_contexts.append(cached_contexts.pop(index))
+                    cached_fields = context[2]
+                    break
+            else:
+                # One adapter serves both roles. Retain their two contexts across
+                # the full and first-half paths; provisional midpoints evict them.
                 cached_fields = {}
+                cached_contexts.append(
+                    (
+                        histories,
+                        tuple(value.copy() for value in geometry),
+                        cached_fields,
+                        revision_key,
+                    )
+                )
+                if len(cached_contexts) > 2:
+                    cached_contexts.pop(0)
         charge_history = exact_source_history
         observer_history = None
         dipole_source_collection = None
@@ -229,6 +288,11 @@ def make_exact_role_eom_advance(options: ExactPairEOMOptions) -> AdvanceRoleTria
                     bound_eom = partial(
                         bound_eom, _skip_exact_endpoint_field_diagnostic=True
                     )
+                    if _clock_observer_index is not None:
+                        bound_eom = partial(
+                            bound_eom,
+                            _exact_clock_observer_index=_clock_observer_index,
+                        )
             return cast(
                 ParticleState,
                 self_consistent_step(
@@ -297,6 +361,16 @@ def make_exact_role_eom_advance(options: ExactPairEOMOptions) -> AdvanceRoleTria
         # followed by one complete vector evaluation at the solved steps.
         setattr(
             advance, "_clock_query", partial(advance, _skip_endpoint_diagnostic=True)
+        )
+        setattr(
+            advance,
+            "_clock_observer_query",
+            lambda steps, index, *args: advance(
+                steps,
+                *args,
+                _skip_endpoint_diagnostic=True,
+                _clock_observer_index=index,
+            ),
         )
     return advance
 
@@ -509,6 +583,36 @@ def solve_exact_pair_slab_trial(
                 copy.deepcopy(rider_start),
                 driver_source_history,
             )
+        for role, advance, observer, source, history in (
+            ("rider", advance_rider, rider_start, driver_start, rider_source_history),
+            (
+                "driver",
+                advance_driver,
+                driver_start,
+                rider_start,
+                driver_source_history,
+            ),
+        ):
+            observer_query = getattr(advance, "_clock_observer_query", None)
+            if observer_query is not None:
+
+                def query(
+                    h,
+                    index,
+                    query=observer_query,
+                    observer=observer,
+                    source=source,
+                    history=history,
+                ):
+                    return query(
+                        h,
+                        index,
+                        copy.deepcopy(observer),
+                        copy.deepcopy(source),
+                        history,
+                    )
+
+                bunch_options[f"query_{role}_observer"] = query
     provisional = solve_pair(
         **bunch_options,
         advance_rider=lambda h: rider_query(

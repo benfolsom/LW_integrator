@@ -158,6 +158,7 @@ def validated_precise_velocity(value: Sequence[float] | np.ndarray) -> np.ndarra
     return result
 
 
+@register_jitable
 def resolved_separation_frame(
     longitudinal_mm: float,
     transverse_vector_mm: np.ndarray,

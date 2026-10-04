@@ -15,6 +15,7 @@ from core.shared_lab_time import (
     commit_shared_lab_time_pair,
     solve_proper_step_to_lab_time,
     solve_shared_lab_time_pair,
+    solve_shared_lab_time_bunches,
 )
 from core.types import (
     ChronoMatchingMode,
@@ -350,3 +351,56 @@ def test_joint_commit_rejects_bad_driver_before_either_append() -> None:
 
     assert rider_builder.accepted_steps == 1
     assert driver_builder.accepted_steps == 1
+
+
+def test_observer_clock_queries_preserve_roots_counts_and_final_diagnostics():
+    start = {"t": np.zeros(3), "gamma": np.array([2.0, 3.0, 5.0])}
+    queries = []
+    final_steps = []
+
+    def advance(steps):
+        return {
+            "t": start["gamma"] * steps + steps**2,
+            "diagnostic": steps.copy(),
+        }
+
+    def query(steps, index):
+        queries.append(index)
+        # Poison untouched rows to prove the clock consumes only this observer.
+        result = {"t": np.full(3, np.nan)}
+        result["t"][index] = advance(steps)["t"][index]
+        return result
+
+    def finalize(steps):
+        final_steps.append(steps.copy())
+        return advance(steps)
+
+    options = dict(
+        advance_rider=advance,
+        advance_driver=advance,
+        rider_start=start,
+        driver_start=start,
+        finalize_rider=finalize,
+        finalize_driver=finalize,
+        start_time_ns=0.0,
+        delta_time_ns=0.3,
+        absolute_tolerance_ns=1e-18,
+        relative_tolerance=1e-12,
+        max_iterations=64,
+        max_bracket_expansions=20,
+        maximum_proper_step_ns=np.inf,
+    )
+    reference = solve_shared_lab_time_bunches(**options)
+    final_steps.clear()
+    actual = solve_shared_lab_time_bunches(
+        **options, query_rider_observer=query, query_driver_observer=query
+    )
+    assert set(queries) == {0, 1, 2}
+    assert len(final_steps) == 2
+    for role in ("rider", "driver"):
+        expected, result = getattr(reference, role), getattr(actual, role)
+        assert expected.evaluations == result.evaluations
+        assert expected.proper_step_ns == result.proper_step_ns
+        assert expected.residual_ns == result.residual_ns
+        for key in expected.state:
+            assert expected.state[key].tobytes() == result.state[key].tobytes()

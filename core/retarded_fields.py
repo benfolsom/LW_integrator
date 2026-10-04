@@ -337,6 +337,7 @@ class _RetardedSample:
     beta_snap_per_mm3: np.ndarray | None = None
     source_segment_index: int | None = None
     source_segment_fraction: float | None = None
+    ballistic_frame_components: np.ndarray | None = None
 
 
 @dataclass(frozen=True)
@@ -2337,6 +2338,7 @@ def _solve_retarded_sample(
     compiled: bool = False,
     observer_time_tail_ns: float = 0.0,
     observer_position_tail_mm: np.ndarray | None = None,
+    _defer_ballistic_frame: bool = False,
 ) -> _RetardedSample | None:
     if source.inertial_boundary is not None and source.time_ns.size == 0:
         return None
@@ -2367,10 +2369,22 @@ def _solve_retarded_sample(
                 source_proper_velocity=proper_velocity,
                 precise_separation_mm=point.separation_vector_mm,
                 time_error_bound_ns=point.time_error_bound_ns,
-                precise_separation_frame_mm=resolved_separation_frame(
-                    point.longitudinal_separation_mm,
-                    point.transverse_separation_vector_mm,
-                    proper_velocity,
+                precise_separation_frame_mm=(
+                    None
+                    if _defer_ballistic_frame
+                    else resolved_separation_frame(
+                        point.longitudinal_separation_mm,
+                        point.transverse_separation_vector_mm,
+                        proper_velocity,
+                    )
+                ),
+                ballistic_frame_components=(
+                    np.r_[
+                        point.longitudinal_separation_mm,
+                        point.transverse_separation_vector_mm,
+                    ]
+                    if _defer_ballistic_frame
+                    else None
                 ),
             )
     if source.light_cone_segments:
@@ -2616,6 +2630,81 @@ def _validated_root_options(
     return tolerance, iterations
 
 
+def _resolved_source_jets(
+    prepared: _PreparedHistory,
+    event: ObserverEvent,
+    tolerance: float,
+    iterations: int,
+    extrapolate_ns: float,
+) -> tuple[dict[int, Any], dict[int, tuple[np.ndarray, np.ndarray, np.ndarray, float]]]:
+    """Keep resolved roots, and batch all precise jets for one observer.
+
+    Decimal coordinate resolution and inertial root certificates retain their
+    scalar oracle. No flattened legacy position polynomial substitutes for a
+    resolved segment. Missing and legacy samples are handled by the caller.
+    """
+    from .resolved_charge_batch import resolved_charge_jets_strict_serial
+
+    position = np.asarray(event.position_mm)
+    low = np.asarray(event.position_low_mm)
+    tail = np.asarray(event.position_tail_mm)
+    samples = {
+        index: _solve_retarded_sample(
+            source,
+            observer_time_ns=float(event.time_ns),
+            observer_position_mm=position,
+            observer_time_low_ns=event.time_low_ns,
+            observer_position_low_mm=low,
+            observer_time_tail_ns=event.time_tail_ns,
+            observer_position_tail_mm=tail,
+            root_tolerance_mm=tolerance,
+            max_root_iterations=iterations,
+            extrapolate_ns=extrapolate_ns,
+            compiled=True,
+            _defer_ballistic_frame=True,
+        )
+        for index, source in prepared.sources.items()
+    }
+    indices = [
+        index
+        for index, sample in samples.items()
+        if sample is not None and sample.source_proper_velocity is not None
+    ]
+    count = len(indices)
+    if count == 0:
+        return samples, {}
+    charges = np.empty(count)
+    vectors = np.zeros((6, count, 3))
+    has_frame = np.zeros(count, dtype=bool)
+    has_snap = np.zeros(count, dtype=bool)
+    ballistic_frames = np.zeros((count, 4))
+    ballistic_mask = np.zeros(count, dtype=bool)
+    for row, index in enumerate(indices):
+        sample = samples[index]
+        charges[row] = prepared.arrays.charge_native[index]
+        vectors[0, row] = sample.precise_separation_mm
+        vectors[1, row] = sample.source_proper_velocity
+        vectors[2, row] = sample.beta_prime_per_mm
+        if sample.beta_jerk_per_mm2 is not None:
+            vectors[3, row] = sample.beta_jerk_per_mm2
+        if sample.precise_separation_frame_mm is not None:
+            vectors[4, row] = sample.precise_separation_frame_mm
+            has_frame[row] = True
+        if sample.beta_snap_per_mm3 is not None:
+            vectors[5, row] = sample.beta_snap_per_mm3
+            has_snap[row] = True
+        if sample.ballistic_frame_components is not None:
+            ballistic_frames[row] = sample.ballistic_frame_components
+            ballistic_mask[row] = True
+    potential, electric, magnetic, kappa = resolved_charge_jets_strict_serial(
+        charges, *vectors, has_frame, has_snap, ballistic_frames, ballistic_mask
+    )
+    return samples, {
+        index: (potential[row], electric[row], magnetic[row], float(kappa[row]))
+        for row, index in enumerate(indices)
+    }
+
+
 def _evaluate_prepared_charge_field_native(
     prepared: _PreparedHistory,
     observer_event: ObserverEvent,
@@ -2641,19 +2730,35 @@ def _evaluate_prepared_charge_field_native(
     missing_sources: list[int] = []
     time_error_bounds = np.full(arrays.n_sources, np.nan)
 
+    batch_samples, batch_jets = (
+        _resolved_source_jets(
+            prepared,
+            observer_event,
+            root_tolerance_mm,
+            max_root_iterations,
+            extrapolate_ns,
+        )
+        if compiled
+        else ({}, {})
+    )
+
     for source_index, source in prepared.sources.items():
-        sample = _solve_retarded_sample(
-            source,
-            observer_time_ns=observer_time_ns,
-            observer_position_mm=observer_position_mm,
-            root_tolerance_mm=root_tolerance_mm,
-            max_root_iterations=max_root_iterations,
-            extrapolate_ns=extrapolate_ns,
-            compiled=compiled,
-            observer_time_low_ns=observer_event.time_low_ns,
-            observer_position_low_mm=np.asarray(observer_event.position_low_mm),
-            observer_time_tail_ns=observer_event.time_tail_ns,
-            observer_position_tail_mm=np.asarray(observer_event.position_tail_mm),
+        sample = (
+            batch_samples[source_index]
+            if compiled
+            else _solve_retarded_sample(
+                source,
+                observer_time_ns=observer_time_ns,
+                observer_position_mm=observer_position_mm,
+                root_tolerance_mm=root_tolerance_mm,
+                max_root_iterations=max_root_iterations,
+                extrapolate_ns=extrapolate_ns,
+                compiled=compiled,
+                observer_time_low_ns=observer_event.time_low_ns,
+                observer_position_low_mm=np.asarray(observer_event.position_low_mm),
+                observer_time_tail_ns=observer_event.time_tail_ns,
+                observer_position_tail_mm=np.asarray(observer_event.position_tail_mm),
+            )
         )
         if sample is None:
             if _source_terminated_before_light_cone(
@@ -2666,21 +2771,31 @@ def _evaluate_prepared_charge_field_native(
             continue
         if sample.source_proper_velocity is not None:
             assert sample.precise_separation_mm is not None
-            potential_jets, electric_jets, magnetic_jets, _root, _residual, _kappa = (
-                precise_charge_jets_strict_serial if compiled else precise_charge_jets
-            )(
-                float(arrays.charge_native[source_index]),
-                sample.precise_separation_mm,
-                sample.source_proper_velocity,
-                sample.beta_prime_per_mm,
+            if compiled:
+                potential_jets, electric_jets, magnetic_jets, _kappa = batch_jets[
+                    source_index
+                ]
+            else:
                 (
-                    np.zeros(3)
-                    if sample.beta_jerk_per_mm2 is None
-                    else sample.beta_jerk_per_mm2
-                ),
-                sample.precise_separation_frame_mm,
-                sample.beta_snap_per_mm3,
-            )
+                    potential_jets,
+                    electric_jets,
+                    magnetic_jets,
+                    _root,
+                    _residual,
+                    _kappa,
+                ) = precise_charge_jets(
+                    float(arrays.charge_native[source_index]),
+                    sample.precise_separation_mm,
+                    sample.source_proper_velocity,
+                    sample.beta_prime_per_mm,
+                    (
+                        np.zeros(3)
+                        if sample.beta_jerk_per_mm2 is None
+                        else sample.beta_jerk_per_mm2
+                    ),
+                    sample.precise_separation_frame_mm,
+                    sample.beta_snap_per_mm3,
+                )
             electric = electric_jets[:, 0]
             magnetic = magnetic_jets[:, 0]
             four_potential = potential_jets[:, 0]
@@ -3084,6 +3199,21 @@ def _evaluate_prepared_charge_batch(
     max_root_iterations: int,
     extrapolate_ns: float = 0.0,
 ) -> tuple[RetardedChargeFieldResult, ...]:
+    if extrapolate_ns > 0.0 and backend == "numba_full_strict_serial":
+        # Continuation uses the same resolved bracket and segment as Python.
+        # The flat legacy batch kernel has no continuation contract.
+        return tuple(
+            _evaluate_prepared_charge_field_native(
+                prepared,
+                event,
+                require_complete_history=require_complete_history,
+                root_tolerance_mm=root_tolerance_mm,
+                max_root_iterations=max_root_iterations,
+                extrapolate_ns=extrapolate_ns,
+                compiled=True,
+            )
+            for event in observer_events
+        )
     if extrapolate_ns > 0.0 and backend != "python":
         raise ValueError("source-history extrapolation requires the python backend")
     if backend == "numba_roots_exact_serial":
@@ -3330,19 +3460,30 @@ def evaluate_retarded_charge_response_gradient_native(
     partial_a_terms = np.zeros((arrays.n_sources, 4, 4))
     response_terms = np.zeros((arrays.n_sources, 6))
     partial_response_terms = np.zeros((arrays.n_sources, 4, 6))
+    batch_samples, batch_jets = (
+        _resolved_source_jets(
+            prepared, observer_event, tolerance, iterations, extrapolate_ns
+        )
+        if compiled
+        else ({}, {})
+    )
     for source_index, source in prepared.sources.items():
-        sample = _solve_retarded_sample(
-            source,
-            observer_time_ns=float(observer_event.time_ns),
-            observer_position_mm=np.asarray(observer_event.position_mm),
-            observer_time_low_ns=observer_event.time_low_ns,
-            observer_position_low_mm=np.asarray(observer_event.position_low_mm),
-            observer_time_tail_ns=observer_event.time_tail_ns,
-            observer_position_tail_mm=np.asarray(observer_event.position_tail_mm),
-            compiled=compiled,
-            root_tolerance_mm=tolerance,
-            max_root_iterations=iterations,
-            extrapolate_ns=extrapolate_ns,
+        sample = (
+            batch_samples[source_index]
+            if compiled
+            else _solve_retarded_sample(
+                source,
+                observer_time_ns=float(observer_event.time_ns),
+                observer_position_mm=np.asarray(observer_event.position_mm),
+                observer_time_low_ns=observer_event.time_low_ns,
+                observer_position_low_mm=np.asarray(observer_event.position_low_mm),
+                observer_time_tail_ns=observer_event.time_tail_ns,
+                observer_position_tail_mm=np.asarray(observer_event.position_tail_mm),
+                compiled=compiled,
+                root_tolerance_mm=tolerance,
+                max_root_iterations=iterations,
+                extrapolate_ns=extrapolate_ns,
+            )
         )
         if sample is None:
             if not _source_terminated_before_light_cone(
@@ -3361,21 +3502,24 @@ def evaluate_retarded_charge_response_gradient_native(
         )
         if sample.source_proper_velocity is not None:
             assert sample.precise_separation_mm is not None
-            potential, electric, magnetic, _root, _residual, stable_kappa = (
-                precise_charge_jets_strict_serial if compiled else precise_charge_jets
-            )(
-                float(arrays.charge_native[source_index]),
-                sample.precise_separation_mm,
-                sample.source_proper_velocity,
-                sample.beta_prime_per_mm,
-                (
-                    np.zeros(3)
-                    if sample.beta_jerk_per_mm2 is None
-                    else sample.beta_jerk_per_mm2
-                ),
-                sample.precise_separation_frame_mm,
-                sample.beta_snap_per_mm3,
-            )
+            if compiled:
+                potential, electric, magnetic, stable_kappa = batch_jets[source_index]
+            else:
+                potential, electric, magnetic, _root, _residual, stable_kappa = (
+                    precise_charge_jets(
+                        float(arrays.charge_native[source_index]),
+                        sample.precise_separation_mm,
+                        sample.source_proper_velocity,
+                        sample.beta_prime_per_mm,
+                        (
+                            np.zeros(3)
+                            if sample.beta_jerk_per_mm2 is None
+                            else sample.beta_jerk_per_mm2
+                        ),
+                        sample.precise_separation_frame_mm,
+                        sample.beta_snap_per_mm3,
+                    )
+                )
             packed = np.stack(
                 (
                     -electric[0],
@@ -3800,7 +3944,10 @@ def evaluate_retarded_charge_field_gradient_native(
     tolerance, iterations = _validated_root_options(
         root_tolerance_mm, max_root_iterations
     )
-    if extrapolate_ns > 0.0 and selected_backend != "python":
+    if extrapolate_ns > 0.0 and selected_backend not in {
+        "python",
+        "numba_full_strict_serial",
+    }:
         raise ValueError("source-history extrapolation requires the python backend")
     from .antisymmetric_response_rfs import (
         materialize_antisymmetric_response_native,

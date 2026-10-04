@@ -1851,6 +1851,7 @@ def retarded_equations_of_motion(
     _pseudo_grid_potential_context: Optional[Any] = None,
     _exact_trial_charge_fields: dict[tuple[str, int], Any] | None = None,
     _skip_exact_endpoint_field_diagnostic: bool = False,
+    _exact_clock_observer_index: int | None = None,
 ) -> ParticleState:
     """Core equations of motion preserving the validated reference behavior.
 
@@ -2130,7 +2131,17 @@ def retarded_equations_of_motion(
         ):
             raise ValueError("particle proper steps must be finite and positive")
     # Process each particle independently
-    for particle_idx in range(num_particles):
+    observer_indices: range | tuple[int, ...] = range(num_particles)
+    if _exact_clock_observer_index is not None:
+        if not (
+            _skip_exact_endpoint_field_diagnostic
+            and _exact_trial_charge_fields is not None
+            and _particle_proper_steps_ns is not None
+            and 0 <= _exact_clock_observer_index < num_particles
+        ):
+            raise ValueError("observer-only evaluation requires an exact clock query")
+        observer_indices = (_exact_clock_observer_index,)
+    for particle_idx in observer_indices:
         if _particle_proper_steps_ns is not None:
             h = float(proper_steps[particle_idx])
         # Check for cancellation before processing each particle
@@ -3512,7 +3523,7 @@ def retarded_equations_of_motion(
                         )
                         # Bunch-mates closer than one light-step have their retarded
                         # point inside the step being solved: continue their last
-                        # accepted quintic segment (python provider only).
+                        # accepted quintic segment with the strict charge provider.
                         gamma_now = float(np.max(np.asarray(current_state["gamma"])))
                         exact_same_bunch_field_cache = (
                             evaluate_retarded_charge_field_gradient_native(
@@ -3523,7 +3534,12 @@ def retarded_equations_of_motion(
                                 minimum_step_mm=charge_minimum_step,
                                 root_tolerance_mm=charge_root_tolerance,
                                 max_root_iterations=charge_root_iterations,
-                                backend="python",
+                                backend=(
+                                    "python"
+                                    if magnetic_dipole.exact_retarded_backend
+                                    == "python"
+                                    else "numba_full_strict_serial"
+                                ),
                                 extrapolate_ns=2.0 * float(h) * gamma_now,
                             )
                         )
