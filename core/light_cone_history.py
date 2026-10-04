@@ -279,6 +279,51 @@ def endpoint_geometry(
     *,
     include_endpoint: bool = False,
 ) -> np.ndarray:
+    """Use compiled geometry only when its Decimal rounding is certified."""
+    from .certified_source_geometry import endpoint_geometry_certified
+
+    geometry, certified = endpoint_geometry_certified(
+        segment.frame,
+        segment.frame_low,
+        segment.origin_position_mm,
+        segment.origin_position_low_mm,
+        segment.origin_position_tail_mm,
+        segment.time_ns,
+        segment.origin_time_low_ns,
+        segment.origin_time_tail_ns,
+        observer_position_mm,
+        observer_position_low_mm,
+        observer_position_tail_mm,
+        observer_time_ns,
+        observer_time_low_ns,
+        observer_time_tail_ns,
+        segment.endpoint_coordinates if include_endpoint else None,
+    )
+    if certified:
+        return geometry
+    return endpoint_geometry_decimal(
+        segment,
+        observer_time_ns,
+        observer_position_mm,
+        observer_time_low_ns,
+        observer_position_low_mm,
+        observer_time_tail_ns,
+        observer_position_tail_mm,
+        include_endpoint=include_endpoint,
+    )
+
+
+def endpoint_geometry_decimal(
+    segment: LightConeSegment,
+    observer_time_ns: float,
+    observer_position_mm: np.ndarray,
+    observer_time_low_ns: float = 0.0,
+    observer_position_low_mm: np.ndarray | None = None,
+    observer_time_tail_ns: float = 0.0,
+    observer_position_tail_mm: np.ndarray | None = None,
+    *,
+    include_endpoint: bool = False,
+) -> np.ndarray:
     """Resolve anchor geometry, optionally at both accepted endpoints.
 
     The second anchor keeps evaluation near the upper knot consistent with
@@ -371,6 +416,20 @@ def endpoint_geometry(
 
 
 def separation_in_velocity_frame(
+    segment: LightConeSegment, separation: np.ndarray, proper_velocity: np.ndarray
+) -> np.ndarray:
+    """Certify the rounded rotation, retaining Decimal for ambiguous results."""
+    from .certified_source_geometry import separation_frame_certified
+
+    rotated, certified = separation_frame_certified(
+        segment.frame, segment.frame_low, separation, proper_velocity
+    )
+    if certified:
+        return rotated
+    return separation_in_velocity_frame_decimal(segment, separation, proper_velocity)
+
+
+def separation_in_velocity_frame_decimal(
     segment: LightConeSegment, separation: np.ndarray, proper_velocity: np.ndarray
 ) -> np.ndarray:
     """Rotate resolved separation components without forming a large lab vector."""
