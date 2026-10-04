@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Docs: add the physics discussion "Classical limit, bremsstrahlung, and
+  validity" (`docs/source/classical_limit_bremsstrahlung.rst`, under Physics
+  background). It covers:
+  - LW as the classical limit of retarded QED, and the parameters that bound
+    it;
+  - benchmarks against QFT-derived classical scattering results;
+  - the capture threshold and emission beyond the bremsstrahlung endpoint;
+  - where the classical spinning electron stops being valid (about
+    0.3 $E_S$), and the 165 fm reaction-ledger failure;
+  - impact-parameter-summed cross sections against Li et al. (2021) and
+    Kim and Pratt (1987).
+
 - Extend opt-in `adaptive_pair_return` to exact INERTIAL_PREHISTORY runs with
   multiple particles per bunch and same-bunch charge fields. Every particle
   reaches a shared lab-time barrier, step doubling controls errors across all

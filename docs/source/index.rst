@@ -44,6 +44,7 @@ If you are new to the project, start with the **Overview** and **Quick start** p
    :caption: Physics background
 
    theory
+   classical_limit_bremsstrahlung
    magnetic_dipole_moments
    radiation_reaction_plan
    radiation_flux_oracle
