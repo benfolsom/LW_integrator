@@ -22,14 +22,17 @@ of scope for this layer.
 from __future__ import annotations
 
 from copy import copy
+from collections import OrderedDict
 from dataclasses import dataclass, field as dataclass_field, replace
 from math import comb, fsum
 from typing import Any, Sequence, cast
+from weakref import ref
 
 import numpy as np
 
 from .constants import C_MMNS
 from .exact_source_cloud import ExactCloudHistory, transverse_offsets
+from .history_prefix_view import HistoryPrefixView
 from .light_cone_history import (
     LightConeSegment,
     build_light_cone_segment,
@@ -286,7 +289,7 @@ class _PreparedSourceHistory:
     ended_by_loss: bool
     source_acceleration_semantics: str = "preceding_interval"
     inertial_boundary: tuple[float, np.ndarray, np.ndarray] | None = None
-    light_cone_segments: tuple[LightConeSegment, ...] = ()
+    light_cone_segments: Sequence[LightConeSegment] = ()
     light_cone_enabled: bool = True
     _duration_buffer: np.ndarray | None = dataclass_field(default=None, repr=False)
     _coefficient_buffer: np.ndarray | None = dataclass_field(default=None, repr=False)
@@ -304,11 +307,18 @@ class _PreparedHistory:
     sources: dict[int, _PreparedSourceHistory]
     source_acceleration_semantics: str = "preceding_interval"
     parent_indices: np.ndarray | None = None
+    # Owned by this storage revision, never by observer-specific exclusions.
+    clouds: dict[tuple, _PreparedHistory] = dataclass_field(
+        default_factory=dict, repr=False, compare=False
+    )
+    trials: OrderedDict = dataclass_field(
+        default_factory=OrderedDict, repr=False, compare=False
+    )
 
 
 _CHARGE_PREPARED_HISTORY_CACHE: AppendAwarePreparedHistoryCache[
     TrajectoryHistory, _PreparedHistory
-] = AppendAwarePreparedHistoryCache(max_entries=2)
+] = AppendAwarePreparedHistoryCache(max_entries=16, preserve_capacity_growth=True)
 
 
 @dataclass(frozen=True)
@@ -711,6 +721,14 @@ def _append_history_arrays(
     if not np.array_equal(tail.charge_native, previous.charge_native):
         return _extract_history(history)
 
+    return _append_extracted_history_arrays(previous, tail, old_stop)
+
+
+def _append_extracted_history_arrays(
+    previous: _HistoryArrays, tail: _HistoryArrays, old_stop: int
+) -> _HistoryArrays:
+    """Append already extracted rows, including translated cloud rows."""
+
     tail_count = int(tail.time_ns.shape[0])
     new_stop = int(old_stop) + tail_count
     buffers = (
@@ -860,23 +878,137 @@ def _prepare_trial_history(
     """Extend cached accepted charge history without publishing trial knots."""
 
     accepted = _prepare_history(
-        history.base,
-        excluded_source_indices,
-        source_acceleration_semantics=source_acceleration_semantics,
+        history.base, (), source_acceleration_semantics=source_acceleration_semantics
     )
+    cached = accepted.trials.get(id(history))
+    if cached is not None and cached[0]() is history:
+        return _exclude_prepared_sources(cached[1], excluded_source_indices)
     tail_arrays = _extract_history(list(history.tail))
-    arrays, old_stop = _append_history_array_tail(accepted.arrays, tail_arrays)
+    old_stop = accepted.arrays.time_ns.shape[0]
+    arrays = _overlay_history_arrays(accepted.arrays, tail_arrays)
+    # The reconstruction needs just the former endpoint and its neighbour.
+    # Keep three context knots so the existing append arithmetic is unchanged.
+    context_start = max(0, old_stop - 3)
+    context = _slice_history_arrays(accepted.arrays, context_start)
+    local = _concatenate_history_arrays(context, tail_arrays)
     sources: dict[int, _PreparedSourceHistory] = {}
     for source_index, source in accepted.sources.items():
-        trial_source = _clone_prepared_source_history_for_trial(source)
-        trial_source._maximum_capacity = arrays._maximum_capacity
-        _append_prepared_source_history(trial_source, arrays, old_stop)
+        if source.ended_by_loss:
+            trial_source = copy(source)
+            _append_prepared_source_history(trial_source, arrays, old_stop)
+            sources[source_index] = trial_source
+            continue
+        local_source = replace(
+            source,
+            time_ns=source.time_ns[context_start:],
+            position_mm=source.position_mm[context_start:],
+            beta=source.beta[context_start:],
+            beta_prime_per_mm=source.beta_prime_per_mm[context_start:],
+            segment_duration_ns=source.segment_duration_ns[context_start:],
+            position_coefficients_mm=source.position_coefficients_mm[context_start:],
+            light_cone_segments=source.light_cone_segments[context_start:],
+            _duration_buffer=None,
+            _coefficient_buffer=None,
+            _beta_prime_buffer=None,
+            _maximum_capacity=local.time_ns.shape[0],
+        )
+        _append_prepared_source_history(local_source, local, old_stop - context_start)
+        instantaneous = source_acceleration_semantics == "instantaneous"
+        knot_start = (
+            old_stop if instantaneous else (0 if old_stop < 3 else old_stop - 1)
+        )
+        segment_start = max(0, old_stop - (1 if instantaneous else 2))
+        trial_source = replace(source, ended_by_loss=local_source.ended_by_loss)
+        for name in ("time_ns", "position_mm", "beta"):
+            setattr(
+                trial_source,
+                name,
+                HistoryPrefixView(
+                    getattr(source, name),
+                    old_stop,
+                    getattr(local_source, name)[old_stop - context_start :],
+                ),
+            )
+        for name, start in (
+            ("beta_prime_per_mm", knot_start),
+            ("segment_duration_ns", segment_start),
+            ("position_coefficients_mm", segment_start),
+            ("light_cone_segments", segment_start),
+        ):
+            setattr(
+                trial_source,
+                name,
+                (
+                    HistoryPrefixView(
+                        getattr(source, name),
+                        start,
+                        getattr(local_source, name)[start - context_start :],
+                    )
+                    if name != "light_cone_segments" or source.light_cone_enabled
+                    else ()
+                ),
+            )
+        trial_source._duration_buffer = None
+        trial_source._coefficient_buffer = None
+        trial_source._beta_prime_buffer = None
         sources[source_index] = trial_source
-    return _PreparedHistory(
+    prepared = _PreparedHistory(
         arrays=arrays,
         sources=sources,
         source_acceleration_semantics=source_acceleration_semantics,
     )
+    accepted.trials[id(history)] = (ref(history), prepared)
+    while len(accepted.trials) > 8:
+        accepted.trials.popitem(last=False)
+    return _exclude_prepared_sources(prepared, excluded_source_indices)
+
+
+_HISTORY_ROW_FIELDS = (
+    "time_ns",
+    "position_mm",
+    "beta",
+    "beta_prime_per_mm",
+    "dead",
+    "resolved_knots",
+)
+
+
+def _slice_history_arrays(arrays: _HistoryArrays, start: int) -> _HistoryArrays:
+    values: dict[str, Any] = {
+        name: None if getattr(arrays, name) is None else getattr(arrays, name)[start:]
+        for name in _HISTORY_ROW_FIELDS
+    }
+    return _HistoryArrays(charge_native=arrays.charge_native, **values)
+
+
+def _concatenate_history_arrays(
+    prefix: _HistoryArrays, tail: _HistoryArrays
+) -> _HistoryArrays:
+    values: dict[str, Any] = {
+        name: (
+            None
+            if getattr(prefix, name) is None
+            else np.concatenate((getattr(prefix, name), getattr(tail, name)), axis=0)
+        )
+        for name in _HISTORY_ROW_FIELDS
+    }
+    return _HistoryArrays(charge_native=prefix.charge_native, **values)
+
+
+def _overlay_history_arrays(
+    prefix: _HistoryArrays, tail: _HistoryArrays
+) -> _HistoryArrays:
+    values: dict[str, Any] = {
+        name: (
+            None
+            if getattr(prefix, name) is None
+            else HistoryPrefixView(
+                getattr(prefix, name), prefix.time_ns.shape[0], getattr(tail, name)
+            )
+        )
+        for name in _HISTORY_ROW_FIELDS
+    }
+    return _HistoryArrays(charge_native=prefix.charge_native, **values)
 
 
 def _quintic_worldline_sample(
@@ -1105,7 +1237,9 @@ def _prepare_source_history(
         source_acceleration_semantics=acceleration_semantics,
         inertial_boundary=inertial_boundary,
         light_cone_segments=(
-            _build_null_segments(history, source_index, 0, alive_stop, beta_primes)
+            list(
+                _build_null_segments(history, source_index, 0, alive_stop, beta_primes)
+            )
             if light_cone_enabled
             else ()
         ),
@@ -1259,9 +1393,9 @@ def _append_prepared_source_history(
     previous.segment_duration_ns = previous._duration_buffer[:segment_stop]
     previous.position_coefficients_mm = previous._coefficient_buffer[:segment_stop]
     if previous.light_cone_enabled:
-        previous.light_cone_segments = previous.light_cone_segments[
-            :coefficient_start
-        ] + _build_null_segments(
+        if not isinstance(previous.light_cone_segments, list):
+            previous.light_cone_segments = list(previous.light_cone_segments)
+        previous.light_cone_segments[coefficient_start:] = _build_null_segments(
             history,
             source_index,
             coefficient_start,
@@ -1354,6 +1488,10 @@ def _append_prepared_history(
 ) -> _PreparedHistory:
     """Extend charged-source preparation from one builder history tail."""
 
+    capacity = history_storage_capacity(history)
+    previous.arrays._maximum_capacity = capacity
+    for source in previous.sources.values():
+        source._maximum_capacity = capacity
     arrays = _append_history_arrays(previous.arrays, history, old_stop)
     # A changed constant forces _append_history_arrays to re-extract the full
     # history. Rebuild source selection as well instead of treating it as an
@@ -1368,6 +1506,7 @@ def _append_prepared_history(
         )
     for source in previous.sources.values():
         _append_prepared_source_history(source, arrays, old_stop)
+    previous.trials.clear()
     return previous
 
 
@@ -1383,32 +1522,64 @@ def _prepare_history(
         source_acceleration_semantics
     )
     if isinstance(history, ExactCloudHistory):
-        # Exclude parents before expansion: every child of the observer's
-        # own macro is absent, including off-centre children.
         macro = _prepare_history(
-            history.base,
-            excluded_source_indices,
-            source_acceleration_semantics=acceleration_semantics,
+            history.base, (), source_acceleration_semantics=acceleration_semantics
         )
-        return _expand_cloud_prepared_history(macro, history.config)
+        # These are precisely the inputs to transverse_offsets. A changed
+        # width, seed, or quadrature cannot reuse translated coordinates.
+        key = (
+            history.config.subcharge_count,
+            history.config.seed,
+            history.config.position_sigma_mm,
+            history.config.sigma_multiplier,
+        )
+        cloud = macro.clouds.get(key)
+        if (
+            cloud is None
+            or cloud.arrays.time_ns.shape[0] != macro.arrays.time_ns.shape[0]
+        ):
+            provisional = isinstance(history.base, TrialTrajectoryHistory)
+            if provisional:
+                cloud = _prepare_history(
+                    ExactCloudHistory(history.base.base, history.config),
+                    (),
+                    source_acceleration_semantics=acceleration_semantics,
+                )
+            # Accepted appenders may grow buffers in place. A failed cloud
+            # translation must not leave a half-updated variant reusable.
+            macro.clouds.pop(key, None)
+            cloud = _expand_cloud_prepared_history(
+                macro, history.config, previous=cloud, provisional=provisional
+            )
+            macro.clouds[key] = cloud
+            while len(macro.clouds) > 4:
+                del macro.clouds[next(iter(macro.clouds))]
+        return _exclude_prepared_sources(cloud, excluded_source_indices)
     if isinstance(history, TrialTrajectoryHistory):
         return _prepare_trial_history(
-            history,
-            excluded_source_indices,
-            acceleration_semantics,
+            history, excluded_source_indices, acceleration_semantics
         )
-    excluded = tuple(sorted({int(index) for index in excluded_source_indices}))
     try:
-        modes = _history_matrix(history, "source_history_mode")
+        # Indexed matrices use advanced indexing, which would copy the whole
+        # prefix just to identify the representation of its first row.
+        modes = (
+            history.row("source_history_mode", 0)[None, :]
+            if (
+                isinstance(history, IndexedTrajectoryArrays)
+                and history.n_steps
+                and history.base.source_history_mode.size
+            )
+            else _history_matrix(history, "source_history_mode")
+        )
     except (KeyError, AttributeError):
         modes = np.zeros((0, 0))
     mode_key = tuple(modes[0]) if modes.size else ()
-    return _CHARGE_PREPARED_HISTORY_CACHE.prepare(
+    prepared = _CHARGE_PREPARED_HISTORY_CACHE.prepare(
         history,
-        variant=("charge", excluded, acceleration_semantics, mode_key),
+        variant=("charge", acceleration_semantics, mode_key),
         prepare_full=lambda current: _prepare_history_uncached(
             current,
-            excluded,
+            (),
             reserve_capacity=history_prepared_buffer_capacity(current),
             maximum_capacity=history_storage_capacity(current),
             source_acceleration_semantics=acceleration_semantics,
@@ -1417,13 +1588,42 @@ def _prepare_history(
             previous,
             current,
             old_stop,
-            excluded,
         ),
     ).value
+    return _exclude_prepared_sources(prepared, excluded_source_indices)
+
+
+def _exclude_prepared_sources(
+    prepared: _PreparedHistory, excluded_source_indices: Sequence[int]
+) -> _PreparedHistory:
+    """Share arrays and worldlines while excluding every child of a parent."""
+    excluded = {int(index) for index in excluded_source_indices}
+    parents = prepared.parent_indices
+    count = (
+        prepared.arrays.n_sources
+        if parents is None
+        else (0 if not len(parents) else int(parents[-1]) + 1)
+    )
+    if any(index < 0 or index >= count for index in excluded):
+        raise IndexError("excluded source index is out of bounds")
+    if not excluded:
+        return prepared
+    return replace(
+        prepared,
+        sources={
+            index: source
+            for index, source in prepared.sources.items()
+            if (index if parents is None else int(parents[index])) not in excluded
+        },
+    )
 
 
 def _expand_cloud_prepared_history(
-    macro: _PreparedHistory, config: MacroparticleSmearingConfig
+    macro: _PreparedHistory,
+    config: MacroparticleSmearingConfig,
+    *,
+    previous: _PreparedHistory | None = None,
+    provisional: bool = False,
 ) -> _PreparedHistory:
     """Translate already reconstructed centre curves, including inertial past.
 
@@ -1432,9 +1632,9 @@ def _expand_cloud_prepared_history(
     Every translated curve is then solved independently by ordinary providers.
     """
     count = config.subcharge_count
-    if macro.arrays.resolved_knots is not None and np.any(
-        macro.arrays.resolved_knots[..., 13] != 0
-    ):
+    old_stop = 0 if previous is None else previous.arrays.time_ns.shape[0]
+    rows = _slice_history_arrays(macro.arrays, old_stop)
+    if rows.resolved_knots is not None and np.any(rows.resolved_knots[..., 13] != 0):
         raise ValueError(
             "exact charge clouds do not support source_history_representation="
             "'proper_velocity'; use 'light_cone_quintic' or point sources"
@@ -1446,50 +1646,141 @@ def _expand_cloud_prepared_history(
     ]
     offsets = np.concatenate([item[0] for item in offsets_and_weights])
     fractions = np.concatenate([item[1] for item in offsets_and_weights])
+    resolved = rows.resolved_knots
     arrays = _HistoryArrays(
-        time_ns=macro.arrays.time_ns[:, parents],
-        position_mm=macro.arrays.position_mm[:, parents] + offsets,
-        beta=macro.arrays.beta[:, parents],
-        beta_prime_per_mm=macro.arrays.beta_prime_per_mm[:, parents],
+        time_ns=rows.time_ns[:, parents],
+        position_mm=rows.position_mm[:, parents] + offsets,
+        beta=rows.beta[:, parents],
+        beta_prime_per_mm=rows.beta_prime_per_mm[:, parents],
         charge_native=macro.arrays.charge_native[parents] * fractions,
-        dead=macro.arrays.dead[:, parents],
+        dead=rows.dead[:, parents],
         resolved_knots=(
-            None
-            if macro.arrays.resolved_knots is None
-            else macro.arrays.resolved_knots[:, parents].copy()
+            None if resolved is None else np.array(resolved[:, parents], copy=True)
         ),
     )
     if arrays.resolved_knots is not None:
         for knot, child in np.ndindex(arrays.position_mm.shape[:2]):
             _, low, tail = _translate_resolved_position(
-                macro.arrays.position_mm[knot, parents[child]],
+                rows.position_mm[knot, parents[child]],
                 arrays.resolved_knots[knot, child, 4:7],
                 arrays.resolved_knots[knot, child, 8:11],
                 offsets[child],
             )
             arrays.resolved_knots[knot, child, 4:7] = low
             arrays.resolved_knots[knot, child, 8:11] = tail
+    if previous is None:
+        arrays = _reserve_history_arrays(
+            arrays,
+            (
+                macro.arrays._time_buffer.shape[0]
+                if macro.arrays._time_buffer is not None
+                else None
+            ),
+            maximum_capacity=macro.arrays._maximum_capacity,
+        )
+    elif provisional:
+        arrays = _overlay_history_arrays(previous.arrays, arrays)
+    else:
+        previous.arrays._maximum_capacity = macro.arrays._maximum_capacity
+        arrays = _append_extracted_history_arrays(previous.arrays, arrays, old_stop)
     sources = {}
     for child, parent in enumerate(parents):
         if parent not in macro.sources:
             continue
         centre = macro.sources[int(parent)]
-        coefficients = centre.position_coefficients_mm.copy()
+        old_source = None if previous is None else previous.sources.get(child)
+        segment_start = (
+            0
+            if old_source is None
+            else min(
+                len(old_source.segment_duration_ns),
+                max(
+                    0,
+                    old_stop
+                    - (
+                        1
+                        if macro.source_acceleration_semantics == "instantaneous"
+                        else 2
+                    ),
+                ),
+            )
+        )
+        # A provisional coefficient store becomes a prefix/tail row view.
+        coefficients: Any = np.array(
+            centre.position_coefficients_mm[segment_start:], copy=True
+        )
         coefficients[:, 0] += offsets[child]
+        segments: Sequence[LightConeSegment] = [
+            _translate_light_cone_segment(segment, offsets[child])
+            for segment in centre.light_cone_segments[segment_start:]
+        ]
+        if old_source is not None:
+            if provisional:
+                coefficients = HistoryPrefixView(
+                    old_source.position_coefficients_mm, segment_start, coefficients
+                )
+                segments = (
+                    HistoryPrefixView(
+                        old_source.light_cone_segments, segment_start, segments
+                    )
+                    if centre.light_cone_enabled
+                    else ()
+                )
+            else:
+                required = len(centre.position_coefficients_mm)
+                buffer = old_source._coefficient_buffer
+                if buffer is None or len(buffer) < required:
+                    capacity = max(
+                        required, 2 * len(old_source.position_coefficients_mm), 7
+                    )
+                    buffer = np.empty((capacity, 6, 3))
+                    buffer[:segment_start] = old_source.position_coefficients_mm[
+                        :segment_start
+                    ]
+                buffer[segment_start:required] = coefficients
+                coefficients = buffer[:required]
+                old_source._coefficient_buffer = buffer
+                if not isinstance(old_source.light_cone_segments, list):
+                    old_source.light_cone_segments = list(
+                        old_source.light_cone_segments
+                    )
+                old_source.light_cone_segments[segment_start:] = segments
+                segments = old_source.light_cone_segments
+        coefficient_buffer = None
+        if old_source is None and not provisional:
+            capacity = max(
+                len(coefficients),
+                7,
+                (
+                    0
+                    if macro.arrays._time_buffer is None
+                    else len(macro.arrays._time_buffer) - 1
+                ),
+            )
+            coefficient_buffer = np.empty((capacity, 6, 3))
+            coefficient_buffer[: len(coefficients)] = coefficients
+            coefficients = coefficient_buffer[: len(coefficients)]
         boundary = centre.inertial_boundary
-        if boundary is not None:
+        if old_source is not None:
+            boundary = old_source.inertial_boundary
+        elif boundary is not None:
             boundary = (boundary[0], boundary[1] + offsets[child], boundary[2])
+        # All child kinematics come from the centre; only positions and
+        # constant polynomial coefficients are translated.
+        alive_stop = len(centre.time_ns)
+        translated_position = arrays.position_mm[:alive_stop, child]
         sources[child] = replace(
             centre,
             source_index=child,
-            position_mm=centre.position_mm + offsets[child],
+            position_mm=translated_position,
             position_coefficients_mm=coefficients,
             inertial_boundary=boundary,
-            light_cone_segments=tuple(
-                _translate_light_cone_segment(segment, offsets[child])
-                for segment in centre.light_cone_segments
+            light_cone_segments=segments,
+            _coefficient_buffer=(
+                coefficient_buffer
+                if old_source is None
+                else (None if provisional else old_source._coefficient_buffer)
             ),
-            _coefficient_buffer=None,
         )
     return _PreparedHistory(
         arrays, sources, macro.source_acceleration_semantics, parents
@@ -2463,6 +2754,29 @@ def _charge_batch_event_arrays(
     return event_time_ns, event_position_mm
 
 
+def _legacy_kernel_array(values: Any, *, contiguous: bool = False) -> np.ndarray:
+    """Materialize legacy inputs with the reference Numba array layout.
+
+    The resolved provider indexes views directly. The older flat provider
+    needs ndarrays, and specializes its arithmetic on their C/strided layout.
+    Centre time columns stay strided; translated cloud positions stay C-order.
+    """
+    result = np.asarray(values)
+    if contiguous:
+        return np.ascontiguousarray(result)
+    if isinstance(values, HistoryPrefixView):
+        prefix = values.prefix
+        while isinstance(prefix, HistoryPrefixView):
+            prefix = prefix.prefix
+        row_bytes = result.dtype.itemsize * int(np.prod(result.shape[1:]))
+        if isinstance(prefix, np.ndarray) and prefix.strides[0] > row_bytes:
+            buffer = np.empty((len(result), 2, *result.shape[1:]), dtype=result.dtype)
+            strided = buffer[:, 0]
+            strided[:] = result
+            return strided
+    return result
+
+
 def _evaluate_prepared_charge_batch_numba_roots_exact_serial(
     prepared: _PreparedHistory,
     observer_events: Sequence[ObserverEvent],
@@ -2504,10 +2818,13 @@ def _evaluate_prepared_charge_batch_numba_roots_exact_serial(
             source_batches[source_index] = cast(
                 tuple[np.ndarray, ...],
                 evaluate_source_roots_exact_serial(
-                    source.time_ns,
-                    source.position_mm,
-                    source.segment_duration_ns,
-                    source.position_coefficients_mm,
+                    _legacy_kernel_array(source.time_ns),
+                    _legacy_kernel_array(
+                        source.position_mm,
+                        contiguous=prepared.parent_indices is not None,
+                    ),
+                    _legacy_kernel_array(source.segment_duration_ns),
+                    _legacy_kernel_array(source.position_coefficients_mm),
                     bool(source.ended_by_loss),
                     event_time_ns,
                     event_position_mm,
@@ -2662,10 +2979,13 @@ def _evaluate_prepared_charge_batch_numba_full_strict_serial(
             source_batches[source_index] = cast(
                 tuple[np.ndarray, ...],
                 evaluate_charge_source_events_full_strict_serial(
-                    source.time_ns,
-                    source.position_mm,
-                    source.segment_duration_ns,
-                    source.position_coefficients_mm,
+                    _legacy_kernel_array(source.time_ns),
+                    _legacy_kernel_array(
+                        source.position_mm,
+                        contiguous=prepared.parent_indices is not None,
+                    ),
+                    _legacy_kernel_array(source.segment_duration_ns),
+                    _legacy_kernel_array(source.position_coefficients_mm),
                     float(prepared.arrays.charge_native[source_index]),
                     bool(source.ended_by_loss),
                     event_time_ns,

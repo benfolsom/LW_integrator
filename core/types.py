@@ -56,6 +56,10 @@ class _TrajectoryStorageState:
     generation: int = 0
     rewrite_epoch: int = 0
     array_revision: int = 0
+    # Capacity replacements preserve all existing values. Keep their count
+    # separate so prepared providers can retain owned prefix data, while old
+    # trajectory wrappers still fail the ordinary array-revision check.
+    capacity_revision: int = 0
 
     def __deepcopy__(self, memo: dict[int, object]) -> "_TrajectoryStorageState":
         """Copy one storage graph while minting a collision-free token."""
@@ -63,13 +67,14 @@ class _TrajectoryStorageState:
         copied = _TrajectoryStorageState(
             capacity=self.capacity,
             generation=self.generation,
+            capacity_revision=self.capacity_revision,
             rewrite_epoch=self.rewrite_epoch,
             array_revision=self.array_revision,
         )
         memo[id(self)] = copied
         return copied
 
-    def __reduce__(self) -> tuple[object, tuple[int, int, int, int]]:
+    def __reduce__(self) -> tuple[object, tuple[int, int, int, int, int]]:
         """Never persist a process-local allocation token through pickle."""
 
         return (
@@ -79,6 +84,7 @@ class _TrajectoryStorageState:
                 self.generation,
                 self.rewrite_epoch,
                 self.array_revision,
+                self.capacity_revision,
             ),
         )
 
@@ -88,12 +94,14 @@ def _restore_trajectory_storage_state(
     generation: int,
     rewrite_epoch: int,
     array_revision: int,
+    capacity_revision: int = 0,
 ) -> _TrajectoryStorageState:
     return _TrajectoryStorageState(
         capacity=capacity,
         generation=generation,
         rewrite_epoch=rewrite_epoch,
         array_revision=array_revision,
+        capacity_revision=capacity_revision,
     )
 
 
@@ -2318,6 +2326,7 @@ class TrajectoryBuilder:
 
         self._n_steps = new_capacity
         self._storage_state.capacity = new_capacity
+        self._storage_state.capacity_revision += 1
         self._storage_state.rewrite_epoch += 1
         self._storage_state.array_revision += 1
 

@@ -39,6 +39,7 @@ class HistoryStorageSnapshot:
     rewrite_epoch: int
     array_revision: int
     owner_ref: ReferenceType[object]
+    capacity_revision: int = 0
 
 
 @dataclass(frozen=True)
@@ -75,6 +76,7 @@ class _CacheEntry(Generic[PreparedT]):
     array_revision: int
     revision: int
     owner_ref: ReferenceType[object]
+    capacity_revision: int = 0
 
 
 def _array_value_signature(values: np.ndarray) -> tuple[Hashable, ...]:
@@ -125,6 +127,7 @@ def history_storage_snapshot(
             rewrite_epoch=rewrite_epoch,
             array_revision=array_revision,
             owner_ref=ref(owner),
+            capacity_revision=owner.capacity_revision,
         )
 
     if isinstance(history, TrajectoryArrays):
@@ -150,6 +153,7 @@ def history_storage_snapshot(
             rewrite_epoch=rewrite_epoch,
             array_revision=array_revision,
             owner_ref=ref(owner),
+            capacity_revision=owner.capacity_revision,
         )
 
     return None
@@ -196,13 +200,21 @@ def history_prepared_buffer_capacity(
 
 
 class AppendAwarePreparedHistoryCache(Generic[HistoryT, PreparedT]):
-    """Bounded cache that distinguishes tail growth from history rewrites."""
+    """Bounded cache that distinguishes tail growth from history rewrites.
 
-    def __init__(self, *, max_entries: int = 16) -> None:
+    ``preserve_capacity_growth`` is for providers that own their prepared
+    prefix storage. It discounts only certified value-preserving capacity
+    replacements, and keeps ordinary rewrites and lazy allocations invalidating.
+    """
+
+    def __init__(
+        self, *, max_entries: int = 16, preserve_capacity_growth: bool = False
+    ) -> None:
         entries = int(max_entries)
         if entries < 1:
             raise ValueError("max_entries must be positive")
         self._max_entries = entries
+        self._preserve_capacity_growth = bool(preserve_capacity_growth)
         self._entries: OrderedDict[
             tuple[tuple[Hashable, ...], Hashable], _CacheEntry[PreparedT]
         ] = OrderedDict()
@@ -276,6 +288,7 @@ class AppendAwarePreparedHistoryCache(Generic[HistoryT, PreparedT]):
                     array_revision=snapshot.array_revision,
                     revision=1,
                     owner_ref=self._owner_ref_with_eviction(snapshot, key),
+                    capacity_revision=snapshot.capacity_revision,
                 )
                 self._entries[key] = entry
                 self._entries.move_to_end(key)
@@ -284,9 +297,14 @@ class AppendAwarePreparedHistoryCache(Generic[HistoryT, PreparedT]):
                 return PreparedHistoryCacheResult(value, "miss", entry.revision)
 
             disposition: CacheDisposition
+            capacity_delta = (
+                snapshot.capacity_revision - entry.capacity_revision
+                if self._preserve_capacity_growth
+                else 0
+            )
             if (
-                snapshot.rewrite_epoch != entry.rewrite_epoch
-                or snapshot.array_revision != entry.array_revision
+                snapshot.rewrite_epoch != entry.rewrite_epoch + capacity_delta
+                or snapshot.array_revision != entry.array_revision + capacity_delta
                 or snapshot.visible_stop < entry.visible_stop
                 or (
                     snapshot.visible_stop > entry.visible_stop
@@ -299,6 +317,7 @@ class AppendAwarePreparedHistoryCache(Generic[HistoryT, PreparedT]):
                 entry.generation = snapshot.generation
                 entry.rewrite_epoch = snapshot.rewrite_epoch
                 entry.array_revision = snapshot.array_revision
+                entry.capacity_revision = snapshot.capacity_revision
                 entry.revision += 1
                 entry.owner_ref = self._owner_ref_with_eviction(snapshot, key)
                 self._rebuilds += 1
@@ -317,6 +336,7 @@ class AppendAwarePreparedHistoryCache(Generic[HistoryT, PreparedT]):
                 entry.generation = snapshot.generation
                 entry.rewrite_epoch = snapshot.rewrite_epoch
                 entry.array_revision = snapshot.array_revision
+                entry.capacity_revision = snapshot.capacity_revision
                 entry.revision += 1
                 entry.owner_ref = self._owner_ref_with_eviction(snapshot, key)
                 self._appends += 1
@@ -326,6 +346,9 @@ class AppendAwarePreparedHistoryCache(Generic[HistoryT, PreparedT]):
                 # alter its contents, so a generation-only change remains a
                 # valid exact hit.
                 entry.generation = snapshot.generation
+                entry.rewrite_epoch = snapshot.rewrite_epoch
+                entry.array_revision = snapshot.array_revision
+                entry.capacity_revision = snapshot.capacity_revision
                 self._reuses += 1
                 disposition = "reuse"
 

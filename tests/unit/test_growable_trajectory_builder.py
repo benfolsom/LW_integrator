@@ -166,7 +166,7 @@ def test_growable_builder_rejects_invalid_storage_parameters(
         )
 
 
-def test_provider_caches_append_between_geometric_rebuilds() -> None:
+def test_provider_caches_preserve_charge_prefix_across_geometric_growth() -> None:
     retarded_fields._CHARGE_PREPARED_HISTORY_CACHE.clear()
     retarded_dipole_fields._DIPOLE_PREPARED_HISTORY_CACHE.clear()
     builder = GrowableTrajectoryBuilder(4, 1, magnetic_dipole=True)
@@ -218,7 +218,8 @@ def test_provider_caches_append_between_geometric_rebuilds() -> None:
         excluded_source_identities=(),
     )
 
-    assert retarded_fields._CHARGE_PREPARED_HISTORY_CACHE.stats().rebuilds == 1
+    assert retarded_fields._CHARGE_PREPARED_HISTORY_CACHE.stats().rebuilds == 0
+    assert retarded_fields._CHARGE_PREPARED_HISTORY_CACHE.stats().appends == 4
     assert retarded_dipole_fields._DIPOLE_PREPARED_HISTORY_CACHE.stats().rebuilds == 1
     np.testing.assert_array_equal(
         cached_charge.sources[0].position_coefficients_mm,
