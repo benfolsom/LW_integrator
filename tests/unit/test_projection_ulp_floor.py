@@ -238,3 +238,98 @@ def test_floor_fails_closed_without_a_reference_or_with_an_invalid_reference():
                 _state(),
                 diagnostic_ulp_floor=True,
             )
+
+
+def test_rejected_projection_uses_only_above_floor_excess_for_shrink():
+    floor = 8 * np.spacing(1929.7068553)
+    full, refined = _state(), _state(
+        projection=12.77785878285567 * np.spacing(1929.7068553)
+    )
+    result = _assess(
+        full, refined, diagnostic_ulp_floor=True, diagnostic_ulp_multiplier=8
+    )
+    scale = _scaled_tolerances(1).diagnostics_native
+    expected = (refined.diagnostics_native[0, 3] - floor) / (
+        scale.absolute + scale.relative * abs(refined.diagnostics_native[0, 3])
+    )
+    assert not result.accepted
+    assert result.controller_error == pytest.approx(expected)
+    assert result.rejected_floor_excess_error == result.controller_error
+    assert result.rejected_floor_excess_entries == ((0, 3),)
+    assert result.step_size_group == "mass_shell_projection_energy"
+    proposed = propose_next_step_ns(
+        0.03253268613532327,
+        result.controller_error,
+        accepted=False,
+        config=StepControllerConfig(method_order=1),
+        minimum_step_ns=1e-6,
+        maximum_step_ns=0.03253268613532327,
+    )
+    assert proposed < 0.03253268613532327
+
+
+def test_arbitrarily_small_rejected_excess_still_shrinks():
+    full = _state()
+    floor = 4 * np.spacing(1929.7068553)
+    tolerances = replace(
+        _scaled_tolerances(1, diagnostic_ulp_floor=True),
+        diagnostics_native=ErrorScale(1e-13, 0),
+    )
+    result = assess_step_doubling(
+        full,
+        _state(projection=np.nextafter(floor, np.inf)),
+        method_order=1,
+        tolerances=tolerances,
+    )
+    assert not result.accepted
+    assert result.controller_error == 1.0
+    assert (
+        propose_next_step_ns(
+            1.0,
+            result.controller_error,
+            accepted=False,
+            config=StepControllerConfig(method_order=1),
+            minimum_step_ns=0.01,
+            maximum_step_ns=1.0,
+        )
+        == 0.9
+    )
+
+
+def test_accepted_excess_inside_relative_budget_keeps_option_b():
+    floor = 4 * np.spacing(1929.7068553)
+    full = _state(projection=1e-3)
+    refined = _state(projection=1e-3 + 1.01 * floor)
+    tolerances = replace(
+        _scaled_tolerances(1, diagnostic_ulp_floor=True),
+        diagnostics_native=ErrorScale(1e-13, 1e-10),
+    )
+    result = assess_step_doubling(full, refined, method_order=1, tolerances=tolerances)
+    assert result.accepted
+    assert result.controller_error == 0
+    assert result.rejected_floor_excess_error == 0
+    assert not result.rejected_floor_excess_entries
+
+
+def test_state_rejection_keeps_below_floor_diagnostics_out_of_control():
+    full = _state()
+    refined = replace(_state(projection=8e-13), position_mm=np.ones((2, 3)))
+    result = _assess(full, refined, diagnostic_ulp_floor=True)
+    assert not result.accepted
+    assert result.controller_error == result.position_error
+    assert result.rejected_floor_excess_error == 0
+    assert not result.rejected_floor_excess_entries
+
+
+def test_same_column_rejected_excess_is_selected_per_observer():
+    full = _state()
+    values = full.diagnostics_native.copy()
+    values[0, 3] = 3e-12
+    values[1, 3] = 8e-13
+    result = _assess(
+        full, replace(full, diagnostics_native=values), diagnostic_ulp_floor=True
+    )
+    assert not result.accepted
+    assert result.rejected_floor_excess_entries == ((0, 3),)
+    assert result.controller_error == result.rejected_floor_excess_error
+    assert result.step_size_group == "mass_shell_projection_energy"

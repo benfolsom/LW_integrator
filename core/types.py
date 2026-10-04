@@ -1013,7 +1013,9 @@ class AdaptivePairReturnConfig:
     None preserves the original scaled tolerance. ``diagnostic_ulp_floor`` is
     default-off. When enabled, diagnostic acceptance uses at least
     ``diagnostic_ulp_multiplier`` ulps of its reference, and entries dominated
-    by that budget are excluded from the step-size estimator. Projection uses
+    by that budget are excluded from accepted-step proposals. On rejection,
+    their above-floor excess can request a shrink using the unchanged physical
+    diagnostic tolerance, with a unit lower bound to ensure progress. Projection uses
     per-observer endpoint kinetic energy; other increments use their magnitudes.
     Position, momentum, spin, and health guards retain their original scales.
     """

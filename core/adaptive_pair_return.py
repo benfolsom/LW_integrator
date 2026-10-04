@@ -263,6 +263,8 @@ class AdaptivePairAttemptDiagnostics:
     floored_groups: tuple[str, ...] = ()
     controller_error: float | None = None
     step_size_group: str = ""
+    rejected_floor_excess_error: float = 0.0
+    rejected_floor_excess_entries: tuple[tuple[int, ...], ...] = ()
 
 
 def _accepted_pair_time_ns(
@@ -940,6 +942,8 @@ def run_exact_pair_adaptive_window(
                     floored_diagnostic_entries=assessment.floored_diagnostic_entries,
                     floored_groups=assessment.floored_groups,
                     controller_error=assessment.controller_error,
+                    rejected_floor_excess_error=assessment.rejected_floor_excess_error,
+                    rejected_floor_excess_entries=assessment.rejected_floor_excess_entries,
                     step_size_group=(
                         "medina_impulse_cap"
                         if any(

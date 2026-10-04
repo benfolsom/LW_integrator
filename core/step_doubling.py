@@ -102,6 +102,8 @@ class StepDoublingAssessment:
     floored_groups: tuple[str, ...] = ()
     controller_error: float | None = None
     step_size_group: str = ""
+    rejected_floor_excess_error: float = 0.0
+    rejected_floor_excess_entries: tuple[tuple[int, ...], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -308,7 +310,15 @@ def _diagnostic_floor_errors(
     refined: StepDoublingState,
     tolerances: StepDoublingTolerances,
     richardson_denominator: float,
-) -> tuple[float, tuple[int, ...], float, tuple[int, ...], np.ndarray, np.ndarray]:
+) -> tuple[
+    float,
+    tuple[int, ...],
+    float,
+    tuple[int, ...],
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+]:
     """Apply per-entry resolution budgets, excluding dominated entries from control.
 
     Explicit reference matrices support any diagnostic, including cancellation
@@ -362,6 +372,18 @@ def _diagnostic_floor_errors(
     # A large relative tolerance remains a truncation-error budget and can steer.
     floored = (floor > scale.absolute) & (floor >= relative)
     steering = np.where(floored, 0.0, normalized)
+    # A rejected trial can retry using only the discrepancy above the resolution
+    # allowance. Scale that excess with the unchanged physical tolerance. The
+    # unit lower bound ensures every above-floor rejection requests a shrink,
+    # including an arbitrarily small excess at the acceptance boundary.
+    physical_budget = scale.absolute + relative
+    excess = np.divide(
+        np.maximum(error - floor, 0.0),
+        physical_budget,
+        out=np.zeros_like(error),
+        where=physical_budget > 0.0,
+    )
+    excess_steering = np.where(floored & (error > floor), np.maximum(1.0, excess), 0.0)
     index = tuple(int(v) for v in np.unravel_index(np.argmax(normalized), f.shape))
     steering_index = tuple(
         int(v) for v in np.unravel_index(np.argmax(steering), f.shape)
@@ -373,6 +395,7 @@ def _diagnostic_floor_errors(
         steering_index,
         floored,
         floor,
+        excess_steering,
     )
 
 
@@ -485,6 +508,11 @@ def assess_step_doubling(
     floored_groups = ()
     steering_diagnostics = diagnostics_error
     steering_index = diagnostics_error_index
+    rejected_excess_error = 0.0
+    rejected_excess_entries = ()
+    normalized_error = max(
+        position_error, momentum_error, spin_error, diagnostics_error
+    )
     if tolerances.diagnostic_ulp_floor:
         without_floor = diagnostics_error
         (
@@ -494,7 +522,25 @@ def assess_step_doubling(
             steering_index,
             floored,
             floors,
+            excess_steering,
         ) = _diagnostic_floor_errors(full, refined, tolerances, richardson_denominator)
+        normalized_error = max(
+            position_error, momentum_error, spin_error, diagnostics_error
+        )
+        if normalized_error > 1.0:
+            rejected_excess_entries = tuple(
+                tuple(int(v) for v in row) for row in np.argwhere(excess_steering > 0)
+            )
+            excess_index = tuple(
+                int(v)
+                for v in np.unravel_index(
+                    np.argmax(excess_steering), excess_steering.shape
+                )
+            )
+            rejected_excess_error = float(excess_steering[excess_index])
+            if rejected_excess_error > steering_diagnostics:
+                steering_diagnostics = rejected_excess_error
+                steering_index = excess_index
         floored_entries = tuple(
             tuple(int(v) for v in row) for row in np.argwhere(floored)
         )
@@ -520,12 +566,6 @@ def assess_step_doubling(
         and steering_index[1] < len(full.diagnostic_names)
     ):
         group = full.diagnostic_names[steering_index[1]]
-    normalized_error = max(
-        position_error,
-        momentum_error,
-        spin_error,
-        diagnostics_error,
-    )
     return StepDoublingAssessment(
         accepted=bool(normalized_error <= 1.0),
         normalized_error=normalized_error,
@@ -554,6 +594,8 @@ def assess_step_doubling(
         floored_groups=floored_groups,
         controller_error=controller_error,
         step_size_group=group,
+        rejected_floor_excess_error=rejected_excess_error,
+        rejected_floor_excess_entries=rejected_excess_entries,
     )
 
 
