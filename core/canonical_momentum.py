@@ -30,6 +30,7 @@ from typing import Sequence, Union, cast
 import numpy as np
 
 from .constants import C_MMNS
+from .small_tensor_validation import antisymmetric_tensor_status
 
 VectorLike = Union[Sequence[float], np.ndarray]
 MatrixLike = Union[Sequence[Sequence[float]], np.ndarray]
@@ -60,9 +61,10 @@ def _field_tensor(value: MatrixLike) -> np.ndarray:
     field = np.asarray(value, dtype=float)
     if field.shape != (4, 4):
         raise ValueError("field_tensor must have shape (4, 4)")
-    if not np.all(np.isfinite(field)):
+    status = antisymmetric_tensor_status(np.ascontiguousarray(field))
+    if status == 1:
         raise ValueError("field_tensor must contain only finite values")
-    if not np.allclose(field, -field.T, rtol=0.0, atol=1.0e-15):
+    if status == 2:
         raise ValueError("field_tensor must be antisymmetric")
     return cast(np.ndarray, field)
 
@@ -71,14 +73,10 @@ def _field_gradient(value: GradientLike) -> np.ndarray:
     gradient = np.asarray(value, dtype=float)
     if gradient.shape != (4, 4, 4):
         raise ValueError("partial_f must have shape (4, 4, 4)")
-    if not np.all(np.isfinite(gradient)):
+    status = antisymmetric_tensor_status(np.ascontiguousarray(gradient))
+    if status == 1:
         raise ValueError("partial_f must contain only finite values")
-    if not np.allclose(
-        gradient,
-        -np.swapaxes(gradient, 1, 2),
-        rtol=0.0,
-        atol=1.0e-15,
-    ):
+    if status == 2:
         raise ValueError("partial_f must be antisymmetric in its field indices")
     return cast(np.ndarray, gradient)
 

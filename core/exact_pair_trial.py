@@ -8,11 +8,12 @@ therefore discard the returned path without rollback work.
 
 from __future__ import annotations
 
-import copy
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Callable, cast
 
 import numpy as np
+
+from .particle_state_copy import copy_particle_state
 
 from .exact_pair_endpoint import finalize_exact_source_canonical_pair_states
 from .self_consistency import SelfConsistencyConfig
@@ -382,8 +383,8 @@ def _history_tail_state(
     role: str,
 ) -> ParticleState:
     if tail:
-        return copy.deepcopy(tail[-1])
-    return copy.deepcopy(base.state_at(-1))
+        return copy_particle_state(tail[-1])
+    return copy_particle_state(base.state_at(-1))
 
 
 def _single_state_time(state: ParticleState, *, role: str) -> float:
@@ -572,15 +573,15 @@ def solve_exact_pair_slab_trial(
         if rider_query is not advance_rider:
             bunch_options["finalize_rider"] = lambda h: advance_rider(
                 h,
-                copy.deepcopy(rider_start),
-                copy.deepcopy(driver_start),
+                copy_particle_state(rider_start),
+                copy_particle_state(driver_start),
                 rider_source_history,
             )
         if driver_query is not advance_driver:
             bunch_options["finalize_driver"] = lambda h: advance_driver(
                 h,
-                copy.deepcopy(driver_start),
-                copy.deepcopy(rider_start),
+                copy_particle_state(driver_start),
+                copy_particle_state(rider_start),
                 driver_source_history,
             )
         for role, advance, observer, source, history in (
@@ -607,8 +608,8 @@ def solve_exact_pair_slab_trial(
                     return query(
                         h,
                         index,
-                        copy.deepcopy(observer),
-                        copy.deepcopy(source),
+                        copy_particle_state(observer),
+                        copy_particle_state(source),
                         history,
                     )
 
@@ -617,14 +618,14 @@ def solve_exact_pair_slab_trial(
         **bunch_options,
         advance_rider=lambda h: rider_query(
             h,
-            copy.deepcopy(rider_start),
-            copy.deepcopy(driver_start),
+            copy_particle_state(rider_start),
+            copy_particle_state(driver_start),
             rider_source_history,
         ),
         advance_driver=lambda h: driver_query(
             h,
-            copy.deepcopy(driver_start),
-            copy.deepcopy(rider_start),
+            copy_particle_state(driver_start),
+            copy_particle_state(rider_start),
             driver_source_history,
         ),
         start_time_ns=start_time_ns,
