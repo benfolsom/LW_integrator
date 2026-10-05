@@ -1,11 +1,12 @@
-"""Stage 1, float64, free-space relativistic electrostatic PIC (SI units).
+"""Float64 free-space electrostatic PIC with optional exact-cloud LW correction.
 
-This is a separate lab-time solver. It does not dispatch the LW integrator,
-radiation reaction, boundary fields, or a GPU backend.
+This is a separate lab-time SI solver. Radiation reaction, boundary fields,
+near pairs, and GPU execution remain separate stages.
 """
 
 from .backend import NumpyBackend, PICBackend
 from .grid import Grid, Species, PICFields, ElectrostaticPIC
+from .correction import CloudCorrection, CorrectionConfig
 from .simulation import run_pic
 
 __all__ = [
@@ -16,4 +17,6 @@ __all__ = [
     "PICFields",
     "ElectrostaticPIC",
     "run_pic",
+    "CloudCorrection",
+    "CorrectionConfig",
 ]
