@@ -296,7 +296,17 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--pic-config",
         type=Path,
-        help="Stage 1 CPU PIC JSON config (lab time, explicit radiation reaction off).",
+        help="Native PIC JSON config (lab time, explicit radiation reaction off).",
+    )
+    parser.add_argument(
+        "--pic-backend",
+        choices=("auto", "cpu", "mlx", "cupy"),
+        help="Override PIC backend; auto stays CPU. Requires --pic-config.",
+    )
+    parser.add_argument(
+        "--pic-precision",
+        choices=("float32", "float64"),
+        help="Override PIC precision (MLX float32; CuPy defaults to float64).",
     )
     parser.add_argument(
         "--testbed-config",
@@ -3813,6 +3823,12 @@ def _print_results_report(report: Mapping[str, Any]) -> None:
 def main(argv: Optional[list[str]] = None) -> int:
     args = parse_args(argv)
 
+    if args.pic_config is None and (
+        args.pic_backend is not None or args.pic_precision is not None
+    ):
+        print("Error: PIC backend/precision options require --pic-config.", file=sys.stderr)
+        return 2
+
     if args.pic_config is not None:
         if any(
             value is not None
@@ -3831,8 +3847,13 @@ def main(argv: Optional[list[str]] = None) -> int:
         from core.pic import run_pic
 
         try:
-            report = run_pic(json.loads(args.pic_config.read_text(encoding="utf-8")))
-        except (ValueError, KeyError, TypeError, OSError) as exc:
+            config = json.loads(args.pic_config.read_text(encoding="utf-8"))
+            if args.pic_backend is not None:
+                config["backend"] = args.pic_backend
+            if args.pic_precision is not None:
+                config["precision"] = args.pic_precision
+            report = run_pic(config)
+        except (ValueError, KeyError, TypeError, OSError, RuntimeError) as exc:
             print(f"Error: PIC config/run: {exc}", file=sys.stderr)
             return 2
         if args.output is not None:

@@ -153,13 +153,13 @@ def boris_kernel(
     """Relativistic Boris rotation of u=p/(mc), using physical q/m."""
     result = np.empty_like(u)
     for p in range(len(u)):
-        half = charge_mass[p] * dt / 2.0
-        minus = u[p] + half * electric[p] / C
+        half_step = charge_mass[p] * dt / 2.0
+        minus = u[p] + half_step * electric[p] / C
         gamma = np.sqrt(1.0 + np.dot(minus, minus))
-        t = half * magnetic[p] / gamma
+        t = half_step * magnetic[p] / gamma
         s = 2.0 * t / (1.0 + np.dot(t, t))
         prime = minus + np.cross(minus, t)
-        result[p] = minus + np.cross(prime, s) + half * electric[p] / C
+        result[p] = minus + np.cross(prime, s) + half_step * electric[p] / C
     return result
 
 

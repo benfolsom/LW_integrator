@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any, Protocol
+import platform
+from typing import Any, Protocol, cast
 
 import numpy as np
 from scipy import fft
@@ -13,13 +14,22 @@ from . import kernels
 class PICBackend(Protocol):
     """Backends own arrays, kernels, and FFT plans; model code owns physics.
 
-    A future accelerator must implement the entire seam, including bounded
+    An accelerator must implement the entire seam, including bounded
     host diagnostics. Changing only ``xp`` does not create a GPU backend.
     CPU boundaries validate inputs in float64 before invoking these kernels.
     """
 
     xp: Any
     name: str
+    dtype: str
+
+    def array(self, value: Any, dtype: Any = None) -> Any:
+        """Explicit host-to-device transfer (float64 on CPU)."""
+        ...
+
+    def synchronize(self, *values: Any) -> None:
+        """Complete queued operations, including lazy device arrays."""
+        ...
 
     def deposit(
         self, coordinates: Any, charge: Any, shape: tuple[int, ...], order: int
@@ -83,6 +93,7 @@ class NumpyBackend:
 
     xp: Any = np
     name: str = "cpu_numpy_numba_float64"
+    dtype: str = "float64"
 
     def __init__(self) -> None:
         self._key: tuple | None = None
@@ -93,6 +104,12 @@ class NumpyBackend:
     gather = staticmethod(kernels.gather_kernel)
     push = staticmethod(kernels.boris_kernel)
     nodes = staticmethod(kernels.node_field_kernel)
+
+    def array(self, value: Any, dtype: Any = None) -> Any:
+        return np.ascontiguousarray(value, dtype=dtype or self.dtype)
+
+    def synchronize(self, *values: Any) -> None:
+        pass
 
     def to_host(self, array: Any) -> Any:
         return np.asarray(array)
@@ -145,32 +162,7 @@ class NumpyBackend:
             self._spectra.clear()
             self._key = key
         if component not in self._spectra:
-            axes = [np.arange(n) * h for n, h in zip(shape, spacing)]
-            positive = kernels.integrated_green(
-                (
-                    axes[0][:, None, None],
-                    axes[1][None, :, None],
-                    axes[2][None, None, :],
-                ),
-                spacing,
-                component,
-            )
-            if component is not None:
-                zero: list[slice | int] = [slice(None)] * 3
-                zero[component] = 0
-                positive[tuple(zero)] = 0.0
-            # Reflect the octant explicitly: odd force and even potential to
-            # roundoff. Displacement -n is never used by the physical crop.
-            indices = [
-                np.minimum(np.abs(np.r_[np.arange(n), np.arange(-n, 0)]), n - 1)
-                for n in shape
-            ]
-            padded = positive[np.ix_(*indices)]
-            if component is not None:
-                signs = np.r_[np.ones(shape[component]), -np.ones(shape[component])]
-                reshape = [1, 1, 1]
-                reshape[component] = len(signs)
-                padded *= signs.reshape(reshape)
+            padded = green_mesh(shape, spacing, component)
             self._spectra[component] = fft.rfftn(padded, workers=1)
         return self._spectra[component]
 
@@ -191,3 +183,141 @@ class NumpyBackend:
             green = self._spectrum(shape, spacing, None)
             phi = fft.irfftn(spectrum * green, s=extended, workers=1)[crop].copy()
         return field, phi
+
+
+def green_mesh(
+    shape: tuple[int, ...], spacing: Any, component: int | None
+) -> np.ndarray:
+    """Host float64 geometry setup; no charges or particle operations."""
+    axes = [np.arange(n) * h for n, h in zip(shape, spacing)]
+    positive = kernels.integrated_green(
+        (
+            axes[0][:, None, None],
+            axes[1][None, :, None],
+            axes[2][None, None, :],
+        ),
+        spacing,
+        component,
+    )
+    if component is not None:
+        zero: list[slice | int] = [slice(None)] * 3
+        zero[component] = 0
+        positive[tuple(zero)] = 0.0
+    # Reflect the octant explicitly: odd force and even potential to
+    # roundoff. Displacement -n is never used by the physical crop.
+    indices = [
+        np.minimum(np.abs(np.r_[np.arange(n), np.arange(-n, 0)]), n - 1) for n in shape
+    ]
+    padded = positive[np.ix_(*indices)]
+    if component is not None:
+        signs = np.r_[np.ones(shape[component]), -np.ones(shape[component])]
+        reshape = [1, 1, 1]
+        reshape[component] = len(signs)
+        padded *= signs.reshape(reshape)
+    return cast(np.ndarray, padded)
+
+
+def require_host(selection: str) -> None:
+    """Reject unsupported hosts before importing any optional GPU framework."""
+    system, machine = platform.system(), platform.machine().lower()
+    if selection == "mlx":
+        if system != "Darwin" or machine not in ("arm64", "aarch64"):
+            raise RuntimeError(
+                "MLX Metal requires Apple-silicon macOS; MLX was not imported"
+            )
+    elif selection == "cupy":
+        if system not in ("Linux", "Windows") or machine not in (
+            "x86_64",
+            "amd64",
+            "aarch64",
+            "arm64",
+        ):
+            raise RuntimeError(
+                "CuPy CUDA requires a supported Linux/Windows host; "
+                "CuPy was not imported"
+            )
+    else:
+        raise ValueError(f"unknown PIC GPU backend: {selection}")
+
+
+def select_backend(selection: str = "auto", precision: str | None = None) -> PICBackend:
+    """Explicit GPU opt-in. Auto remains the authoritative CPU reference."""
+    if selection not in ("auto", "cpu", "mlx", "cupy"):
+        raise ValueError("PIC backend must be auto, cpu, mlx, or cupy")
+    if precision not in (None, "float32", "float64"):
+        raise ValueError("PIC precision must be float32 or float64")
+    if selection in ("auto", "cpu"):
+        if precision == "float32":
+            raise ValueError("CPU reference requires float64")
+        return NumpyBackend()
+    if selection == "mlx" and precision == "float64":
+        raise ValueError("MLX Metal requires float32 precision")
+    require_host(selection)
+    try:
+        if selection == "mlx":
+            from .mlx_backend import MLXBackend
+
+            return MLXBackend()
+        from .cupy_backend import CuPyBackend
+
+        return CuPyBackend(precision or "float64")
+    except (ImportError, OSError, RuntimeError) as exc:
+        raise RuntimeError(
+            f"PIC {selection} unavailable: {exc}. No CPU fallback was selected."
+        ) from exc
+
+
+def cuda_build_hint() -> str | None:
+    """Find the host toolkit major without importing CuPy or installing it.
+
+    nvcc reports the installed toolkit; nvidia-smi reports driver capability,
+    which can be newer and must not select a wheel. Source/Conda builds have
+    their own runtime resolution. Unknown toolkits are checked by CuPy itself.
+    """
+    import os
+    import re
+    import subprocess
+    from pathlib import Path
+
+    candidates = []
+    if os.environ.get("CUDA_PATH"):
+        candidates.append(str(Path(os.environ["CUDA_PATH"]) / "bin" / "nvcc"))
+    candidates.extend(["nvcc", "/usr/local/cuda/bin/nvcc"])
+    for executable in candidates:
+        try:
+            result = subprocess.run(
+                [executable, "--version"],
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=10,
+            )
+        except (OSError, subprocess.SubprocessError):
+            continue
+        match = re.search(r"release\s+(\d+)\.", result.stdout)
+        if match:
+            return f"cupy-cuda{match.group(1)}x"
+    return None
+
+
+def check_cupy_build() -> str | None:
+    """Reject conflicting or toolkit-mismatched wheel installations."""
+    from importlib.metadata import PackageNotFoundError, version
+
+    wheels = []
+    for name in ("cupy-cuda11x", "cupy-cuda12x", "cupy-cuda13x"):
+        try:
+            version(name)
+            wheels.append(name)
+        except PackageNotFoundError:
+            pass
+    expected = cuda_build_hint()
+    if len(wheels) > 1:
+        raise RuntimeError(f"multiple CuPy CUDA builds installed: {', '.join(wheels)}")
+    if expected and wheels and wheels[0] != expected:
+        raise RuntimeError(
+            f"host CUDA toolkit needs {expected}, but {wheels[0]} is installed; "
+            "select the matching existing environment/build "
+            "(Colab CUDA 13: cupy-cuda13x)"
+        )
+    return expected
