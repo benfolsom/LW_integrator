@@ -2940,6 +2940,24 @@ class IntegratorGUITabMixin:
             row=4, column=1, sticky="ew", pady=2
         )
 
+        ttk.Label(sc_frame, text="Instantaneous source clock:").grid(
+            row=5, column=0, sticky="w", padx=(20, 0)
+        )
+        self.space_charge_clock_combo = ttk.Combobox(
+            sc_frame,
+            textvariable=self.space_charge_instantaneous_clock_var,
+            values=("legacy_same_index", "lab_time"),
+            state="readonly",
+            width=20,
+        )
+        self.space_charge_clock_combo.grid(row=5, column=1, sticky="ew", pady=2)
+        Tooltip(
+            self.space_charge_clock_combo,
+            "legacy_same_index (default) uses a common proper-time step.\n"
+            "lab_time is opt-in: it synchronizes live particles in each bunch\n"
+            "at one laboratory time and can substantially increase runtime.",
+        )
+
         self._space_charge_sub_widgets = [
             self.space_charge_retarded_label,
             self.space_charge_retarded_check,
@@ -2959,6 +2977,9 @@ class IntegratorGUITabMixin:
                 widget.configure(state=state)
             except Exception:
                 pass
+        combo = getattr(self, "space_charge_clock_combo", None)
+        if combo is not None:
+            combo.configure(state="readonly" if enabled else "disabled")
 
     def _build_auto_duration_section(self, stability_frame: ttk.Frame) -> None:
         """Build auto-duration crossing mode controls."""

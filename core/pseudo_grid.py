@@ -1247,6 +1247,7 @@ def reconstruct_full_state_from_active_result(
     passive_update_mode: str = "weighted_delta",
     h_step: float | None = None,
     step_index: int | None = None,
+    lab_time_target_ns: float | None = None,
 ) -> ParticleState:
     """Rebuild a full bunch state from an active-only solve result."""
     full_state = _copy_particle_state(previous_full_state)
@@ -1394,7 +1395,9 @@ def reconstruct_full_state_from_active_result(
             raise ValueError(
                 f"h_step is required for {passive_update_mode} passive updates"
             )
-        _coast_passive_indices(full_state, passive_indices, float(h_step))
+        _coast_passive_indices(
+            full_state, passive_indices, float(h_step), lab_time_target_ns
+        )
         _validate_reconstructed_particles(
             previous_full_state, full_state, passive_indices, step_index
         )
@@ -1533,6 +1536,8 @@ def reconstruct_full_state_from_active_result(
                 previous_avg * previous_sample_counts + new_beta
             ) / updated_sample_counts
 
+    if lab_time_target_ns is not None:
+        full_state["t"][valid_passive_indices] = lab_time_target_ns
     return full_state
 
 
@@ -1951,6 +1956,7 @@ def _coast_passive_indices(
     state: ParticleState,
     passive_indices: np.ndarray,
     h_step: float,
+    lab_time_target_ns: float | None = None,
 ) -> None:
     passive = np.asarray(passive_indices, dtype=int)
     if passive.size == 0:
@@ -1958,7 +1964,11 @@ def _coast_passive_indices(
     if "gamma" not in state or "t" not in state:
         raise KeyError("ballistic passive updates require 'gamma' and 't' fields")
     gamma = np.asarray(state["gamma"], dtype=float)[passive]
-    dt_lab = gamma * float(h_step)
+    dt_lab = (
+        gamma * float(h_step)
+        if lab_time_target_ns is None
+        else lab_time_target_ns - np.asarray(state["t"])[passive]
+    )
     state["t"][passive] = np.asarray(state["t"], dtype=float)[passive] + dt_lab
     for axis, beta_key in (("x", "bx"), ("y", "by"), ("z", "bz")):
         if axis in state and beta_key in state:

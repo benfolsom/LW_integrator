@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-
 _PERSISTED_CONFIG_DEFAULTS: dict[str, Any] = {
     "self_consistency_enabled": True,
     "self_consistency_tolerance": 1e-4,
@@ -37,6 +36,7 @@ _PERSISTED_CONFIG_DEFAULTS: dict[str, Any] = {
     "space_charge_retarded": True,
     "space_charge_softening_mm": 0.0,
     "space_charge_bunch_sigma_mm": 0.01,
+    "space_charge_instantaneous_clock": "legacy_same_index",
     "space_charge_min_retarded_steps": None,
     "external_field_enabled": False,
     "external_electric_field_native": (0.0, 0.0, 0.0),
@@ -292,6 +292,7 @@ def build_saved_config_payload(
         "space_charge_retarded": config.space_charge_retarded,
         "space_charge_softening_mm": config.space_charge_softening_mm,
         "space_charge_bunch_sigma_mm": config.space_charge_bunch_sigma_mm,
+        "space_charge_instantaneous_clock": config.space_charge_instantaneous_clock,
         "space_charge_min_retarded_steps": config.space_charge_min_retarded_steps,
         "external_field_enabled": config.external_field_enabled,
         "external_electric_field_native": list(config.external_electric_field_native),

@@ -1851,6 +1851,10 @@ def retarded_equations_of_motion(
     _pseudo_grid_potential_context: Optional[Any] = None,
     _exact_trial_charge_fields: dict[tuple[str, int], Any] | None = None,
     _skip_exact_endpoint_field_diagnostic: bool = False,
+    _lab_time_target_ns: float | None = None,
+    _instantaneous_source_endpoint: Optional[Any] = None,
+    _skip_instantaneous_endpoint_recomposition: bool = False,
+    _observer_trial_index: int | None = None,
     _exact_clock_observer_index: int | None = None,
 ) -> ParticleState:
     """Core equations of motion preserving the validated reference behavior.
@@ -1905,6 +1909,92 @@ def retarded_equations_of_motion(
     ParticleState
         Updated particle state for the next time step.
     """
+    exact_endpoint_recomposition_selected = bool(
+        magnetic_dipole is not None
+        and magnetic_dipole.enabled
+        and magnetic_dipole.spin_model == "rfs_minimal_2021"
+        and startup_mode is StartupMode.INERTIAL_PREHISTORY
+        and sim_type == SimulationType.BUNCH_TO_BUNCH
+    )
+    # Coordinate each bunch separately; cross-bunch retarded clocks are unchanged.
+    if (
+        _lab_time_target_ns is not None
+        or (
+            space_charge is not None
+            and space_charge.synchronizes_lab_time
+            and not exact_endpoint_recomposition_selected
+            and len(trajectory[index_traj]["x"]) > 1
+        )
+    ) and _particle_proper_steps_ns is None:
+        from .shared_lab_time import solve_shared_lab_time_bunch
+        from .instantaneous_space_charge import MissingLabTimeHistoryError
+
+        parameters = locals().copy()
+        parameters.pop("solve_shared_lab_time_bunch")
+        parameters.pop("MissingLabTimeHistoryError")
+        parameters.pop("exact_endpoint_recomposition_selected")
+        start_state = trajectory[index_traj]
+        alive = ~np.asarray(
+            start_state.get(
+                "_dead_particles", np.zeros(len(start_state["t"]), dtype=bool)
+            )
+        )
+        start_time = (
+            float(start_state["t"][np.flatnonzero(alive)[0]])
+            if np.any(alive)
+            else float(start_state["t"][0])
+        )
+        delta_time = (
+            float(_lab_time_target_ns) - start_time
+            if _lab_time_target_ns is not None
+            else (
+                float(h) * float(np.mean(start_state["gamma"][alive]))
+                if np.any(alive)
+                else float(h)
+            )
+        )
+        # Initialize once at the accepted boundary, before immutable root trials.
+        _ensure_startup_metadata(start_state)
+
+        def advance(proper_steps):
+            return retarded_equations_of_motion(
+                **parameters, _particle_proper_steps_ns=proper_steps
+            )
+
+        parameters.pop("_particle_proper_steps_ns")
+        parameters["_skip_instantaneous_endpoint_recomposition"] = True
+
+        def advance_particle(proper_steps, particle_index):
+            trial_parameters = dict(parameters)
+            trial_parameters["_observer_trial_index"] = particle_index
+            return retarded_equations_of_motion(
+                **trial_parameters, _particle_proper_steps_ns=proper_steps
+            )
+
+        def finalize(proper_steps):
+            final_parameters = dict(parameters)
+            final_parameters["_skip_instantaneous_endpoint_recomposition"] = False
+            final_parameters["_lab_time_target_ns"] = start_time + delta_time
+            return retarded_equations_of_motion(
+                **final_parameters, _particle_proper_steps_ns=proper_steps
+            )
+
+        return solve_shared_lab_time_bunch(
+            advance,
+            start_state,
+            "same-bunch",
+            finalize=finalize,
+            advance_particle=advance_particle,
+            start_time_ns=start_time,
+            delta_time_ns=delta_time,
+            particle_mask=alive,
+            propagate_trial_exceptions=(
+                GammaBlowupError,
+                SelfConsistencyNonConvergenceError,
+                MissingLabTimeHistoryError,
+            ),
+        ).state
+
     # Ensure metadata for startup mode is initialized
     _ensure_startup_metadata(trajectory[index_traj])
 
@@ -1965,13 +2055,6 @@ def retarded_equations_of_motion(
                 "radiation force estimate requires Medina moment diagnostic"
             )
         moment_rr_force = np.zeros((num_particles, 3))
-    exact_endpoint_recomposition_selected = bool(
-        magnetic_dipole is not None
-        and magnetic_dipole.enabled
-        and magnetic_dipole.spin_model == "rfs_minimal_2021"
-        and startup_mode is StartupMode.INERTIAL_PREHISTORY
-        and sim_type == SimulationType.BUNCH_TO_BUNCH
-    )
     second_order_exact_source_selected = bool(
         exact_endpoint_recomposition_selected
         and magnetic_dipole is not None
@@ -2130,6 +2213,23 @@ def retarded_equations_of_motion(
             np.isfinite(proper_steps) & (proper_steps > 0.0)
         ):
             raise ValueError("particle proper steps must be finite and positive")
+    # Startup membership uses the nominal bunch step, never a root proposal.
+    same_bunch_threshold = (
+        space_charge.resolve_min_retarded_steps(h)
+        if space_charge is not None and space_charge.enabled
+        else 0
+    )
+    inclusion_space_charge = space_charge
+    if (
+        space_charge is not None
+        and space_charge.synchronizes_lab_time
+        and space_charge.min_retarded_steps is None
+    ):
+        from dataclasses import replace
+
+        inclusion_space_charge = replace(
+            space_charge, min_retarded_steps=same_bunch_threshold
+        )
     # Process each particle independently
     observer_indices: range | tuple[int, ...] = range(num_particles)
     if _exact_clock_observer_index is not None:
@@ -2142,6 +2242,8 @@ def retarded_equations_of_motion(
             raise ValueError("observer-only evaluation requires an exact clock query")
         observer_indices = (_exact_clock_observer_index,)
     for particle_idx in observer_indices:
+        if _observer_trial_index is not None and particle_idx != _observer_trial_index:
+            continue
         if _particle_proper_steps_ns is not None:
             h = float(proper_steps[particle_idx])
         # Check for cancellation before processing each particle
@@ -2263,7 +2365,7 @@ def retarded_equations_of_motion(
                 sim_type=sim_type,
                 chrono_mode=chrono_mode,
                 self_consistency=self_consistency,
-                space_charge=space_charge,
+                space_charge=inclusion_space_charge,
                 beamline_geometry=beamline_geometry,
                 traj_soa=traj_soa,
                 traj_ext_soa=traj_ext_soa,
@@ -2779,7 +2881,11 @@ def retarded_equations_of_motion(
                     # resolve_min_retarded_steps returns the step threshold; below
                     # it we use instantaneous Coulomb as a physically motivated
                     # startup approximation.
-                    _sc_threshold = space_charge.resolve_min_retarded_steps(h)
+                    _sc_threshold = (
+                        same_bunch_threshold
+                        if space_charge.instantaneous_clock == "lab_time"
+                        else space_charge.resolve_min_retarded_steps(h)
+                    )
                     use_retarded_sc = len(trajectory) > _sc_threshold
 
                     sc_chrono_result = None
@@ -2891,6 +2997,46 @@ def retarded_equations_of_motion(
                                 sc_indices,
                                 include_positions=True,
                             )
+
+                    if (
+                        not use_retarded_sc
+                        and space_charge.instantaneous_clock == "lab_time"
+                    ):
+                        from .instantaneous_space_charge import sample_lab_time_sources
+
+                        sc_samples = sample_lab_time_sources(
+                            (
+                                sc_source_trajectory
+                                if pseudo_grid_space_charge_source_trajectory
+                                is not None
+                                else trajectory[: index_traj + 1]
+                            ),
+                            float(current_state["t"][particle_idx]),
+                            required_charges=observer_sc_charge_row,
+                        )
+                        displacement = np.column_stack(
+                            [
+                                current_state[axis][particle_idx]
+                                - getattr(sc_samples, axis)
+                                for axis in "xyz"
+                            ]
+                        )
+                        sc_unsoftened_R = np.linalg.norm(displacement, axis=1)
+                        direction = np.divide(
+                            displacement,
+                            sc_unsoftened_R[:, None],
+                            out=np.zeros_like(displacement),
+                            where=sc_unsoftened_R[:, None] > 0,
+                        )
+                        sc_nhat = {
+                            "n" + axis: direction[:, k] for k, axis in enumerate("xyz")
+                        }
+                        sc_R = np.sqrt(
+                            sc_unsoftened_R**2
+                            + sc_softening**2
+                            + np.asarray(source_radius) ** 2
+                        )
+                        sc_nhat["R"] = sc_R
 
                     if not use_retarded_sc:
                         sc_samples.bx = np.zeros_like(sc_samples.bx)
@@ -5624,6 +5770,22 @@ def retarded_equations_of_motion(
     # instantaneous scalar sector at this accepted same-index endpoint. Keep
     # the sampled source set frozen for the step: births, deaths, and switches
     # continue to belong exclusively to the inclusion ledger at the next start.
+    root_endpoint_times = result["t"].copy()
+    if _skip_instantaneous_endpoint_recomposition:
+        instantaneous_endpoints = {}
+    elif _lab_time_target_ns is not None:
+        alive = ~np.asarray(
+            current_state.get("_dead_particles", np.zeros(num_particles, dtype=bool))
+        )
+        result["t"][alive] = _lab_time_target_ns
+    prescribed_endpoint_history = None
+    if (
+        instantaneous_endpoints
+        and pseudo_grid_space_charge_source_trajectory is not None
+    ):
+        prescribed_endpoint_history = pseudo_grid_space_charge_source_trajectory
+        if _instantaneous_source_endpoint is not None:
+            prescribed_endpoint_history = [_instantaneous_source_endpoint(result)]
     endpoint_positions = np.column_stack([result[axis] for axis in "xyz"])
     for particle_idx, endpoint in instantaneous_endpoints.items():
         (
@@ -5637,14 +5799,37 @@ def retarded_equations_of_motion(
             reciprocal,
             observer_charge,
         ) = endpoint
-        source_shift = (
-            np.tile(
-                np.repeat(endpoint_positions - source_start, subcharges, axis=0),
+        if (
+            prescribed_endpoint_history is not None
+            and space_charge.instantaneous_clock == "lab_time"
+        ):
+            from .instantaneous_space_charge import sample_lab_time_sources
+
+            # Source membership is frozen to the force sample for this step.
+            macro_charges = charges.reshape(-1, len(source_start), subcharges).sum(
+                axis=(0, 2)
+            )
+            endpoint_samples = sample_lab_time_sources(
+                prescribed_endpoint_history,
+                float(result["t"][particle_idx]),
+                required_charges=macro_charges,
+            )
+            sampled_positions = np.column_stack(
+                [getattr(endpoint_samples, axis) for axis in "xyz"]
+            )
+            source_shift = np.tile(
+                np.repeat(sampled_positions - source_start, subcharges, axis=0),
                 (len(displacement) // (len(source_start) * subcharges), 1),
             )
-            if reciprocal
-            else np.zeros_like(displacement)
-        )
+        else:
+            source_shift = (
+                np.tile(
+                    np.repeat(endpoint_positions - source_start, subcharges, axis=0),
+                    (len(displacement) // (len(source_start) * subcharges), 1),
+                )
+                if reciprocal
+                else np.zeros_like(displacement)
+            )
         endpoint_displacement = (
             displacement
             + endpoint_positions[particle_idx]
@@ -5660,6 +5845,8 @@ def retarded_equations_of_motion(
         result["Pt"][particle_idx] += (
             observer_charge * (endpoint_phi - start_phi) / C_MMNS
         )
+
+    result["t"] = root_endpoint_times
 
     # Log summary if any particles died in this step
     if particles_marked_dead_this_step > 0:

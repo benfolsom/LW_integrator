@@ -1241,6 +1241,12 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--space-charge-instantaneous-clock",
+        choices=("lab_time", "legacy_same_index"),
+        default=None,
+        help="Instantaneous source clock (default: legacy_same_index; lab_time is opt-in).",
+    )
+    parser.add_argument(
         "--space-charge-min-retarded-steps",
         type=int,
         default=None,
@@ -1627,6 +1633,10 @@ def run_testbed_config(args: argparse.Namespace) -> int:
         from .testbed_runner import load_config, run_testbed
 
         options = load_config(config_path)
+        if args.space_charge_instantaneous_clock is not None:
+            options.space_charge_instantaneous_clock = (
+                args.space_charge_instantaneous_clock
+            )
         if args.source_history_representation is not None:
             options.source_history_representation = args.source_history_representation
         if args.resume_from is not None:
@@ -1788,6 +1798,7 @@ def _merge_simulation_payload(
         "space_charge_retarded",
         "space_charge_softening_mm",
         "space_charge_bunch_sigma_mm",
+        "space_charge_instantaneous_clock",
         "space_charge_min_retarded_steps",
         "auto_duration_enabled",
         "auto_duration_crossing_steps",
@@ -1906,6 +1917,10 @@ def _merge_simulation_payload(
         result["space_charge_softening_mm"] = args.space_charge_softening_mm
     if getattr(args, "space_charge_bunch_sigma_mm", None) is not None:
         result["space_charge_bunch_sigma_mm"] = args.space_charge_bunch_sigma_mm
+    if getattr(args, "space_charge_instantaneous_clock", None) is not None:
+        result["space_charge_instantaneous_clock"] = (
+            args.space_charge_instantaneous_clock
+        )
     if getattr(args, "space_charge_min_retarded_steps", None) is not None:
         result["space_charge_min_retarded_steps"] = args.space_charge_min_retarded_steps
 
@@ -3071,6 +3086,9 @@ def _build_space_charge_config(
         softening_mm=softening_mm,
         bunch_sigma_mm=bunch_sigma_mm,
         min_retarded_steps=min_retarded_steps,
+        instantaneous_clock=str(
+            payload.get("space_charge_instantaneous_clock", "legacy_same_index")
+        ),
     )
 
 
