@@ -7,7 +7,7 @@ import sys
 import numpy as np
 import pytest
 
-from core.pic import NumpyBackend, select_backend
+from core.pic import select_backend
 from core.pic.conformance import run_conformance
 from scripts.check_pic_gpu_source import HostCBackend
 
