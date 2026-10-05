@@ -59,6 +59,43 @@ the canonical accumulator:
   rest mass only, document that choice, and leave dressed-mass handling behind
   an explicit option.
 
+Medina Impulse Guard Modes
+--------------------------
+
+The existing config key ``radiation_reaction_mode`` selects both modes. The
+default, ``medina_lad``, retains the legacy cap at 25% of the non-RR external
+impulse. This preserves existing results, but can suppress physical radiation
+loss when the lab-frame RR force dominates the Lorentz force.
+
+Opt into ``medina_lad_validity`` in a run or sweep config, the GUI mode selector,
+or with ``--radiation-reaction-mode medina_lad_validity``. This mode keeps the
+complete reduced-order impulse. It screens the instantaneous rest-frame
+effective field relative to the classical field scale: with native Gaussian
+units, ``r_q = q^2/(m c^2)``, the criterion is
+``r_q |F_ext_rest|/(m c^2) <= 0.01``. It also requires
+``|F_RR_rest| <= 0.01 |F_ext_rest|``, including the sampled force derivative.
+Mechanical three-forces transform with unchanged parallel components and
+transverse components multiplied by gamma. Thus, a large lab-frame RR/Lorentz
+ratio alone does not activate the guard. The effective field is inferred from
+the total non-RR mechanical force, using physical particle charge and rest mass.
+
+The step criterion is ``|delta_p_RR| <= 0.01 max(|p_start|, m c)``; the rest
+momentum scale covers particles initially at rest. Any failed criterion sets
+the existing ``medina_impulse_capped`` flag, which now means that either guard
+acted. Adaptive exact-pair and exact-bunch trials reject flagged states and
+shrink without publishing trial history. At the minimum step, an unresolved
+failure ends the run. Other stepping paths apply the full impulse and flag the
+step for review; they never clip in this mode. Refining a step cannot cure a
+physical validity failure. Accepted force-history priming remains unchanged.
+
+These 1% thresholds are conservative engineering screens motivated by the
+small-force and slow-variation assumptions of
+`Medina's reduced-order approximation <https://arxiv.org/abs/physics/0508031>`_.
+They do not certify quantum validity, resolve field variation absent from the
+accepted force samples, or test an independent rest-frame magnetic field.
+Radiated energy and signed reaction work continue to describe the full force
+in the opt-in mode, including flagged fixed-step states.
+
 Medina Native-Units Derivation Draft
 ------------------------------------
 
