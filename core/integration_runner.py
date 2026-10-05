@@ -3249,7 +3249,9 @@ def retarded_integrator(
         ``power_matched_damping`` removes the radiated energy from mechanical
         momentum after the normal LW update. ``medina_lad`` applies the
         experimental Medina/LAD candidate force to mechanical momentum before
-        recomposing canonical momentum. With ``rfs_minimal_2021``, this is a
+        recomposing canonical momentum. ``medina_lad_validity`` uses the same
+        force with rest-frame and step validity flags instead of impulse clipping.
+        With ``rfs_minimal_2021``, this is a
         charge-radiation-only hybrid: the applied charge self-force also adds
         its constraint-compatible Fermi--Walker spin term, while intrinsic
         dipole self-recoil remains outside the model.
@@ -3539,6 +3541,7 @@ def retarded_integrator(
             "off",
             "diagnostic_only",
             "medina_lad",
+            "medina_lad_validity",
         }:
             raise NotImplementedError(
                 "rfs_minimal_2021 supports only the explicitly named "

@@ -19,6 +19,24 @@ from lw_integrator import cli
 from lw_integrator.testbed_runner import SimulationOptions, build_magnetic_dipole_config
 
 
+@pytest.mark.parametrize("mode", ["medina_lad", "medina_lad_validity"])
+def test_medina_guard_mode_cli_config_and_testbed_parity(tmp_path, mode):
+    path = tmp_path / "run.json"
+    path.write_text(json.dumps({"radiation_reaction_mode": mode}))
+    from_file = cli.build_request(cli.parse_args(["--config", str(path)]))
+    from_flag = cli.build_request(cli.parse_args(["--radiation-reaction-mode", mode]))
+    options = SimulationOptions.from_dict({"radiation_reaction_mode": mode})
+    reloaded = SimulationOptions.from_dict(options.to_dict())
+
+    assert from_file.config.radiation_reaction_mode == mode
+    assert from_flag.config.radiation_reaction_mode == mode
+    assert options.radiation_reaction_mode == reloaded.radiation_reaction_mode == mode
+    from lw_integrator.testbed_runner import RADIATION_REACTION_MODE_CHOICES
+
+    assert cli.RADIATION_REACTION_MODE_CHOICES == RADIATION_REACTION_MODE_CHOICES
+    assert mode in RADIATION_REACTION_MODE_CHOICES
+
+
 def test_cli_direct_checkpoint_flags_build_core_config(tmp_path: Path) -> None:
     config_path = tmp_path / "run.json"
     config_path.write_text(

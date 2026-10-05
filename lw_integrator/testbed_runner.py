@@ -72,6 +72,7 @@ RADIATION_REACTION_MODE_CHOICES: Tuple[str, ...] = (
     "diagnostic_only",
     "power_matched_damping",
     "medina_lad",
+    "medina_lad_validity",
 )
 
 DIPOLE_SOURCE_MODEL_OPTIONS: Tuple[Tuple[str, str], ...] = (

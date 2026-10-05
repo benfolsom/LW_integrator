@@ -480,7 +480,8 @@ class OptimizationPluginUIMixin:
             "off - no momentum change from self-radiation\n"
             "diagnostic_only - record radiated power without changing momentum\n"
             "power_matched_damping - post-update energy-matched damping\n"
-            "medina_lad - recommended default for new study runs",
+            "medina_lad - legacy impulse cap (default)\n"
+            "medina_lad_validity - opt-in rest-frame and step validity checks",
         )
         ttk.Label(
             rr_frame,

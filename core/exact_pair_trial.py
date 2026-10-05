@@ -92,13 +92,18 @@ class ExactPairEOMOptions:
         if (
             self.magnetic_dipole.intrinsic_spin_self_reaction_mode
             == "experimental_linear_spin"
-            and self.radiation_reaction_mode not in {"off", "medina_lad"}
+            and self.radiation_reaction_mode
+            not in {"off", "medina_lad", "medina_lad_validity"}
         ):
             raise ValueError("experimental spin recoil supports only off or medina_lad")
         if self.moment_impulse_diagnostic is not None:
             if not callable(self.moment_impulse_diagnostic):
                 raise ValueError("moment impulse diagnostic must be callable")
-            if self.radiation_reaction_mode not in ("off", "medina_lad"):
+            if self.radiation_reaction_mode not in (
+                "off",
+                "medina_lad",
+                "medina_lad_validity",
+            ):
                 raise ValueError(
                     "moment impulse diagnostic supports only off or medina_lad"
                 )
@@ -325,7 +330,7 @@ def make_exact_role_eom_advance(options: ExactPairEOMOptions) -> AdvanceRoleTria
         result: ParticleState
         if (
             options.moment_impulse_diagnostic is not None
-            and options.radiation_reaction_mode == "medina_lad"
+            and options.radiation_reaction_mode in {"medina_lad", "medina_lad_validity"}
         ):
             from functools import partial
 

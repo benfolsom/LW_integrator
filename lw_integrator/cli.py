@@ -81,6 +81,7 @@ RADIATION_REACTION_MODE_CHOICES: Tuple[str, ...] = (
     "diagnostic_only",
     "power_matched_damping",
     "medina_lad",
+    "medina_lad_validity",
 )
 
 DEFAULT_RIDER: Dict[str, Any] = {
@@ -679,6 +680,7 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         choices=RADIATION_REACTION_MODE_CHOICES,
         help=(
             "Radiation-reaction mode for single runs. Default: medina_lad. "
+            "medina_lad_validity opts into rest-frame and step validity checks. "
             "Choose off or diagnostic_only for baselines."
         ),
     )
