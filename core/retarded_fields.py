@@ -3754,6 +3754,34 @@ def evaluate_retarded_charge_field_native(
     )[0]
 
 
+def evaluate_retarded_charge_fields_native(
+    history: TrajectoryHistory | ExactCloudHistory,
+    observer_events: Sequence[ObserverEvent],
+    *,
+    backend: str = "python",
+    source_acceleration_semantics: str = "preceding_interval",
+) -> tuple[RetardedChargeFieldResult, ...]:
+    """Evaluate arbitrary field nodes, retaining every source at every node.
+
+    Unlike the mutual provider, node indices never imply self exclusion.
+    Missing history and singular source events fail closed.
+    """
+    _reject_proper_metal(history, backend)
+    selected = require_exact_retarded_backend(backend)
+    prepared = _prepare_history(
+        history, (), source_acceleration_semantics=source_acceleration_semantics
+    )
+    return _evaluate_prepared_charge_batch(
+        prepared,
+        tuple(observer_events),
+        backend=selected,
+        require_complete_history=True,
+        root_tolerance_mm=_DEFAULT_ROOT_TOLERANCE_MM,
+        max_root_iterations=_DEFAULT_MAX_ROOT_ITERATIONS,
+        extrapolate_ns=0.0,
+    )
+
+
 def evaluate_retarded_mutual_charge_field_matrix_native(
     history: TrajectoryHistory | ExactCloudHistory,
     observer_events: Sequence[ObserverEvent],

@@ -1,4 +1,4 @@
-"""Validated stage 1 config and a drift–Boris–drift lab-time runner."""
+"""Validated PIC config, optional correction, and lab-time stepping."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ import numpy as np
 
 from .backend import select_backend
 from .grid import ElectrostaticPIC, Species, diagnostics
+from .correction import CloudCorrection, CorrectionConfig, correction_ledger
 from .kernels import C
 
 E_CHARGE = 1.602176634e-19
@@ -103,15 +104,16 @@ def run_pic(config: Mapping[str, Any]) -> dict[str, Any]:
     _keys(
         config,
         "mode backend precision grid species steps timestep_s propagation_distance_mm "
-        "sample_every radiation_reaction_mode",
+        "sample_every radiation_reaction_mode correction",
         "PIC config",
     )
     if config.get("mode") != "pic":
         raise ValueError("native PIC config requires mode: pic")
-
+    if "correction" in config and config.get("backend", "auto") not in ("auto", "cpu"):
+        raise ValueError("the exact-cloud LW correction runs only with the CPU backend")
     if config.get("radiation_reaction_mode") != "off":
         raise ValueError(
-            "stage 1 diagnostic requires explicit radiation_reaction_mode: off"
+            "native PIC diagnostic requires explicit radiation_reaction_mode: off"
         )
     grid = config["grid"]
     _keys(grid, "shape half_extent_mm shape_order", "grid")
@@ -157,13 +159,42 @@ def run_pic(config: Mapping[str, Any]) -> dict[str, Any]:
         )
     if not np.isfinite(dt) or dt <= 0:
         raise ValueError("lab timestep must be finite and positive")
+    correction = (
+        CloudCorrection(species, CorrectionConfig.from_config(config["correction"]))
+        if "correction" in config
+        else None
+    )
+    correction_totals: dict[str, Any] = dict(
+        kick_energy_j=0.0,
+        electric_work_j=0.0,
+        kick_momentum_kg_m_s=np.zeros(3),
+        lorentz_impulse_kg_m_s=np.zeros(3),
+    )
     rows = []
 
     def record(step: int) -> None:
         fields = solver.fields(species, potential=True)
-        rows.append(
-            dict(step=step, time_s=step * dt, **diagnostics(species, fields, solver))
-        )
+        row = dict(step=step, time_s=step * dt, **diagnostics(species, fields, solver))
+        if correction is not None:
+            row["correction"] = {
+                key: value.tolist() if isinstance(value, np.ndarray) else value
+                for key, value in correction_totals.items()
+            }
+            row["correction"]["work_minus_kick_energy_j"] = (
+                correction_totals["electric_work_j"]
+                - correction_totals["kick_energy_j"]
+            )
+            row["correction"]["impulse_minus_kick_momentum_kg_m_s"] = (
+                correction_totals["lorentz_impulse_kg_m_s"]
+                - correction_totals["kick_momentum_kg_m_s"]
+            ).tolist()
+            row["missing_ledger_terms"].extend(
+                [
+                    "correction field energy and momentum, including PIC cross terms",
+                    "cloud source reaction and radiated energy",
+                ]
+            )
+        rows.append(row)
 
     record(0)
     max_continuity = 0.0
@@ -175,10 +206,23 @@ def run_pic(config: Mapping[str, Any]) -> dict[str, Any]:
         updated = []
         for s in species:
             e, b = solver.sample(fields, s.position_m)
-            updated.append(solver.push(s, e, b, dt))
+            baseline = solver.push(s, e, b, dt)
+            if correction is None:
+                updated.append(baseline)
+            else:
+                de, db = correction.sample(s)
+                pushed = solver.push(s, e + de, b + db, dt)
+                ledger = correction_ledger(s, baseline, pushed, de, db, dt)
+                for key, value in ledger.items():
+                    correction_totals[key] += (
+                        np.asarray(value) if isinstance(value, list) else value
+                    )
+                updated.append(pushed)
         for s, u in zip(species, updated):
             s.momentum_mc = u
             s.position_m += 0.5 * dt * s.velocity_m_s
+        if correction is not None:
+            correction.accept(species, step * dt)
         # Use the same frozen midpoint frame at both endpoints. The current
         # is relative to that translating grid, not the physical lab current.
         for f in fields:
@@ -226,10 +270,38 @@ def run_pic(config: Mapping[str, Any]) -> dict[str, Any]:
             )
             for s in species
         ],
+        correction=(
+            dict(
+                enabled=True,
+                cloud_count=len(correction.members),
+                accepted_steps=correction.accepted_steps,
+                refits=correction.refits,
+                temporal_rule=(
+                    "last accepted source time; explicit first-order correction"
+                ),
+                fit=(
+                    "persistent cohorts; first moments at refits, "
+                    "ballistic between fits"
+                ),
+                cloud_model=(
+                    "fixed transverse Gaussian quadrature; no longitudinal smoothing"
+                ),
+                accounting=(
+                    "kick difference versus PIC-only push at identical particle state"
+                ),
+            )
+            if correction is not None
+            else dict(enabled=False)
+        ),
         limitations=[
             "GUI parity deferred",
             "quasi-static group snapshots",
-            "no LW correction, near pairs, boundaries, or radiation reaction",
+            "no near pairs, boundaries, or radiation reaction",
+            (
+                "one-way correction lacks a closed electromagnetic ledger"
+                if correction is not None
+                else "no LW correction"
+            ),
             "field ledger covers a stated finite diagnostic domain",
         ],
     )
