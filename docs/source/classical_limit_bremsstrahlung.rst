@@ -138,13 +138,19 @@ Capture threshold
 
 For a point nucleus the classical charge orbit plunges when the angular
 momentum falls below :math:`Ze^2/c`, i.e. for :math:`b<b_{\rm crit}`.
-Radiation reaction moves the capture boundary outward. Charge-only
-electron--carbon encounters are captured for :math:`b/b_{\rm crit}\le 2.5`
-at 100 keV and :math:`\le 3` at 5 keV. They scatter for
-:math:`b/b_{\rm crit}\ge 3` and :math:`\ge 3.5` respectively. Just outside the
-boundary a single pass radiates a large fraction of the kinetic energy: 29%
-at 100 keV and :math:`3\,b_{\rm crit}`, and 44% at 5 keV and
-:math:`3.5\,b_{\rm crit}`. Captured runs end near 3 fm, where the point-charge
+Radiation reaction moves the capture boundary outward. For charge-only
+electron--carbon encounters the boundary lies in
+:math:`2.5 < b/b_{\rm crit} \le 2.75` at 100 keV and in
+:math:`3 < b/b_{\rm crit} \le 3.25` at 5 keV. Just outside the boundary a
+single pass radiates a large fraction of the kinetic energy:
+
+* 55% at 100 keV and :math:`2.75\,b_{\rm crit}`, and 29% at
+  :math:`3\,b_{\rm crit}`;
+* 71% at 5 keV and :math:`3.25\,b_{\rm crit}`, and 44% at
+  :math:`3.5\,b_{\rm crit}`.
+
+Halving the step changes these scattering outcomes by less than
+:math:`10^{-4}`. Captured runs end near 3 fm, where the point-charge
 model fails. Radiation-assisted Coulomb capture has been computed before
 [Huschilt1978]_.
 
@@ -166,7 +172,8 @@ Limit of the classical spinning electron
 With the intrinsic moment included (``full_dipole_coupled``, analytic
 derivatives, ``reaction_source_order=4``), encounters that would approach
 closer than about 130--150 fm stop there, independent of energy (5 and
-100 keV) and impact parameter. The failure is local and algebraic. Either
+100 keV) and impact parameter. Halving the step moves the stopping radius by
+2--5%, to 137 and 148 fm, with the same failure. The failure is local and algebraic. Either
 the momentum--spin--velocity relation has no timelike root, or the
 self-field fixed point does not converge. With reaction off, reduced order,
 and coupled reaction, the runs stop at 114, 130, and 145 fm, so the
@@ -178,8 +185,10 @@ relation when the spin--field coupling approaches the rest mass. This is a
 model-specific failure surface, not a universal threshold.
 
 Where the spin model scatters, its effect grows quickly with proximity. At a
-closest approach of 426 fm (5 keV) the spin increases the radiated energy by
-1.7%, and the energy ledger closes to :math:`10^{-5}`. At 165 fm (100 keV,
+closest approach of 426 fm (5 keV), the intrinsic-dipole radiation adds 1.33%
+to the charge radiation on the same trajectory. The total, 27.31 eV, is 1.75%
+above an independent charge-only encounter. The energy ledger closes to
+:math:`10^{-5}`, and both numbers are converged under step halving. At 165 fm (100 keV,
 :math:`b/b_{\rm crit}=8`) the spin adds about 310 eV to 260 eV of charge
 radiation, almost all of it at :math:`\hbar\omega` of 1--70 MeV. There the
 radiated field is robust: it agrees to within 1% between the coupled and
