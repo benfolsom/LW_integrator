@@ -1,0 +1,86 @@
+14.0.1
+
+WARNING: Skipping cupy-cuda12x as it is not installed.
+
+pip rc 0
+cpu 16^3: PASS []
+cpu 64^3: PASS []
+cpu 128^3: PASS []
+cupy 16^3: PASS []
+cupy 64^3: PASS []
+cupy 128^3: PASS []
+
+
+CONF float64 0
+cpu 16^3: PASS []
+cpu 64^3: PASS []
+cpu 128^3: PASS []
+cupy 16^3: PASS []
+cupy 64^3: PASS []
+cupy 128^3: PASS []
+
+
+CONF float32 0
+cupy N=100000 64^3 order=1 deposit: 0.824 ms
+cupy N=100000 64^3 order=1 gather: 0.334 ms
+cupy N=100000 64^3 order=1 push: 0.498 ms
+cupy N=100000 64^3 order=1 poisson: 1.631 ms
+cupy N=100000 64^3 order=1 pipeline: 2.883 ms
+cupy N=100000 64^3 order=2 deposit: 2.213 ms
+cupy N=100000 64^3 order=2 gather: 0.994 ms
+cupy N=100000 64^3 order=2 push: 0.478 ms
+cupy N=100000 64^3 order=2 poisson: 1.606 ms
+cupy N=100000 64^3 order=2 pipeline: 4.773 ms
+cupy N=1000000 64^3 order=1 deposit: 7.323 ms
+cupy N=1000000 64^3 order=1 gather: 3.287 ms
+cupy N=1000000 64^3 order=1 push: 4.261 ms
+cupy N=1000000 64^3 order=1 poisson: 1.783 ms
+cupy N=1000000 64^3 order=1 pipeline: 15.325 ms
+cupy N=1000000 64^3 order=2 deposit: 22.364 ms
+cupy N=1000000 64^3 order=2 gather: 4.841 ms
+cupy N=1000000 64^3 order=2 push: 1.960 ms
+cupy N=1000000 64^3 order=2 poisson: 1.224 ms
+cupy N=1000000 64^3 order=2 pipeline: 27.351 ms
+cupy N=10000000 64^3 order=1 deposit: 71.455 ms
+cupy N=10000000 64^3 order=1 gather: 18.263 ms
+cupy N=10000000 64^3 order=1 push: 20.076 ms
+cupy N=10000000 64^3 order=1 poisson: 1.132 ms
+cupy N=10000000 64^3 order=1 pipeline: 100.105 ms
+cupy N=10000000 64^3 order=2 deposit: 224.051 ms
+cupy N=10000000 64^3 order=2 gather: 60.822 ms
+cupy N=10000000 64^3 order=2 push: 19.669 ms
+cupy N=10000000 64^3 order=2 poisson: 1.550 ms
+cupy N=10000000 64^3 order=2 pipeline: 273.492 ms
+cupy N=100000 128^3 order=1 deposit: 2.363 ms
+cupy N=100000 128^3 order=1 gather: 0.495 ms
+cupy N=100000 128^3 order=1 push: 0.277 ms
+cupy N=100000 128^3 order=1 poisson: 8.295 ms
+cupy N=100000 128^3 order=1 pipeline: 11.504 ms
+cupy N=100000 128^3 order=2 deposit: 7.015 ms
+cupy N=100000 128^3 order=2 gather: 1.454 ms
+cupy N=100000 128^3 order=2 push: 0.368 ms
+cupy N=100000 128^3 order=2 poisson: 8.367 ms
+cupy N=100000 128^3 order=2 pipeline: 17.123 ms
+cupy N=1000000 128^3 order=1 deposit: 20.579 ms
+cupy N=1000000 128^3 order=1 gather: 4.345 ms
+cupy N=1000000 128^3 order=1 push: 1.995 ms
+cupy N=1000000 128^3 order=1 poisson: 8.758 ms
+cupy N=1000000 128^3 order=1 pipeline: 35.378 ms
+cupy N=1000000 128^3 order=2 deposit: 68.365 ms
+cupy N=1000000 128^3 order=2 gather: 13.613 ms
+cupy N=1000000 128^3 order=2 push: 2.622 ms
+cupy N=1000000 128^3 order=2 poisson: 9.349 ms
+cupy N=1000000 128^3 order=2 pipeline: 93.885 ms
+cupy N=10000000 128^3 order=1 deposit: 202.552 ms
+cupy N=10000000 128^3 order=1 gather: 35.765 ms
+cupy N=10000000 128^3 order=1 push: 20.161 ms
+cupy N=10000000 128^3 order=1 poisson: 8.521 ms
+cupy N=10000000 128^3 order=1 pipeline: 275.045 ms
+cupy N=10000000 128^3 order=2 deposit: 681.818 ms
+cupy N=10000000 128^3 order=2 gather: 122.363 ms
+cupy N=10000000 128^3 order=2 push: 20.256 ms
+cupy N=10000000 128^3 order=2 poisson: 8.620 ms
+cupy N=10000000 128^3 order=2 pipeline: 844.036 ms
+
+
+BENCH 0

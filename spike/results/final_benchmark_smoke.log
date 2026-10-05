@@ -1,0 +1,10 @@
+cpu N=100000 64^3 order=1 deposit: 11.050 ms
+cpu N=100000 64^3 order=1 gather: 26.573 ms
+cpu N=100000 64^3 order=1 push: 29.824 ms
+cpu N=100000 64^3 order=1 poisson: 11.714 ms
+cpu N=100000 64^3 order=1 pipeline: 82.250 ms
+cpu N=100000 64^3 order=2 deposit: 19.298 ms
+cpu N=100000 64^3 order=2 gather: 56.987 ms
+cpu N=100000 64^3 order=2 push: 28.712 ms
+cpu N=100000 64^3 order=2 poisson: 11.787 ms
+cpu N=100000 64^3 order=2 pipeline: 101.972 ms

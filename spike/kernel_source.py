@@ -119,7 +119,7 @@ def push_body(grid):
 
 def cuda_source(grid, dtype):
     ctype = "double" if dtype == "float64" else "float"
-    header = f"#include <math.h>\ntypedef {ctype} T;\n"
+    header = f"#ifndef __CUDACC_RTC__\n#include <math.h>\n#endif\ntypedef {ctype} T;\n"
     kernels = []
     for order in (1, 2):
         kernels.append(f"""extern "C" __global__ void deposit{order}(

@@ -3,5 +3,8 @@
 numpy==2.5.3
 numba==0.68.0
 taichi==1.7.4
-cupy-cuda12x==14.2.0
+# Match CuPy to the machine CUDA major version: cupy-cuda13x on Colab (CUDA 13,
+# preinstalled 14.0.1); cupy-cuda12x on CUDA 12 hosts. A CUDA 12 build on a CUDA 13
+# image fails to load libcufft.so.11.
+cupy-cuda13x>=14.0
 pytest==9.1.1

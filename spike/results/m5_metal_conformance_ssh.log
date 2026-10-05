@@ -1,0 +1,11 @@
+cpu 16^3: PASS []
+cpu 64^3: PASS []
+cpu 128^3: PASS []
+mlx 16^3: PASS []
+mlx 64^3: PASS []
+mlx 128^3: PASS []
+[Taichi] version 1.7.4, llvm 15.0.7, commit b4b956fd, osx, python 3.12.12
+[Taichi] Starting on arch=metal
+taichi-metal 16^3: FAIL ['deposit_1_cancellation', 'deposit_2_cancellation']
+taichi-metal 64^3: FAIL ['deposit_2_cancellation']
+taichi-metal 128^3: FAIL ['deposit_1_cancellation', 'charge_1_cancellation', 'charge_2_cancellation']

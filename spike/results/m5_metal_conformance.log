@@ -1,0 +1,8 @@
+mlx 16^3: ERROR [metal::load_device] No Metal device available. This typically occurs in headless, sandboxed, or virtualized macOS sessions where the GPU is not accessible.
+RHI Error: cannot extract entry point function from shader library
+[E 10/05/26 13:59:37.028 40304095] [runtime.cpp:host_to_device@59] Assertion failure: device_->map(*device_args_buffer_, &device_base) == RhiResult::success
+[Taichi] version 1.7.4, llvm 15.0.7, commit b4b956fd, osx, python 3.12.12
+[Taichi] Starting on arch=metal
+taichi-metal 16^3: ERROR [runtime.cpp:host_to_device@59] Assertion failure: device_->map(*device_args_buffer_, &device_base) == RhiResult::success
+
+

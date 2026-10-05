@@ -1,0 +1,3 @@
+[Taichi] version 1.7.4, llvm 15.0.7, commit b4b956fd, osx, python 3.12.12
+[Taichi] Starting on arch=arm64
+taichi-cpu 16^3: FAIL ['deposit_1_cancellation', 'charge_1_cancellation', 'deposit_2_cancellation', 'charge_2_cancellation']

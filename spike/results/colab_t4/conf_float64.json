@@ -1,0 +1,1547 @@
+{
+  "metadata": {
+    "recorded_utc": "2026-10-05T12:44:28.933352+00:00",
+    "python": "3.13.15 (main, Aug  6 2026, 11:06:22) [GCC 13.3.0]",
+    "executable": "/usr/bin/python3",
+    "platform": "Linux-6.6.122+-x86_64-with-glibc2.39",
+    "machine": "x86_64",
+    "packages": {
+      "numpy": "2.1.3",
+      "numba": "0.61.2",
+      "llvmlite": "0.44.0",
+      "mlx": null,
+      "mlx-metal": null,
+      "mlx-cuda-12": null,
+      "mlx-cuda-13": null,
+      "taichi": "1.7.4",
+      "cupy-cuda12x": "14.2.0",
+      "pytest": "8.4.2"
+    },
+    "base_commit": "fatal: not a git repository (or any of the parent directories): .git",
+    "git_status": "fatal: not a git repository (or any of the parent directories): .git",
+    "source_sha256": "ee52971980eeeb0ebb7666c85c4a18ffcf12d681c94dd305a80838f3b557be19",
+    "source_files_sha256": {
+      ".___init__.py": "f0f212c7fc98d96979709b665769ea5b40f071c9da04ec8685e0597da5683c5f",
+      "._benchmark.py": "f0f212c7fc98d96979709b665769ea5b40f071c9da04ec8685e0597da5683c5f",
+      "._check_generated_cpp.py": "f0f212c7fc98d96979709b665769ea5b40f071c9da04ec8685e0597da5683c5f",
+      "._common.py": "f0f212c7fc98d96979709b665769ea5b40f071c9da04ec8685e0597da5683c5f",
+      "._conformance.py": "f0f212c7fc98d96979709b665769ea5b40f071c9da04ec8685e0597da5683c5f",
+      "._cpu.py": "f0f212c7fc98d96979709b665769ea5b40f071c9da04ec8685e0597da5683c5f",
+      "._cupy_backend.py": "f0f212c7fc98d96979709b665769ea5b40f071c9da04ec8685e0597da5683c5f",
+      "._kernel_source.py": "f0f212c7fc98d96979709b665769ea5b40f071c9da04ec8685e0597da5683c5f",
+      "._mlx_backend.py": "f0f212c7fc98d96979709b665769ea5b40f071c9da04ec8685e0597da5683c5f",
+      "._probe_mlx_cuda.py": "f0f212c7fc98d96979709b665769ea5b40f071c9da04ec8685e0597da5683c5f",
+      "._provenance.py": "f0f212c7fc98d96979709b665769ea5b40f071c9da04ec8685e0597da5683c5f",
+      "._taichi_backend.py": "f0f212c7fc98d96979709b665769ea5b40f071c9da04ec8685e0597da5683c5f",
+      "._test_reference.py": "f0f212c7fc98d96979709b665769ea5b40f071c9da04ec8685e0597da5683c5f",
+      "__init__.py": "f3756c795c38ac19ea889d2ed5f190294be379ef506fb05d2b4a73834427f64c",
+      "benchmark.py": "68b3fe08b1a2c617c4f2ec796846f30a8b55a8011bbf8c5b174e94f3f9796e95",
+      "check_generated_cpp.py": "d1c08e832d6065f77bf061c4de1544820a656551b2ed4ffecd796ef377289d2a",
+      "common.py": "62d4fcb45180669f263aee76692a8c0fe31bef8de3c8ef49af2ab0c23f0f785c",
+      "conformance.py": "bf926f99126f7795d68bdea3c364b323bdfd8c34ef1a2a798c308a9a31008860",
+      "cpu.py": "f62e420fd8d873713210aac652e13fb90c8b920fd35fea83b0dc7247d6d6653e",
+      "cupy_backend.py": "c7da69d52d0bde071a979040cd8ddc58eeb4c425a3f60cbbc78fcf644cd1892e",
+      "kernel_source.py": "0e51f63daef7955c40cc9658690f0d695b50409a93fc53a95138e9ca6ea1ef4e",
+      "mlx_backend.py": "28cdff0e133b07b068f1c93d8d2da5d84179d152fbfa11b517a0efb213effb95",
+      "probe_mlx_cuda.py": "12ecd98ea1ffa5672ec903b69cd2a0b8f301b1cf85beddaab3708a9a7a018afb",
+      "provenance.py": "5b5f02dd249a959c43bcdcac4d52d590a63178774f288c694f17f9c275631d50",
+      "taichi_backend.py": "b83efc4c42e250f05d23eedaf8a31c6837fefefee3153767d18dfabe9248759f",
+      "test_reference.py": "017ad1fc0943c163d65795d841d26a15117131ee579656f0a64ce873a928d79e"
+    },
+    "nvidia_smi": "Mon Oct  5 12:44:28 2026       \n+-----------------------------------------------------------------------------------------+\n| NVIDIA-SMI 580.82.07              Driver Version: 580.82.07      CUDA Version: 13.0     |\n+-----------------------------------------+------------------------+----------------------+\n| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |\n| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |\n|                                         |                        |               MIG M. |\n|=========================================+========================+======================|\n|   0  Tesla T4                       Off |   00000000:00:04.0 Off |                    0 |\n| N/A   37C    P8             13W /   70W |       0MiB /  15360MiB |      0%      Default |\n|                                         |                        |                  N/A |\n+-----------------------------------------+------------------------+----------------------+\n\n+-----------------------------------------------------------------------------------------+\n| Processes:                                                                              |\n|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |\n|        ID   ID                                                               Usage      |\n|=========================================================================================|\n|  No running processes found                                                             |\n+-----------------------------------------------------------------------------------------+",
+    "cuda_toolkit": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2025 NVIDIA Corporation\nBuilt on Wed_Aug_20_01:58:59_PM_PDT_2025\nCuda compilation tools, release 13.0, V13.0.88\nBuild cuda_13.0.r13.0/compiler.36424714_0"
+  },
+  "radiation_reaction": "off (synthetic kernel controls)",
+  "results": [
+    {
+      "backend": "cpu",
+      "dtype": "float64",
+      "grid": 16,
+      "dx": 1.0,
+      "count": 8192,
+      "checks": [
+        {
+          "test": "deposit_1_uniform",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "charge_1_uniform",
+          "value": 6.474331680887732e-19,
+          "tolerance": 1e-13,
+          "passed": true,
+          "net_charge_error": 5.329070518200751e-15,
+          "expected_net_charge": 10.631306876747123
+        },
+        {
+          "test": "gather_1_random",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "gather_1_constant",
+          "max_abs": 2.220446049250313e-16,
+          "max_rel": 2.220446049250313e-16,
+          "max_tolerance_ratio": 8.881784197001252e-06,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "deposit_1_cancellation",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "charge_1_cancellation",
+          "value": 0.0,
+          "tolerance": 1e-12,
+          "passed": true,
+          "net_charge_error": 0.0
+        },
+        {
+          "test": "internal_force_1",
+          "value": 9.389406238190576e-18,
+          "tolerance": 1e-12,
+          "passed": true
+        },
+        {
+          "test": "weighted_momentum_1",
+          "value": 1.7102687668611757e-18,
+          "tolerance": 1e-12,
+          "passed": true,
+          "delta_momentum": [
+            -8.335346302068558e-16,
+            -5.761016663718976e-15,
+            1.458728970948897e-14
+          ]
+        },
+        {
+          "test": "deposit_2_uniform",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "charge_2_uniform",
+          "value": 1.0790552801479554e-18,
+          "tolerance": 1e-13,
+          "passed": true,
+          "net_charge_error": 8.881784197001252e-15,
+          "expected_net_charge": 10.631306876747123
+        },
+        {
+          "test": "gather_2_random",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "gather_2_constant",
+          "max_abs": 4.440892098500626e-16,
+          "max_rel": 4.440892098500626e-16,
+          "max_tolerance_ratio": 1.7763568394002505e-05,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "deposit_2_cancellation",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "charge_2_cancellation",
+          "value": 0.0,
+          "tolerance": 1e-12,
+          "passed": true,
+          "net_charge_error": 0.0
+        },
+        {
+          "test": "internal_force_2",
+          "value": 1.633299882541847e-17,
+          "tolerance": 1e-12,
+          "passed": true
+        },
+        {
+          "test": "weighted_momentum_2",
+          "value": 1.4386936721540664e-18,
+          "tolerance": 1e-12,
+          "passed": true,
+          "delta_momentum": [
+            -7.33802938118061e-15,
+            -7.145325997548468e-15,
+            8.345754642924419e-15
+          ]
+        },
+        {
+          "test": "boris_position",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "boris_momentum",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "zero_field_momentum",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "electric_impulse",
+          "max_abs": 4.440892098500626e-16,
+          "max_rel": 2.8125391840975134e-16,
+          "max_tolerance_ratio": 1.4801064887564537e-05,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "magnetic_norm",
+          "value": 3.486692357714109e-16,
+          "tolerance": 2e-13,
+          "passed": true
+        },
+        {
+          "test": "poisson_manufactured_phi",
+          "max_abs": 4.440892098500626e-16,
+          "max_rel": 8.5626491061409,
+          "max_tolerance_ratio": 2.2125778411769293e-05,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "poisson_manufactured_field",
+          "max_abs": 2.220446049250313e-16,
+          "max_rel": 6.0,
+          "max_tolerance_ratio": 1.1102230246251565e-05,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "poisson_random_phi",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "poisson_random_field",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "poisson_mean_phi",
+          "value": 4.336808689942018e-19,
+          "tolerance": 2e-13,
+          "passed": true
+        }
+      ],
+      "passed": true,
+      "compensated": true
+    },
+    {
+      "backend": "cpu",
+      "dtype": "float64",
+      "grid": 64,
+      "dx": 1.0,
+      "count": 8192,
+      "checks": [
+        {
+          "test": "deposit_1_uniform",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "charge_1_uniform",
+          "value": 1.0790552801479554e-18,
+          "tolerance": 1e-13,
+          "passed": true,
+          "net_charge_error": 8.881784197001252e-15,
+          "expected_net_charge": 10.631306876747123
+        },
+        {
+          "test": "gather_1_random",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "gather_1_constant",
+          "max_abs": 2.220446049250313e-16,
+          "max_rel": 2.220446049250313e-16,
+          "max_tolerance_ratio": 8.881784197001252e-06,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "deposit_1_cancellation",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "charge_1_cancellation",
+          "value": 0.0,
+          "tolerance": 1e-12,
+          "passed": true,
+          "net_charge_error": 0.0
+        },
+        {
+          "test": "internal_force_1",
+          "value": 3.8254394159743904e-17,
+          "tolerance": 1e-12,
+          "passed": true
+        },
+        {
+          "test": "weighted_momentum_1",
+          "value": 5.214647906461778e-19,
+          "tolerance": 1e-12,
+          "passed": true,
+          "delta_momentum": [
+            -2.1649348980190553e-15,
+            -3.425103083098957e-15,
+            -2.5522119140308774e-15
+          ]
+        },
+        {
+          "test": "deposit_2_uniform",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "charge_2_uniform",
+          "value": -2.1581105602959107e-19,
+          "tolerance": 1e-13,
+          "passed": true,
+          "net_charge_error": -1.7763568394002505e-15,
+          "expected_net_charge": 10.631306876747123
+        },
+        {
+          "test": "gather_2_random",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "gather_2_constant",
+          "max_abs": 2.220446049250313e-16,
+          "max_rel": 2.220446049250313e-16,
+          "max_tolerance_ratio": 8.881784197001252e-06,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "deposit_2_cancellation",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "charge_2_cancellation",
+          "value": 0.0,
+          "tolerance": 1e-12,
+          "passed": true,
+          "net_charge_error": 0.0
+        },
+        {
+          "test": "internal_force_2",
+          "value": 1.871368649477181e-17,
+          "tolerance": 1e-12,
+          "passed": true
+        },
+        {
+          "test": "weighted_momentum_2",
+          "value": 1.620312658200126e-18,
+          "tolerance": 1e-12,
+          "passed": true,
+          "delta_momentum": [
+            -1.7264835394659173e-15,
+            3.5603030940078995e-15,
+            1.4343994741983224e-14
+          ]
+        },
+        {
+          "test": "boris_position",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "boris_momentum",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "zero_field_momentum",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "electric_impulse",
+          "max_abs": 4.440892098500626e-16,
+          "max_rel": 4.535259676258467e-16,
+          "max_tolerance_ratio": 1.4799139108094135e-05,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "magnetic_norm",
+          "value": 3.079251605834605e-16,
+          "tolerance": 2e-13,
+          "passed": true
+        },
+        {
+          "test": "poisson_manufactured_phi",
+          "max_abs": 8.881784197001252e-16,
+          "max_rel": 15.753999605923996,
+          "max_tolerance_ratio": 3.798785250753133e-05,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "poisson_manufactured_field",
+          "max_abs": 3.3306690738754696e-16,
+          "max_rel": 13.0,
+          "max_tolerance_ratio": 1.661344253938593e-05,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "poisson_random_phi",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "poisson_random_field",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "poisson_mean_phi",
+          "value": 2.168404344971009e-19,
+          "tolerance": 2e-13,
+          "passed": true
+        }
+      ],
+      "passed": true,
+      "compensated": true
+    },
+    {
+      "backend": "cpu",
+      "dtype": "float64",
+      "grid": 128,
+      "dx": 1.0,
+      "count": 8192,
+      "checks": [
+        {
+          "test": "deposit_1_uniform",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "charge_1_uniform",
+          "value": 2.805543728384684e-18,
+          "tolerance": 1e-13,
+          "passed": true,
+          "net_charge_error": 2.3092638912203256e-14,
+          "expected_net_charge": 10.631306876747123
+        },
+        {
+          "test": "gather_1_random",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "gather_1_constant",
+          "max_abs": 2.220446049250313e-16,
+          "max_rel": 2.220446049250313e-16,
+          "max_tolerance_ratio": 8.881784197001252e-06,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "deposit_1_cancellation",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "charge_1_cancellation",
+          "value": 0.0,
+          "tolerance": 1e-12,
+          "passed": true,
+          "net_charge_error": 0.0
+        },
+        {
+          "test": "internal_force_1",
+          "value": 3.370972937565498e-17,
+          "tolerance": 1e-12,
+          "passed": true
+        },
+        {
+          "test": "weighted_momentum_1",
+          "value": 1.327692358185442e-18,
+          "tolerance": 1e-12,
+          "passed": true,
+          "delta_momentum": [
+            -1.0843119479554686e-14,
+            1.7548489788035693e-15,
+            -5.291990803901747e-15
+          ]
+        },
+        {
+          "test": "deposit_2_uniform",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "charge_2_uniform",
+          "value": 7.985009073094869e-18,
+          "tolerance": 1e-13,
+          "passed": true,
+          "net_charge_error": 6.572520305780927e-14,
+          "expected_net_charge": 10.631306876747123
+        },
+        {
+          "test": "gather_2_random",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "gather_2_constant",
+          "max_abs": 2.220446049250313e-16,
+          "max_rel": 2.220446049250313e-16,
+          "max_tolerance_ratio": 8.881784197001252e-06,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "deposit_2_cancellation",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "charge_2_cancellation",
+          "value": 0.0,
+          "tolerance": 1e-12,
+          "passed": true,
+          "net_charge_error": 0.0
+        },
+        {
+          "test": "internal_force_2",
+          "value": 1.6272897670443814e-17,
+          "tolerance": 1e-12,
+          "passed": true
+        },
+        {
+          "test": "weighted_momentum_2",
+          "value": 2.0670132194460597e-18,
+          "tolerance": 1e-12,
+          "passed": true,
+          "delta_momentum": [
+            -1.6907485323223266e-14,
+            -8.170628887013698e-15,
+            -2.7731723167834232e-15
+          ]
+        },
+        {
+          "test": "boris_position",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "boris_momentum",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "zero_field_momentum",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "electric_impulse",
+          "max_abs": 4.440892098500626e-16,
+          "max_rel": 1.6844177987093041e-15,
+          "max_tolerance_ratio": 1.4799047262040239e-05,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "magnetic_norm",
+          "value": 3.7235188530128963e-16,
+          "tolerance": 2e-13,
+          "passed": true
+        },
+        {
+          "test": "poisson_manufactured_phi",
+          "max_abs": 1.4432899320127035e-15,
+          "max_rel": 19.54792394868352,
+          "max_tolerance_ratio": 7.039579068296914e-05,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "poisson_manufactured_field",
+          "max_abs": 4.440892098500626e-16,
+          "max_rel": 11.0,
+          "max_tolerance_ratio": 2.2177794615735734e-05,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "poisson_random_phi",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "poisson_random_field",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "poisson_mean_phi",
+          "value": 3.415236843329339e-18,
+          "tolerance": 2e-13,
+          "passed": true
+        }
+      ],
+      "passed": true,
+      "compensated": true
+    },
+    {
+      "backend": "taichi-cuda",
+      "dtype": "float64",
+      "grid": 16,
+      "dx": 1.0,
+      "count": 8192,
+      "checks": [
+        {
+          "test": "deposit_1_uniform",
+          "max_abs": 8.881784197001252e-16,
+          "max_rel": 2.6033966931734557e-13,
+          "max_tolerance_ratio": 3.301443467427035e-05,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "charge_1_uniform",
+          "value": -1.0790552801479554e-18,
+          "tolerance": 1e-13,
+          "passed": true,
+          "net_charge_error": -8.881784197001252e-15,
+          "expected_net_charge": 10.631306876747123
+        },
+        {
+          "test": "gather_1_random",
+          "max_abs": 5.551115123125783e-17,
+          "max_rel": 1.2549632433099725e-13,
+          "max_tolerance_ratio": 2.654521834706759e-06,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "gather_1_constant",
+          "max_abs": 2.220446049250313e-16,
+          "max_rel": 2.220446049250313e-16,
+          "max_tolerance_ratio": 8.881784197001252e-06,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "deposit_1_cancellation",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "charge_1_cancellation",
+          "value": 0.0,
+          "tolerance": 1e-12,
+          "passed": true,
+          "net_charge_error": 0.0
+        },
+        {
+          "test": "internal_force_1",
+          "value": 7.482190388411412e-18,
+          "tolerance": 1e-12,
+          "passed": true
+        },
+        {
+          "test": "weighted_momentum_1",
+          "value": 1.7256785211298817e-18,
+          "tolerance": 1e-12,
+          "passed": true,
+          "delta_momentum": [
+            -2.6463206626026192e-15,
+            -4.727121472036799e-15,
+            1.489260104126089e-14
+          ]
+        },
+        {
+          "test": "deposit_2_uniform",
+          "max_abs": 6.661338147750939e-16,
+          "max_rel": 2.2703286265221765e-13,
+          "max_tolerance_ratio": 2.438499061923669e-05,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "charge_2_uniform",
+          "value": 6.474331680887732e-19,
+          "tolerance": 1e-13,
+          "passed": true,
+          "net_charge_error": 5.329070518200751e-15,
+          "expected_net_charge": 10.631306876747123
+        },
+        {
+          "test": "gather_2_random",
+          "max_abs": 4.163336342344337e-17,
+          "max_rel": 5.1400852236757786e-12,
+          "max_tolerance_ratio": 2.0475302924687693e-06,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "gather_2_constant",
+          "max_abs": 2.220446049250313e-16,
+          "max_rel": 2.220446049250313e-16,
+          "max_tolerance_ratio": 8.881784197001252e-06,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "deposit_2_cancellation",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "charge_2_cancellation",
+          "value": 0.0,
+          "tolerance": 1e-12,
+          "passed": true,
+          "net_charge_error": 0.0
+        },
+        {
+          "test": "internal_force_2",
+          "value": 1.6298599185301118e-17,
+          "tolerance": 1e-12,
+          "passed": true
+        },
+        {
+          "test": "weighted_momentum_2",
+          "value": 1.540776640445717e-18,
+          "tolerance": 1e-12,
+          "passed": true,
+          "delta_momentum": [
+            -9.27224605689475e-15,
+            -7.16614267926019e-15,
+            7.929421008689985e-15
+          ]
+        },
+        {
+          "test": "boris_position",
+          "max_abs": 1.7763568394002505e-15,
+          "max_rel": 2.2009799623559422e-16,
+          "max_tolerance_ratio": 2.9432408315688534e-05,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "boris_momentum",
+          "max_abs": 4.440892098500626e-16,
+          "max_rel": 1.1514510760484316e-13,
+          "max_tolerance_ratio": 1.6864285136601955e-05,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "zero_field_momentum",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "electric_impulse",
+          "max_abs": 4.440892098500626e-16,
+          "max_rel": 9.081843788715356e-16,
+          "max_tolerance_ratio": 1.4801064887564537e-05,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "magnetic_norm",
+          "value": 3.486692357714109e-16,
+          "tolerance": 2e-13,
+          "passed": true
+        },
+        {
+          "test": "poisson_manufactured_phi",
+          "max_abs": 6.661338147750939e-16,
+          "max_rel": 6.180324325791827,
+          "max_tolerance_ratio": 2.8812766859144726e-05,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "poisson_manufactured_field",
+          "max_abs": 3.3306690738754696e-16,
+          "max_rel": 4.0,
+          "max_tolerance_ratio": 1.6065172846163922e-05,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "poisson_random_phi",
+          "max_abs": 2.7755575615628914e-17,
+          "max_rel": 8.947536498778088e-13,
+          "max_tolerance_ratio": 1.3766264961697489e-06,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "poisson_random_field",
+          "max_abs": 1.734723475976807e-17,
+          "max_rel": 4.0422068902532386e-12,
+          "max_tolerance_ratio": 8.65462446540752e-07,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "poisson_mean_phi",
+          "value": 0.0,
+          "tolerance": 2e-13,
+          "passed": true
+        }
+      ],
+      "passed": true,
+      "compensated": true
+    },
+    {
+      "backend": "taichi-cuda",
+      "dtype": "float64",
+      "grid": 64,
+      "dx": 1.0,
+      "count": 8192,
+      "checks": [
+        {
+          "test": "deposit_1_uniform",
+          "max_abs": 2.220446049250313e-16,
+          "max_rel": 4.2234884509810905e-12,
+          "max_tolerance_ratio": 8.845994823828654e-06,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "charge_1_uniform",
+          "value": 1.0790552801479554e-18,
+          "tolerance": 1e-13,
+          "passed": true,
+          "net_charge_error": 8.881784197001252e-15,
+          "expected_net_charge": 10.631306876747123
+        },
+        {
+          "test": "gather_1_random",
+          "max_abs": 2.7755575615628914e-17,
+          "max_rel": 2.4442144132996226e-13,
+          "max_tolerance_ratio": 1.365394737203306e-06,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "gather_1_constant",
+          "max_abs": 2.220446049250313e-16,
+          "max_rel": 2.220446049250313e-16,
+          "max_tolerance_ratio": 8.881784197001252e-06,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "deposit_1_cancellation",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "charge_1_cancellation",
+          "value": 0.0,
+          "tolerance": 1e-12,
+          "passed": true,
+          "net_charge_error": 0.0
+        },
+        {
+          "test": "internal_force_1",
+          "value": 1.1573480882324077e-17,
+          "tolerance": 1e-12,
+          "passed": true
+        },
+        {
+          "test": "weighted_momentum_1",
+          "value": 3.122965125504302e-19,
+          "tolerance": 1e-12,
+          "passed": true,
+          "delta_momentum": [
+            -2.2690183065776637e-15,
+            -1.5481322820920518e-15,
+            -8.244273319579776e-16
+          ]
+        },
+        {
+          "test": "deposit_2_uniform",
+          "max_abs": 2.220446049250313e-16,
+          "max_rel": 4.1720315071494267e-13,
+          "max_tolerance_ratio": 1.0106185939019484e-05,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "charge_2_uniform",
+          "value": -1.2948663361775464e-18,
+          "tolerance": 1e-13,
+          "passed": true,
+          "net_charge_error": -1.0658141036401503e-14,
+          "expected_net_charge": 10.631306876747123
+        },
+        {
+          "test": "gather_2_random",
+          "max_abs": 4.163336342344337e-17,
+          "max_rel": 5.729738131357116e-13,
+          "max_tolerance_ratio": 2.0406206519045237e-06,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "gather_2_constant",
+          "max_abs": 2.220446049250313e-16,
+          "max_rel": 2.220446049250313e-16,
+          "max_tolerance_ratio": 8.881784197001252e-06,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "deposit_2_cancellation",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "charge_2_cancellation",
+          "value": 0.0,
+          "tolerance": 1e-12,
+          "passed": true,
+          "net_charge_error": 0.0
+        },
+        {
+          "test": "internal_force_2",
+          "value": 7.609274673843559e-18,
+          "tolerance": 1e-12,
+          "passed": true
+        },
+        {
+          "test": "weighted_momentum_2",
+          "value": 1.5486290928728677e-18,
+          "tolerance": 1e-12,
+          "passed": true,
+          "delta_momentum": [
+            -8.036106502462559e-16,
+            3.3868307464102188e-15,
+            1.3788883229670645e-14
+          ]
+        },
+        {
+          "test": "boris_position",
+          "max_abs": 7.105427357601002e-15,
+          "max_rel": 1.7183812440640454e-16,
+          "max_tolerance_ratio": 2.879632674189198e-05,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "boris_momentum",
+          "max_abs": 2.220446049250313e-16,
+          "max_rel": 1.0062173690814054e-14,
+          "max_tolerance_ratio": 9.021511537684928e-06,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "zero_field_momentum",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "electric_impulse",
+          "max_abs": 4.440892098500626e-16,
+          "max_rel": 1.0469507734982057e-15,
+          "max_tolerance_ratio": 1.4799139108094135e-05,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "magnetic_norm",
+          "value": 3.079251605834605e-16,
+          "tolerance": 2e-13,
+          "passed": true
+        },
+        {
+          "test": "poisson_manufactured_phi",
+          "max_abs": 1.6930901125533637e-15,
+          "max_rel": 43.781723971353564,
+          "max_tolerance_ratio": 8.195598132244205e-05,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "poisson_manufactured_field",
+          "max_abs": 4.440892098500626e-16,
+          "max_rel": 13.0,
+          "max_tolerance_ratio": 2.2047630876965727e-05,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "poisson_random_phi",
+          "max_abs": 9.71445146547012e-17,
+          "max_rel": 1.3879446330605452e-10,
+          "max_tolerance_ratio": 4.755056043125876e-06,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "poisson_random_field",
+          "max_abs": 5.551115123125783e-17,
+          "max_rel": 1.8501972786724865e-10,
+          "max_tolerance_ratio": 2.7733892607843894e-06,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "poisson_mean_phi",
+          "value": 9.75781955236954e-19,
+          "tolerance": 2e-13,
+          "passed": true
+        }
+      ],
+      "passed": true,
+      "compensated": true
+    },
+    {
+      "backend": "taichi-cuda",
+      "dtype": "float64",
+      "grid": 128,
+      "dx": 1.0,
+      "count": 8192,
+      "checks": [
+        {
+          "test": "deposit_1_uniform",
+          "max_abs": 2.220446049250313e-16,
+          "max_rel": 4.883744425057508e-15,
+          "max_tolerance_ratio": 8.48554889400207e-06,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "charge_1_uniform",
+          "value": 2.805543728384684e-18,
+          "tolerance": 1e-13,
+          "passed": true,
+          "net_charge_error": 2.3092638912203256e-14,
+          "expected_net_charge": 10.631306876747123
+        },
+        {
+          "test": "gather_1_random",
+          "max_abs": 2.7755575615628914e-17,
+          "max_rel": 3.362687983738255e-12,
+          "max_tolerance_ratio": 1.3658062857114e-06,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "gather_1_constant",
+          "max_abs": 2.220446049250313e-16,
+          "max_rel": 2.220446049250313e-16,
+          "max_tolerance_ratio": 8.881784197001252e-06,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "deposit_1_cancellation",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "charge_1_cancellation",
+          "value": 0.0,
+          "tolerance": 1e-12,
+          "passed": true,
+          "net_charge_error": 0.0
+        },
+        {
+          "test": "internal_force_1",
+          "value": 3.7455087946809454e-17,
+          "tolerance": 1e-12,
+          "passed": true
+        },
+        {
+          "test": "weighted_momentum_1",
+          "value": 1.297537960214081e-18,
+          "tolerance": 1e-12,
+          "passed": true,
+          "delta_momentum": [
+            -1.1293713902439662e-14,
+            1.0540206945089392e-15,
+            -3.650075033889699e-15
+          ]
+        },
+        {
+          "test": "deposit_2_uniform",
+          "max_abs": 1.6653345369377348e-16,
+          "max_rel": 3.31715290915613e-14,
+          "max_tolerance_ratio": 7.759410048004408e-06,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "charge_2_uniform",
+          "value": 3.668787952503048e-18,
+          "tolerance": 1e-13,
+          "passed": true,
+          "net_charge_error": 3.019806626980426e-14,
+          "expected_net_charge": 10.631306876747123
+        },
+        {
+          "test": "gather_2_random",
+          "max_abs": 4.163336342344337e-17,
+          "max_rel": 1.8458892051577287e-12,
+          "max_tolerance_ratio": 2.033285862416774e-06,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "gather_2_constant",
+          "max_abs": 2.220446049250313e-16,
+          "max_rel": 2.220446049250313e-16,
+          "max_tolerance_ratio": 8.881784197001252e-06,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "deposit_2_cancellation",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "charge_2_cancellation",
+          "value": 0.0,
+          "tolerance": 1e-12,
+          "passed": true,
+          "net_charge_error": 0.0
+        },
+        {
+          "test": "internal_force_2",
+          "value": 3.7482551804049225e-17,
+          "tolerance": 1e-12,
+          "passed": true
+        },
+        {
+          "test": "weighted_momentum_2",
+          "value": 1.9958990620529617e-18,
+          "tolerance": 1e-12,
+          "passed": true,
+          "delta_momentum": [
+            -1.6116451418177842e-14,
+            -8.146342758350023e-15,
+            -3.1374642467385527e-15
+          ]
+        },
+        {
+          "test": "boris_position",
+          "max_abs": 7.105427357601002e-15,
+          "max_rel": 1.8830851113473677e-16,
+          "max_tolerance_ratio": 3.405191745050944e-05,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "boris_momentum",
+          "max_abs": 4.440892098500626e-16,
+          "max_rel": 2.1878306639579382e-14,
+          "max_tolerance_ratio": 1.6964004549408812e-05,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "zero_field_momentum",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "electric_impulse",
+          "max_abs": 4.440892098500626e-16,
+          "max_rel": 2.1055222483866303e-15,
+          "max_tolerance_ratio": 1.4799047262040239e-05,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "magnetic_norm",
+          "value": 3.7235188530128963e-16,
+          "tolerance": 2e-13,
+          "passed": true
+        },
+        {
+          "test": "poisson_manufactured_phi",
+          "max_abs": 3.774758283725532e-15,
+          "max_rel": 16.248491852007845,
+          "max_tolerance_ratio": 0.0001780126677168453,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "poisson_manufactured_field",
+          "max_abs": 5.551115123125783e-16,
+          "max_rel": 13.0,
+          "max_tolerance_ratio": 2.769647229800068e-05,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "poisson_random_phi",
+          "max_abs": 1.3877787807814457e-16,
+          "max_rel": 1.4630898499863483e-09,
+          "max_tolerance_ratio": 6.828782776620835e-06,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "poisson_random_field",
+          "max_abs": 8.326672684688674e-17,
+          "max_rel": 1.4229302763751926e-09,
+          "max_tolerance_ratio": 4.158101008204842e-06,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "poisson_mean_phi",
+          "value": 4.824699667560495e-18,
+          "tolerance": 2e-13,
+          "passed": true
+        }
+      ],
+      "passed": true,
+      "compensated": true
+    }
+  ],
+  "unavailable": [
+    {
+      "backend": "cupy",
+      "grid": 16,
+      "error": "/tmp/tmpdgi_vqzz/7876f7431f65ea25c1676d18b64b78cd7c531112.cubin.cu(1): catastrophic error: cannot open source file \"math.h\"\n  #include <math.h>\n                   ^\n\n1 catastrophic error detected in the compilation of \"/tmp/tmpdgi_vqzz/7876f7431f65ea25c1676d18b64b78cd7c531112.cubin.cu\".\nCompilation terminated.\n",
+      "traceback": "Traceback (most recent call last):\n  File \"/usr/local/lib/python3.13/dist-packages/cupy/cuda/compiler.py\", line 860, in compile\n    nvrtc.compileProgram(self.ptr, options)\n    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^\n  File \"cupy_backends/cuda/libs/nvrtc.pyx\", line 125, in cupy_backends.cuda.libs.nvrtc.compileProgram\n  File \"cupy_backends/cuda/libs/nvrtc.pyx\", line 138, in cupy_backends.cuda.libs.nvrtc.compileProgram\n  File \"cupy_backends/cuda/libs/nvrtc.pyx\", line 53, in cupy_backends.cuda.libs.nvrtc.check_status\ncupy_backends.cuda.libs.nvrtc.NVRTCError: NVRTC_ERROR_COMPILATION (6)\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/content/lw/spike/conformance.py\", line 227, in main\n    backend = make_backend(\n        name, Grid(n), args.dtype, compensated=not args.uncompensated\n    )\n  File \"/content/lw/spike/common.py\", line 67, in make_backend\n    return CuPy(grid, dtype=dtype or \"float64\")\n  File \"/content/lw/spike/cupy_backend.py\", line 26, in __init__\n    name: self.module.get_function(name)\n          ~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^\n  File \"cupy/_core/raw.pyx\", line 498, in cupy._core.raw.RawModule.get_function\n  File \"cupy/_core/raw.pyx\", line 108, in cupy._core.raw.RawKernel.kernel.__get__\n  File \"cupy/_core/raw.pyx\", line 125, in cupy._core.raw.RawKernel._kernel\n  File \"cupy/_util.pyx\", line 67, in cupy._util.memoize.decorator.ret\n  File \"cupy/_core/raw.pyx\", line 549, in cupy._core.raw._get_raw_module\n  File \"cupy/_core/core.pyx\", line 2621, in cupy._core.core.compile_with_cache\n  File \"cupy/_core/core.pyx\", line 2639, in cupy._core.core.compile_with_cache\n  File \"/usr/local/lib/python3.13/dist-packages/cupy/cuda/compiler.py\", line 649, in _compile_module_with_cache\n    return _compile_with_cache_cuda(\n        source, options, arch, extra_source, backend,\n        enable_cooperative_groups, name_expressions, log_stream,\n        cache_in_memory, jitify, to_ltoir)\n  File \"/usr/local/lib/python3.13/dist-packages/cupy/cuda/compiler.py\", line 748, in _compile_with_cache_cuda\n    ptx, mapping = _compile_using_nvrtc_no_warning(\n                   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^\n        source, options, arch, cu_name, name_expressions,\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n        log_stream, cache_in_memory, jitify, 'lto' if to_ltoir else None)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.13/dist-packages/cupy/cuda/compiler.py\", line 402, in _compile_using_nvrtc_no_warning\n    return _compile(source, options, cu_path, name_expressions,\n                    log_stream, jitify, method)\n  File \"/usr/local/lib/python3.13/dist-packages/cupy/cuda/compiler.py\", line 384, in _compile\n    compiled_obj, mapping = prog.compile(options, log_stream)\n                            ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.13/dist-packages/cupy/cuda/compiler.py\", line 879, in compile\n    raise CompileException(log, self.src, self.name, options,\n                           'nvrtc' if not runtime.is_hip else 'hiprtc')\ncupy.cuda.compiler.CompileException: /tmp/tmpdgi_vqzz/7876f7431f65ea25c1676d18b64b78cd7c531112.cubin.cu(1): catastrophic error: cannot open source file \"math.h\"\n  #include <math.h>\n                   ^\n\n1 catastrophic error detected in the compilation of \"/tmp/tmpdgi_vqzz/7876f7431f65ea25c1676d18b64b78cd7c531112.cubin.cu\".\nCompilation terminated.\n\n"
+    }
+  ]
+}
