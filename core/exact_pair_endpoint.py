@@ -94,6 +94,32 @@ def evaluate_exact_endpoint_four_potential(
                 float(observer_state["y"][particle_idx]),
                 float(observer_state["z"][particle_idx]),
             ),
+            time_low_ns=float(
+                observer_state.get("source_time_low_ns", np.zeros(particle_count))[
+                    particle_idx
+                ]
+            ),
+            position_low_mm=tuple(
+                float(
+                    observer_state.get(
+                        f"source_position_low_{axis}", np.zeros(particle_count)
+                    )[particle_idx]
+                )
+                for axis in "xyz"
+            ),
+            time_tail_ns=float(
+                observer_state.get("source_time_tail_ns", np.zeros(particle_count))[
+                    particle_idx
+                ]
+            ),
+            position_tail_mm=tuple(
+                float(
+                    observer_state.get(
+                        f"source_position_tail_{axis}", np.zeros(particle_count)
+                    )[particle_idx]
+                )
+                for axis in "xyz"
+            ),
         )
         try:
             charge_field = evaluate_retarded_charge_field_native(
