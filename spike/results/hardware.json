@@ -1,0 +1,19 @@
+{
+  "SPHardwareDataType": [
+    {
+      "chip_type": "Apple M5 Pro",
+      "physical_memory": "48 GB",
+      "machine_model": "Mac17,9",
+      "machine_name": "MacBook Pro",
+      "number_processors": "proc 15:5:10:0"
+    }
+  ],
+  "SPDisplaysDataType": [
+    {
+      "sppci_model": "Apple M5 Pro",
+      "spdisplays_metal": "spdisplays_supported",
+      "spdisplays_vendor": "sppci_vendor_Apple",
+      "sppci_cores": "16"
+    }
+  ]
+}

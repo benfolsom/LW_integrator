@@ -1,0 +1,36 @@
+{
+  "source": "https://api.github.com/repos/taichi-dev/taichi/releases?per_page=6",
+  "retrieved": "2026-10-05",
+  "data": [
+    {
+      "tag_name": "v1.7.4",
+      "published_at": "2025-07-31T15:32:07Z",
+      "html_url": "https://github.com/taichi-dev/taichi/releases/tag/v1.7.4"
+    },
+    {
+      "tag_name": "v1.7.3",
+      "published_at": "2024-12-23T08:01:30Z",
+      "html_url": "https://github.com/taichi-dev/taichi/releases/tag/v1.7.3"
+    },
+    {
+      "tag_name": "v1.7.2",
+      "published_at": "2024-08-22T08:59:46Z",
+      "html_url": "https://github.com/taichi-dev/taichi/releases/tag/v1.7.2"
+    },
+    {
+      "tag_name": "v1.7.1",
+      "published_at": "2024-04-17T03:15:44Z",
+      "html_url": "https://github.com/taichi-dev/taichi/releases/tag/v1.7.1"
+    },
+    {
+      "tag_name": "v1.7.0",
+      "published_at": "2023-11-27T06:46:58Z",
+      "html_url": "https://github.com/taichi-dev/taichi/releases/tag/v1.7.0"
+    },
+    {
+      "tag_name": "v1.6.0",
+      "published_at": "2023-05-12T03:19:58Z",
+      "html_url": "https://github.com/taichi-dev/taichi/releases/tag/v1.6.0"
+    }
+  ]
+}

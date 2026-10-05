@@ -1,0 +1,57 @@
+{
+  "metadata": {
+    "python": "3.12.12 | packaged by conda-forge | (main, Jan 27 2026, 00:01:15) [Clang 19.1.7 ]",
+    "executable": "/Users/benjaminfolsom/.local/share/lw-gpu-spike/bin/python",
+    "platform": "macOS-27.0-arm64-arm-64bit",
+    "machine": "arm64",
+    "packages": {
+      "numpy": "2.5.3",
+      "numba": "0.68.0",
+      "llvmlite": "0.50.0",
+      "mlx": "0.32.3",
+      "mlx-metal": "0.32.3",
+      "mlx-cuda-12": null,
+      "mlx-cuda-13": null,
+      "taichi": "1.7.4",
+      "cupy-cuda12x": null,
+      "pytest": "9.1.1"
+    },
+    "base_commit": "66901e4075c913de439008d9bb26c280447f49bf",
+    "git_status": "?? codex_gpu-spike.log.1\n?? notebooks/\n?? spike/",
+    "source_sha256": "bce78713f9415c0c6e04886c68e6700283fd5889ce5cf32fee8d2b1585183994",
+    "source_files_sha256": {
+      "__init__.py": "f3756c795c38ac19ea889d2ed5f190294be379ef506fb05d2b4a73834427f64c",
+      "benchmark.py": "4fff793a28df1f98bede00149d51e2862eeba3a59e3b4054b9c429c2927eee14",
+      "check_generated_cpp.py": "d1c08e832d6065f77bf061c4de1544820a656551b2ed4ffecd796ef377289d2a",
+      "common.py": "48c46e3797e49a884601be14fa7339691f4b93deb55ed1dd0d5f1e9cca9c6195",
+      "conformance.py": "bf926f99126f7795d68bdea3c364b323bdfd8c34ef1a2a798c308a9a31008860",
+      "cpu.py": "f62e420fd8d873713210aac652e13fb90c8b920fd35fea83b0dc7247d6d6653e",
+      "cupy_backend.py": "c7da69d52d0bde071a979040cd8ddc58eeb4c425a3f60cbbc78fcf644cd1892e",
+      "kernel_source.py": "0e51f63daef7955c40cc9658690f0d695b50409a93fc53a95138e9ca6ea1ef4e",
+      "mlx_backend.py": "28cdff0e133b07b068f1c93d8d2da5d84179d152fbfa11b517a0efb213effb95",
+      "probe_mlx_cuda.py": "12ecd98ea1ffa5672ec903b69cd2a0b8f301b1cf85beddaab3708a9a7a018afb",
+      "provenance.py": "5f60a2905cd410910b8a45222f127643b0a2c73e3a09b9680a440fadc5bbf0f8",
+      "taichi_backend.py": "b83efc4c42e250f05d23eedaf8a31c6837fefefee3153767d18dfabe9248759f",
+      "test_reference.py": "b5e756312bf8df001917f036ccf9a95e9caab63b35884e1e07a440f4e3945286"
+    },
+    "hardware": "sysctl: sysctl fmt -1 1024 1: Operation not permitted",
+    "memory_bytes": "sysctl: sysctl fmt -1 1024 1: Operation not permitted",
+    "macos": "27.0"
+  },
+  "radiation_reaction": "off (synthetic kernel controls)",
+  "results": [],
+  "unavailable": [
+    {
+      "backend": "mlx",
+      "grid": 16,
+      "error": "[metal::load_device] No Metal device available. This typically occurs in headless, sandboxed, or virtualized macOS sessions where the GPU is not accessible.",
+      "traceback": "Traceback (most recent call last):\n  File \"/Users/benjaminfolsom/work/extracurr/LW_integrator-gpu-spike/spike/conformance.py\", line 227, in main\n    backend = make_backend(\n              ^^^^^^^^^^^^^\n  File \"/Users/benjaminfolsom/work/extracurr/LW_integrator-gpu-spike/spike/common.py\", line 56, in make_backend\n    return MLX(grid, cuda=name == \"mlx-cuda\", compensated=compensated)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/benjaminfolsom/work/extracurr/LW_integrator-gpu-spike/spike/mlx_backend.py\", line 17, in __init__\n    import mlx.core as mx\nImportError: [metal::load_device] No Metal device available. This typically occurs in headless, sandboxed, or virtualized macOS sessions where the GPU is not accessible.\n"
+    },
+    {
+      "backend": "taichi-metal",
+      "grid": 16,
+      "error": "[runtime.cpp:host_to_device@59] Assertion failure: device_->map(*device_args_buffer_, &device_base) == RhiResult::success",
+      "traceback": "Traceback (most recent call last):\n  File \"/Users/benjaminfolsom/work/extracurr/LW_integrator-gpu-spike/spike/conformance.py\", line 227, in main\n    backend = make_backend(\n              ^^^^^^^^^^^^^\n  File \"/Users/benjaminfolsom/work/extracurr/LW_integrator-gpu-spike/spike/common.py\", line 63, in make_backend\n    return module.Taichi(\n           ^^^^^^^^^^^^^^\n  File \"/Users/benjaminfolsom/work/extracurr/LW_integrator-gpu-spike/spike/taichi_backend.py\", line 56, in __init__\n    self.inverse = self.array(inverse_laplacian(grid))\n                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/benjaminfolsom/work/extracurr/LW_integrator-gpu-spike/spike/taichi_backend.py\", line 61, in array\n    result.from_numpy(data)\n  File \"/Users/benjaminfolsom/.local/share/lw-gpu-spike/lib/python3.12/site-packages/taichi/lang/util.py\", line 351, in wrapped\n    return func(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/benjaminfolsom/.local/share/lw-gpu-spike/lib/python3.12/site-packages/taichi/lang/_ndarray.py\", line 270, in from_numpy\n    self._ndarray_from_numpy(arr)\n  File \"/Users/benjaminfolsom/.local/share/lw-gpu-spike/lib/python3.12/site-packages/taichi/lang/util.py\", line 351, in wrapped\n    return func(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/benjaminfolsom/.local/share/lw-gpu-spike/lib/python3.12/site-packages/taichi/lang/_ndarray.py\", line 128, in _ndarray_from_numpy\n    ext_arr_to_ndarray(arr, self)\n  File \"/Users/benjaminfolsom/.local/share/lw-gpu-spike/lib/python3.12/site-packages/taichi/lang/kernel_impl.py\", line 1113, in wrapped\n    return primal(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/benjaminfolsom/.local/share/lw-gpu-spike/lib/python3.12/site-packages/taichi/lang/kernel_impl.py\", line 1045, in __call__\n    return self.launch_kernel(kernel_cpp, *args)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/benjaminfolsom/.local/share/lw-gpu-spike/lib/python3.12/site-packages/taichi/lang/kernel_impl.py\", line 976, in launch_kernel\n    raise e from None\n  File \"/Users/benjaminfolsom/.local/share/lw-gpu-spike/lib/python3.12/site-packages/taichi/lang/kernel_impl.py\", line 971, in launch_kernel\n    prog.launch_kernel(compiled_kernel_data, launch_ctx)\nRuntimeError: [runtime.cpp:host_to_device@59] Assertion failure: device_->map(*device_args_buffer_, &device_base) == RhiResult::success\n"
+    }
+  ]
+}

@@ -1,0 +1,40 @@
+{
+  "recorded_utc": "2026-10-05T12:19:15.077061+00:00",
+  "python": "3.12.12 | packaged by conda-forge | (main, Jan 27 2026, 00:01:15) [Clang 19.1.7 ]",
+  "executable": "/Users/benjaminfolsom/.local/share/lw-gpu-spike/bin/python",
+  "platform": "macOS-27.0-arm64-arm-64bit",
+  "machine": "arm64",
+  "packages": {
+    "numpy": "2.5.3",
+    "numba": "0.68.0",
+    "llvmlite": "0.50.0",
+    "mlx": "0.32.3",
+    "mlx-metal": "0.32.3",
+    "mlx-cuda-12": null,
+    "mlx-cuda-13": null,
+    "taichi": "1.7.4",
+    "cupy-cuda12x": null,
+    "pytest": "9.1.1"
+  },
+  "base_commit": "66901e4075c913de439008d9bb26c280447f49bf",
+  "git_status": "?? codex_gpu-spike.log.1\n?? notebooks/\n?? spike/",
+  "source_sha256": "5f3a0985bd288873dc26e349de18adb387cc979e64046286d071293d912f6d3e",
+  "source_files_sha256": {
+    "__init__.py": "f3756c795c38ac19ea889d2ed5f190294be379ef506fb05d2b4a73834427f64c",
+    "benchmark.py": "68b3fe08b1a2c617c4f2ec796846f30a8b55a8011bbf8c5b174e94f3f9796e95",
+    "check_generated_cpp.py": "d1c08e832d6065f77bf061c4de1544820a656551b2ed4ffecd796ef377289d2a",
+    "common.py": "62d4fcb45180669f263aee76692a8c0fe31bef8de3c8ef49af2ab0c23f0f785c",
+    "conformance.py": "bf926f99126f7795d68bdea3c364b323bdfd8c34ef1a2a798c308a9a31008860",
+    "cpu.py": "f62e420fd8d873713210aac652e13fb90c8b920fd35fea83b0dc7247d6d6653e",
+    "cupy_backend.py": "c7da69d52d0bde071a979040cd8ddc58eeb4c425a3f60cbbc78fcf644cd1892e",
+    "kernel_source.py": "0e51f63daef7955c40cc9658690f0d695b50409a93fc53a95138e9ca6ea1ef4e",
+    "mlx_backend.py": "28cdff0e133b07b068f1c93d8d2da5d84179d152fbfa11b517a0efb213effb95",
+    "probe_mlx_cuda.py": "12ecd98ea1ffa5672ec903b69cd2a0b8f301b1cf85beddaab3708a9a7a018afb",
+    "provenance.py": "5b5f02dd249a959c43bcdcac4d52d590a63178774f288c694f17f9c275631d50",
+    "taichi_backend.py": "b83efc4c42e250f05d23eedaf8a31c6837fefefee3153767d18dfabe9248759f",
+    "test_reference.py": "017ad1fc0943c163d65795d841d26a15117131ee579656f0a64ce873a928d79e"
+  },
+  "hardware": "sysctl: sysctl fmt -1 1024 1: Operation not permitted",
+  "memory_bytes": "sysctl: sysctl fmt -1 1024 1: Operation not permitted",
+  "macos": "27.0"
+}

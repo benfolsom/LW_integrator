@@ -1,0 +1,7 @@
+# Python 3.12–3.13: pinned NumPy requires 3.12+, and Taichi wheels stop at 3.13.
+# CUDA 12 runtime; T4 for correctness, A100 optional for float64 throughput.
+numpy==2.5.3
+numba==0.68.0
+taichi==1.7.4
+cupy-cuda12x==14.2.0
+pytest==9.1.1

@@ -1,0 +1,1527 @@
+{
+  "metadata": {
+    "python": "3.12.12 | packaged by conda-forge | (main, Jan 27 2026, 00:01:15) [Clang 19.1.7 ]",
+    "executable": "/Users/benjaminfolsom/.local/share/lw-gpu-spike/bin/python",
+    "platform": "macOS-27.0-arm64-arm-64bit",
+    "machine": "arm64",
+    "packages": {
+      "numpy": "2.5.3",
+      "numba": "0.68.0",
+      "llvmlite": "0.50.0",
+      "mlx": "0.32.3",
+      "mlx-metal": "0.32.3",
+      "mlx-cuda-12": null,
+      "mlx-cuda-13": null,
+      "taichi": "1.7.4",
+      "cupy-cuda12x": null,
+      "pytest": "9.1.1"
+    },
+    "base_commit": "66901e4075c913de439008d9bb26c280447f49bf",
+    "git_status": "?? codex_gpu-spike.log.1\n?? notebooks/\n?? spike/",
+    "source_sha256": "6b86127514cbd0238ca5722fd7b856471b89370f9df30a540208675906bc43de",
+    "source_files_sha256": {
+      "__init__.py": "f3756c795c38ac19ea889d2ed5f190294be379ef506fb05d2b4a73834427f64c",
+      "benchmark.py": "f143459800930a2ac0a4fb7618dc7f89546a997a8a51b8f0a9cb0be35de1a80e",
+      "check_generated_cpp.py": "d1c08e832d6065f77bf061c4de1544820a656551b2ed4ffecd796ef377289d2a",
+      "common.py": "6f9276722bc678183336a983287ecb96e82f1ced9c2607ec22ec971fb55dde08",
+      "conformance.py": "bf926f99126f7795d68bdea3c364b323bdfd8c34ef1a2a798c308a9a31008860",
+      "cpu.py": "f62e420fd8d873713210aac652e13fb90c8b920fd35fea83b0dc7247d6d6653e",
+      "cupy_backend.py": "c7da69d52d0bde071a979040cd8ddc58eeb4c425a3f60cbbc78fcf644cd1892e",
+      "kernel_source.py": "0e51f63daef7955c40cc9658690f0d695b50409a93fc53a95138e9ca6ea1ef4e",
+      "mlx_backend.py": "28cdff0e133b07b068f1c93d8d2da5d84179d152fbfa11b517a0efb213effb95",
+      "probe_mlx_cuda.py": "12ecd98ea1ffa5672ec903b69cd2a0b8f301b1cf85beddaab3708a9a7a018afb",
+      "provenance.py": "5f60a2905cd410910b8a45222f127643b0a2c73e3a09b9680a440fadc5bbf0f8",
+      "taichi_backend.py": "b83efc4c42e250f05d23eedaf8a31c6837fefefee3153767d18dfabe9248759f",
+      "test_reference.py": "9e2fa25f518752ea236f8001166026606539e529ce4dd74080ff8216a1139d01"
+    },
+    "hardware": "sysctl: sysctl fmt -1 1024 1: Operation not permitted",
+    "memory_bytes": "sysctl: sysctl fmt -1 1024 1: Operation not permitted",
+    "macos": "27.0"
+  },
+  "radiation_reaction": "off (synthetic kernel controls)",
+  "results": [
+    {
+      "backend": "cpu",
+      "dtype": "float64",
+      "grid": 16,
+      "dx": 1.0,
+      "count": 8192,
+      "checks": [
+        {
+          "test": "deposit_1_uniform",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "charge_1_uniform",
+          "value": 6.474331680887732e-19,
+          "tolerance": 1e-13,
+          "passed": true,
+          "net_charge_error": 5.329070518200751e-15,
+          "expected_net_charge": 10.631306876747123
+        },
+        {
+          "test": "gather_1_random",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "gather_1_constant",
+          "max_abs": 2.220446049250313e-16,
+          "max_rel": 2.220446049250313e-16,
+          "max_tolerance_ratio": 8.881784197001252e-06,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "deposit_1_cancellation",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "charge_1_cancellation",
+          "value": 0.0,
+          "tolerance": 1e-12,
+          "passed": true,
+          "net_charge_error": 0.0
+        },
+        {
+          "test": "internal_force_1",
+          "value": 2.4857895528755076e-17,
+          "tolerance": 1e-12,
+          "passed": true
+        },
+        {
+          "test": "weighted_momentum_1",
+          "value": 1.805172204972008e-18,
+          "tolerance": 1e-12,
+          "passed": true,
+          "delta_momentum": [
+            -2.3930510351100054e-15,
+            -5.4001941807158005e-15,
+            1.548934591699691e-14
+          ]
+        },
+        {
+          "test": "deposit_2_uniform",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "charge_2_uniform",
+          "value": 1.0790552801479554e-18,
+          "tolerance": 1e-13,
+          "passed": true,
+          "net_charge_error": 8.881784197001252e-15,
+          "expected_net_charge": 10.631306876747123
+        },
+        {
+          "test": "gather_2_random",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "gather_2_constant",
+          "max_abs": 4.440892098500626e-16,
+          "max_rel": 4.440892098500626e-16,
+          "max_tolerance_ratio": 1.7763568394002505e-05,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "deposit_2_cancellation",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "charge_2_cancellation",
+          "value": 0.0,
+          "tolerance": 1e-12,
+          "passed": true,
+          "net_charge_error": 0.0
+        },
+        {
+          "test": "internal_force_2",
+          "value": 1.3088399655485282e-17,
+          "tolerance": 1e-12,
+          "passed": true
+        },
+        {
+          "test": "weighted_momentum_2",
+          "value": 1.6606448221243687e-18,
+          "tolerance": 1e-12,
+          "passed": true,
+          "delta_momentum": [
+            -1.0196853669590389e-14,
+            -8.206976764846274e-15,
+            7.825337600131377e-15
+          ]
+        },
+        {
+          "test": "boris_position",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "boris_momentum",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "zero_field_momentum",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "electric_impulse",
+          "max_abs": 4.440892098500626e-16,
+          "max_rel": 2.8125391840975134e-16,
+          "max_tolerance_ratio": 1.4801064887564537e-05,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "magnetic_norm",
+          "value": 3.486692357714109e-16,
+          "tolerance": 2e-13,
+          "passed": true
+        },
+        {
+          "test": "poisson_manufactured_phi",
+          "max_abs": 4.440892098500626e-16,
+          "max_rel": 6.357622935908546,
+          "max_tolerance_ratio": 2.2125778411769293e-05,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "poisson_manufactured_field",
+          "max_abs": 2.220446049250313e-16,
+          "max_rel": 5.0,
+          "max_tolerance_ratio": 1.1102230246251565e-05,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "poisson_random_phi",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "poisson_random_field",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "poisson_mean_phi",
+          "value": 2.168404344971009e-19,
+          "tolerance": 2e-13,
+          "passed": true
+        }
+      ],
+      "passed": true,
+      "compensated": true
+    },
+    {
+      "backend": "cpu",
+      "dtype": "float64",
+      "grid": 64,
+      "dx": 1.0,
+      "count": 8192,
+      "checks": [
+        {
+          "test": "deposit_1_uniform",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "charge_1_uniform",
+          "value": 1.9422995042663195e-18,
+          "tolerance": 1e-13,
+          "passed": true,
+          "net_charge_error": 1.5987211554602254e-14,
+          "expected_net_charge": 10.631306876747123
+        },
+        {
+          "test": "gather_1_random",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "gather_1_constant",
+          "max_abs": 2.220446049250313e-16,
+          "max_rel": 2.220446049250313e-16,
+          "max_tolerance_ratio": 8.881784197001252e-06,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "deposit_1_cancellation",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "charge_1_cancellation",
+          "value": 0.0,
+          "tolerance": 1e-12,
+          "passed": true,
+          "net_charge_error": 0.0
+        },
+        {
+          "test": "internal_force_1",
+          "value": 4.166432650673805e-17,
+          "tolerance": 1e-12,
+          "passed": true
+        },
+        {
+          "test": "weighted_momentum_1",
+          "value": 3.1827307937607046e-19,
+          "tolerance": 1e-12,
+          "passed": true,
+          "delta_momentum": [
+            -1.6237011735142914e-15,
+            -2.283655035906218e-15,
+            -8.313662258618848e-16
+          ]
+        },
+        {
+          "test": "deposit_2_uniform",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "charge_2_uniform",
+          "value": -2.1581105602959107e-19,
+          "tolerance": 1e-13,
+          "passed": true,
+          "net_charge_error": -1.7763568394002505e-15,
+          "expected_net_charge": 10.631306876747123
+        },
+        {
+          "test": "gather_2_random",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "gather_2_constant",
+          "max_abs": 2.220446049250313e-16,
+          "max_rel": 2.220446049250313e-16,
+          "max_tolerance_ratio": 8.881784197001252e-06,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "deposit_2_cancellation",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "charge_2_cancellation",
+          "value": 0.0,
+          "tolerance": 1e-12,
+          "passed": true,
+          "net_charge_error": 0.0
+        },
+        {
+          "test": "internal_force_2",
+          "value": 2.3178527713005382e-17,
+          "tolerance": 1e-12,
+          "passed": true
+        },
+        {
+          "test": "weighted_momentum_2",
+          "value": 1.496505040124031e-18,
+          "tolerance": 1e-12,
+          "passed": true,
+          "delta_momentum": [
+            -2.2035324953595392e-15,
+            3.751122676365348e-15,
+            1.3036013241096711e-14
+          ]
+        },
+        {
+          "test": "boris_position",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "boris_momentum",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "zero_field_momentum",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "electric_impulse",
+          "max_abs": 4.440892098500626e-16,
+          "max_rel": 4.535259676258467e-16,
+          "max_tolerance_ratio": 1.4799139108094135e-05,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "magnetic_norm",
+          "value": 3.079251605834605e-16,
+          "tolerance": 2e-13,
+          "passed": true
+        },
+        {
+          "test": "poisson_manufactured_phi",
+          "max_abs": 7.771561172376096e-16,
+          "max_rel": 11.8496242853165,
+          "max_tolerance_ratio": 3.354623186747577e-05,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "poisson_manufactured_field",
+          "max_abs": 3.3306690738754696e-16,
+          "max_rel": 9.0,
+          "max_tolerance_ratio": 1.6653345369377348e-05,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "poisson_random_phi",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "poisson_random_field",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "poisson_mean_phi",
+          "value": 0.0,
+          "tolerance": 2e-13,
+          "passed": true
+        }
+      ],
+      "passed": true,
+      "compensated": true
+    },
+    {
+      "backend": "cpu",
+      "dtype": "float64",
+      "grid": 128,
+      "dx": 1.0,
+      "count": 8192,
+      "checks": [
+        {
+          "test": "deposit_1_uniform",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "charge_1_uniform",
+          "value": -6.474331680887732e-19,
+          "tolerance": 1e-13,
+          "passed": true,
+          "net_charge_error": -5.329070518200751e-15,
+          "expected_net_charge": 10.631306876747123
+        },
+        {
+          "test": "gather_1_random",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "gather_1_constant",
+          "max_abs": 2.220446049250313e-16,
+          "max_rel": 2.220446049250313e-16,
+          "max_tolerance_ratio": 8.881784197001252e-06,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "deposit_1_cancellation",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "charge_1_cancellation",
+          "value": 0.0,
+          "tolerance": 1e-12,
+          "passed": true,
+          "net_charge_error": 0.0
+        },
+        {
+          "test": "internal_force_1",
+          "value": 2.6760732291148847e-17,
+          "tolerance": 1e-12,
+          "passed": true
+        },
+        {
+          "test": "weighted_momentum_1",
+          "value": 1.3370132512288588e-18,
+          "tolerance": 1e-12,
+          "passed": true,
+          "delta_momentum": [
+            -1.1191798898226024e-14,
+            1.6542350171969145e-15,
+            -4.770706399370717e-15
+          ]
+        },
+        {
+          "test": "deposit_2_uniform",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "charge_2_uniform",
+          "value": 1.0790552801479554e-18,
+          "tolerance": 1e-13,
+          "passed": true,
+          "net_charge_error": 8.881784197001252e-15,
+          "expected_net_charge": 10.631306876747123
+        },
+        {
+          "test": "gather_2_random",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "gather_2_constant",
+          "max_abs": 2.220446049250313e-16,
+          "max_rel": 2.220446049250313e-16,
+          "max_tolerance_ratio": 8.881784197001252e-06,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "deposit_2_cancellation",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "charge_2_cancellation",
+          "value": 0.0,
+          "tolerance": 1e-12,
+          "passed": true,
+          "net_charge_error": 0.0
+        },
+        {
+          "test": "internal_force_2",
+          "value": 1.541685820130533e-17,
+          "tolerance": 1e-12,
+          "passed": true
+        },
+        {
+          "test": "weighted_momentum_2",
+          "value": 2.0448158095157617e-18,
+          "tolerance": 1e-12,
+          "passed": true,
+          "delta_momentum": [
+            -1.654145866979216e-14,
+            -8.037055179363484e-15,
+            -3.794924444133763e-15
+          ]
+        },
+        {
+          "test": "boris_position",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "boris_momentum",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "zero_field_momentum",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "electric_impulse",
+          "max_abs": 4.440892098500626e-16,
+          "max_rel": 1.6844177987093041e-15,
+          "max_tolerance_ratio": 1.4799047262040239e-05,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "magnetic_norm",
+          "value": 3.7235188530128963e-16,
+          "tolerance": 2e-13,
+          "passed": true
+        },
+        {
+          "test": "poisson_manufactured_phi",
+          "max_abs": 3.0531133177191805e-15,
+          "max_rel": 65.28586936157008,
+          "max_tolerance_ratio": 0.00014701390486194892,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "poisson_manufactured_field",
+          "max_abs": 4.996003610813204e-16,
+          "max_rel": 11.0,
+          "max_tolerance_ratio": 2.4810928233272138e-05,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "poisson_random_phi",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "poisson_random_field",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 2e-11,
+          "rtol": 5e-12,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "poisson_mean_phi",
+          "value": 8.673617379884035e-19,
+          "tolerance": 2e-13,
+          "passed": true
+        }
+      ],
+      "passed": true,
+      "compensated": true
+    },
+    {
+      "backend": "taichi-cpu",
+      "dtype": "float32",
+      "grid": 16,
+      "dx": 1.0,
+      "count": 8192,
+      "checks": [
+        {
+          "test": "deposit_1_uniform",
+          "max_abs": 2.4661964995731367e-06,
+          "max_rel": 0.0030182100854216107,
+          "max_tolerance_ratio": 0.03595851420767885,
+          "atol": 5e-05,
+          "rtol": 0.0002,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "charge_1_uniform",
+          "value": 3.0731136240166287e-10,
+          "tolerance": 2e-06,
+          "passed": true,
+          "net_charge_error": 2.529502660664207e-06,
+          "expected_net_charge": 10.631306876747123
+        },
+        {
+          "test": "gather_1_random",
+          "max_abs": 2.2112249753458713e-07,
+          "max_rel": 0.01109765151953675,
+          "max_tolerance_ratio": 0.0038136970623270745,
+          "atol": 5e-05,
+          "rtol": 0.0002,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "gather_1_constant",
+          "max_abs": 1.1920928955078125e-07,
+          "max_rel": 1.1920928955078125e-07,
+          "max_tolerance_ratio": 0.000476837158203125,
+          "atol": 5e-05,
+          "rtol": 0.0002,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "deposit_1_cancellation",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 5e-05,
+          "rtol": 0.0002,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "charge_1_cancellation",
+          "value": 0.0,
+          "tolerance": 5e-05,
+          "passed": true,
+          "net_charge_error": 0.0
+        },
+        {
+          "test": "internal_force_1",
+          "value": 1.835120167566639e-09,
+          "tolerance": 5e-06,
+          "passed": true
+        },
+        {
+          "test": "weighted_momentum_1",
+          "value": 1.0189893897168494e-09,
+          "tolerance": 5e-06,
+          "passed": true,
+          "delta_momentum": [
+            8.705051989990132e-06,
+            -3.0772916804009537e-06,
+            1.5224061819876789e-06
+          ]
+        },
+        {
+          "test": "deposit_2_uniform",
+          "max_abs": 1.4415344480878112e-06,
+          "max_rel": 0.0006126289329935475,
+          "max_tolerance_ratio": 0.02451374007102784,
+          "atol": 5e-05,
+          "rtol": 0.0002,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "charge_2_uniform",
+          "value": 9.361248636167835e-10,
+          "tolerance": 2e-06,
+          "passed": true,
+          "net_charge_error": 7.7053133171745e-06,
+          "expected_net_charge": 10.631306876747123
+        },
+        {
+          "test": "gather_2_random",
+          "max_abs": 1.3139374956117056e-07,
+          "max_rel": 0.12718290165130625,
+          "max_tolerance_ratio": 0.0025184438626384585,
+          "atol": 5e-05,
+          "rtol": 0.0002,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "gather_2_constant",
+          "max_abs": 1.1920928955078125e-07,
+          "max_rel": 1.1920928955078125e-07,
+          "max_tolerance_ratio": 0.000476837158203125,
+          "atol": 5e-05,
+          "rtol": 0.0002,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "deposit_2_cancellation",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 5e-05,
+          "rtol": 0.0002,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "charge_2_cancellation",
+          "value": 0.0,
+          "tolerance": 5e-05,
+          "passed": true,
+          "net_charge_error": 0.0
+        },
+        {
+          "test": "internal_force_2",
+          "value": 1.1345854453062264e-09,
+          "tolerance": 5e-06,
+          "passed": true
+        },
+        {
+          "test": "weighted_momentum_2",
+          "value": 3.2091839128926565e-10,
+          "tolerance": 5e-06,
+          "passed": true,
+          "delta_momentum": [
+            1.7856213882943731e-06,
+            -1.564852954317325e-06,
+            -1.7458639735169063e-06
+          ]
+        },
+        {
+          "test": "boris_position",
+          "max_abs": 1.0999264183908508e-06,
+          "max_rel": 0.008150757958230729,
+          "max_tolerance_ratio": 0.021371659296569916,
+          "atol": 5e-05,
+          "rtol": 0.0002,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "boris_momentum",
+          "max_abs": 3.6689361104791374e-07,
+          "max_rel": 1.5117877689978842e-06,
+          "max_tolerance_ratio": 0.000820478885759735,
+          "atol": 5e-05,
+          "rtol": 0.0002,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "zero_field_momentum",
+          "max_abs": 1.1723732118440466e-07,
+          "max_rel": 5.9091729736433275e-08,
+          "max_tolerance_ratio": 0.00025625205006190715,
+          "atol": 5e-05,
+          "rtol": 0.0002,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "electric_impulse",
+          "max_abs": 3.407559732160337e-07,
+          "max_rel": 1.0260105849506575e-06,
+          "max_tolerance_ratio": 0.0007153020031131364,
+          "atol": 5e-05,
+          "rtol": 0.0002,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "magnetic_norm",
+          "value": 1.7971932728909964e-07,
+          "tolerance": 2e-06,
+          "passed": true
+        },
+        {
+          "test": "poisson_manufactured_phi",
+          "max_abs": 1.3446173774411818e-07,
+          "max_rel": 935720187.4903716,
+          "max_tolerance_ratio": 0.0012528037840336618,
+          "atol": 5e-05,
+          "rtol": 0.0002,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "poisson_manufactured_field",
+          "max_abs": 9.536743172944284e-08,
+          "max_rel": 1073741825.0,
+          "max_tolerance_ratio": 0.0011920928999487035,
+          "atol": 5e-05,
+          "rtol": 0.0002,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "poisson_random_phi",
+          "max_abs": 1.2769048249317017e-08,
+          "max_rel": 0.00015568709630605734,
+          "max_tolerance_ratio": 0.00021250900764206113,
+          "atol": 5e-05,
+          "rtol": 0.0002,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "poisson_random_field",
+          "max_abs": 7.03888006041431e-09,
+          "max_rel": 0.001734082151012308,
+          "max_tolerance_ratio": 0.00013541244958629642,
+          "atol": 5e-05,
+          "rtol": 0.0002,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "poisson_mean_phi",
+          "value": 1.7969625787372934e-11,
+          "tolerance": 2e-06,
+          "passed": true
+        }
+      ],
+      "passed": true,
+      "compensated": true
+    },
+    {
+      "backend": "taichi-cpu",
+      "dtype": "float32",
+      "grid": 64,
+      "dx": 1.0,
+      "count": 8192,
+      "checks": [
+        {
+          "test": "deposit_1_uniform",
+          "max_abs": 4.994896062759935e-06,
+          "max_rel": 0.2342723779475183,
+          "max_tolerance_ratio": 0.0467110938213201,
+          "atol": 5e-05,
+          "rtol": 0.0002,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "charge_1_uniform",
+          "value": 6.591011760565997e-10,
+          "tolerance": 2e-06,
+          "passed": true,
+          "net_charge_error": 5.425110758849883e-06,
+          "expected_net_charge": 10.631306876747123
+        },
+        {
+          "test": "gather_1_random",
+          "max_abs": 1.2065767868996158e-06,
+          "max_rel": 0.016354175154691647,
+          "max_tolerance_ratio": 0.016334624427910963,
+          "atol": 5e-05,
+          "rtol": 0.0002,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "gather_1_constant",
+          "max_abs": 1.1920928955078125e-07,
+          "max_rel": 1.1920928955078125e-07,
+          "max_tolerance_ratio": 0.000476837158203125,
+          "atol": 5e-05,
+          "rtol": 0.0002,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "deposit_1_cancellation",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 5e-05,
+          "rtol": 0.0002,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "charge_1_cancellation",
+          "value": 0.0,
+          "tolerance": 5e-05,
+          "passed": true,
+          "net_charge_error": 0.0
+        },
+        {
+          "test": "internal_force_1",
+          "value": 3.865304717151986e-09,
+          "tolerance": 5e-06,
+          "passed": true
+        },
+        {
+          "test": "weighted_momentum_1",
+          "value": 4.6439285108157744e-10,
+          "tolerance": 5e-06,
+          "passed": true,
+          "delta_momentum": [
+            -2.7626969730157173e-06,
+            -3.1822540644620796e-06,
+            -6.541354045800155e-07
+          ]
+        },
+        {
+          "test": "deposit_2_uniform",
+          "max_abs": 2.0406223391056244e-06,
+          "max_rel": 0.12080318246406568,
+          "max_tolerance_ratio": 0.02947916755354096,
+          "atol": 5e-05,
+          "rtol": 0.0002,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "charge_2_uniform",
+          "value": -2.396996887616771e-10,
+          "tolerance": 2e-06,
+          "passed": true,
+          "net_charge_error": -1.97298595061568e-06,
+          "expected_net_charge": 10.631306876747123
+        },
+        {
+          "test": "gather_2_random",
+          "max_abs": 5.566571381395574e-07,
+          "max_rel": 0.033934743411435216,
+          "max_tolerance_ratio": 0.01053707425195774,
+          "atol": 5e-05,
+          "rtol": 0.0002,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "gather_2_constant",
+          "max_abs": 1.1920928955078125e-07,
+          "max_rel": 1.1920928955078125e-07,
+          "max_tolerance_ratio": 0.000476837158203125,
+          "atol": 5e-05,
+          "rtol": 0.0002,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "deposit_2_cancellation",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 5e-05,
+          "rtol": 0.0002,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "charge_2_cancellation",
+          "value": 0.0,
+          "tolerance": 5e-05,
+          "passed": true,
+          "net_charge_error": 0.0
+        },
+        {
+          "test": "internal_force_2",
+          "value": 1.0254323602448879e-09,
+          "tolerance": 5e-06,
+          "passed": true
+        },
+        {
+          "test": "weighted_momentum_2",
+          "value": 6.268185047667678e-10,
+          "tolerance": 5e-06,
+          "passed": true,
+          "delta_momentum": [
+            -4.847354355746558e-06,
+            -1.2329479315220052e-06,
+            2.8490720646780904e-06
+          ]
+        },
+        {
+          "test": "boris_position",
+          "max_abs": 4.3545962569169205e-06,
+          "max_rel": 0.0005185342869436745,
+          "max_tolerance_ratio": 0.08231269748121046,
+          "atol": 5e-05,
+          "rtol": 0.0002,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "boris_momentum",
+          "max_abs": 4.420208079558563e-07,
+          "max_rel": 4.626202925357131e-06,
+          "max_tolerance_ratio": 0.0008360916173332338,
+          "atol": 5e-05,
+          "rtol": 0.0002,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "zero_field_momentum",
+          "max_abs": 1.1723732118440466e-07,
+          "max_rel": 5.9091729736433275e-08,
+          "max_tolerance_ratio": 0.00025625205006190715,
+          "atol": 5e-05,
+          "rtol": 0.0002,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "electric_impulse",
+          "max_abs": 3.363310745463366e-07,
+          "max_rel": 3.5744715870765474e-06,
+          "max_tolerance_ratio": 0.0006931538200445136,
+          "atol": 5e-05,
+          "rtol": 0.0002,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "magnetic_norm",
+          "value": 1.5690468738437219e-07,
+          "tolerance": 2e-06,
+          "passed": true
+        },
+        {
+          "test": "poisson_manufactured_phi",
+          "max_abs": 8.603156420594615e-07,
+          "max_rel": 7001810215.623004,
+          "max_tolerance_ratio": 0.014133097444626494,
+          "atol": 5e-05,
+          "rtol": 0.0002,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "poisson_manufactured_field",
+          "max_abs": 1.8479349872535522e-07,
+          "max_rel": 1073741825.0,
+          "max_tolerance_ratio": 0.003034820459604549,
+          "atol": 5e-05,
+          "rtol": 0.0002,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "poisson_random_phi",
+          "max_abs": 4.2117634727056874e-08,
+          "max_rel": 0.03042986821474874,
+          "max_tolerance_ratio": 0.0006550194627241136,
+          "atol": 5e-05,
+          "rtol": 0.0002,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "poisson_random_field",
+          "max_abs": 2.436112359061049e-08,
+          "max_rel": 0.09139351882247744,
+          "max_tolerance_ratio": 0.0004776276554445825,
+          "atol": 5e-05,
+          "rtol": 0.0002,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "poisson_mean_phi",
+          "value": 7.977535299019678e-12,
+          "tolerance": 2e-06,
+          "passed": true
+        }
+      ],
+      "passed": true,
+      "compensated": true
+    },
+    {
+      "backend": "taichi-cpu",
+      "dtype": "float32",
+      "grid": 128,
+      "dx": 1.0,
+      "count": 8192,
+      "checks": [
+        {
+          "test": "deposit_1_uniform",
+          "max_abs": 8.952406304718608e-06,
+          "max_rel": 0.04297037380666363,
+          "max_tolerance_ratio": 0.09419858147078351,
+          "atol": 5e-05,
+          "rtol": 0.0002,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "charge_1_uniform",
+          "value": 2.976927879415923e-10,
+          "tolerance": 2e-06,
+          "passed": true,
+          "net_charge_error": 2.450331459513677e-06,
+          "expected_net_charge": 10.631306876747123
+        },
+        {
+          "test": "gather_1_random",
+          "max_abs": 1.7396030075056412e-06,
+          "max_rel": 0.2926158250543146,
+          "max_tolerance_ratio": 0.026388816168466982,
+          "atol": 5e-05,
+          "rtol": 0.0002,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "gather_1_constant",
+          "max_abs": 1.1920928955078125e-07,
+          "max_rel": 1.1920928955078125e-07,
+          "max_tolerance_ratio": 0.000476837158203125,
+          "atol": 5e-05,
+          "rtol": 0.0002,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "deposit_1_cancellation",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 5e-05,
+          "rtol": 0.0002,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "charge_1_cancellation",
+          "value": 0.0,
+          "tolerance": 5e-05,
+          "passed": true,
+          "net_charge_error": 0.0
+        },
+        {
+          "test": "internal_force_1",
+          "value": 1.820307824165275e-08,
+          "tolerance": 5e-06,
+          "passed": true
+        },
+        {
+          "test": "weighted_momentum_1",
+          "value": 9.129458359162299e-10,
+          "tolerance": 5e-06,
+          "passed": true,
+          "delta_momentum": [
+            -6.2713792945067335e-06,
+            -1.2175331336503439e-06,
+            5.429155222180099e-06
+          ]
+        },
+        {
+          "test": "deposit_2_uniform",
+          "max_abs": 3.6816247643289834e-06,
+          "max_rel": 0.08257331194035344,
+          "max_tolerance_ratio": 0.036395223051383374,
+          "atol": 5e-05,
+          "rtol": 0.0002,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "charge_2_uniform",
+          "value": 1.5524404988261385e-09,
+          "tolerance": 2e-06,
+          "passed": true,
+          "net_charge_error": 1.2778253109857474e-05,
+          "expected_net_charge": 10.631306876747123
+        },
+        {
+          "test": "gather_2_random",
+          "max_abs": 9.965297803476991e-07,
+          "max_rel": 0.026135059070322597,
+          "max_tolerance_ratio": 0.01704898521319858,
+          "atol": 5e-05,
+          "rtol": 0.0002,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "gather_2_constant",
+          "max_abs": 1.1920928955078125e-07,
+          "max_rel": 1.1920928955078125e-07,
+          "max_tolerance_ratio": 0.000476837158203125,
+          "atol": 5e-05,
+          "rtol": 0.0002,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "deposit_2_cancellation",
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "max_tolerance_ratio": 0.0,
+          "atol": 5e-05,
+          "rtol": 0.0002,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "charge_2_cancellation",
+          "value": 0.0,
+          "tolerance": 5e-05,
+          "passed": true,
+          "net_charge_error": 0.0
+        },
+        {
+          "test": "internal_force_2",
+          "value": 1.4330974974313307e-08,
+          "tolerance": 5e-06,
+          "passed": true
+        },
+        {
+          "test": "weighted_momentum_2",
+          "value": 1.1928383464250438e-09,
+          "tolerance": 5e-06,
+          "passed": true,
+          "delta_momentum": [
+            4.7370997082717774e-06,
+            -3.8948535750167395e-06,
+            9.076513723721555e-06
+          ]
+        },
+        {
+          "test": "boris_position",
+          "max_abs": 7.5328099597982145e-06,
+          "max_rel": 0.006394215403083836,
+          "max_tolerance_ratio": 0.14467225503104486,
+          "atol": 5e-05,
+          "rtol": 0.0002,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "boris_momentum",
+          "max_abs": 4.180925903263244e-07,
+          "max_rel": 2.2981424703348267e-05,
+          "max_tolerance_ratio": 0.0008644204294116028,
+          "atol": 5e-05,
+          "rtol": 0.0002,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "zero_field_momentum",
+          "max_abs": 1.1723732118440466e-07,
+          "max_rel": 5.9091729736433275e-08,
+          "max_tolerance_ratio": 0.00025625205006190715,
+          "atol": 5e-05,
+          "rtol": 0.0002,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "electric_impulse",
+          "max_abs": 3.17446240849506e-07,
+          "max_rel": 2.290074079697771e-06,
+          "max_tolerance_ratio": 0.0007030246323009921,
+          "atol": 5e-05,
+          "rtol": 0.0002,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "magnetic_norm",
+          "value": 1.4233900688592164e-07,
+          "tolerance": 2e-06,
+          "passed": true
+        },
+        {
+          "test": "poisson_manufactured_phi",
+          "max_abs": 1.5044523838936286e-06,
+          "max_rel": 3230558745.736797,
+          "max_tolerance_ratio": 0.025292315653064865,
+          "atol": 5e-05,
+          "rtol": 0.0002,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "poisson_manufactured_field",
+          "max_abs": 2.2284167122688103e-07,
+          "max_rel": 1073741825.0,
+          "max_tolerance_ratio": 0.004145469128161388,
+          "atol": 5e-05,
+          "rtol": 0.0002,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "poisson_random_phi",
+          "max_abs": 6.127604001981979e-08,
+          "max_rel": 1.1911047507436407,
+          "max_tolerance_ratio": 0.0009812344756216821,
+          "atol": 5e-05,
+          "rtol": 0.0002,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "poisson_random_field",
+          "max_abs": 3.3829255313699846e-08,
+          "max_rel": 0.6600761182346605,
+          "max_tolerance_ratio": 0.0006602576155425741,
+          "atol": 5e-05,
+          "rtol": 0.0002,
+          "finite": true,
+          "passed": true
+        },
+        {
+          "test": "poisson_mean_phi",
+          "value": 3.149719721151634e-11,
+          "tolerance": 2e-06,
+          "passed": true
+        }
+      ],
+      "passed": true,
+      "compensated": true
+    }
+  ],
+  "unavailable": []
+}

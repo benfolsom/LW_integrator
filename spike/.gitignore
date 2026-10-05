@@ -1,0 +1,8 @@
+# Ship the pinned inputs and compact synthetic evidence with the spike.
+!requirements-*.txt
+!results/
+!results/*.json
+!results/*.csv
+
+# Generated diagnostic logs stay local.
+results/*.log

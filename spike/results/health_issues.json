@@ -1,0 +1,89 @@
+{
+  "source": "https://api.github.com/search/issues?q=repo:taichi-dev/taichi+is:issue+is:open+metal&per_page=10",
+  "retrieved": "2026-10-05",
+  "data": {
+    "total_count": 103,
+    "items": [
+      {
+        "number": 6882,
+        "title": "[metal] Track Metal RHI redesign conformance",
+        "state": "open",
+        "created_at": "2022-12-12T18:56:35Z",
+        "updated_at": "2023-08-29T02:15:47Z",
+        "html_url": "https://github.com/taichi-dev/taichi/issues/6882"
+      },
+      {
+        "number": 8353,
+        "title": "to_torch segmentation fault apple metal",
+        "state": "open",
+        "created_at": "2023-09-20T18:53:24Z",
+        "updated_at": "2023-09-20T19:41:12Z",
+        "html_url": "https://github.com/taichi-dev/taichi/issues/8353"
+      },
+      {
+        "number": 6221,
+        "title": "Assertion failure: pipeline_state_ != nullptr on metal",
+        "state": "open",
+        "created_at": "2022-10-02T04:18:04Z",
+        "updated_at": "2023-01-12T01:29:42Z",
+        "html_url": "https://github.com/taichi-dev/taichi/issues/6221"
+      },
+      {
+        "number": 2784,
+        "title": "Test cases crashed on Apple Metal(M1 chip).",
+        "state": "open",
+        "created_at": "2021-08-24T02:22:37Z",
+        "updated_at": "2021-08-24T05:42:25Z",
+        "html_url": "https://github.com/taichi-dev/taichi/issues/2784"
+      },
+      {
+        "number": 8762,
+        "title": "Metal: 4Gb memory limit causes quiet overwriting of field values",
+        "state": "open",
+        "created_at": "2025-10-02T04:32:04Z",
+        "updated_at": "2025-10-02T04:35:22Z",
+        "html_url": "https://github.com/taichi-dev/taichi/issues/8762"
+      },
+      {
+        "number": 6127,
+        "title": "DiffTaichi diffmpm3d.py does not compile on M1 metal backend",
+        "state": "open",
+        "created_at": "2022-09-21T10:33:11Z",
+        "updated_at": "2022-09-23T07:20:49Z",
+        "html_url": "https://github.com/taichi-dev/taichi/issues/6127"
+      },
+      {
+        "number": 542,
+        "title": "Have a circular buffer of args memories for GPU kernels",
+        "state": "open",
+        "created_at": "2020-02-27T15:33:55Z",
+        "updated_at": "2021-12-20T01:56:35Z",
+        "html_url": "https://github.com/taichi-dev/taichi/issues/542"
+      },
+      {
+        "number": 5702,
+        "title": "Random test failure on Apple M1 + macOS 12.x + metal backend",
+        "state": "open",
+        "created_at": "2022-08-10T03:48:57Z",
+        "updated_at": "2022-08-10T03:52:03Z",
+        "html_url": "https://github.com/taichi-dev/taichi/issues/5702"
+      },
+      {
+        "number": 8478,
+        "title": "cornell_box.py example doesn't work on macOS with Metal backend",
+        "state": "open",
+        "created_at": "2024-02-24T12:13:46Z",
+        "updated_at": "2025-03-20T17:37:29Z",
+        "html_url": "https://github.com/taichi-dev/taichi/issues/8478"
+      },
+      {
+        "number": 5876,
+        "title": "Performance regression on Metal starting at version 0.9.0 (still present)",
+        "state": "open",
+        "created_at": "2022-08-24T20:37:44Z",
+        "updated_at": "2022-08-26T07:31:28Z",
+        "html_url": "https://github.com/taichi-dev/taichi/issues/5876"
+      }
+    ]
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "source": "https://pypi.org/pypi/taichi/json",
+  "retrieved": "2026-10-05",
+  "data": {
+    "info": {
+      "version": "1.7.4",
+      "requires_python": "<4.0,>=3.9",
+      "classifiers": [
+        "Development Status :: 5 - Production/Stable",
+        "Intended Audience :: Developers",
+        "Intended Audience :: Science/Research",
+        "License :: OSI Approved :: Apache Software License",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.9",
+        "Topic :: Games/Entertainment :: Simulation",
+        "Topic :: Multimedia :: Graphics",
+        "Topic :: Software Development :: Compilers"
+      ]
+    },
+    "wheels": [
+      "taichi-1.7.4-cp310-cp310-macosx_11_0_arm64.whl",
+      "taichi-1.7.4-cp310-cp310-manylinux_2_27_x86_64.whl",
+      "taichi-1.7.4-cp310-cp310-win_amd64.whl",
+      "taichi-1.7.4-cp311-cp311-macosx_11_0_arm64.whl",
+      "taichi-1.7.4-cp311-cp311-manylinux_2_27_x86_64.whl",
+      "taichi-1.7.4-cp311-cp311-win_amd64.whl",
+      "taichi-1.7.4-cp312-cp312-macosx_11_0_arm64.whl",
+      "taichi-1.7.4-cp312-cp312-manylinux_2_27_x86_64.whl",
+      "taichi-1.7.4-cp312-cp312-win_amd64.whl",
+      "taichi-1.7.4-cp313-cp313-macosx_11_0_arm64.whl",
+      "taichi-1.7.4-cp313-cp313-manylinux_2_27_x86_64.whl",
+      "taichi-1.7.4-cp313-cp313-win_amd64.whl",
+      "taichi-1.7.4-cp39-cp39-manylinux_2_27_x86_64.whl",
+      "taichi-1.7.4-cp39-cp39-win_amd64.whl"
+    ]
+  }
+}
