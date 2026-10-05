@@ -1003,6 +1003,45 @@ class IntegratorGUIConfigMixin:
             )
         return _normalize_chrono_matching_mode(loaded)
 
+    def _apply_space_charge_options_to_ui(self, options: SimulationOptions) -> None:
+        """Load the same source-clock choice used by CLI and saved runs."""
+        self.space_charge_enabled_var.set(
+            getattr(options, "space_charge_enabled", False)
+        )
+        self.space_charge_retarded_var.set(
+            getattr(options, "space_charge_retarded", True)
+        )
+        self.space_charge_softening_mm_var.set(
+            getattr(options, "space_charge_softening_mm", 0.0)
+        )
+        self.space_charge_bunch_sigma_mm_var.set(
+            getattr(options, "space_charge_bunch_sigma_mm", 0.01)
+        )
+        self.space_charge_instantaneous_clock_var.set(
+            getattr(options, "space_charge_instantaneous_clock", "legacy_same_index")
+        )
+        min_ret_steps = getattr(options, "space_charge_min_retarded_steps", None)
+        self.space_charge_min_retarded_steps_var.set(
+            "" if min_ret_steps is None else str(min_ret_steps)
+        )
+
+    def _build_space_charge_options_from_ui(self) -> dict[str, Any]:
+        """Collect same-bunch settings without requiring a Tk display."""
+        return dict(
+            space_charge_enabled=bool(self.space_charge_enabled_var.get()),
+            space_charge_retarded=bool(self.space_charge_retarded_var.get()),
+            space_charge_softening_mm=float(self.space_charge_softening_mm_var.get()),
+            space_charge_bunch_sigma_mm=float(
+                self.space_charge_bunch_sigma_mm_var.get()
+            ),
+            space_charge_instantaneous_clock=self.space_charge_instantaneous_clock_var.get(),
+            space_charge_min_retarded_steps=(
+                int(self.space_charge_min_retarded_steps_var.get())
+                if self.space_charge_min_retarded_steps_var.get().strip()
+                else None
+            ),
+        )
+
     def _apply_options_to_ui(
         self, options: SimulationOptions, preserve_directories: bool = False
     ) -> None:
@@ -1265,22 +1304,7 @@ class IntegratorGUIConfigMixin:
         self.radiation_reaction_mode_var.set(
             getattr(options, "radiation_reaction_mode", "medina_lad")
         )
-        self.space_charge_enabled_var.set(
-            getattr(options, "space_charge_enabled", False)
-        )
-        self.space_charge_retarded_var.set(
-            getattr(options, "space_charge_retarded", True)
-        )
-        self.space_charge_softening_mm_var.set(
-            getattr(options, "space_charge_softening_mm", 0.0)
-        )
-        self.space_charge_bunch_sigma_mm_var.set(
-            getattr(options, "space_charge_bunch_sigma_mm", 0.01)
-        )
-        min_ret_steps = getattr(options, "space_charge_min_retarded_steps", None)
-        self.space_charge_min_retarded_steps_var.set(
-            "" if min_ret_steps is None else str(min_ret_steps)
-        )
+        self._apply_space_charge_options_to_ui(options)
         self.external_field_enabled_var.set(
             getattr(options, "external_field_enabled", False)
         )
@@ -1820,17 +1844,7 @@ class IntegratorGUIConfigMixin:
             adaptive_timestep_bunch_proximity_transition_n_sigma=float(
                 self.adaptive_timestep_bunch_proximity_transition_n_sigma_var.get()
             ),
-            space_charge_enabled=bool(self.space_charge_enabled_var.get()),
-            space_charge_retarded=bool(self.space_charge_retarded_var.get()),
-            space_charge_softening_mm=float(self.space_charge_softening_mm_var.get()),
-            space_charge_bunch_sigma_mm=float(
-                self.space_charge_bunch_sigma_mm_var.get()
-            ),
-            space_charge_min_retarded_steps=(
-                int(self.space_charge_min_retarded_steps_var.get())
-                if self.space_charge_min_retarded_steps_var.get().strip()
-                else None
-            ),
+            **self._build_space_charge_options_from_ui(),
             external_field_enabled=external_field_enabled,
             external_electric_field_native=external_electric_native,
             external_electric_field_v_per_m=external_electric_si,

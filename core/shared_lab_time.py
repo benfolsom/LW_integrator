@@ -81,6 +81,7 @@ def solve_proper_step_to_lab_time(
     max_iterations: int = DEFAULT_PROPER_TIME_ROOT_MAX_ITERATIONS,
     max_bracket_expansions: int = 20,
     maximum_proper_step_ns: float = np.inf,
+    propagate_trial_exceptions: tuple[type[Exception], ...] = (),
 ) -> ProperTimeEndpoint:
     """Solve ``t(tau + h) = target_time_ns`` with a bracketed secant method.
 
@@ -138,6 +139,8 @@ def solve_proper_step_to_lab_time(
             state = advance_trial(float(proper_step_ns))
         except IntegrationCancelled:
             # Cancellation must reach the caller that saves accepted history.
+            raise
+        except propagate_trial_exceptions:
             raise
         except Exception as exc:
             raise SharedLabTimeError(
@@ -292,6 +295,97 @@ def solve_shared_lab_time_pair(
             "rider and driver endpoint times exceed the shared-barrier tolerance"
         )
     return pair
+
+
+def solve_shared_lab_time_bunch(
+    advance: Callable[[np.ndarray], ParticleState],
+    state: ParticleState,
+    role: str,
+    finalize: Callable[[np.ndarray], ParticleState] | None = None,
+    advance_particle: Callable[[np.ndarray, int], ParticleState] | None = None,
+    *,
+    start_time_ns: float,
+    delta_time_ns: float,
+    absolute_tolerance_ns: float = 1e-18,
+    relative_tolerance: float = 1e-12,
+    max_iterations: int = DEFAULT_PROPER_TIME_ROOT_MAX_ITERATIONS,
+    max_bracket_expansions: int = 20,
+    maximum_proper_step_ns: float = np.inf,
+    particle_mask: np.ndarray | None = None,
+    propagate_trial_exceptions: tuple[type[Exception], ...] = (),
+) -> ProperTimeEndpoint:
+    """Solve an immutable bunch trial to one lab barrier, then evaluate jointly."""
+    start = float(start_time_ns)
+    target = start + float(delta_time_ns)
+    absolute = float(absolute_tolerance_ns)
+    relative = float(relative_tolerance)
+    times = np.asarray(state["t"], dtype=float)
+    count = len(times)
+    mask = np.ones(count, dtype=bool) if particle_mask is None else particle_mask
+    tolerance = absolute + relative * abs(target - start)
+    if (
+        not np.all(np.isfinite(times))
+        or np.max(np.abs(times[mask] - start), initial=0.0) > 2 * tolerance
+    ):
+        raise SharedLabTimeError(f"{role} particles do not share the start barrier")
+    # gamma supplies a close first guess, reducing repeated bunch evaluations.
+    steps = np.full(count, delta_time_ns)
+    steps[mask] = (target - times[mask]) / np.asarray(state["gamma"], dtype=float)[mask]
+    evaluations = 0
+    cached_steps = steps.copy()
+    cached_state = advance(steps)
+    evaluations += 1
+    for index in np.flatnonzero(mask):
+
+        def trial(h: float, index: int = index) -> ParticleState:
+            nonlocal cached_steps, cached_state, evaluations
+            proposal = steps.copy()
+            proposal[index] = h
+            if not np.array_equal(proposal, cached_steps):
+                if advance_particle is None:
+                    cached_state = advance(proposal)
+                else:
+                    particle_state = advance_particle(proposal, int(index))
+                    cached_state["t"][index] = particle_state["t"][index]
+                evaluations += 1
+                cached_steps = proposal
+            return {"t": np.asarray(cached_state["t"])[index : index + 1]}
+
+        endpoint = solve_proper_step_to_lab_time(
+            trial,
+            role=f"{role}[{index}]",
+            start_time_ns=float(times[index]),
+            target_time_ns=target,
+            initial_proper_step_ns=float(steps[index]),
+            absolute_tolerance_ns=absolute,
+            relative_tolerance=relative,
+            max_iterations=max_iterations,
+            max_bracket_expansions=max_bracket_expansions,
+            maximum_proper_step_ns=maximum_proper_step_ns,
+            propagate_trial_exceptions=propagate_trial_exceptions,
+        )
+        steps[index] = endpoint.proper_step_ns
+    if finalize is not None:
+        result = finalize(steps)
+    elif np.array_equal(steps, cached_steps):
+        result = cached_state
+    else:
+        result = advance(steps)
+        evaluations += 1
+    residuals = np.asarray(result["t"])[mask] - target
+    if np.max(np.abs(residuals), initial=0.0) > tolerance:
+        raise SharedLabTimeError(f"{role} vector trial missed the lab barrier")
+    # Root residuals are already bounded; publish an exact common time so
+    # a smaller following slab cannot reject the previous clock spread.
+    result["t"] = np.asarray(result["t"]).copy()
+    result["t"][mask] = target
+    return ProperTimeEndpoint(
+        state=result,
+        proper_step_ns=float(np.mean(steps)),
+        coordinate_time_ns=target,
+        residual_ns=float(np.max(np.abs(residuals), initial=0.0)),
+        evaluations=evaluations,
+    )
 
 
 def solve_shared_lab_time_bunches(
@@ -463,6 +557,7 @@ __all__ = [
     "SharedLabTimePair",
     "commit_shared_lab_time_pair",
     "solve_proper_step_to_lab_time",
+    "solve_shared_lab_time_bunch",
     "solve_shared_lab_time_bunches",
     "solve_shared_lab_time_pair",
 ]

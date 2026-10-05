@@ -1318,7 +1318,23 @@ class SpaceChargeConfig:
         None  # None = auto from bunch_sigma_mm / (c * h_step)
     )
 
+    # Preserve the existing clock unless simultaneous lab sampling is requested.
+    instantaneous_clock: str = "legacy_same_index"
+
+    @property
+    def synchronizes_lab_time(self) -> bool:
+        """Include auto startup and adaptive returns to instantaneous forces."""
+        return (
+            self.enabled
+            and self.instantaneous_clock == "lab_time"
+            and (not self.retarded or self.min_retarded_steps != 0)
+        )
+
     def __post_init__(self) -> None:
+        if self.instantaneous_clock not in {"lab_time", "legacy_same_index"}:
+            raise ValueError(
+                "space-charge instantaneous_clock must be lab_time or legacy_same_index"
+            )
         if self.softening_mm < 0.0:
             raise ValueError("space-charge softening_mm must be non-negative")
         if self.bunch_sigma_mm <= 0.0:

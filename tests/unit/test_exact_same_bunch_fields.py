@@ -141,3 +141,24 @@ def test_same_bunch_exact_fields_reject_cold_start() -> None:
             space_charge=SpaceChargeConfig(enabled=True),
             startup=StartupMode.COLD_START,
         )
+
+
+def test_exact_retarded_bunch_default_clock_is_bit_identical_to_legacy() -> None:
+    """Exact same-bunch forces never use instantaneous startup or fallback."""
+    electron, proton, spectator = _pair(1.0e-7)
+    histories = []
+    for clock in ("lab_time", "legacy_same_index"):
+        histories.append(
+            _run(
+                _merge(electron, proton),
+                spectator,
+                steps=9,
+                h_step=2.5e-12,
+                space_charge=SpaceChargeConfig(enabled=True, instantaneous_clock=clock),
+            )[:2]
+        )
+    for lab_role, legacy_role in zip(*histories):
+        for lab, legacy in zip(lab_role, legacy_role):
+            for key in lab:
+                if isinstance(lab[key], np.ndarray):
+                    np.testing.assert_array_equal(lab[key], legacy[key], err_msg=key)

@@ -430,6 +430,7 @@ class SimulationOptions:
     space_charge_retarded: bool = True
     space_charge_softening_mm: float = 0.0
     space_charge_bunch_sigma_mm: float = 0.01
+    space_charge_instantaneous_clock: str = "legacy_same_index"
     space_charge_min_retarded_steps: Optional[int] = None
 
     # Prescribed external uniform field options
@@ -561,6 +562,13 @@ class SimulationOptions:
     def __post_init__(self) -> None:
         from core.proper_velocity_history import validate_source_history_representation
 
+        if self.space_charge_instantaneous_clock not in {
+            "lab_time",
+            "legacy_same_index",
+        }:
+            raise ValueError(
+                "space-charge instantaneous_clock must be lab_time or legacy_same_index"
+            )
         self.source_history_representation = validate_source_history_representation(
             self.source_history_representation
         )
@@ -787,6 +795,7 @@ class SimulationOptions:
             "space_charge_retarded": self.space_charge_retarded,
             "space_charge_softening_mm": self.space_charge_softening_mm,
             "space_charge_bunch_sigma_mm": self.space_charge_bunch_sigma_mm,
+            "space_charge_instantaneous_clock": self.space_charge_instantaneous_clock,
             "space_charge_min_retarded_steps": self.space_charge_min_retarded_steps,
             "external_field_enabled": self.external_field_enabled,
             "external_electric_field_native": list(self.external_electric_field_native),
@@ -1718,6 +1727,9 @@ class SimulationOptions:
             space_charge_retarded=_bool("space_charge_retarded", True),
             space_charge_softening_mm=_float("space_charge_softening_mm", 0.0),
             space_charge_bunch_sigma_mm=_float("space_charge_bunch_sigma_mm", 0.01),
+            space_charge_instantaneous_clock=str(
+                payload.get("space_charge_instantaneous_clock", "legacy_same_index")
+            ),
             space_charge_min_retarded_steps=(
                 _int("space_charge_min_retarded_steps", 0)
                 if payload.get("space_charge_min_retarded_steps") is not None
@@ -3104,6 +3116,7 @@ def build_space_charge_config(options: SimulationOptions) -> Optional[object]:
         softening_mm=options.space_charge_softening_mm,
         bunch_sigma_mm=options.space_charge_bunch_sigma_mm,
         min_retarded_steps=options.space_charge_min_retarded_steps,
+        instantaneous_clock=options.space_charge_instantaneous_clock,
     )
 
 

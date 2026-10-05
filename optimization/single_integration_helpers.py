@@ -353,6 +353,9 @@ def build_single_integration_setup(
         space_charge_bunch_sigma_mm=getattr(
             config, "space_charge_bunch_sigma_mm", 0.01
         ),
+        space_charge_instantaneous_clock=getattr(
+            config, "space_charge_instantaneous_clock", "legacy_same_index"
+        ),
         space_charge_min_retarded_steps=getattr(
             config, "space_charge_min_retarded_steps", None
         ),

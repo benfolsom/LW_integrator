@@ -768,10 +768,20 @@ def _coast_state_by_proper_steps(
     state: ParticleState,
     h_step: float,
     step_offset: int,
+    synchronize_lab_time: bool = False,
 ) -> ParticleState:
     result = _copy_particle_state(state)
     gamma = np.asarray(state["gamma"], dtype=float)
     dt_lab = gamma * float(h_step) * float(step_offset)
+    if synchronize_lab_time:
+        live = ~np.asarray(
+            state.get("_dead_particles", np.zeros(len(gamma), dtype=bool))
+        )
+        dt_lab = np.zeros_like(gamma)
+        if np.any(live):
+            dt_lab[live] = (
+                float(np.mean(gamma[live])) * float(h_step) * float(step_offset)
+            )
     for axis, beta_key in (("x", "bx"), ("y", "by"), ("z", "bz")):
         if axis in state and beta_key in state:
             result[axis] = np.asarray(state[axis], dtype=float) + (
@@ -1809,6 +1819,77 @@ def _run_pseudo_grid_reduced_step(
             len(observer_sc_source_history),
         )
 
+    lab_clock = bool(space_charge is not None and space_charge.synchronizes_lab_time)
+    lab_target = None
+    if lab_clock:
+        full_start = observer_history[-1]
+        live = ~np.asarray(
+            full_start.get(
+                "_dead_particles", np.zeros(len(full_start["t"]), dtype=bool)
+            )
+        )
+        lab_target = float(full_start["t"][np.flatnonzero(live)[0]]) + h_step * float(
+            np.mean(full_start["gamma"][live])
+        )
+
+    passive_lab_result = None
+    passive_lab_indices = np.asarray(passive_map.passive_indices, dtype=int)
+    if (
+        lab_clock
+        and passive_update_mode == "external_interbunch"
+        and passive_lab_indices.size
+    ):
+        passive_history = slice_trajectory_particle_history(
+            observer_history, passive_lab_indices
+        )
+        passive_lab_result = self_consistent_step(
+            retarded_equations_of_motion,
+            h_step,
+            passive_history,
+            source_active_history,
+            len(passive_history) - 1,
+            aperture_radius,
+            sim_type,
+            self_consistency,
+            chrono_mode,
+            startup_mode,
+            step_idx=step_idx,
+            cancel_callback=cancel_callback,
+            radiation_reaction_mode=radiation_reaction_mode,
+            external_field=external_field,
+            macroparticle_smearing=macroparticle_smearing,
+            beamline_geometry=beamline_geometry,
+            _sampled_inclusion_enabled=False,
+            _lab_time_target_ns=lab_target,
+        )
+
+    def reconstruct_endpoint(active_state):
+        reconstructed = reconstruct_full_state_from_active_result(
+            observer_history[-1],
+            observer_active,
+            active_state,
+            passive_map,
+            step_index=step_idx,
+            loss_tracking_enabled=loss_tracking_enabled,
+            passive_update_mode=(
+                "frozen"
+                if passive_update_mode == "external_interbunch"
+                else passive_update_mode
+            ),
+            h_step=h_step,
+            lab_time_target_ns=lab_target,
+        )
+        if passive_lab_result is not None:
+            for key, value in passive_lab_result.items():
+                if (
+                    not key.startswith("_")
+                    and key in reconstructed
+                    and isinstance(value, np.ndarray)
+                    and value.shape == (len(passive_lab_indices),)
+                ):
+                    reconstructed[key][passive_lab_indices] = value
+        return slice_trajectory_particle_history([reconstructed], sc_source_indices)[0]
+
     local_index = len(observer_active_history) - 1
 
     promoted = endpoint_roles[observer_active]
@@ -1919,6 +2000,14 @@ def _run_pseudo_grid_reduced_step(
             **(
                 {"_sampled_inclusion_enabled": False}
                 if _call_accepts_kw(self_consistent_step, "_sampled_inclusion_enabled")
+                else {}
+            ),
+            **(
+                {
+                    "_lab_time_target_ns": lab_target,
+                    "_instantaneous_source_endpoint": reconstruct_endpoint,
+                }
+                if lab_clock
                 else {}
             ),
             **(
@@ -2054,6 +2143,7 @@ def _run_pseudo_grid_reduced_step(
             else passive_update_mode
         ),
         h_step=h_step,
+        lab_time_target_ns=lab_target,
     )
 
     passive_indices = np.asarray(passive_map.passive_indices, dtype=int)
@@ -2103,32 +2193,38 @@ def _run_pseudo_grid_reduced_step(
             len(observer_passive_history),
         )
 
-    passive_result_state = self_consistent_step(
-        retarded_equations_of_motion,
-        h_step,
-        cast(Trajectory, observer_passive_history),
-        cast(Trajectory, source_active_history),
-        len(observer_passive_history) - 1,
-        aperture_radius,
-        sim_type,
-        self_consistency,
-        chrono_mode,
-        startup_mode,
-        step_idx=step_idx,
-        cancel_callback=cancel_callback,
-        space_charge=None,
-        radiation_reaction_mode=radiation_reaction_mode,
-        **(
-            {"_sampled_inclusion_enabled": False}
-            if _call_accepts_kw(self_consistent_step, "_sampled_inclusion_enabled")
-            else {}
-        ),
-        macroparticle_smearing=macroparticle_smearing,
-        beamline_geometry=beamline_geometry,
-        traj_soa=observer_passive_soa,
-        traj_ext_soa=source_active_soa,
-        **({"external_field": external_field} if external_field is not None else {}),
-    )
+    if passive_lab_result is not None:
+        passive_result_state = passive_lab_result
+    else:
+        passive_result_state = self_consistent_step(
+            retarded_equations_of_motion,
+            h_step,
+            cast(Trajectory, observer_passive_history),
+            cast(Trajectory, source_active_history),
+            len(observer_passive_history) - 1,
+            aperture_radius,
+            sim_type,
+            self_consistency,
+            chrono_mode,
+            startup_mode,
+            step_idx=step_idx,
+            cancel_callback=cancel_callback,
+            space_charge=None,
+            **({"_lab_time_target_ns": lab_target} if lab_clock else {}),
+            radiation_reaction_mode=radiation_reaction_mode,
+            **(
+                {"_sampled_inclusion_enabled": False}
+                if _call_accepts_kw(self_consistent_step, "_sampled_inclusion_enabled")
+                else {}
+            ),
+            macroparticle_smearing=macroparticle_smearing,
+            beamline_geometry=beamline_geometry,
+            traj_soa=observer_passive_soa,
+            traj_ext_soa=source_active_soa,
+            **(
+                {"external_field": external_field} if external_field is not None else {}
+            ),
+        )
 
     empty_passive_map = PassiveNeighborMap(
         passive_indices=np.zeros(0, dtype=int),
@@ -4941,6 +5037,17 @@ def retarded_integrator(
                         trajectory_drv[i - 1],
                         h_step,
                         1,
+                        synchronize_lab_time=bool(
+                            space_charge is not None
+                            and space_charge.synchronizes_lab_time
+                            and not driver_train_enabled
+                            and len(trajectory_drv[i - 1]["x"]) > 1
+                            and not (
+                                inertial_prehistory_enabled
+                                and magnetic_dipole.enabled
+                                and magnetic_dipole.spin_model == "rfs_minimal_2021"
+                            )
+                        ),
                     )
                     _initialize_magnetic_field_diagnostic(
                         trajectory_drv[i], external_field

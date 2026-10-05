@@ -333,6 +333,7 @@ class OptimizationConfig:
     space_charge_retarded: bool = True
     space_charge_softening_mm: float = 0.0
     space_charge_bunch_sigma_mm: float = 0.01
+    space_charge_instantaneous_clock: str = "legacy_same_index"
     space_charge_min_retarded_steps: Optional[int] = None
 
     # Prescribed external uniform field options
@@ -636,6 +637,9 @@ class OptimizationConfig:
             ),
             space_charge_bunch_sigma_mm=getattr(
                 options, "space_charge_bunch_sigma_mm", 0.01
+            ),
+            space_charge_instantaneous_clock=getattr(
+                options, "space_charge_instantaneous_clock", "legacy_same_index"
             ),
             space_charge_min_retarded_steps=getattr(
                 options, "space_charge_min_retarded_steps", None
