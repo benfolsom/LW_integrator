@@ -1376,6 +1376,7 @@ def _canonicalize_radiation_reaction_mode(mode: Optional[str]) -> str:
         "diagnostic_only",
         "power_matched_damping",
         "medina_lad",
+        "medina_lad_validity",
     }
     if normalized not in valid_modes:
         raise ValueError(
@@ -1552,6 +1553,72 @@ def _cap_medina_radiation_reaction_impulse(
         ),
         False,
     )
+
+
+def _medina_radiation_reaction_validity_guard(
+    *,
+    impulse: tuple[float, float, float],
+    external_force: tuple[float, float, float],
+    coordinate_dt: float,
+    beta: tuple[float, float, float],
+    gamma: float,
+    mass: float,
+    charge: float,
+    momentum: tuple[float, float, float],
+) -> tuple[tuple[float, float, float], bool]:
+    """Flag reduced-order or step validity failures without clipping the impulse.
+
+    Transform mechanical three-forces to instantaneous rest: parallel forces
+    are unchanged, and transverse forces gain gamma. The effective rest-frame
+    field criterion is r_q |F_ext'| / (m c^2) <= 0.01, with
+    r_q = q^2 / (m c^2) in native Gaussian units. Also require
+    |F_RR'| / |F_ext'| <= 0.01, retaining sensitivity to the derivative term.
+    Neither condition bounds the lab RR/Lorentz force ratio.
+
+    Require |delta p_RR| / max(|p_start|, mc) <= 0.01. The mc floor covers
+    particles at rest. Adaptive exact trials reject flagged states and shrink;
+    stepping paths without that support retain the full impulse and flag it.
+    These are conservative screening thresholds, not quantum validity tests.
+    """
+    force = np.asarray(external_force, dtype=float)
+    impulse_vector = np.asarray(impulse, dtype=float)
+    beta_vector = np.asarray(beta, dtype=float)
+    momentum_vector = np.asarray(momentum, dtype=float)
+    if not (
+        all(
+            vector.shape == (3,) and np.all(np.isfinite(vector))
+            for vector in (force, impulse_vector, beta_vector, momentum_vector)
+        )
+        and np.isfinite(coordinate_dt)
+        and coordinate_dt > 0.0
+        and np.isfinite(gamma)
+        and gamma >= 1.0
+        and np.isfinite(mass)
+        and mass > 0.0
+        and np.isfinite(charge)
+    ):
+        return impulse, True
+
+    beta_norm = float(np.linalg.norm(beta_vector))
+    direction = beta_vector / beta_norm if beta_norm > 0.0 else np.zeros(3)
+
+    def rest_force_norm(vector: np.ndarray) -> float:
+        parallel = float(np.dot(vector, direction)) * direction
+        return float(np.linalg.norm(parallel + gamma * (vector - parallel)))
+
+    external_rest_norm = rest_force_norm(force)
+    reaction_rest_norm = rest_force_norm(impulse_vector / coordinate_dt)
+    if not (np.isfinite(external_rest_norm) and np.isfinite(reaction_rest_norm)):
+        return impulse, True
+    mc = mass * C_MMNS
+    field_parameter = charge**2 * external_rest_norm / (mc * C_MMNS) ** 2
+    # Avoid division by zero: a nonzero reaction with zero external force is
+    # outside this relative reduced-order screen, even for a small lab impulse.
+    force_invalid = reaction_rest_norm > 0.01 * external_rest_norm
+    step_invalid = float(np.linalg.norm(impulse_vector)) > 0.01 * max(
+        float(np.linalg.norm(momentum_vector)), mc
+    )
+    return impulse, bool(field_parameter > 0.01 or force_invalid or step_invalid)
 
 
 def _derive_relativistic_kinematics_from_force(
@@ -1936,6 +2003,9 @@ def retarded_equations_of_motion(
     result = _initialize_result_state(current_state)
     initialize_resolved_result(result, current_state)
     radiation_mode = _canonicalize_radiation_reaction_mode(radiation_reaction_mode)
+    medina_validity_guard = radiation_mode == "medina_lad_validity"
+    if medina_validity_guard:
+        radiation_mode = "medina_lad"
     if radiation_mode == "medina_lad":
         _initialize_medina_step_state(result)
 
@@ -4971,20 +5041,56 @@ def retarded_equations_of_motion(
                         particle_idx
                     ] = medina_result.cross_field_energy
 
+                    if medina_validity_guard:
+                        validity_impulse, validity_flag = (
+                            _medina_radiation_reaction_validity_guard(
+                                impulse=(
+                                    medina_result.radiation_reaction_impulse
+                                    if derivative_ready
+                                    else (0.0, 0.0, 0.0)
+                                ),
+                                external_force=external_force,
+                                coordinate_dt=float(predictor_coordinate_dt),
+                                beta=beta_tuple,
+                                gamma=float(result["gamma"][particle_idx]),
+                                mass=float(particle_mass),
+                                charge=float(force_particle_charge),
+                                momentum=(
+                                    previous_mechanical_px,
+                                    previous_mechanical_py,
+                                    previous_mechanical_pz,
+                                ),
+                            )
+                        )
+
                     if not derivative_ready:
                         medina_impulse = (0.0, 0.0, 0.0)
                         medina_capped = False
+                        if medina_validity_guard:
+                            medina_impulse, medina_capped = (
+                                validity_impulse,
+                                validity_flag,
+                            )
+                            result["medina_impulse_capped"][
+                                particle_idx
+                            ] = medina_capped
                     else:
                         result["medina_cross_field_energy_change"][
                             particle_idx
                         ] = medina_result.cross_field_energy_change
-                        medina_impulse, medina_capped = (
-                            _cap_medina_radiation_reaction_impulse(
-                                impulse=medina_result.radiation_reaction_impulse,
-                                external_force=external_force,
-                                coordinate_dt=float(predictor_coordinate_dt),
+                        if medina_validity_guard:
+                            medina_impulse, medina_capped = (
+                                validity_impulse,
+                                validity_flag,
                             )
-                        )
+                        else:
+                            medina_impulse, medina_capped = (
+                                _cap_medina_radiation_reaction_impulse(
+                                    impulse=medina_result.radiation_reaction_impulse,
+                                    external_force=external_force,
+                                    coordinate_dt=float(predictor_coordinate_dt),
+                                )
+                            )
                         result["medina_impulse_capped"][particle_idx] = medina_capped
                         uncapped_impulse_norm = float(
                             np.linalg.norm(
@@ -5014,10 +5120,15 @@ def retarded_equations_of_motion(
                         )
 
                     if medina_capped and sc_verbosity >= 2:
-                        print(
-                            "      Medina radiation-reaction impulse capped "
-                            "by numerical guard"
-                        )
+                        if medina_validity_guard:
+                            print(
+                                "      Medina radiation-reaction validity guard flagged step"
+                            )
+                        else:
+                            print(
+                                "      Medina radiation-reaction impulse capped "
+                                "by numerical guard"
+                            )
                     impulse_vec = np.asarray(medina_impulse, dtype=float)
                     if derivative_ready:
                         # Use the same coordinate-time interval that formed

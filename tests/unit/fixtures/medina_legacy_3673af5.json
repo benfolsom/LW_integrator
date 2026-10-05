@@ -1,0 +1,7 @@
+{
+  "source_commit": "3673af51445001d1131ec40ce34a36937ad6cdfb",
+  "description": "SHA256 over all numerical state arrays for 32 proper-time intervals; generated with unmodified baseline equations, no RR validity guard.",
+  "67620000000.0:19569.511835591835": "eb16e613ca569eaafbab372f67e71dc5760d2df17b313d88af6cc85299d6c34a",
+  "676200000000.0:19569.511835591835": "85e793746bee5a5a8ef72d9eec7ca7f0413d9713cb965edde73c0a4779cce408",
+  "100000.0:2": "50d9d175ad781e3f34320d6387dbc67ce14013a6fa3c2cce1bab2a9501176d42"
+}

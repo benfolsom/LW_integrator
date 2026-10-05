@@ -336,7 +336,10 @@ class TestOptimizationPluginIntegration:
         assert harness.metrics_scope_var.get() == "all"
         assert harness.log_verbosity_var.get() == "truncated"
 
-    def test_gather_stability_config_kwargs_prefers_gui_with_config_fallback(self):
+    @pytest.mark.parametrize("mode", ["power_matched_damping", "medina_lad_validity"])
+    def test_gather_stability_config_kwargs_prefers_gui_with_config_fallback(
+        self, mode
+    ):
         existing_config = OptimizationConfig(
             image_subcharge_count=24,
             use_image_weighting=False,
@@ -354,7 +357,7 @@ class TestOptimizationPluginIntegration:
             self_consistency_target_ms_tolerance_var=_MockVar("5e-4"),
             adaptive_timestep_enabled_var=_MockVar(True),
         )
-        harness.radiation_reaction_mode_var = _MockVar("power_matched_damping")
+        harness.radiation_reaction_mode_var = _MockVar(mode)
 
         kwargs = harness._gather_stability_config_kwargs(existing_config)
 
@@ -364,7 +367,7 @@ class TestOptimizationPluginIntegration:
         assert kwargs["use_image_weighting"] is False
         assert kwargs["self_consistency_enabled"] is False
         assert kwargs["adaptive_timestep_threshold"] == pytest.approx(0.25)
-        assert kwargs["radiation_reaction_mode"] == "power_matched_damping"
+        assert kwargs["radiation_reaction_mode"] == mode
         assert (
             kwargs["self_consistency_gamma_reconciliation_method"] == "FIXED_WEIGHTED"
         )

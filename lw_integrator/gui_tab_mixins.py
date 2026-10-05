@@ -2784,6 +2784,8 @@ class IntegratorGUITabMixin:
             "  • diagnostic_only - Record radiated power without changing momentum.\n"
             "  • power_matched_damping - Remove radiated energy from mechanical momentum after the LW update.\n"
             "  • medina_lad - Experimental Medina/LAD candidate reaction force.\n\n"
+            "  • medina_lad_validity - Opt-in rest-frame and step validity checks; "
+            "full RR force, with flagged failures.\n\n"
             "Recommended default for new study runs: medina_lad.\n"
             "Use off or diagnostic_only for baselines/comparisons.",
         )

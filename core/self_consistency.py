@@ -611,7 +611,10 @@ def self_consistency_runtime_warnings(
             inert_reason = (
                 "the exact RFS/dipole path derives beta from on-shell momentum"
             )
-        elif str(radiation_reaction_mode or "").lower() == "medina_lad":
+        elif str(radiation_reaction_mode or "").lower() in {
+            "medina_lad",
+            "medina_lad_validity",
+        }:
             inert_reason = (
                 "radiation_reaction_mode='medina_lad' derives beta from on-shell "
                 "momentum, so gamma_velocity equals gamma_energy"

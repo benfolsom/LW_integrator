@@ -1160,6 +1160,8 @@ class IntegratorConfig:
     radiation_reaction_mode:
         Radiation-reaction handling mode forwarded to the canonical integrator.
         Defaults to ``"medina_lad"`` for user-facing runs.
+        ``"medina_lad_validity"`` opts into rest-frame and step validity checks
+        without clipping the reaction impulse.
     macroparticle_charge_multiplier:
         Multiplier for particle and image charges in macroparticle simulations.
         Defaults to ``1.0`` (no scaling). Use > 1.0 for macroparticle mode.

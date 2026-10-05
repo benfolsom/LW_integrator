@@ -441,8 +441,10 @@ def test_failed_driver_trial_leaves_both_accepted_histories_unchanged() -> None:
     assert accepted_driver.n_steps == 1
 
 
+@pytest.mark.parametrize("mode", ["medina_lad", "medina_lad_validity"])
 def test_eom_adapter_forwards_trial_history_and_causal_spin_contract(
     monkeypatch: pytest.MonkeyPatch,
+    mode: str,
 ) -> None:
     import core.self_consistency as self_consistency_module
 
@@ -463,7 +465,7 @@ def test_eom_adapter_forwards_trial_history_and_causal_spin_contract(
         aperture_radius_mm=1.0,
         magnetic_dipole=magnetic,
         self_consistency=SelfConsistencyConfig.standard(),
-        radiation_reaction_mode="medina_lad",
+        radiation_reaction_mode=mode,
         step_idx=7,
     )
     callback = make_exact_role_eom_advance(options)
@@ -489,7 +491,7 @@ def test_eom_adapter_forwards_trial_history_and_causal_spin_contract(
     assert received["exact_source_history"] is accepted
     assert received["exact_dipole_source_collection"] is dipole_history
     assert received["exact_source_spin_interpolation_model"] == "causal_frozen_c1"
-    assert received["radiation_reaction_mode"] == "medina_lad"
+    assert received["radiation_reaction_mode"] == mode
     assert received["magnetic_dipole"] is magnetic
 
 
