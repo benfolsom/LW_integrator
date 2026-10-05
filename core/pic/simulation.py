@@ -7,6 +7,7 @@ from typing import Any
 
 import numpy as np
 
+from .backend import select_backend
 from .grid import ElectrostaticPIC, Species, diagnostics
 from .kernels import C
 
@@ -101,14 +102,13 @@ def run_pic(config: Mapping[str, Any]) -> dict[str, Any]:
     """
     _keys(
         config,
-        "mode backend grid species steps timestep_s propagation_distance_mm "
+        "mode backend precision grid species steps timestep_s propagation_distance_mm "
         "sample_every radiation_reaction_mode",
         "PIC config",
     )
     if config.get("mode") != "pic":
         raise ValueError("native PIC config requires mode: pic")
-    if config.get("backend", "cpu") != "cpu":
-        raise ValueError("stage 1 provides only the CPU reference backend")
+
     if config.get("radiation_reaction_mode") != "off":
         raise ValueError(
             "stage 1 diagnostic requires explicit radiation_reaction_mode: off"
@@ -119,6 +119,7 @@ def run_pic(config: Mapping[str, Any]) -> dict[str, Any]:
         tuple(grid["shape"]),
         np.asarray(grid["half_extent_mm"]) * 1e-3,
         grid.get("shape_order", 1),
+        backend=select_backend(config.get("backend", "auto"), config.get("precision")),
     )
     species = [species_from_config(s) for s in config["species"]]
     if not species or len(set(s.name for s in species)) != len(species):
@@ -190,6 +191,8 @@ def run_pic(config: Mapping[str, Any]) -> dict[str, Any]:
             before = f.grid.deposit(a, charge, solver.backend)
             after = f.grid.deposit(b, charge, solver.backend)
             current = f.grid.current(a, b, charge, dt, solver.backend)
+            before, after = (solver.backend.to_host(v) for v in (before, after))
+            current = tuple(solver.backend.to_host(v) for v in current)
             residual = f.grid.continuity_residual(before, after, current, dt)
             scale = max(
                 float(np.max(np.abs(before))),
@@ -204,6 +207,7 @@ def run_pic(config: Mapping[str, Any]) -> dict[str, Any]:
     return dict(
         mode="pic",
         backend=solver.backend.name,
+        precision=solver.backend.dtype,
         config=config,
         lab_timestep_s=dt,
         timestep_method=timestep_method,

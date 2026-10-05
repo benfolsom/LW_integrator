@@ -238,7 +238,7 @@ class PICFields:
         return position
 
     def sample(self, lab_position: Any, shape_order: int | None = None) -> Any:
-        xp = self.backend.xp
+        xp = np
         order = self.grid.shape_order if shape_order is None else shape_order
         if order not in (1, 2):
             raise ValueError("gather order must be CIC(1) or TSC(2)")
@@ -246,6 +246,7 @@ class PICFields:
         er = self.backend.gather_open(
             coordinates, self.electric_rest, self.charge, self.grid.spacing_m, order
         )
+        er = self.backend.to_host(er).astype(float)
         er[:, :2] *= self.gamma
         electric = er @ self.basis.T
         magnetic = xp.cross(self.beta_vector, electric) / C
@@ -260,7 +261,13 @@ class PICFields:
         """
         if self.potential_rest is None:
             raise ValueError("potential was not requested for energy diagnostics")
-        return float(0.5 * self.backend.xp.sum(self.charge * self.potential_rest))
+        return float(
+            0.5
+            * np.sum(
+                self.backend.to_host(self.charge).astype(float)
+                * self.backend.to_host(self.potential_rest).astype(float)
+            )
+        )
 
 
 class ElectrostaticPIC:
@@ -286,7 +293,7 @@ class ElectrostaticPIC:
     def fields(
         self, species: list[Species], potential: bool = False
     ) -> list[PICFields]:
-        xp = self.backend.xp
+        xp = np
         result = []
         for si, s in enumerate(species):
             # Common bunch-local lab extent, separately stretched per group.
@@ -309,10 +316,10 @@ class ElectrostaticPIC:
                 )
                 rest = (s.position_m[indices] - center) @ basis
                 rest[:, 2] *= gamma
-                half = self.half_extent_m.copy()
-                half[2] *= gamma
-                spacing = 2 * half / xp.asarray(self.shape)
-                grid = Grid(self.shape, spacing, -half + spacing / 2, self.shape_order)
+                half_step = self.half_extent_m.copy()
+                half_step[2] *= gamma
+                spacing = 2 * half_step / xp.asarray(self.shape)
+                grid = Grid(self.shape, spacing, -half_step + spacing / 2, self.shape_order)
                 charge = grid.deposit(rest, s.source_charge_c[indices], self.backend)
                 electric, phi = self.backend.solve(charge, spacing, potential)
                 result.append(
@@ -333,7 +340,7 @@ class ElectrostaticPIC:
         return result
 
     def sample(self, fields: Any, position: Any) -> Any:
-        xp = self.backend.xp
+        xp = np
         electric = xp.zeros((len(position), 3))
         magnetic = xp.zeros_like(electric)
         for field in fields:
@@ -345,15 +352,16 @@ class ElectrostaticPIC:
     def push(self, species: Species, electric: Any, magnetic: Any, dt: float) -> Any:
         if not np.isfinite(dt) or dt <= 0:
             raise ValueError("Boris push needs a finite positive lab timestep")
+        electric, magnetic = (self.backend.to_host(f) for f in (electric, magnetic))
         for field in (electric, magnetic):
             if field.shape != species.momentum_mc.shape or not np.all(
                 np.isfinite(field)
             ):
                 raise ValueError("push fields must be finite and match particle shape")
-        qm = self.backend.xp.full(
-            len(species.position_m), species.charge_c / species.mass_kg
-        )
-        return self.backend.push(species.momentum_mc, electric, magnetic, qm, dt)
+        qm = np.full(len(species.position_m), species.charge_c / species.mass_kg)
+        return self.backend.to_host(
+            self.backend.push(species.momentum_mc, electric, magnetic, qm, dt)
+        ).astype(float)
 
 
 def diagnostics(
@@ -365,7 +373,7 @@ def diagnostics(
     retaining cross terms. Do not sum group self energies as a total energy.
     Exterior lab field energy/momentum and radiation are not closed here.
     """
-    xp = solver.backend.xp
+    xp = np
     kinetic = 0.0
     momentum = xp.zeros(3)
     for s in species:
@@ -389,7 +397,9 @@ def diagnostics(
         for other in fields[1:]:
             q = other.grid.coordinates(other.rest_positions(position))
             keep &= other.grid.inside(q, 1)
-        own = f.electric_rest.reshape(-1, 3).copy()
+        own = (
+            solver.backend.to_host(f.electric_rest).astype(float).reshape(-1, 3).copy()
+        )
         own[:, :2] *= f.gamma
         own = own @ f.basis.T
         # Interpolate nodal fields linearly for quadrature; do not apply a
