@@ -294,6 +294,11 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         help="Path to a native direct-integrator JSON configuration.",
     )
     parser.add_argument(
+        "--pic-config",
+        type=Path,
+        help="Stage 1 CPU PIC JSON config (lab time, explicit radiation reaction off).",
+    )
+    parser.add_argument(
         "--testbed-config",
         type=Path,
         dest="testbed_config",
@@ -3807,6 +3812,41 @@ def _print_results_report(report: Mapping[str, Any]) -> None:
 
 def main(argv: Optional[list[str]] = None) -> int:
     args = parse_args(argv)
+
+    if args.pic_config is not None:
+        if any(
+            value is not None
+            for value in (
+                args.config,
+                args.testbed_config,
+                args.sweep_config,
+                args.results_file,
+            )
+        ):
+            print(
+                "Error: --pic-config cannot be combined with another input mode.",
+                file=sys.stderr,
+            )
+            return 2
+        from core.pic import run_pic
+
+        try:
+            report = run_pic(json.loads(args.pic_config.read_text(encoding="utf-8")))
+        except (ValueError, KeyError, TypeError, OSError) as exc:
+            print(f"Error: PIC config/run: {exc}", file=sys.stderr)
+            return 2
+        if args.output is not None:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(
+                json.dumps(report, indent=2, allow_nan=False) + "\n", encoding="utf-8"
+            )
+        if not args.quiet:
+            last = report["diagnostics"][-1]
+            print(
+                f"PIC completed: {last['step']} lab steps, "
+                f"weighted kinetic energy {last['kinetic_energy_j']:.8g} J"
+            )
+        return 0
 
     if args.testbed_config is not None:
         return run_testbed_config(args)
