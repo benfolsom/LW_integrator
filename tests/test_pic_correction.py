@@ -148,3 +148,40 @@ def test_optional_runner_and_disabled_compatibility():
         == plain["diagnostics"][-1]["population"]
     )
     assert np.isfinite(enabled["diagnostics"][-1]["correction"]["electric_work_j"])
+
+
+def test_node_batch_parity_and_ambiguous_bracket_fallback():
+    from core import retarded_fields as rf
+    from core.exact_source_cloud import exact_cloud_history
+    from core.pic.correction import E_NATIVE_TO_SI
+    from core.pic.correction_fields import node_segment_hints, resolved_node_fields
+
+    s = source()
+    corr = CloudCorrection([s], CorrectionConfig(clouds_per_species=2))
+    position_m = np.array([[2.1, 1.3, 0.2], [-1.9, 1.5, 0.4]]) * 1e-3
+    positions = position_m * 1e3
+    for step in range(20):
+        if step:
+            old = s.velocity_m_s.copy()
+            s.momentum_mc[:, 0] += 0.04
+            s.position_m += 0.5e-12 * (old + s.velocity_m_s)
+            corr.accept([s], step * 1e-12)
+        history = exact_cloud_history(corr.builder.build_current(), corr.smearing)
+        prepared = rf._prepare_history(history, ())
+        times = np.full(len(positions), corr.time_s * 1e9)
+        expected = rf.evaluate_retarded_charge_fields_native(
+            history,
+            [rf.ObserverEvent(t, tuple(p)) for t, p in zip(times, positions)],
+            backend="numba_full_strict_serial",
+        )
+        hints = node_segment_hints(prepared.sources, times, positions)
+        # Force an incorrect in-range hint: the resolved certifier must reject it.
+        if step:
+            hints[:] = 0
+        e, b = resolved_node_fields(prepared, times, positions, hints=hints)
+        np.testing.assert_array_equal(e, [f.electric_field_native for f in expected])
+        np.testing.assert_array_equal(b, [f.magnetic_field_native for f in expected])
+        qe, qb = corr.quasi_static(position_m)
+        de, db = corr.direct(position_m)
+        np.testing.assert_array_equal(de, e * E_NATIVE_TO_SI - qe)
+        np.testing.assert_array_equal(db, b * E_NATIVE_TO_SI / C - qb)

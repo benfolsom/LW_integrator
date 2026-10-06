@@ -17,8 +17,8 @@ import numpy as np
 
 from ..exact_source_cloud import exact_cloud_history, transverse_offsets
 from ..external_fields import electric_field_native_to_v_per_m
-from ..retarded_fields import ObserverEvent, evaluate_retarded_charge_fields_native
 from ..types import GrowableTrajectoryBuilder, MacroparticleSmearingConfig
+from .correction_fields import correction_node_fields
 from .grid import Grid, Species, rest_basis
 from .kernels import C, COULOMB
 
@@ -294,12 +294,10 @@ class CloudCorrection:
         if len(position) == 0:
             return np.zeros((0, 3)), np.zeros((0, 3))
         history = exact_cloud_history(self.builder.build_current(), self.smearing)
-        events = [ObserverEvent(self.time_s * 1e9, tuple(p * 1e3)) for p in position]
-        fields = evaluate_retarded_charge_fields_native(
-            history, events, backend="numba_full_strict_serial"
-        )
-        e = np.array([f.electric_field_native for f in fields]) * E_NATIVE_TO_SI
-        b = np.array([f.magnetic_field_native for f in fields]) * E_NATIVE_TO_SI / C
+        e, b = correction_node_fields(history, self.time_s * 1e9, position * 1e3)
+        e *= E_NATIVE_TO_SI
+        b *= E_NATIVE_TO_SI
+        b /= C
         qe, qb = self.quasi_static(position)
         return e - qe, b - qb
 
