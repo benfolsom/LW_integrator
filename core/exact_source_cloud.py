@@ -13,6 +13,22 @@ import numpy as np
 from .types import MacroparticleSmearingConfig
 
 
+def same_bunch_exclusions(
+    particle: int,
+    count: int,
+    bunch_ranges: tuple[slice, ...] = (),
+) -> tuple[int, ...]:
+    """Exclude self and other train bunches from an own-bunch source sum."""
+    if not bunch_ranges:
+        return (int(particle),)
+    group = next(
+        group for group in bunch_ranges if group.start <= particle < group.stop
+    )
+    return tuple(
+        i for i in range(count) if i == particle or not group.start <= i < group.stop
+    )
+
+
 def validate_exact_cloud(config: MacroparticleSmearingConfig) -> None:
     """Keep rigid histories distinct from sampled-event smearing."""
     if config.position_sigma_mm is None:

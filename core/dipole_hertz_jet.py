@@ -1136,6 +1136,11 @@ def evaluate_retarded_dipole_field_gradient_hertz_jet_native(
         excluded_source_identities=excluded_source_identities,
         spin_interpolation_model=spin_interpolation_model,
     )
+    from .exact_visibility import visible_prepared
+
+    prepared = visible_prepared(
+        prepared, history, observer_event, root_tolerance_mm, max_root_iterations
+    )
     center: RetardedDipoleRootResult | RetardedDipoleHertzResult
     if response_kernel == "numba_sparse_strict_serial":
         center = _evaluate_prepared_dipole_roots_numba_exact_serial(

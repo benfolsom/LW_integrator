@@ -162,6 +162,7 @@ def run_exact_pair_adaptive_integrator(
     requested_public_samples: int,
     aperture_radius_mm: float,
     magnetic_dipole: MagneticDipoleConfig,
+    beamline_geometry: Any = None,
     self_consistency: SelfConsistencyConfig | None,
     chrono_mode: ChronoMatchingMode,
     radiation_reaction_mode: str,
@@ -351,6 +352,7 @@ def run_exact_pair_adaptive_integrator(
         ExactPairEOMOptions(
             aperture_radius_mm=aperture_radius_mm,
             magnetic_dipole=magnetic_dipole,
+            beamline_geometry=beamline_geometry,
             self_consistency=self_consistency,
             space_charge=space_charge,
             chrono_mode=chrono_mode,
@@ -399,6 +401,7 @@ def run_exact_pair_adaptive_integrator(
         magnetic_dipole=magnetic_dipole,
         include_dipole_source=magnetic_dipole.source.active,
         same_bunch_fields=bool(space_charge is not None and space_charge.enabled),
+        beamline_geometry=beamline_geometry,
         public_output_state=public_output,
         checkpoint_store=store,
         spin_interpolation_model="causal_frozen_c1",

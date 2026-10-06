@@ -751,7 +751,7 @@ def _build_driver_train_initial_state(
             pieces = []
             for z_offset in offsets:
                 piece = np.copy(value)
-                if key == "z":
+                if key == "z" and float(z_offset) != 0.0:
                     piece = piece + float(z_offset)
                 pieces.append(piece)
             train_state[key] = np.concatenate(pieces, axis=0)
@@ -1166,6 +1166,8 @@ def _preflight_inertial_exact_histories(
     same_bunch_fields: bool = False,
     causal_c5_source_history: Any = None,
     causal_local_source_history: Any = None,
+    beamline_geometry: Any = None,
+    driver_bunch_ranges: tuple[slice, ...] = (),
 ) -> tuple[np.ndarray, np.ndarray]:
     """Preflight exact stencils and return each active state's total ``qA/c``."""
 
@@ -1173,7 +1175,8 @@ def _preflight_inertial_exact_histories(
         evaluate_retarded_charge_source_interaction_native,
     )
     from .retarded_fields import ObserverEvent
-    from .exact_source_cloud import exact_cloud_history
+    from .exact_source_cloud import exact_cloud_history, same_bunch_exclusions
+    from .exact_visibility import visibility_history
 
     if dipole_field_required:
         from .dipole_source_interactions import (
@@ -1261,11 +1264,28 @@ def _preflight_inertial_exact_histories(
                 # Preflight both light cones and seed P=p+qA/c with their sum.
                 charge_histories = [(source_history, ())]
                 if same_bunch_fields and particle_count > 1:
-                    charge_histories.append((own_history, (particle_idx,)))
+                    charge_histories.append(
+                        (
+                            own_history,
+                            same_bunch_exclusions(
+                                particle_idx,
+                                particle_count,
+                                (
+                                    driver_bunch_ranges
+                                    if observer_state is driver_history[-1]
+                                    else ()
+                                ),
+                            ),
+                        )
+                    )
                 for charge_history, excluded in charge_histories:
                     charge_history = exact_cloud_history(
                         charge_history, magnetic_dipole.exact_charge_cloud
                     )
+                    if not excluded:
+                        charge_history = visibility_history(
+                            charge_history, beamline_geometry, beta
+                        )
                     charge_interaction = (
                         evaluate_retarded_charge_source_interaction_native(
                             charge_history,
@@ -1310,7 +1330,7 @@ def _preflight_inertial_exact_histories(
                 if exact_dipole_source_collection is None:
                     dipole_interaction = (
                         evaluate_retarded_dipole_source_interaction_native(
-                            source_history,
+                            visibility_history(source_history, beamline_geometry, beta),
                             event,
                             four_velocity_mm_ns=four_velocity,
                             observer_charge_native=observer_charge,
@@ -1395,6 +1415,8 @@ def _finalize_exact_source_canonical_pair(
     include_dipole_source: bool,
     same_bunch_fields: bool = False,
     require_complete_history: bool = True,
+    beamline_geometry: Any = None,
+    driver_bunch_ranges: tuple[slice, ...] = (),
 ) -> None:
     """Recompose both accepted canonical endpoints from their retarded fields.
 
@@ -1415,6 +1437,8 @@ def _finalize_exact_source_canonical_pair(
         include_dipole_source=include_dipole_source,
         same_bunch_fields=same_bunch_fields,
         require_complete_history=require_complete_history,
+        beamline_geometry=beamline_geometry,
+        driver_bunch_ranges=driver_bunch_ranges,
     )
     rider_state.clear()
     rider_state.update(finalized_rider)
@@ -3471,7 +3495,15 @@ def retarded_integrator(
         magnetic_dipole.enabled and magnetic_dipole.source.active
     )
     exact_magnetic_active = bool(rfs_active or dipole_source_active)
-    if magnetic_dipole.enabled and pseudo_grid.enabled:
+    pseudo_grid_space_charge_reduction_supported = not _space_charge_enabled(
+        space_charge
+    ) or (pseudo_grid.active_rider_count >= 2 and pseudo_grid.active_driver_count >= 2)
+    pseudo_grid_force_reduction_enabled = (
+        pseudo_grid.enabled
+        and sim_type == SimulationType.BUNCH_TO_BUNCH
+        and pseudo_grid_space_charge_reduction_supported
+    )
+    if magnetic_dipole.enabled and pseudo_grid_force_reduction_enabled:
         raise NotImplementedError(
             "Magnetic-dipole dynamics are not yet compatible with pseudo-grid "
             "spin reconstruction or conserved persistent source histories; "
@@ -3609,6 +3641,41 @@ def retarded_integrator(
         or (_has_particles(init_driver) and _has_source_charge(init_rider))
     )
     if exact_magnetic_active:
+        if (
+            (rfs_has_charge_sources or dipole_source_active)
+            and beamline_geometry is not None
+            and beamline_geometry.enabled
+        ):
+            from .exact_visibility_history import mark_gate_history_active
+
+            mark_gate_history_active()
+            if source_history_representation == "proper_velocity":
+                raise NotImplementedError(
+                    "Exact visibility event splitting requires light_cone_quintic "
+                    "source history; constrained proper-velocity segments need "
+                    "their own aperture intersection solver"
+                )
+            if startup_mode is not StartupMode.INERTIAL_PREHISTORY:
+                raise NotImplementedError(
+                    "Exact visibility gates require INERTIAL_PREHISTORY"
+                )
+            if adaptive_pair_return.enabled and (
+                len(init_rider["x"]) > 1
+                or (init_driver is not None and len(init_driver["x"]) > 1)
+            ):
+                raise NotImplementedError(
+                    "Adaptive exact visibility gates currently support one "
+                    "observer per bunch, including its exact source cloud; "
+                    "bunch clock queries need joint visibility-event histories"
+                )
+            if dipole_source_active and magnetic_dipole.source.history_model in {
+                "causal_c5",
+                "causal_local_jet",
+            }:
+                raise NotImplementedError(
+                    "Exact visibility gates require the trajectory dipole history; "
+                    "independent causal dipole histories need their own boundary events"
+                )
         if sim_type != SimulationType.BUNCH_TO_BUNCH:
             raise NotImplementedError(
                 "Exact RFS/dipole-source dynamics currently support only "
@@ -3651,7 +3718,15 @@ def retarded_integrator(
                     "Exact same-bunch fields support charge sources only; "
                     "dipole sources are not implemented"
                 )
-            if not space_charge.retarded or space_charge.softening_mm != 0.0:
+            train_has_no_same_bunch_pairs = bool(
+                driver_train.enabled
+                and len(init_rider["x"]) == 1
+                and init_driver is not None
+                and len(init_driver["x"]) == 1
+            )
+            if not train_has_no_same_bunch_pairs and (
+                not space_charge.retarded or space_charge.softening_mm != 0.0
+            ):
                 raise NotImplementedError(
                     "Exact same-bunch fields require retarded=True and "
                     "softening_mm=0 for point charges"
@@ -3662,15 +3737,6 @@ def retarded_integrator(
                     "COLD_START a bunch-mate's field would switch on at its light "
                     "cone instead of being present from t = 0"
                 )
-        if (
-            (rfs_has_charge_sources or dipole_source_active)
-            and beamline_geometry is not None
-            and beamline_geometry.enabled
-        ):
-            raise NotImplementedError(
-                "Exact RFS/dipole-source finite-difference stencils do not yet "
-                "support beamline visibility boundaries."
-            )
         if adaptive_timestep is not None and adaptive_timestep.enabled:
             raise NotImplementedError(
                 "Exact RFS/dipole-source histories are not yet validated with "
@@ -3836,10 +3902,6 @@ def retarded_integrator(
             )
         if init_driver is None:
             raise ValueError("INERTIAL_PREHISTORY requires init_driver")
-        if driver_train_enabled:
-            raise NotImplementedError(
-                "INERTIAL_PREHISTORY cannot yet be combined with driver trains"
-            )
         for state in (init_rider, init_driver):
             state["charge_source_canonical_ready"] = np.zeros(
                 len(np.asarray(state.get("x", []))),
@@ -3939,15 +4001,6 @@ def retarded_integrator(
         active_start = int(driver_train.prehistory_steps) if driver_train_enabled else 0
     requested_steps = int(steps)
     total_steps = requested_steps + active_start
-
-    pseudo_grid_space_charge_reduction_supported = not _space_charge_enabled(
-        space_charge
-    ) or (pseudo_grid.active_rider_count >= 2 and pseudo_grid.active_driver_count >= 2)
-    pseudo_grid_force_reduction_enabled = (
-        pseudo_grid.enabled
-        and sim_type == SimulationType.BUNCH_TO_BUNCH
-        and pseudo_grid_space_charge_reduction_supported
-    )
 
     numba_kernels_enabled = bool(use_numba and _vectorized_interactions.NUMBA_AVAILABLE)
 
@@ -4089,6 +4142,8 @@ def retarded_integrator(
                         charge_field_required=exact_magnetic_active,
                         dipole_field_required=dipole_source_active,
                         same_bunch_fields=_space_charge_enabled(space_charge),
+                        beamline_geometry=beamline_geometry,
+                        driver_bunch_ranges=driver_train_bunch_ranges,
                         causal_c5_source_history=(initial_causal_c5_source_history),
                         causal_local_source_history=(
                             initial_causal_local_source_history
@@ -4202,6 +4257,7 @@ def retarded_integrator(
                 "magnetic_dipole": magnetic_dipole,
                 "adaptive_pair_return": adaptive_pair_return,
                 "space_charge": space_charge,
+                "beamline_geometry": beamline_geometry,
             }
         )
         from .exact_pair_integration import run_exact_pair_adaptive_integrator
@@ -4214,6 +4270,7 @@ def retarded_integrator(
             requested_public_samples=int(steps),
             aperture_radius_mm=aperture_radius,
             magnetic_dipole=magnetic_dipole,
+            beamline_geometry=beamline_geometry,
             self_consistency=self_consistency,
             chrono_mode=chrono_mode,
             radiation_reaction_mode=radiation_reaction_mode,
@@ -5160,7 +5217,10 @@ def retarded_integrator(
                         ),
                         **(
                             {"space_charge": space_charge}
-                            if space_charge is not None and not driver_train_enabled
+                            if space_charge is not None
+                            and (
+                                not driver_train_enabled or inertial_prehistory_enabled
+                            )
                             else {}
                         ),
                         **(
@@ -5182,6 +5242,11 @@ def retarded_integrator(
                         macroparticle_smearing=macroparticle_smearing,
                         beamline_geometry=beamline_geometry,
                         magnetic_dipole=magnetic_dipole,
+                        **(
+                            {"exact_same_bunch_ranges": driver_train_bunch_ranges}
+                            if inertial_prehistory_enabled and driver_train_enabled
+                            else {}
+                        ),
                     )
             _ensure_startup_metadata(trajectory_drv[i])
             _set_pseudo_grid_schedule_metadata(trajectory_drv[i], None)
@@ -5225,6 +5290,8 @@ def retarded_integrator(
                     include_dipole_source=dipole_source_active,
                     same_bunch_fields=_space_charge_enabled(space_charge),
                     require_complete_history=inertial_prehistory_enabled,
+                    beamline_geometry=beamline_geometry,
+                    driver_bunch_ranges=driver_train_bunch_ranges,
                 )
             if (
                 pseudo_grid.enabled

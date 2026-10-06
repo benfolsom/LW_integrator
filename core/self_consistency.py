@@ -368,6 +368,7 @@ def self_consistent_step(
     exact_source_history: Optional[Any] = None,
     exact_dipole_source_collection: Optional[Any] = None,
     exact_source_spin_interpolation_model: str = "centered_c1",
+    exact_same_bunch_ranges: tuple[slice, ...] = (),
     _sampled_inclusion_enabled: bool = True,
     _lab_time_target_ns: float | None = None,
     _instantaneous_source_endpoint: Optional[Any] = None,
@@ -560,6 +561,12 @@ def self_consistent_step(
             {"magnetic_dipole": magnetic_dipole}
             if magnetic_dipole is not None
             and ("magnetic_dipole" in _sig_params or _accepts_var_kwargs)
+            else {}
+        ),
+        **(
+            {"exact_same_bunch_ranges": exact_same_bunch_ranges}
+            if exact_same_bunch_ranges
+            and ("exact_same_bunch_ranges" in _sig_params or _accepts_var_kwargs)
             else {}
         ),
         **(

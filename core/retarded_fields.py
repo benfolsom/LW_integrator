@@ -32,6 +32,7 @@ import numpy as np
 
 from .constants import C_MMNS
 from .exact_source_cloud import ExactCloudHistory, transverse_offsets
+from .exact_visibility import ExactVisibilityHistory, visible_prepared
 from .history_prefix_view import HistoryPrefixView
 from .light_cone_history import (
     LightConeSegment,
@@ -262,6 +263,8 @@ class _HistoryArrays:
     charge_native: np.ndarray
     dead: np.ndarray
     resolved_knots: np.ndarray | None = dataclass_field(default=None, repr=False)
+    gate_prime_before: np.ndarray | None = dataclass_field(default=None, repr=False)
+    gate_prime_after: np.ndarray | None = dataclass_field(default=None, repr=False)
     _resolved_buffer: np.ndarray | None = dataclass_field(default=None, repr=False)
     _time_buffer: np.ndarray | None = dataclass_field(default=None, repr=False)
     _position_buffer: np.ndarray | None = dataclass_field(default=None, repr=False)
@@ -491,11 +494,12 @@ def _build_null_segments(
             if history.resolved_knots is None
             else history.resolved_knots[sl, source_index]
         )
+        primes = _segment_beta_primes(history, source_index, knot, beta_primes)
         segment = build_light_cone_segment(
             history.time_ns[sl, source_index],
             history.position_mm[sl, source_index],
             history.beta[sl, source_index],
-            beta_primes[sl],
+            primes,
             proper_velocity=(
                 data[:, :3] if data is not None and np.all(data[:, 3]) else None
             ),
@@ -521,6 +525,21 @@ def _build_null_segments(
                     ) from error
         result.append(segment)
     return tuple(result)
+
+
+def _segment_beta_primes(
+    history: _HistoryArrays, source_index: int, knot: int, beta_primes: np.ndarray
+) -> np.ndarray:
+    primes = np.array(beta_primes[knot : knot + 2], copy=True)
+    for endpoint, values in (
+        (0, history.gate_prime_after),
+        (1, history.gate_prime_before),
+    ):
+        if values is not None:
+            value = values[knot + endpoint, source_index]
+            if np.all(np.isfinite(value)):
+                primes[endpoint] = value
+    return primes
 
 
 def _extract_history(history: TrajectoryHistory) -> _HistoryArrays:
@@ -560,6 +579,19 @@ def _extract_history(history: TrajectoryHistory) -> _HistoryArrays:
     # Stored bdot is d beta / d(ct), where ct is measured in millimetres.
     beta_prime_per_mm = np.stack((bdotx, bdoty, bdotz), axis=-1)
     dead = _history_dead(history, time_ns.shape)
+    gate_primes = {}
+    if isinstance(history, list) and any(
+        "_gate_prime_before" in row for row in history
+    ):
+        for side in ("before", "after"):
+            gate_primes[f"gate_prime_{side}"] = np.stack(
+                [
+                    row.get(
+                        f"_gate_prime_{side}", np.full((time_ns.shape[1], 3), np.nan)
+                    )
+                    for row in history
+                ]
+            )
     return _HistoryArrays(
         time_ns=time_ns,
         position_mm=position_mm,
@@ -568,6 +600,7 @@ def _extract_history(history: TrajectoryHistory) -> _HistoryArrays:
         charge_native=charge_native,
         dead=dead,
         resolved_knots=_resolved_history_knots(history, time_ns.shape),
+        **gate_primes,
     )
 
 
@@ -1220,12 +1253,46 @@ def _prepare_source_history(
             ),
         )
     )
+    if (
+        history.gate_prime_before is not None
+        and acceleration_semantics != "instantaneous"
+    ):
+        # Reconstruct on each smooth side separately. Even the neighbours of
+        # a gate knot must not difference velocities across its force jump.
+        breaks = np.flatnonzero(
+            np.all(
+                np.isfinite(history.gate_prime_before[:alive_stop, source_index]),
+                axis=1,
+            )
+        )
+        boundaries = sorted(set((0, *breaks, alive_stop - 1)))
+        for left, right in zip(boundaries[:-1], boundaries[1:]):
+            sl = slice(left, right + 1)
+            beta_primes[sl] = _source_beta_prime_samples(
+                times[sl],
+                betas[sl],
+                inertial_boundary,
+                (
+                    None
+                    if history.resolved_knots is None
+                    else history.resolved_knots[sl, source_index]
+                ),
+            )
     durations, coefficients = _quintic_position_coefficients_mm(
         times,
         positions,
         betas,
         beta_primes,
     )
+    if history.gate_prime_before is not None:
+        for knot in range(len(durations)):
+            _, piece = _quintic_position_coefficients_mm(
+                times[knot : knot + 2],
+                positions[knot : knot + 2],
+                betas[knot : knot + 2],
+                _segment_beta_primes(history, source_index, knot, beta_primes),
+            )
+            coefficients[knot] = piece[0]
     prepared = _PreparedSourceHistory(
         source_index=source_index,
         time_ns=times,
@@ -1522,6 +1589,12 @@ def _prepare_history(
     acceleration_semantics = _validated_source_acceleration_semantics(
         source_acceleration_semantics
     )
+    if isinstance(history, ExactVisibilityHistory):
+        return _prepare_history(
+            history.base,
+            excluded_source_indices,
+            source_acceleration_semantics=acceleration_semantics,
+        )
     if isinstance(history, ExactCloudHistory):
         macro = _prepare_history(
             history.base, (), source_acceleration_semantics=acceleration_semantics
@@ -1556,6 +1629,21 @@ def _prepare_history(
             while len(macro.clouds) > 4:
                 del macro.clouds[next(iter(macro.clouds))]
         return _exclude_prepared_sources(cloud, excluded_source_indices)
+    from .exact_visibility_history import expanded_visibility_history
+
+    expanded = expanded_visibility_history(history)
+    if expanded is not None:
+        prepared = _CHARGE_PREPARED_HISTORY_CACHE.prepare(
+            history,
+            variant=("gate_knots", acceleration_semantics),
+            prepare_full=lambda current: _prepare_history_uncached(
+                expanded, (), source_acceleration_semantics=acceleration_semantics
+            ),
+            append=lambda previous, current, old_stop: _prepare_history_uncached(
+                expanded, (), source_acceleration_semantics=acceleration_semantics
+            ),
+        ).value
+        return _exclude_prepared_sources(prepared, excluded_source_indices)
     if isinstance(history, TrialTrajectoryHistory):
         return _prepare_trial_history(
             history, excluded_source_indices, acceleration_semantics
@@ -3482,6 +3570,9 @@ def evaluate_retarded_charge_response_gradient_native(
         excluded_source_indices,
         source_acceleration_semantics=acceleration_semantics,
     )
+    prepared = visible_prepared(
+        prepared, history, observer_event, tolerance, iterations, extrapolate_ns
+    )
     arrays = prepared.arrays
     retarded_time_ns = np.full(arrays.n_sources, np.nan, dtype=float)
     residual_mm = np.full(arrays.n_sources, np.nan, dtype=float)
@@ -3734,6 +3825,8 @@ def evaluate_retarded_charge_response_gradient_native(
 
 
 def _reject_proper_metal(history: TrajectoryHistory, backend: str) -> None:
+    if isinstance(history, ExactVisibilityHistory):
+        return _reject_proper_metal(history.base, backend)
     if not str(backend).lower().startswith("metal"):
         return
     if isinstance(history, TrialTrajectoryHistory):
@@ -3781,6 +3874,9 @@ def evaluate_retarded_charge_field_native(
         excluded_source_indices,
         source_acceleration_semantics=source_acceleration_semantics,
     )
+    prepared = visible_prepared(
+        prepared, history, observer_event, tolerance, iterations, extrapolate_ns
+    )
     return _evaluate_prepared_charge_batch(
         prepared,
         (observer_event,),
@@ -3809,6 +3905,16 @@ def evaluate_retarded_charge_fields_native(
     prepared = _prepare_history(
         history, (), source_acceleration_semantics=source_acceleration_semantics
     )
+    if isinstance(history, ExactVisibilityHistory):
+        return tuple(
+            evaluate_retarded_charge_field_native(
+                history,
+                event,
+                backend=backend,
+                source_acceleration_semantics=source_acceleration_semantics,
+            )
+            for event in observer_events
+        )
     return _evaluate_prepared_charge_batch(
         prepared,
         tuple(observer_events),
@@ -3895,8 +4001,13 @@ def evaluate_retarded_mutual_charge_field_matrix_native(
         for event_index, event in enumerate(events):
             if exclude_diagonal and event_index == parent_indices[source_index]:
                 continue
+            selected = visible_prepared(
+                one_source, history, event, tolerance, iterations
+            )
+            if source_index not in selected.sources:
+                continue
             field = _evaluate_prepared_charge_field_native(
-                one_source,
+                selected,
                 event,
                 require_complete_history=False,
                 root_tolerance_mm=tolerance,
@@ -4112,6 +4223,10 @@ def evaluate_retarded_charge_field_gradient_stencil_native(
         excluded_source_indices,
         source_acceleration_semantics=source_acceleration_semantics,
     )
+    ungated_prepared = prepared
+    prepared = visible_prepared(
+        prepared, history, observer_event, tolerance, iterations, extrapolate_ns
+    )
     center = _evaluate_prepared_charge_field_native(
         prepared,
         observer_event,
@@ -4174,6 +4289,31 @@ def evaluate_retarded_charge_field_gradient_stencil_native(
                 )
             displaced_events.append(displaced)
 
+    if isinstance(history, ExactVisibilityHistory) and any(
+        set(
+            visible_prepared(
+                ungated_prepared, history, event, tolerance, iterations, extrapolate_ns
+            ).sources
+        )
+        != set(prepared.sources)
+        for event in displaced_events
+    ):
+        # A charge jet gives the exact local smooth-branch derivative without
+        # differencing the ideal discontinuity. The diagnostic retains its
+        # original centered arithmetic wherever its source set stays fixed.
+        return evaluate_retarded_charge_field_gradient_native(
+            history,
+            observer_event,
+            excluded_source_indices=excluded_source_indices,
+            require_complete_history=require_complete_history,
+            relative_step=relative,
+            minimum_step_mm=minimum,
+            root_tolerance_mm=tolerance,
+            max_root_iterations=iterations,
+            backend=selected_backend,
+            source_acceleration_semantics=source_acceleration_semantics,
+            extrapolate_ns=extrapolate_ns,
+        )
     displaced_fields = _evaluate_prepared_charge_batch(
         prepared,
         displaced_events,

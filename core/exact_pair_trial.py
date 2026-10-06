@@ -87,6 +87,7 @@ class ExactPairEOMOptions:
     spin_interpolation_model: str = "causal_frozen_c1"
     moment_impulse_diagnostic: Any = None
     cache_start_charge_fields: bool = True
+    beamline_geometry: Any = None
 
     def __post_init__(self) -> None:
         if (
@@ -317,6 +318,7 @@ def make_exact_role_eom_advance(options: ExactPairEOMOptions) -> AdvanceRoleTria
                     radiation_reaction_mode=options.radiation_reaction_mode,
                     external_field=options.external_field,
                     magnetic_dipole=options.magnetic_dipole,
+                    beamline_geometry=options.beamline_geometry,
                     exact_source_history=charge_history,
                     traj_soa=observer_history,
                     space_charge=options.space_charge,
@@ -431,6 +433,7 @@ def solve_exact_pair_slab_trial(
     magnetic_dipole: MagneticDipoleConfig,
     include_dipole_source: bool,
     same_bunch_fields: bool = False,
+    beamline_geometry: Any = None,
     rider_prior_tail: tuple[ParticleState, ...] = (),
     driver_prior_tail: tuple[ParticleState, ...] = (),
     causal_c5_source_history: AcceptedPairCausalC5SourceHistory | None = None,
@@ -683,6 +686,7 @@ def solve_exact_pair_slab_trial(
         rider_state=provisional.rider.state,
         driver_state=provisional.driver.state,
         same_bunch_fields=same_bunch_fields,
+        beamline_geometry=beamline_geometry,
         rider_endpoint_history=provisional_rider_history,
         driver_endpoint_history=provisional_driver_history,
         magnetic_dipole=magnetic_dipole,
@@ -729,6 +733,7 @@ def solve_exact_pair_step_doubling_trial(
     magnetic_dipole: MagneticDipoleConfig,
     include_dipole_source: bool,
     same_bunch_fields: bool = False,
+    beamline_geometry: Any = None,
     tolerances: StepDoublingTolerances,
     method_order: int = 1,
     causal_c5_source_history: AcceptedPairCausalC5SourceHistory | None = None,
@@ -795,6 +800,7 @@ def solve_exact_pair_step_doubling_trial(
             magnetic_dipole=magnetic_dipole,
             include_dipole_source=include_dipole_source,
             same_bunch_fields=same_bunch_fields,
+            beamline_geometry=beamline_geometry,
             rider_prior_tail=rider_tail,
             driver_prior_tail=driver_tail,
             causal_c5_source_history=slab_causal_c5_source_history,
@@ -961,11 +967,26 @@ def _trial_state_health_failures(
     elif np.any(far_energy < 0.0):
         failures.append(f"{label}: negative far-radiated energy")
     if expected_medina_ready is not None:
+        expected = np.full(count, expected_medina_ready, dtype=bool)
+        restarted = np.asarray(
+            state.get("_exact_visibility_force_history_restarted", np.zeros(count)),
+            dtype=bool,
+        )
+        if restarted.shape != (count,):
+            failures.append(f"{label}: invalid gate force-history restart mask")
+        else:
+            # A switch seeds its new force at the boundary. A positive final
+            # piece must use that one-sided derivative; an endpoint switch
+            # only seeds the following step.
+            expected[restarted] = (
+                np.asarray(state["medina_external_force_sample_time"])[restarted]
+                < np.asarray(state["t"])[restarted]
+            )
         ready = np.asarray(
             state.get("medina_force_derivative_ready", np.zeros(count, dtype=bool)),
             dtype=bool,
         )
-        if ready.shape != (count,) or not np.all(ready == expected_medina_ready):
+        if ready.shape != (count,) or not np.all(ready == expected):
             failures.append(f"{label}: unexpected Medina derivative readiness")
     return failures
 
@@ -1005,6 +1026,12 @@ def _step_doubling_health_failures(
         start_primed = _state_has_finite_medina_sample(start)
         first_ready = bool(start_primed) if medina_present and charged else None
         refined_ready = True if medina_present and charged else None
+        if "_exact_visibility_force_history_restarted" in midpoint_state:
+            refined_ready = (
+                _state_has_finite_medina_sample(midpoint_state)
+                if medina_present and charged
+                else None
+            )
         failures.extend(
             _trial_state_health_failures(
                 full_state,
