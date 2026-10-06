@@ -1965,6 +1965,7 @@ def _find_retarded_knot_bracket(
     observer_position_low_mm: np.ndarray | None = None,
     observer_time_tail_ns: float = 0.0,
     observer_position_tail_mm: np.ndarray | None = None,
+    segment_hint: int = -2,
 ) -> int | None:
     """Return the latest knot segment bracketing the retarded event.
 
@@ -1982,6 +1983,30 @@ def _find_retarded_knot_bracket(
     knot_count = int(source.time_ns.size)
     if knot_count < 2:
         return None
+
+    # Hints never replace the resolved endpoint oracle. In particular, a
+    # rounded lab-coordinate scan can choose the wrong side of an exact knot.
+    from .metal_certified_roots import _strict_timelike_chord_proof
+
+    if 0 <= segment_hint < knot_count - 1 and _strict_timelike_chord_proof(source):
+        residuals = [
+            _knot_light_cone_residual_mm(
+                source,
+                knot,
+                observer_time_ns=observer_time_ns,
+                observer_position_mm=observer_position_mm,
+                observer_time_low_ns=observer_time_low_ns,
+                observer_position_low_mm=observer_position_low_mm,
+                observer_time_tail_ns=observer_time_tail_ns,
+                observer_position_tail_mm=observer_position_tail_mm,
+            )
+            for knot in (segment_hint, segment_hint + 1)
+        ]
+        if residuals[0] >= 0.0 and (
+            residuals[1] < 0.0
+            or (residuals[1] == 0.0 and segment_hint == knot_count - 2)
+        ):
+            return segment_hint
 
     lower = 0
     upper = knot_count - 1
@@ -2080,6 +2105,8 @@ def _solve_null_history_sample(
     observer_position_low_mm: np.ndarray | None = None,
     observer_time_tail_ns: float = 0.0,
     observer_position_tail_mm: np.ndarray | None = None,
+    segment_hint: int = -2,
+    _null_solver: Any = None,
 ) -> _RetardedSample | None:
     observer_remainders: dict[str, Any] = (
         {}
@@ -2099,11 +2126,14 @@ def _solve_null_history_sample(
             "observer_position_tail_mm": observer_position_tail_mm,
         }
     )
+    bracket_options = dict(observer_remainders)
+    if segment_hint >= 0:
+        bracket_options["segment_hint"] = segment_hint
     index = _find_retarded_knot_bracket(
         source,
         observer_time_ns=observer_time_ns,
         observer_position_mm=observer_position_mm,
-        **observer_remainders,
+        **bracket_options,
     )
     upper = 1.0
     lower = 0.0
@@ -2213,7 +2243,11 @@ def _solve_null_history_sample(
         ):
             return None
         snapped_endpoint = upper
-    solver = solve_null_quintic_numba if compiled else solve_null_quintic
+    solver = (
+        _null_solver
+        if _null_solver is not None
+        else solve_null_quintic_numba if compiled else solve_null_quintic
+    )
     proper_solver = solve_constrained_u_numba if compiled else solve_constrained_u
     try:
         if snapped_endpoint is None:
@@ -2339,6 +2373,8 @@ def _solve_retarded_sample(
     observer_time_tail_ns: float = 0.0,
     observer_position_tail_mm: np.ndarray | None = None,
     _defer_ballistic_frame: bool = False,
+    segment_hint: int = -2,
+    _null_solver: Any = None,
 ) -> _RetardedSample | None:
     if source.inertial_boundary is not None and source.time_ns.size == 0:
         return None
@@ -2400,6 +2436,8 @@ def _solve_retarded_sample(
             observer_position_low_mm=observer_position_low_mm,
             observer_time_tail_ns=observer_time_tail_ns,
             observer_position_tail_mm=observer_position_tail_mm,
+            segment_hint=segment_hint,
+            _null_solver=_null_solver,
         )
     times = source.time_ns
     extrapolated = False
