@@ -279,6 +279,8 @@ def run_pic(config: Mapping[str, Any]) -> dict[str, Any]:
                 temporal_rule=(
                     "last accepted source time; explicit first-order correction"
                 ),
+                evaluation_every=correction.config.evaluation_every,
+                temporal_mode=correction.config.temporal_mode,
                 fit=(
                     "persistent cohorts; first moments at refits, "
                     "ballistic between fits"

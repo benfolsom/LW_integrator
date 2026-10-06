@@ -11,7 +11,7 @@ Refit cadence must be converged: sparse fits can create artificial acceleration.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import Any, Mapping, cast
+from typing import Any, Callable, Mapping, cast
 
 import numpy as np
 
@@ -44,6 +44,8 @@ class CorrectionConfig:
     cloud_width_scale: float = 1.0
     certified_inertial_skip: bool = False
     far_field_ratio: float | None = None
+    evaluation_every: int = 1
+    temporal_mode: str = "extrapolate"
 
     def __post_init__(self) -> None:
         if not isinstance(self.certified_inertial_skip, bool):
@@ -52,11 +54,20 @@ class CorrectionConfig:
             not np.isfinite(self.far_field_ratio) or self.far_field_ratio <= 1
         ):
             raise ValueError("far_field_ratio must be finite and greater than one")
-        for key in ("clouds_per_species", "refit_every", "subcharge_count"):
+        for key in (
+            "clouds_per_species",
+            "refit_every",
+            "subcharge_count",
+            "evaluation_every",
+        ):
             value = getattr(self, key)
             if isinstance(value, bool) or int(value) != value or value < 1:
                 raise ValueError(f"{key} must be a positive integer")
             object.__setattr__(self, key, int(value))
+        if self.temporal_mode not in ("hold", "extrapolate"):
+            raise ValueError("temporal_mode must be hold or extrapolate (causal)")
+        if self.evaluation_every > 1 and self.refit_every != 1:
+            raise ValueError("sparse field evaluation requires refit_every=1")
         geometry = Grid(self.lattice_shape, np.ones(3), np.zeros(3))
         object.__setattr__(self, "lattice_shape", geometry.shape)
         extent = np.asarray(self.half_extent_m)
@@ -88,6 +99,8 @@ class CorrectionConfig:
             "cloud_width_scale",
             "certified_inertial_skip",
             "far_field_ratio",
+            "evaluation_every",
+            "temporal_mode",
         }
         if not isinstance(data, Mapping) or set(data) - allowed:
             raise ValueError("unknown correction keys or non-object correction")
@@ -107,6 +120,41 @@ def _mean(values: np.ndarray, weights: np.ndarray) -> np.ndarray:
     return cast(
         np.ndarray, values[0] + np.average(values - values[0], weights=weights, axis=0)
     )
+
+
+class TemporalNodeFields:
+    """Causal samples on matching moving-lattice nodes, in global SI axes.
+
+    The first interval holds its only known value. Later intervals can use
+    the secant through the two preceding exact evaluations. No future source
+    history is requested. Scheduling counts accepted steps, not sample calls.
+    """
+
+    def __init__(self) -> None:
+        self.samples: list[tuple[int, float, tuple[np.ndarray, np.ndarray]]] = []
+
+    def sample(
+        self,
+        step: int,
+        time_s: float,
+        every: int,
+        mode: str,
+        evaluate: Callable[[], tuple[np.ndarray, np.ndarray]],
+    ) -> tuple[np.ndarray, np.ndarray]:
+        if not self.samples or step - self.samples[-1][0] >= every:
+            e, b = evaluate()
+            fields = (e.copy(), b.copy())
+            self.samples.append((step, time_s, fields))
+            self.samples = self.samples[-2:]
+        _, last_time, last = self.samples[-1]
+        if mode == "hold" or len(self.samples) < 2 or time_s == last_time:
+            return last[0].copy(), last[1].copy()
+        _, previous_time, previous = self.samples[0]
+        ratio = (time_s - last_time) / (last_time - previous_time)
+        return (
+            last[0] + ratio * (last[0] - previous[0]),
+            last[1] + ratio * (last[1] - previous[1]),
+        )
 
 
 def certified_uniform_cloud(
@@ -174,8 +222,9 @@ def _cohorts(species: Species, count: int) -> list[np.ndarray]:
 class CloudCorrection:
     """Accepted cloud histories and observer-local translating node lattices.
 
-    Correction fields are evaluated at the last accepted lab time. This is an
-    explicit first-order correction kick alongside the midpoint PIC kick; no
+    By default, fields are evaluated at the last accepted lab time. Sparse
+    evaluation uses causal moving-node samples while refitting every step.
+    This is an explicit correction kick alongside the midpoint PIC kick; no
     provisional or future source steps enter the exact retarded provider.
     """
 
@@ -248,6 +297,9 @@ class CloudCorrection:
         self.particle_shapes = [s.position_m.shape for s in species]
         self._direct_warm_start = NodeWarmStart()
         self._lattice_warm_starts: list[tuple[Species, NodeWarmStart]] = []
+        self._temporal_lattices: list[
+            tuple[Species, CorrectionConfig, TemporalNodeFields]
+        ] = []
 
     @property
     def beta(self) -> np.ndarray:
@@ -496,7 +548,35 @@ class CloudCorrection:
         if cache is None:
             cache = NodeWarmStart()
             self._lattice_warm_starts.append((observers, cache))
-        e, b = self._direct(nodes @ basis.T + center, cache)
+        if self.config.evaluation_every == 1:
+            self._temporal_lattices = [
+                entry for entry in self._temporal_lattices if entry[0] is not observers
+            ]
+            e, b = self._direct(nodes @ basis.T + center, cache)
+        else:
+            temporal = next(
+                (
+                    t
+                    for s, cfg, t in self._temporal_lattices
+                    if s is observers and cfg == self.config
+                ),
+                None,
+            )
+            if temporal is None:
+                temporal = TemporalNodeFields()
+                self._temporal_lattices = [
+                    entry
+                    for entry in self._temporal_lattices
+                    if entry[0] is not observers
+                ]
+                self._temporal_lattices.append((observers, self.config, temporal))
+            e, b = temporal.sample(
+                self.accepted_steps,
+                self.time_s,
+                self.config.evaluation_every,
+                self.config.temporal_mode,
+                lambda: self._direct(nodes @ basis.T + center, cache),
+            )
         return grid.gather(local, e.reshape(*shape, 3)), grid.gather(
             local, b.reshape(*shape, 3)
         )

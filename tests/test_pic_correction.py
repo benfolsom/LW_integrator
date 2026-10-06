@@ -257,3 +257,76 @@ def test_node_batch_parity_and_ambiguous_bracket_fallback():
         np.testing.assert_array_equal(db, b * E_NATIVE_TO_SI / C - qb)
     assert warm.hits > 0
     assert warm.proposals > warm.hits
+
+
+def test_causal_cadence_keeps_refits_and_observer_caches_independent(monkeypatch):
+    from dataclasses import replace
+
+    s = source()
+    cfg = CorrectionConfig.from_config(
+        dict(clouds_per_species=2, evaluation_every=2, temporal_mode="extrapolate")
+    )
+    corr = CloudCorrection([s], cfg)
+    obs = source()
+    obs.position_m += 2e-3
+    other = source()
+    other.position_m += 3e-3
+    calls = []
+
+    def evaluate(nodes, cache):
+        calls.append(corr.accepted_steps)
+        value = 1 + corr.time_s / 1e-12
+        return np.full_like(nodes, value), np.full_like(nodes, -value)
+
+    monkeypatch.setattr(corr, "_direct", evaluate)
+    for step in range(6):
+        if step:
+            s.position_m += 1e-12 * s.velocity_m_s
+            corr.accept([s], step * 1e-12)
+        e, b = corr.sample(obs)
+        expected = 1 if step == 1 else 1 + step
+        np.testing.assert_allclose(e, expected)
+        np.testing.assert_allclose(b, -expected)
+        corr.sample(obs)  # Repeated gathers do not advance the cadence.
+        if step == 3:
+            eo, _ = corr.sample(other)
+            np.testing.assert_allclose(eo, 4)
+    assert calls == [0, 2, 3, 4]
+    assert corr.refits == 6
+    corr.config = replace(cfg, evaluation_every=1)
+    corr.sample(obs)
+    corr.config = cfg
+    corr.sample(obs)
+    assert calls[-2:] == [5, 5]
+    corr.config = replace(cfg, temporal_mode="hold")
+    corr.sample(obs)
+    s.position_m += 1e-12 * s.velocity_m_s
+    corr.accept([s], 6e-12)
+    np.testing.assert_allclose(corr.sample(obs)[0], 6)
+    for invalid in (0, True, 1.5):
+        with pytest.raises(ValueError, match="evaluation_every"):
+            replace(cfg, evaluation_every=invalid)
+    with pytest.raises(ValueError, match="refit_every"):
+        replace(cfg, refit_every=2)
+    with pytest.raises(ValueError, match="causal"):
+        replace(cfg, temporal_mode="linear")
+
+
+def test_temporal_secant_uses_elapsed_time_not_step_count():
+    from core.pic.correction import TemporalNodeFields
+
+    cache = TemporalNodeFields()
+    for step, time_s, expected in (
+        (0, 0.0, 0.0),
+        (1, 0.2, 0.0),
+        (2, 0.5, 1.0),
+        (3, 0.9, 1.8),
+    ):
+        fields = cache.sample(
+            step,
+            time_s,
+            2,
+            "extrapolate",
+            lambda: (np.array([2 * time_s]), np.array([-time_s])),
+        )
+        np.testing.assert_allclose(fields[0], expected)
