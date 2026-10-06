@@ -25,6 +25,64 @@ def source():
     )
 
 
+def test_certified_skip_rejects_tiny_acceleration_and_moving_rounded_drift():
+    from dataclasses import replace
+
+    s = source()
+    cfg = CorrectionConfig(
+        clouds_per_species=2, subcharge_count=4, certified_inertial_skip=True
+    )
+    corr = CloudCorrection([s], cfg)
+    nodes = np.array([[4.0, 2.0, 1.0]]) * 1e-3
+    e, b = corr.direct(nodes)
+    assert np.array_equal(e, np.zeros_like(e))
+    assert np.array_equal(b, np.zeros_like(b))
+    assert corr.cost_counts == dict(skipped=2, compressed=0, roots=0)
+    with pytest.raises(ValueError, match="coincides"):
+        corr.direct((corr.position_m[0] + corr.offsets_m[0, 0])[None, :])
+    s.position_m += 1e-12 * s.velocity_m_s
+    s.momentum_mc[:, 0] += 1e-10
+    corr.accept([s], 1e-12)
+    corr.direct(nodes)
+    assert corr.cost_counts["skipped"] == 0
+    # A stationary history has an exact, whole-window certificate after refits.
+    s = source()
+    s.momentum_mc[:] = 0
+    corr = CloudCorrection([s], cfg)
+    corr.accept([s], 1e-12)
+    corr.direct(nodes)
+    assert corr.cost_counts["skipped"] == 2
+    corr.config = replace(cfg, certified_inertial_skip=False)
+    full = corr.direct(nodes)
+    assert all(np.linalg.norm(f) < 1e-8 for f in full)
+
+
+def test_compression_is_matched_and_near_nodes_keep_full_clouds():
+    from dataclasses import replace
+
+    s = source()
+    cfg = CorrectionConfig(clouds_per_species=2, subcharge_count=4)
+    corr = CloudCorrection([s], cfg)
+    for step in range(1, 7):
+        s.momentum_mc[:, 0] += 0.02
+        s.position_m += 1e-12 * s.velocity_m_s
+        corr.accept([s], step * 1e-12)
+    nodes = np.array([[30.0, 20.0, 10.0], [2.0, 1.0, 0.8]]) * 1e-3
+    full = corr.direct(nodes)
+    corr.config = replace(cfg, certified_inertial_skip=False, far_field_ratio=None)
+    assert all(np.array_equal(a, b) for a, b in zip(full, corr.direct(nodes)))
+    corr.config = replace(cfg, far_field_ratio=16)
+    cheap = corr.direct(nodes)
+    assert corr.cost_counts["compressed"] == 2
+    assert corr.cost_counts["roots"] == 10
+    for a, b in zip(full, cheap):
+        np.testing.assert_allclose(a[1], b[1], rtol=2e-12, atol=1e-9)
+        assert np.linalg.norm(a[0] - b[0]) / np.linalg.norm(a[0]) < 0.002
+    for value in (0, 1, np.inf, np.nan):
+        with pytest.raises(ValueError, match="far_field_ratio"):
+            replace(cfg, far_field_ratio=value)
+
+
 def test_uniform_cloud_cancellation_and_persistent_moment_refits():
     s = source()
     corr = CloudCorrection(

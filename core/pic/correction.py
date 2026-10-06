@@ -10,7 +10,7 @@ Refit cadence must be converged: sparse fits can create artificial acceleration.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Mapping, cast
 
 import numpy as np
@@ -18,7 +18,12 @@ import numpy as np
 from ..exact_source_cloud import exact_cloud_history, transverse_offsets
 from ..external_fields import electric_field_native_to_v_per_m
 from ..types import GrowableTrajectoryBuilder, MacroparticleSmearingConfig
-from .correction_fields import NodeWarmStart, correction_node_fields
+from .. import retarded_fields as rf
+from .correction_fields import (
+    NodeWarmStart,
+    correction_node_fields,
+    resolved_node_fields,
+)
 from .grid import Grid, Species, rest_basis
 from .kernels import C, COULOMB
 
@@ -37,8 +42,16 @@ class CorrectionConfig:
     subcharge_count: int = 16
     cloud_width_rule: str = "fixed"
     cloud_width_scale: float = 1.0
+    certified_inertial_skip: bool = False
+    far_field_ratio: float | None = None
 
     def __post_init__(self) -> None:
+        if not isinstance(self.certified_inertial_skip, bool):
+            raise ValueError("certified_inertial_skip must be boolean")
+        if self.far_field_ratio is not None and (
+            not np.isfinite(self.far_field_ratio) or self.far_field_ratio <= 1
+        ):
+            raise ValueError("far_field_ratio must be finite and greater than one")
         for key in ("clouds_per_species", "refit_every", "subcharge_count"):
             value = getattr(self, key)
             if isinstance(value, bool) or int(value) != value or value < 1:
@@ -73,6 +86,8 @@ class CorrectionConfig:
             "subcharge_count",
             "cloud_width_rule",
             "cloud_width_scale",
+            "certified_inertial_skip",
+            "far_field_ratio",
         }
         if not isinstance(data, Mapping) or set(data) - allowed:
             raise ValueError("unknown correction keys or non-object correction")
@@ -91,6 +106,43 @@ class CorrectionConfig:
 def _mean(values: np.ndarray, weights: np.ndarray) -> np.ndarray:
     return cast(
         np.ndarray, values[0] + np.average(values - values[0], weights=weights, axis=0)
+    )
+
+
+def certified_uniform_cloud(
+    source: rf._PreparedSourceHistory,
+    time_ns: float,
+    position_mm: np.ndarray,
+    proper_velocity: np.ndarray,
+) -> bool:
+    """Sufficient exact certificates, never a small-acceleration threshold.
+
+    At the analytic boundary all causal roots lie in its uniform past.
+    Later, certify only an exactly stationary resolved history. Rounded
+    moving drifts are deliberately rejected rather than called inertial.
+    """
+    boundary = source.inertial_boundary
+    if boundary is None or source.ended_by_loss:
+        return False
+    anchor, position, u = boundary
+    if not (
+        np.array_equal(position_mm, position) and np.array_equal(proper_velocity, u)
+    ):
+        return False
+    if time_ns == anchor and source.time_ns[-1] == anchor:
+        return True
+    return bool(
+        np.all(u == 0)
+        and np.all(source.beta == 0)
+        and np.all(source.beta_prime_per_mm == 0)
+        and np.all(source.position_mm == position)
+        and np.all(source.position_coefficients_mm[:, 1:] == 0)
+        and all(
+            np.all(segment.coefficients_mm[2:] == 0)
+            and segment.proper_velocity_knots is not None
+            and np.all(segment.proper_velocity_knots == 0)
+            for segment in source.light_cone_segments
+        )
     )
 
 
@@ -332,6 +384,11 @@ class CloudCorrection:
             raise ValueError("correction observers must be finite 3D positions")
         if len(position) == 0:
             return np.zeros((0, 3)), np.zeros((0, 3))
+        if (
+            self.config.certified_inertial_skip
+            or self.config.far_field_ratio is not None
+        ):
+            return self._cheap_direct(position)
         history = exact_cloud_history(self.builder.build_current(), self.smearing)
         e, b = correction_node_fields(
             history, self.time_s * 1e9, position * 1e3, warm_start=warm_start
@@ -341,6 +398,86 @@ class CloudCorrection:
         b /= C
         qe, qb = self.quasi_static(position)
         return e - qe, b - qb
+
+    def _cheap_direct(self, position: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """Matched cloud replacements; all strict roots remain CPU authoritative.
+
+        Distance is bounded over every accepted knot, not just the current
+        center. This cutoff is an empirical control, not an error certificate.
+        The symmetric transverse rule has exactly zero physical dipole.
+        """
+        base = rf._prepare_history(self.builder.build_current(), ())
+        full = rf._prepare_history(
+            exact_cloud_history(self.builder.build_current(), self.smearing), ()
+        )
+        e, b = np.zeros_like(position), np.zeros_like(position)
+        skipped = compressed = roots = 0
+        count = self.config.subcharge_count
+        for j, source in base.sources.items():
+            current_r = position[:, None, :] - self.position_m[j] - self.offsets_m[j]
+            if np.any(np.all(current_r == 0, axis=-1)):
+                raise ValueError("correction node coincides with a cloud subcharge")
+            if self.config.certified_inertial_skip and certified_uniform_cloud(
+                source, self.time_s * 1e9, self.position_m[j] * 1e3, self.history_u[j]
+            ):
+                skipped += len(position)
+                continue
+            far = np.zeros(len(position), dtype=bool)
+            symmetric = np.array_equal(
+                self.offsets_m[j], -self.offsets_m[j, ::-1]
+            ) and np.array_equal(self.fractions, self.fractions[::-1])
+            if self.config.far_field_ratio is not None and count > 1 and symmetric:
+                radius = np.max(np.linalg.norm(self.offsets_m[j], axis=1))
+                distance = np.full(len(position), np.inf)
+                for center in source.position_mm:
+                    distance = np.minimum(
+                        distance, np.linalg.norm(position - center * 1e-3, axis=1)
+                    )
+                far = distance > self.config.far_field_ratio * radius
+            for mask, monopole in ((far, True), (~far, False)):
+                if not np.any(mask):
+                    continue
+                selected = position[mask]
+                offsets = np.zeros((1, 3)) if monopole else self.offsets_m[j]
+                fractions = np.ones(1) if monopole else self.fractions
+                prepared = replace(
+                    base if monopole else full,
+                    sources=(
+                        {j: source}
+                        if monopole
+                        else {
+                            i: full.sources[i]
+                            for i in range(j * count, (j + 1) * count)
+                        }
+                    ),
+                )
+                le, lb = resolved_node_fields(
+                    prepared, np.full(len(selected), self.time_s * 1e9), selected * 1e3
+                )
+                r = selected[:, None, :] - self.position_m[j] - offsets
+                beta = self.beta[j]
+                speed = np.linalg.norm(beta)
+                axis = beta / speed if speed else np.array([0.0, 0.0, 1.0])
+                parallel = r @ axis
+                perp = r - parallel[..., None] * axis
+                deficit = 1 / (1 + np.sum(self.history_u[j] ** 2))
+                d2 = parallel**2 + deficit * np.sum(perp**2, axis=-1)
+                if np.any(d2 == 0):
+                    raise ValueError("correction node coincides with a cloud subcharge")
+                qe = (
+                    COULOMB
+                    * self.charge_c[j]
+                    * deficit
+                    * np.sum(
+                        fractions[None, :, None] * r / d2[..., None] ** 1.5, axis=1
+                    )
+                )
+                e[mask] += le * E_NATIVE_TO_SI - qe
+                b[mask] += lb * E_NATIVE_TO_SI / C - np.cross(beta, qe) / C
+                roots += len(selected) * (1 if monopole else count)
+                compressed += len(selected) if monopole else 0
+        self.cost_counts = dict(skipped=skipped, compressed=compressed, roots=roots)
+        return e, b
 
     def sample(self, observers: Species) -> tuple[np.ndarray, np.ndarray]:
         weights = observers.population
