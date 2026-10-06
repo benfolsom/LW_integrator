@@ -63,6 +63,7 @@ from .causal_spin_history import (
     causal_frozen_spin_slopes_per_ns,
 )
 from .constants import C_MMNS
+from .exact_visibility import ExactVisibilityHistory, visible_prepared
 from .exact_retarded_backend import (
     EXACT_RETARDED_BACKENDS,
     ExactRetardedBackendUnavailableError,
@@ -730,6 +731,40 @@ def _prepare_dipole_history(
     selected_spin_interpolation = _validated_spin_interpolation_model(
         spin_interpolation_model
     )
+    if isinstance(history, ExactVisibilityHistory):
+        return _prepare_dipole_history(
+            history.base,
+            source_identities=source_identities,
+            observer_source_identity=observer_source_identity,
+            excluded_source_identities=excluded_source_identities,
+            spin_interpolation_model=spin_interpolation_model,
+        )
+    from .exact_visibility_history import expanded_visibility_history
+
+    expanded = expanded_visibility_history(history)
+    if expanded is not None:
+
+        def prepare_expanded(current):
+            return _prepare_dipole_history_uncached(
+                expanded,
+                source_identities=source_identities,
+                observer_source_identity=observer_source_identity,
+                excluded_source_identities=excluded_source_identities,
+                spin_interpolation_model=selected_spin_interpolation,
+            )
+
+        return _DIPOLE_PREPARED_HISTORY_CACHE.prepare(
+            history,
+            variant=(
+                "gate_knots",
+                selected_spin_interpolation,
+                None if source_identities is None else tuple(source_identities),
+                observer_source_identity,
+                tuple(excluded_source_identities),
+            ),
+            prepare_full=prepare_expanded,
+            append=lambda previous, current, old_stop: prepare_expanded(current),
+        ).value
     if isinstance(history, TrialTrajectoryHistory):
         if selected_spin_interpolation != _CAUSAL_FROZEN_C1_SPIN_INTERPOLATION:
             raise ValueError(
@@ -1469,6 +1504,9 @@ def evaluate_retarded_dipole_hertz_tensor_native(
         excluded_source_identities=excluded_source_identities,
         spin_interpolation_model=spin_interpolation_model,
     )
+    prepared = visible_prepared(
+        prepared, history, observer_event, tolerance, iterations
+    )
     return _evaluate_prepared_hertz_tensor_native(
         prepared,
         observer_event,
@@ -1536,6 +1574,9 @@ def evaluate_retarded_dipole_potential_native(
         excluded_source_identities=excluded_source_identities,
         spin_interpolation_model=spin_interpolation_model,
     )
+    prepared = visible_prepared(
+        prepared, history, observer_event, tolerance, iterations
+    )
     center = _evaluate_prepared_hertz_tensor_native(
         prepared,
         observer_event,
@@ -1560,6 +1601,23 @@ def evaluate_retarded_dipole_potential_native(
         raise ValueError(
             "stencil reaches the minimum-separation guard; reduce stencil_step_mm"
         )
+
+    from .exact_visibility_stencil import gate_dipole_stencil
+
+    gated = gate_dipole_stencil(
+        prepared,
+        history,
+        observer_event,
+        center,
+        step,
+        potential_only=True,
+        require_complete_history=require_complete_history,
+        minimum_separation_mm=minimum_separation,
+        root_tolerance_mm=tolerance,
+        max_root_iterations=iterations,
+    )
+    if gated is not None:
+        return gated
 
     center_position = np.asarray(observer_event.position_mm, dtype=float)
     evaluated: dict[tuple[int, int, int, int], RetardedDipoleHertzResult] = {
@@ -1764,6 +1822,9 @@ def evaluate_retarded_dipole_field_gradient_native(
         excluded_source_identities=excluded_source_identities,
         spin_interpolation_model=spin_interpolation_model,
     )
+    prepared = visible_prepared(
+        prepared, history, observer_event, tolerance, iterations
+    )
     center = _evaluate_prepared_hertz_tensor_native(
         prepared,
         observer_event,
@@ -1787,6 +1848,23 @@ def evaluate_retarded_dipole_field_gradient_native(
         raise ValueError(
             "stencil reaches the minimum-separation guard; reduce stencil_step_mm"
         )
+
+    from .exact_visibility_stencil import gate_dipole_stencil
+
+    gated = gate_dipole_stencil(
+        prepared,
+        history,
+        observer_event,
+        center,
+        step,
+        potential_only=False,
+        require_complete_history=require_complete_history,
+        minimum_separation_mm=minimum_separation,
+        root_tolerance_mm=tolerance,
+        max_root_iterations=iterations,
+    )
+    if gated is not None:
+        return gated
 
     center_position = np.asarray(observer_event.position_mm, dtype=float)
 

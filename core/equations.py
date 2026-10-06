@@ -79,6 +79,7 @@ from .distances import (
     compute_retarded_distance_soa,
 )
 from .beamline_geometry import compute_directional_visibility_mask
+from .exact_visibility import visibility_history
 from .external_fields import (
     boris_external_field_impulse,
     compute_uniform_external_field_impulse,
@@ -86,7 +87,7 @@ from .external_fields import (
     evaluate_external_field_si,
 )
 from .macroparticle_smearing import fixed_cloud_offsets, smear_source_samples
-from .exact_source_cloud import exact_cloud_history
+from .exact_source_cloud import exact_cloud_history, same_bunch_exclusions
 from .medina_radiation_reaction import (
     MedinaRadiationReactionResult,
     compute_medina_radiation_reaction,
@@ -1923,6 +1924,10 @@ def retarded_equations_of_motion(
     _skip_instantaneous_endpoint_recomposition: bool = False,
     _observer_trial_index: int | None = None,
     _exact_clock_observer_index: int | None = None,
+    _exact_visibility_internal: bool = False,
+    _exact_visibility_overrides: dict[int, frozenset[int]] | None = None,
+    _exact_visibility_dipole_overrides: dict[int, frozenset[int]] | None = None,
+    exact_same_bunch_ranges: tuple[slice, ...] = (),
 ) -> ParticleState:
     """Core equations of motion preserving the validated reference behavior.
 
@@ -1983,6 +1988,18 @@ def retarded_equations_of_motion(
         and startup_mode is StartupMode.INERTIAL_PREHISTORY
         and sim_type == SimulationType.BUNCH_TO_BUNCH
     )
+    if (
+        exact_endpoint_recomposition_selected
+        and beamline_geometry is not None
+        and beamline_geometry.enabled
+        and beamline_geometry.occluders
+        and not _exact_visibility_internal
+    ):
+        parameters = locals().copy()
+        parameters.pop("exact_endpoint_recomposition_selected")
+        from .exact_visibility_step import advance_exact_visibility_step
+
+        return advance_exact_visibility_step(retarded_equations_of_motion, parameters)
     # Coordinate each bunch separately; cross-bunch retarded clocks are unchanged.
     if (
         _lab_time_target_ns is not None
@@ -3519,6 +3536,19 @@ def retarded_equations_of_motion(
                             charge_history,
                             getattr(magnetic_dipole, "exact_charge_cloud", None),
                         )
+                        charge_history = visibility_history(
+                            charge_history,
+                            beamline_geometry,
+                            tuple(
+                                current_state[f"b{axis}"][particle_idx]
+                                for axis in "xyz"
+                            ),
+                            (
+                                None
+                                if _exact_visibility_overrides is None
+                                else _exact_visibility_overrides.get(particle_idx)
+                            ),
+                        )
                         charge_event = ObserverEvent(
                             time_ns=float(current_state["t"][particle_idx]),
                             position_mm=charge_source_position,
@@ -3727,7 +3757,9 @@ def retarded_equations_of_motion(
                             evaluate_retarded_charge_field_gradient_native(
                                 own_history,
                                 charge_event,
-                                excluded_source_indices=(particle_idx,),
+                                excluded_source_indices=same_bunch_exclusions(
+                                    particle_idx, num_particles, exact_same_bunch_ranges
+                                ),
                                 relative_step=charge_relative_step,
                                 minimum_step_mm=charge_minimum_step,
                                 root_tolerance_mm=charge_root_tolerance,
@@ -3865,6 +3897,22 @@ def retarded_equations_of_motion(
                         float(current_state["y"][particle_idx]),
                         float(current_state["z"][particle_idx]),
                     )
+                dipole_history = visibility_history(
+                    (
+                        exact_source_history
+                        if exact_source_history is not None
+                        else (
+                            traj_ext_soa if traj_ext_soa is not None else trajectory_ext
+                        )
+                    ),
+                    beamline_geometry,
+                    tuple(current_state[f"b{axis}"][particle_idx] for axis in "xyz"),
+                    (
+                        None
+                        if _exact_visibility_dipole_overrides is None
+                        else _exact_visibility_dipole_overrides.get(particle_idx)
+                    ),
+                )
                 try:
                     if (
                         sc_convergence_mode == "fixed_geometry"
@@ -3909,15 +3957,7 @@ def retarded_equations_of_motion(
                             == "numba_analytic_charge_dipole_response_serial"
                         ):
                             dipole_source_field = evaluate_retarded_dipole_field_gradient_hertz_jet_native(
-                                (
-                                    exact_source_history
-                                    if exact_source_history is not None
-                                    else (
-                                        traj_ext_soa
-                                        if traj_ext_soa is not None
-                                        else trajectory_ext
-                                    )
-                                ),
+                                dipole_history,
                                 ObserverEvent(
                                     time_ns=float(current_state["t"][particle_idx]),
                                     position_mm=dipole_source_position,
@@ -3947,15 +3987,7 @@ def retarded_equations_of_motion(
                         else:
                             dipole_source_field = (
                                 evaluate_retarded_dipole_field_gradient_native(
-                                    (
-                                        exact_source_history
-                                        if exact_source_history is not None
-                                        else (
-                                            traj_ext_soa
-                                            if traj_ext_soa is not None
-                                            else trajectory_ext
-                                        )
-                                    ),
+                                    dipole_history,
                                     ObserverEvent(
                                         time_ns=float(current_state["t"][particle_idx]),
                                         position_mm=dipole_source_position,
@@ -5737,17 +5769,21 @@ def retarded_equations_of_motion(
 
                 try:
                     diagnostic_charge_field = evaluate_retarded_charge_field_native(
-                        exact_cloud_history(
-                            (
-                                exact_source_history
-                                if exact_source_history is not None
-                                else (
-                                    traj_ext_soa
-                                    if traj_ext_soa is not None
-                                    else trajectory_ext
-                                )
+                        visibility_history(
+                            exact_cloud_history(
+                                (
+                                    exact_source_history
+                                    if exact_source_history is not None
+                                    else (
+                                        traj_ext_soa
+                                        if traj_ext_soa is not None
+                                        else trajectory_ext
+                                    )
+                                ),
+                                getattr(magnetic_dipole, "exact_charge_cloud", None),
                             ),
-                            getattr(magnetic_dipole, "exact_charge_cloud", None),
+                            beamline_geometry,
+                            tuple(result[f"b{axis}"][particle_idx] for axis in "xyz"),
                         ),
                         ObserverEvent(
                             time_ns=float(result["t"][particle_idx]),

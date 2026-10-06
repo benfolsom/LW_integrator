@@ -34,6 +34,10 @@ def evaluate_exact_endpoint_four_potential(
     dipole_source_collection: Any = None,
     spin_interpolation_model: str = "centered_c1",
     cross_extrapolate_ns: float = 0.0,
+    beamline_geometry: Any = None,
+    visibility_overrides: dict[int, frozenset[int]] | None = None,
+    dipole_visibility_overrides: dict[int, frozenset[int]] | None = None,
+    own_bunch_ranges: tuple[slice, ...] = (),
 ) -> np.ndarray:
     """Evaluate cross-bunch and non-self own-bunch potentials at endpoints.
 
@@ -45,8 +49,17 @@ def evaluate_exact_endpoint_four_potential(
     """
 
     from .retarded_fields import evaluate_retarded_charge_field_native
-    from .exact_source_cloud import exact_cloud_history
+    from .exact_source_cloud import exact_cloud_history, same_bunch_exclusions
+    from .exact_visibility import boundary_visibility_overrides
 
+    if visibility_overrides is None:
+        visibility_overrides = boundary_visibility_overrides(observer_state)
+    if dipole_visibility_overrides is None:
+        dipole_visibility_overrides = boundary_visibility_overrides(
+            observer_state, dipole=True
+        )
+
+    dipole_history = source_history
     source_history = exact_cloud_history(
         source_history, magnetic_dipole.exact_charge_cloud
     )
@@ -87,6 +100,30 @@ def evaluate_exact_endpoint_four_potential(
         int(source_options.max_root_iterations) if include_dipole_source else 96
     )
     for particle_idx in np.flatnonzero(required):
+        from .exact_visibility import visibility_history
+
+        visible_history = visibility_history(
+            source_history,
+            beamline_geometry,
+            tuple(
+                observer_state.get(f"b{axis}", np.zeros(particle_count))[particle_idx]
+                for axis in "xyz"
+            ),
+            (
+                None
+                if visibility_overrides is None
+                else visibility_overrides.get(int(particle_idx))
+            ),
+        )
+        visible_dipole_history = visibility_history(
+            dipole_history,
+            beamline_geometry,
+            tuple(
+                observer_state.get(f"b{axis}", np.zeros(particle_count))[particle_idx]
+                for axis in "xyz"
+            ),
+            dipole_visibility_overrides.get(int(particle_idx)),
+        )
         event = ObserverEvent(
             time_ns=float(observer_state["t"][particle_idx]),
             position_mm=(
@@ -123,7 +160,7 @@ def evaluate_exact_endpoint_four_potential(
         )
         try:
             charge_field = evaluate_retarded_charge_field_native(
-                source_history,
+                visible_history,
                 event,
                 require_complete_history=require_complete_history,
                 root_tolerance_mm=charge_root_tolerance_mm,
@@ -134,7 +171,7 @@ def evaluate_exact_endpoint_four_potential(
             if cross_extrapolate_ns <= 0.0:
                 raise
             charge_field = evaluate_retarded_charge_field_native(
-                source_history,
+                visible_history,
                 event,
                 require_complete_history=require_complete_history,
                 root_tolerance_mm=charge_root_tolerance_mm,
@@ -150,7 +187,9 @@ def evaluate_exact_endpoint_four_potential(
             own_field = evaluate_retarded_charge_field_native(
                 own_history,
                 event,
-                excluded_source_indices=(int(particle_idx),),
+                excluded_source_indices=same_bunch_exclusions(
+                    particle_idx, particle_count, own_bunch_ranges
+                ),
                 require_complete_history=require_complete_history,
                 root_tolerance_mm=charge_root_tolerance_mm,
                 max_root_iterations=charge_max_root_iterations,
@@ -209,7 +248,7 @@ def evaluate_exact_endpoint_four_potential(
 
                 dipole_response = (
                     evaluate_retarded_dipole_field_gradient_hertz_jet_native(
-                        source_history,
+                        visible_dipole_history,
                         event,
                         require_complete_history=True,
                         fallback_relative_step=float(
@@ -231,7 +270,7 @@ def evaluate_exact_endpoint_four_potential(
                 potentials[particle_idx] += dipole_response.response.four_potential
             else:
                 dipole_potential = evaluate_retarded_dipole_potential_native(
-                    source_history,
+                    visible_dipole_history,
                     event,
                     require_complete_history=True,
                     relative_step=float(source_options.relative_stencil_step),
@@ -316,6 +355,8 @@ def finalize_exact_source_canonical_pair_states(
     rider_dipole_source_collection: Any = None,
     driver_dipole_source_collection: Any = None,
     spin_interpolation_model: str = "centered_c1",
+    beamline_geometry: Any = None,
+    driver_bunch_ranges: tuple[slice, ...] = (),
 ) -> tuple[ParticleState, ParticleState]:
     """Return detached endpoint-canonical states without publishing either row.
 
@@ -343,6 +384,7 @@ def finalize_exact_source_canonical_pair_states(
         dipole_source_collection=driver_dipole_source_collection,
         spin_interpolation_model=spin_interpolation_model,
         cross_extrapolate_ns=2.0 * cross_spread,
+        beamline_geometry=beamline_geometry,
     )
     driver_endpoint = evaluate_exact_endpoint_four_potential(
         driver,
@@ -354,9 +396,13 @@ def finalize_exact_source_canonical_pair_states(
         dipole_source_collection=rider_dipole_source_collection,
         spin_interpolation_model=spin_interpolation_model,
         cross_extrapolate_ns=2.0 * cross_spread,
+        beamline_geometry=beamline_geometry,
+        own_bunch_ranges=driver_bunch_ranges,
     )
     replace_exact_source_endpoint_potential(rider, rider_endpoint)
     replace_exact_source_endpoint_potential(driver, driver_endpoint)
+    rider.pop("_exact_visibility_endpoint_overrides", None)
+    driver.pop("_exact_visibility_endpoint_overrides", None)
     return rider, driver
 
 
