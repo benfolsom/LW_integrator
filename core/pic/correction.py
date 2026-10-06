@@ -18,7 +18,7 @@ import numpy as np
 from ..exact_source_cloud import exact_cloud_history, transverse_offsets
 from ..external_fields import electric_field_native_to_v_per_m
 from ..types import GrowableTrajectoryBuilder, MacroparticleSmearingConfig
-from .correction_fields import correction_node_fields
+from .correction_fields import NodeWarmStart, correction_node_fields
 from .grid import Grid, Species, rest_basis
 from .kernels import C, COULOMB
 
@@ -35,6 +35,8 @@ class CorrectionConfig:
     half_extent_m: tuple[float, float, float] = (0.004, 0.004, 0.004)
     cloud_width_m: float = 0.0002
     subcharge_count: int = 16
+    cloud_width_rule: str = "fixed"
+    cloud_width_scale: float = 1.0
 
     def __post_init__(self) -> None:
         for key in ("clouds_per_species", "refit_every", "subcharge_count"):
@@ -55,6 +57,10 @@ class CorrectionConfig:
             raise ValueError("correction cloud width must be positive and finite")
         if int(np.sqrt(self.subcharge_count)) ** 2 != self.subcharge_count:
             raise ValueError("use square Gauss–Hermite subcharge counts")
+        if self.cloud_width_rule not in ("fixed", "bunch_rms_k"):
+            raise ValueError("cloud width rule must be fixed or bunch_rms_k")
+        if not np.isfinite(self.cloud_width_scale) or self.cloud_width_scale <= 0:
+            raise ValueError("cloud width scale must be positive and finite")
 
     @classmethod
     def from_config(cls, data: Mapping[str, Any]) -> CorrectionConfig:
@@ -65,6 +71,8 @@ class CorrectionConfig:
             "half_extent_mm",
             "cloud_width_mm",
             "subcharge_count",
+            "cloud_width_rule",
+            "cloud_width_scale",
         }
         if not isinstance(data, Mapping) or set(data) - allowed:
             raise ValueError("unknown correction keys or non-object correction")
@@ -136,10 +144,34 @@ class CloudCorrection:
         self.initial_position_m = self.position_m.copy()
         self.velocity_beta = self._velocity_fit(species)
         self.initial_u = self.history_u.copy()
+        width = config.cloud_width_m
+        if config.cloud_width_rule == "bunch_rms_k":
+            # One common, immutable transverse width, as required by the
+            # existing exact-cloud provider. Use the largest species RMS.
+            rms = max(
+                float(
+                    np.sqrt(
+                        np.average(
+                            np.sum(
+                                (s.position_m - _mean(s.position_m, s.population)) ** 2,
+                                axis=1,
+                            ),
+                            weights=s.population,
+                        )
+                        / 3
+                    )
+                )
+                for s in species
+            )
+            width = (
+                config.cloud_width_scale * rms / config.clouds_per_species ** (1 / 3)
+            )
+            if width <= 0:
+                raise ValueError("bunch_rms_k needs a nonzero initial bunch RMS")
         self.smearing = MacroparticleSmearingConfig(
             enabled=True,
             subcharge_count=config.subcharge_count,
-            position_sigma_mm=config.cloud_width_m * 1e3,
+            position_sigma_mm=width * 1e3,
             longitudinal_sigma_mm=0,
             momentum_sigma_amu_mm_ns=0,
             use_momentum_errors=False,
@@ -162,6 +194,8 @@ class CloudCorrection:
         self.refits = 1
         self.source_populations = [s.population.copy() for s in species]
         self.particle_shapes = [s.position_m.shape for s in species]
+        self._direct_warm_start = NodeWarmStart()
+        self._lattice_warm_starts: list[tuple[Species, NodeWarmStart]] = []
 
     @property
     def beta(self) -> np.ndarray:
@@ -284,6 +318,11 @@ class CloudCorrection:
         return e, b
 
     def direct(self, position_m: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        return self._direct(position_m, self._direct_warm_start)
+
+    def _direct(
+        self, position_m: np.ndarray, warm_start: NodeWarmStart
+    ) -> tuple[np.ndarray, np.ndarray]:
         position = np.asarray(position_m, dtype=float)
         if (
             position.ndim != 2
@@ -294,7 +333,9 @@ class CloudCorrection:
         if len(position) == 0:
             return np.zeros((0, 3)), np.zeros((0, 3))
         history = exact_cloud_history(self.builder.build_current(), self.smearing)
-        e, b = correction_node_fields(history, self.time_s * 1e9, position * 1e3)
+        e, b = correction_node_fields(
+            history, self.time_s * 1e9, position * 1e3, warm_start=warm_start
+        )
         e *= E_NATIVE_TO_SI
         b *= E_NATIVE_TO_SI
         b /= C
@@ -312,7 +353,13 @@ class CloudCorrection:
         local = (observers.position_m - center) @ basis
         grid.require_inside(grid.coordinates(local))
         nodes = grid.origin_m + np.indices(shape).reshape(3, -1).T * spacing
-        e, b = self.direct(nodes @ basis.T + center)
+        cache = next(
+            (cache for s, cache in self._lattice_warm_starts if s is observers), None
+        )
+        if cache is None:
+            cache = NodeWarmStart()
+            self._lattice_warm_starts.append((observers, cache))
+        e, b = self._direct(nodes @ basis.T + center, cache)
         return grid.gather(local, e.reshape(*shape, 3)), grid.gather(
             local, b.reshape(*shape, 3)
         )
