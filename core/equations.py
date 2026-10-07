@@ -2109,6 +2109,20 @@ def retarded_equations_of_motion(
                 current_state[name][promoted] = canonical_start[promoted, axis]
     result = _initialize_result_state(current_state)
     initialize_resolved_result(result, current_state)
+    emission_config = None
+    if "_stochastic_emission_config" in current_state:
+        from .stochastic_emission import (
+            StochasticEmissionConfig,
+            crosses,
+            indicators_from_fields,
+            is_electron,
+            sampled_lw_fields,
+        )
+
+        emission_config = StochasticEmissionConfig.from_dict(
+            current_state["_stochastic_emission_config"]
+        )
+        result["_stochastic_emission_samples"] = [None] * len(current_state["x"])
     radiation_mode = _canonicalize_radiation_reaction_mode(radiation_reaction_mode)
     medina_validity_guard = radiation_mode == "medina_lad_validity"
     if medina_validity_guard:
@@ -2472,6 +2486,9 @@ def retarded_equations_of_motion(
         converged = False
         last_mass_shell_error = float("inf")
         for sc_iteration in range(sc_max_iterations):
+            if emission_config is not None:
+                stochastic_electric = np.zeros(3)
+                stochastic_magnetic = np.zeros(3)
             magnetic_rotation_correction = np.zeros(3)
             # Only the final self-consistency trial feeds the once-per-step
             # spin update.  Resetting here prevents an earlier trial's Medina
@@ -2878,6 +2895,11 @@ def retarded_equations_of_motion(
                     apply_external=apply_forces,
                     verbosity=sc_verbosity,
                 )
+
+                if emission_config is not None:
+                    stochastic_electric, stochastic_magnetic = sampled_lw_fields(
+                        nhat, external_samples
+                    )
 
                 # Debug: Log what forces were computed
                 if sc_verbosity >= 3 and sc_enabled:
@@ -5031,7 +5053,61 @@ def retarded_equations_of_motion(
             result["radiation_power"][particle_idx] = radiation_power
             result["radiation_energy"][particle_idx] = radiation_energy
 
-            if radiation_mode == "power_matched_damping" and radiation_energy > 0.0:
+            particle_radiation_mode = radiation_mode
+            if emission_config is not None and is_electron(
+                particle_mass, force_particle_charge
+            ):
+                from .rfs import fields_from_tensor_native
+
+                exact_electric, exact_magnetic = fields_from_tensor_native(
+                    rfs_field_tensor
+                )
+                if (
+                    external_field is not None
+                    and external_field.enabled
+                    and not rfs_selected
+                ):
+                    local_electric_field_native, local_magnetic_field_native, _ = (
+                        evaluate_external_field_native(
+                            external_field,
+                            position_mm=field_position,
+                            time_ns=float(current_state["t"][particle_idx]),
+                        )
+                    )
+                momentum = np.array(
+                    [
+                        physical_mechanical_px,
+                        physical_mechanical_py,
+                        physical_mechanical_pz,
+                    ]
+                )
+                external_in_tensor = (
+                    rfs_selected and dipole_active and (precession_active or sg_active)
+                )
+                indicators = indicators_from_fields(
+                    momentum,
+                    particle_mass,
+                    force_particle_charge,
+                    stochastic_electric
+                    + exact_electric
+                    + (0 if external_in_tensor else local_electric_field_native),
+                    stochastic_magnetic
+                    + exact_magnetic
+                    + (0 if external_in_tensor else local_magnetic_field_native),
+                )
+                active = current_state["_stochastic_emission_active"][
+                    particle_idx
+                ] or crosses(emission_config, indicators)
+                if active:
+                    particle_radiation_mode = "off"
+                result["_stochastic_emission_samples"][particle_idx] = dict(
+                    indicators=indicators, mechanical_momentum=momentum.tolist()
+                )
+
+            if (
+                particle_radiation_mode == "power_matched_damping"
+                and radiation_energy > 0.0
+            ):
                 mechanical_px = (
                     result["Px"][particle_idx] - accumulated_field_x * particle_mass
                 )
@@ -5114,7 +5190,7 @@ def retarded_equations_of_motion(
                         result["bdotz"][particle_idx] = (
                             beta_z_limited - current_state["bz"][particle_idx]
                         ) / time_factor
-            elif radiation_mode == "medina_lad":
+            elif particle_radiation_mode == "medina_lad":
                 predictor_coordinate_dt = coordinate_dt
                 # These are the already on-shell, non-RR momenta used for the
                 # position and beta update.  Do not rescale them from an

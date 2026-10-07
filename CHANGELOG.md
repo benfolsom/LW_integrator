@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Add opt-in stochastic electron/positron emission with local quantum and recoil
+  thresholds, quantum LCFA and classical capped spectra, seeded photon logs,
+  on-shell recoil with a background-impulse ledger, and checkpointed RNG state.
+  Wire zero-spin fixed-RK4 native pairs and fixed-step general BUNCH_TO_BUNCH
+  paths through configs and CLI flags. Keep deterministic defaults unchanged;
+  finite-spin quantum recoil and closed electron–ion conservation remain open.
+
 - Docs: add the physics discussion "Classical limit, bremsstrahlung, and
   validity" (`docs/source/classical_limit_bremsstrahlung.rst`, under Physics
   background). It covers:

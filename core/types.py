@@ -1232,9 +1232,15 @@ class IntegratorConfig:
         default_factory=AdaptivePairReturnConfig
     )
 
+    stochastic_emission: object = None
+
     def __post_init__(self) -> None:
         from .proper_velocity_history import validate_source_history_representation
+        from .stochastic_emission import StochasticEmissionConfig
 
+        self.stochastic_emission = StochasticEmissionConfig.from_dict(
+            self.stochastic_emission
+        )
         self.source_history_representation = validate_source_history_representation(
             self.source_history_representation
         )

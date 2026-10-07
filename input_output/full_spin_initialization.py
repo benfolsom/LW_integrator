@@ -72,6 +72,7 @@ def prepare_particles(specification: dict[str, Any]) -> dict[str, Any]:
             "startup_duration_ns",
             "reaction_mode",
             "source_history_position_tolerance_mm",
+            "stochastic_emission",
         },
         "initial-condition",
     )
@@ -245,4 +246,5 @@ def prepare_particles(specification: dict[str, Any]) -> dict[str, Any]:
         inertial_prehistory=True,
         preserve_source_increments=True,
         integration_method="rk4",
+        stochastic_emission=specification.get("stochastic_emission"),
     )

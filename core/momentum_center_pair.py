@@ -7,7 +7,10 @@ The 14-component state is [t_ns, x_mm(3), P_native(4), S_native(6)].
 
 from dataclasses import asdict, dataclass
 import copy
-from typing import Any, Callable, Iterator
+from typing import Any, Callable, Iterator, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .stochastic_emission import StochasticEmissionConfig
 
 import numpy as np
 from scipy.special import betainc
@@ -244,7 +247,11 @@ def initial_state_native(
 
 
 def dynamics_native(
-    state: np.ndarray, particle: MomentumCenterParticle, provider: NativeProvider
+    state: np.ndarray,
+    particle: MomentumCenterParticle,
+    provider: NativeProvider,
+    *,
+    suppress_radiation: bool = False,
 ) -> tuple[np.ndarray, dict[str, Any]]:
     """Lab-time derivative plus explicitly separated native/length-time diagnostics."""
     scaled_state = _to_length_time(state)
@@ -252,7 +259,7 @@ def dynamics_native(
         raise ValueError("charge_ll requires exactly zero spin; no spin was discarded")
     supplied = _provider_length_time(provider)
     values = supplied(scaled_state[:4])
-    if particle.reaction_mode in FULL_DIPOLE_REACTION_MODES:
+    if particle.reaction_mode in FULL_DIPOLE_REACTION_MODES and not suppress_radiation:
         evaluator = (
             evaluate_coupled_reaction
             if particle.reaction_mode == "full_dipole_coupled"
@@ -273,7 +280,7 @@ def dynamics_native(
         rhs, diagnostic = model.evaluate(
             scaled_state, particle.length_time_particle(), lambda event: values
         )
-    if particle.reaction_mode == "charge_ll":
+    if particle.reaction_mode == "charge_ll" and not suppress_radiation:
         reaction = charge_reaction(
             diagnostic["proper_velocity"],
             values[2],
@@ -562,6 +569,7 @@ def initialize_pair(
     preserve_source_increments: bool = False,
     integration_method: str = "rk4",
     internal_step_settings=None,
+    stochastic_emission: Any = None,
 ) -> dict[str, Any]:
     """Initialize the backward-compatible, exactly two-particle runner."""
     if len(particles) != 2 or len(histories) != 2:
@@ -576,6 +584,7 @@ def initialize_pair(
         preserve_source_increments=preserve_source_increments,
         integration_method=integration_method,
         internal_step_settings=internal_step_settings,
+        stochastic_emission=stochastic_emission,
     )
 
 
@@ -590,6 +599,7 @@ def _initialize_particles(
     preserve_source_increments: bool = False,
     integration_method: str = "rk4",
     internal_step_settings: Any = None,
+    stochastic_emission: Any = None,
     checkpoint_model: str = MODEL,
 ) -> dict[str, Any]:
     """Checkpoint accepted native states and their already prepared source past."""
@@ -638,6 +648,12 @@ def _initialize_particles(
             raise ValueError("Explicit InternalStepSettings required")
         payload["internal_step_control"] = asdict(internal_step_settings)
         _restore(payload)
+    from .stochastic_emission import EmissionRuntime, StochasticEmissionConfig
+
+    emission = StochasticEmissionConfig.from_dict(stochastic_emission)
+    if emission.enabled:
+        _validate_emission_pair(payload, emission)
+        payload["stochastic_emission"] = EmissionRuntime(emission).to_payload()
     return payload
 
 
@@ -744,7 +760,7 @@ def _source_components(payload, states, histories):
 
 
 def _restore(
-    payload: dict[str, Any]
+    payload: dict[str, Any],
 ) -> tuple[list[MomentumCenterParticle], np.ndarray, list[FullDipoleHistory]]:
     if (
         payload.get("model") not in (MODEL, MULTIPARTICLE_MODEL)
@@ -849,6 +865,46 @@ def _relative_constraint_residuals(
     )
 
 
+def _validate_emission_pair(
+    payload: dict[str, Any], config: "StochasticEmissionConfig"
+) -> None:
+    if not config.enabled:
+        return
+    if np.any(np.asarray(payload["states"])[:, 8:]):
+        raise ValueError("Stochastic pair recoil requires zero intrinsic spin")
+    for history in payload["histories"]:
+        if (
+            history.get("geometry_reconstruction", "endpoint") != "endpoint"
+            or history.get("dipole_reconstruction", "endpoint") != "endpoint"
+            or history.get("derivative_sampling", "consecutive") != "consecutive"
+        ):
+            raise ValueError(
+                "Stochastic pair recoil requires endpoint source histories "
+                "with consecutive sampling"
+            )
+    if (
+        payload.get("integration_method", "rk4") != "rk4"
+        or "internal_step_control" in payload
+    ):
+        raise ValueError("Stochastic pair emission currently requires fixed RK4 steps")
+
+
+def _pair_emission_indicators(
+    state: np.ndarray, particle: MomentumCenterParticle, provider: NativeProvider
+) -> dict[str, Any]:
+    from .stochastic_emission import indicators_from_force
+
+    _, data = dynamics_native(state, particle, provider, suppress_radiation=True)
+    u = data["proper_velocity_mm_ns"] / c
+    # F native and q native give dP/dtau in amu mm/ns^2.
+    force = (
+        particle.charge_native * provider(state[0], state[1:4])[2] @ (model.METRIC * u)
+    )
+    return indicators_from_force(
+        data["kinetic_momentum_native"][1:], particle.mass_amu, force[1:] / u[0]
+    )
+
+
 def _advance_particles(
     payload: dict[str, Any],
     width_ns: float,
@@ -871,6 +927,26 @@ def _advance_particles(
     ):
         raise ValueError("Positive finite step width and integer step count required")
     particles, states, histories = _restore(payload)
+    emission_runtime = None
+    if "stochastic_emission" in payload:
+        from .stochastic_emission import (
+            EmissionRuntime,
+            StochasticEmissionConfig,
+            is_electron,
+        )
+
+        emission_config = StochasticEmissionConfig.from_dict(
+            payload["stochastic_emission"]["config"]
+        )
+        _validate_emission_pair(payload, emission_config)
+        if passive_selector is not None:
+            raise ValueError(
+                "Stochastic emission does not support passive pair updates"
+            )
+        if emission_config.enabled:
+            emission_runtime = EmissionRuntime(
+                emission_config, payload["stochastic_emission"]
+            )
     if passive_method not in ("midpoint", "rk3"):
         raise ValueError("Passive method must be midpoint or rk3")
     if passive_constraint_budget_relative is not None and (
@@ -999,6 +1075,32 @@ def _advance_particles(
         for i, (state, particle, provider, history) in enumerate(
             zip(states, particles, providers, histories)
         ):
+            emission_indicators = None
+            reaction_suppressed = False
+            if emission_runtime is not None and is_electron(
+                particle.mass_amu, particle.charge_native
+            ):
+                emission_indicators = _pair_emission_indicators(
+                    state, particle, provider
+                )
+                reaction_suppressed = emission_runtime.observe(
+                    str(i), emission_indicators, state[0]
+                )
+
+            def step_dynamics(
+                value: np.ndarray,
+                selected_particle: MomentumCenterParticle,
+                selected_provider: NativeProvider,
+            ) -> tuple[np.ndarray, dict[str, Any]]:
+                if reaction_suppressed:
+                    return dynamics_native(
+                        value,
+                        selected_particle,
+                        selected_provider,
+                        suppress_radiation=True,
+                    )
+                return dynamics_native(value, selected_particle, selected_provider)
+
             stage_diagnostics = []
             passive = selected_passive is not None and i in selected_passive
             forced_fallback = False
@@ -1039,7 +1141,7 @@ def _advance_particles(
                 return candidate
 
             def rhs(value: np.ndarray) -> np.ndarray:
-                rate, data = dynamics_native(value, particle, provider)
+                rate, data = step_dynamics(value, particle, provider)
                 stage_diagnostics.append(data["length_time"])
                 return rate
 
@@ -1128,7 +1230,7 @@ def _advance_particles(
                 trial_rates = (k1, k2, k3, k4)
             trial = finish_trial(trial, trial_rates, trial_weights, trial_divisor)
             try:
-                rate, diagnostic = dynamics_native(trial, particle, provider)
+                rate, diagnostic = step_dynamics(trial, particle, provider)
             except model.VelocityDomainError:
                 if (
                     not passive
@@ -1138,7 +1240,7 @@ def _advance_particles(
                     raise
                 forced_fallback = True
                 trial = retry_rk4()
-                rate, diagnostic = dynamics_native(trial, particle, provider)
+                rate, diagnostic = step_dynamics(trial, particle, provider)
             if passive and passive_constraint_budget_relative is not None:
                 if forced_fallback:
                     candidate_mass, candidate_spin = None, None
@@ -1156,7 +1258,7 @@ def _advance_particles(
                     # stepping retries the entire interval from its original
                     # increments and replaces all reaction integrals.
                     trial = retry_rk4()
-                    rate, diagnostic = dynamics_native(trial, particle, provider)
+                    rate, diagnostic = step_dynamics(trial, particle, provider)
                 accepted_mass, accepted_spin = _relative_constraint_residuals(
                     trial, particle, diagnostic
                 )
@@ -1175,6 +1277,42 @@ def _advance_particles(
                     accepted_mass_relative=accepted_mass,
                     accepted_spin_relative=accepted_spin,
                 )
+            velocity_before_jump = None
+            if emission_indicators is not None:
+                before = diagnostic["kinetic_momentum_native"][1:].copy()
+                after = emission_runtime.emit(
+                    str(i),
+                    before,
+                    particle.mass_amu,
+                    particle.charge_native,
+                    emission_indicators,
+                    width_ns,
+                    endpoint,
+                    trial[1:4],
+                )
+                if not np.array_equal(before, after):
+                    velocity_before_jump = rate[1:4].copy()
+                    mc = particle.mass_amu * c
+                    # Preserve the event's existing canonical potential offset.
+                    trial[5:8] += after - before
+                    trial[4] += (
+                        np.hypot(mc, np.linalg.norm(after))
+                        - diagnostic["kinetic_momentum_native"][0]
+                    )
+                    if source_components is not None:
+                        from decimal import localcontext
+                        from .preserved_source import decimal_array, split_array
+
+                        with localcontext() as context:
+                            context.prec = 80
+                            source_high[i, 4:8], source_low[i, 4:8] = split_array(
+                                decimal_array(trial[4:8])
+                                - decimal_array(source_reference[i, 4:8])
+                            )
+                    rate, diagnostic = step_dynamics(trial, particle, provider)
+                diagnostic["stochastic_emission"] = copy.deepcopy(
+                    emission_runtime.particles[str(i)]
+                )
             parts = None
             dipole = diagnostic["proper_dipole_native"]
             if source_components is not None:
@@ -1188,6 +1326,11 @@ def _advance_particles(
                     history.dipole_reference,
                 )
                 dipole = rounded_state(history.dipole_reference, *parts)
+            jump_options = (
+                {"velocity_before_jump": velocity_before_jump}
+                if velocity_before_jump is not None
+                else {}
+            )
             candidate_histories.append(
                 history.append(
                     endpoint,
@@ -1195,6 +1338,7 @@ def _advance_particles(
                     rate[1:4],
                     dipole,
                     dipole_parts=parts,
+                    **jump_options,
                 )
             )
             trials.append(trial)
@@ -1207,7 +1351,7 @@ def _advance_particles(
                 raise ValueError(
                     "Reaction integration requires one weight per accepted stage"
                 )
-            if particle.reaction_mode == "charge_ll":
+            if particle.reaction_mode == "charge_ll" and not reaction_suppressed:
                 for key, source in zip(
                     ledger_keys,
                     ("force", "outward_radiation_rate", "bound_momentum_rate"),
@@ -1224,7 +1368,10 @@ def _advance_particles(
                         )
                     )
                     ledger[i][key] = (np.asarray(ledger[i][key]) + increment).tolist()
-            if particle.reaction_mode in FULL_DIPOLE_REACTION_MODES:
+            if (
+                particle.reaction_mode in FULL_DIPOLE_REACTION_MODES
+                and not reaction_suppressed
+            ):
                 if integrated_reaction is not None:
                     from .nonlinear_pair_adaptive import _add_ledgers
 
@@ -1318,6 +1465,10 @@ def _advance_particles(
         p.reaction_mode in FULL_DIPOLE_REACTION_MODES for p in particles
     ):
         result["dipole_reaction_ledger"] = dipole_ledger
+    if emission_runtime is not None:
+        result["stochastic_emission"] = emission_runtime.to_payload()
+    elif "stochastic_emission" in payload:
+        result["stochastic_emission"] = copy.deepcopy(payload["stochastic_emission"])
     return result, records
 
 

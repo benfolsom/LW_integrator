@@ -3261,6 +3261,7 @@ def retarded_integrator(
     logger: Optional[Any] = None,
     use_numba: bool = True,
     radiation_reaction_mode: str = "off",
+    stochastic_emission: Any = None,
     pseudo_grid: Optional[PseudoGridConfig] = None,
     driver_train: Optional[DriverTrainConfig] = None,
     cavity_exit: Optional[CavityExitConfig] = None,
@@ -3453,6 +3454,50 @@ def retarded_integrator(
             )
     checkpoint = checkpoint or CheckpointConfig()
     adaptive_pair_return = adaptive_pair_return or AdaptivePairReturnConfig()
+    from .stochastic_emission import StochasticEmissionConfig
+
+    emission_config = StochasticEmissionConfig.from_dict(stochastic_emission)
+    emission_runtime = None
+    if emission_config.enabled:
+        from .stochastic_emission import (
+            EmissionRuntime,
+            prepare_general_state,
+            commit_general_state,
+        )
+
+        if (
+            sim_type is not SimulationType.BUNCH_TO_BUNCH
+            or adaptive_pair_return.enabled
+            or (adaptive_timestep is not None and adaptive_timestep.enabled)
+            or pseudo_grid.enabled
+            or driver_train.enabled
+            or cavity_exit.enabled
+            or magnetic_dipole.source.active
+            or (beamline_geometry is not None and beamline_geometry.enabled)
+            or (
+                space_charge is not None
+                and space_charge.enabled
+                and startup_mode is not StartupMode.INERTIAL_PREHISTORY
+            )
+        ):
+            raise ValueError(
+                "Stochastic emission requires fixed-step BUNCH_TO_BUNCH without "
+                "adaptive, pseudo-grid, trains, cavity tails, dipole sources, "
+                "geometry, or sampled same-bunch fields"
+            )
+        for state in (init_rider, init_driver):
+            if state is not None and np.any(state.get("magnetic_dipole_active", False)):
+                raise ValueError(
+                    "Stochastic general-runner recoil requires intrinsic dipoles off"
+                )
+            if state is not None and np.any(
+                np.asarray(state.get("macro_population", [1])) != 1
+            ):
+                raise ValueError(
+                    "Stochastic emission requires physical particles, "
+                    "not macroparticles"
+                )
+        emission_runtime = EmissionRuntime(emission_config)
     if (
         magnetic_dipole.intrinsic_spin_self_reaction_mode == "experimental_linear_spin"
         and not adaptive_pair_return.enabled
@@ -3863,6 +3908,14 @@ def retarded_integrator(
     )
     for state in (init_rider, init_driver):
         if state is not None:
+            if emission_config.enabled and (
+                np.any(np.asarray(state.get("magnetic_moment_native", [0])) != 0)
+                or np.any(np.asarray(state.get("spin_quantum_number", [0])) != 0)
+            ):
+                raise ValueError(
+                    "Stochastic general-runner recoil requires zero "
+                    "intrinsic moment and spin"
+                )
             if source_history_representation == "proper_velocity" and np.any(
                 np.asarray(state.get("magnetic_moment_native", np.zeros(0))) != 0.0
             ):
@@ -4586,6 +4639,10 @@ def retarded_integrator(
         TrajectoryArrays | None,
         list[dict[str, float]],
     ]:
+        if emission_runtime is not None:
+            for history in (rider_traj, driver_traj):
+                if history:
+                    history[-1]["_stochastic_emission"] = emission_runtime.to_payload()
         loc = list(_pseudo_grid_charge_localization)
         hide_seed_prehistory = bool(
             inertial_prehistory_enabled
@@ -4612,6 +4669,11 @@ def retarded_integrator(
         compatibility_payload = _checkpoint_json_value(
             {
                 "core_implementation_sha256": (_checkpoint_core_implementation_hash()),
+                **(
+                    {"stochastic_emission": emission_config}
+                    if emission_config.enabled
+                    else {}
+                ),
                 "steps": requested_steps,
                 "h_step": h_step,
                 "wall_z": wall_z,
@@ -4693,6 +4755,10 @@ def retarded_integrator(
             trajectory[:loop_start] = rider_restored
             trajectory_drv[:loop_start] = driver_restored
             restored_loop_state = _checkpoint_store.loop_state
+            if emission_runtime is not None:
+                emission_runtime = EmissionRuntime(
+                    emission_config, restored_loop_state["stochastic_emission"]
+                )
             previous_energy_value = restored_loop_state.get("previous_energy")
             previous_energy = (
                 None if previous_energy_value is None else float(previous_energy_value)
@@ -4736,6 +4802,11 @@ def retarded_integrator(
             "last_particle_death_step": _adaptive_state.last_particle_death_step,
             "adaptive_previous_energy": _adaptive_state.previous_energy,
             "current_h_step": _adaptive_state.current_h_step,
+            **(
+                {"stochastic_emission": emission_runtime.to_payload()}
+                if emission_runtime is not None
+                else {}
+            ),
         }
 
     last_checkpoint_safe_step = loop_start - 1
@@ -4830,6 +4901,9 @@ def retarded_integrator(
             if i < active_start:
                 continue
         else:
+            if emission_runtime is not None:
+                prepare_general_state(trajectory[i - 1], "rider", emission_runtime)
+                prepare_general_state(trajectory_drv[i - 1], "driver", emission_runtime)
             _current_pseudo_grid_schedule = None
             if pseudo_grid.enabled:
                 if _pseudo_grid_planner_state is None:
@@ -5272,6 +5346,18 @@ def retarded_integrator(
                 _traj_builder.set_step(i, trajectory[i])
             if _traj_drv_builder is not None:
                 _traj_drv_builder.set_step(i, trajectory_drv[i])
+            if emission_runtime is not None:
+                commit_general_state(
+                    trajectory[i - 1], trajectory[i], "rider", emission_runtime
+                )
+                commit_general_state(
+                    trajectory_drv[i - 1], trajectory_drv[i], "driver", emission_runtime
+                )
+                _traj_builder.set_step(i, trajectory[i])
+                _traj_drv_builder.set_step(i, trajectory_drv[i])
+                for previous_state in (trajectory[i - 1], trajectory_drv[i - 1]):
+                    previous_state.pop("_stochastic_emission_config", None)
+                    previous_state.pop("_stochastic_emission_active", None)
             if inertial_prehistory_enabled:
                 if _traj_drv_builder is None:
                     raise RuntimeError(
@@ -5671,6 +5757,7 @@ def run_integrator(
         image_subcharge_count=config.image_subcharge_count,
         use_conducting_image_weighting=config.use_image_weighting,
         radiation_reaction_mode=config.radiation_reaction_mode,
+        stochastic_emission=config.stochastic_emission,
         source_history_representation=config.source_history_representation,
         macroparticle_charge_multiplier=config.macroparticle_charge_multiplier,
         macroparticle_sigma_multiplier=config.macroparticle_sigma_multiplier,
