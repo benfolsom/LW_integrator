@@ -85,15 +85,27 @@ def kicks(solver, obs, e, b, dt):
     )
 
 
-def study(count, steps, samples):
+def study(
+    count,
+    steps,
+    samples,
+    *,
+    cloud_config=None,
+    near_subcharges=16,
+    replay_meshes=(24, 48, 96),
+    replay_cutoffs=(0.8, 3.2, 8.0),
+):
     species, encounter = make(count)
     dt = encounter / (2 * (steps - 1) // 3)
     baseline_solver = ElectrostaticPIC((32,) * 3, (4e-3,) * 3, 2)
-    cfg = CorrectionConfig(
+    cfg = cloud_config or CorrectionConfig(
         clouds_per_species=8, cloud_width_m=0.16e-3, subcharge_count=16
     )
+    k_count = cfg.clouds_per_species
     coarse = CloudCorrection(species, cfg)
-    near = NearFieldCorrection(species, NearFieldConfig(0.8e-3), coarse)
+    near = NearFieldCorrection(
+        species, NearFieldConfig(0.8e-3, subcharge_count=near_subcharges), coarse
+    )
     selected = np.unique(
         np.rint(np.linspace((steps - 1) / 2, 5 * (steps - 1) / 6, samples)).astype(int)
     )
@@ -132,7 +144,7 @@ def study(count, steps, samples):
                     )
                 pairs.append((le, lb))
                 cp = _prepared(coarse)
-                de, db = np.zeros((count, 8, 3)), np.zeros((count, 8, 3))
+                de, db = np.zeros((count, k_count, 3)), np.zeros((count, k_count, 3))
                 local = [
                     (j, idx)
                     for j, (source_si, idx) in enumerate(coarse.members)
@@ -182,7 +194,7 @@ def study(count, steps, samples):
                             if radius
                             else np.zeros_like(distance)
                         )
-                        coeff = np.ones((count, 8))
+                        coeff = np.ones((count, k_count))
                         for k, (j, idx) in enumerate(local):
                             coeff[:, k] -= (
                                 np.sum(w[:, idx] * species[si].population[idx], axis=1)
@@ -202,7 +214,11 @@ def study(count, steps, samples):
                         results[mesh, radius, oi].append((plain, corrected, reference))
                         total_ledger["reference"][obs.name] = ref_ledger
                         total_ledger["corrected"][obs.name] = fix_ledger
-                        if step in checkpoints and radius in (0.8, 3.2, 8.0):
+                        if (
+                            step in checkpoints
+                            and mesh in replay_meshes
+                            and radius in replay_cutoffs
+                        ):
                             near.config = replace(near.config, cutoff_m=radius * 1e-3)
                             tick = time.perf_counter()
                             actual = near.sample(fields, obs, (si,))
@@ -335,8 +351,10 @@ def study(count, steps, samples):
         sample_count=len(times),
         dt_s=dt,
         source_mesh=32,
-        source_width_mm=0.16,
-        subcharges=16,
+        source_width_mm=near.config.source_width_m * 1e3,
+        subcharges=near_subcharges,
+        cloud_config=vars(cfg),
+        coarse_width_mm=coarse.smearing.position_sigma_mm,
         max_grid_pair_closure=max(closure),
         max_public_replay_error=max(exact_checks),
         rows=rows,

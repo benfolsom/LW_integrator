@@ -20,13 +20,17 @@ def main():
     parser.add_argument("--count", type=int, choices=(8, 32), default=8)
     parser.add_argument("--steps", type=int, default=2401)
     parser.add_argument("--samples", type=int, default=129)
+    parser.add_argument("--output-dir", type=Path, default=OUT)
+    parser.add_argument("--reference-stride", type=int, default=1)
     args = parser.parse_args()
+    if args.reference_stride < 1:
+        parser.error("reference stride must be positive")
     species, encounter = make(args.count)
     dt = encounter / (2 * (args.steps - 1) // 3)
     baseline = np.load(OUT / f"n{args.count}_s1201_q129.npz")
     baseline_meta = json.loads((OUT / f"n{args.count}_s1201_q129.json").read_text())
     baseline_dt = baseline_meta["dt_s"]
-    baseline_times = baseline["time_s"]
+    baseline_times = baseline["time_s"][:: args.reference_stride]
     solver = ElectrostaticPIC((32,) * 3, (4e-3,) * 3, 2)
     near = NearFieldCorrection(species, NearFieldConfig(0.8e-3))
     selected = np.unique(
@@ -83,7 +87,7 @@ def main():
     assert np.allclose(times[indices], baseline_times, rtol=0, atol=1e-24)
     rows = []
     for oi, name in enumerate(("protons", "electrons")):
-        old = baseline[f"m48_r8.0_{name}_kicks"][:, 2]
+        old = baseline[f"m48_r8.0_{name}_kicks"][:: args.reference_stride, 2]
         actual = reference[indices, oi]
         matching_error = np.linalg.norm(
             actual / dt - old / baseline_dt
@@ -116,7 +120,8 @@ def main():
                 controls=controls,
             )
         )
-    base = OUT / f"control_n{args.count}_s{args.steps}_q{args.samples}"
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    base = args.output_dir / f"control_n{args.count}_s{args.steps}_q{args.samples}"
     np.savez_compressed(
         base.with_suffix(".npz"),
         time_s=times,
@@ -128,6 +133,7 @@ def main():
         count_per_bunch=args.count,
         steps=args.steps,
         samples=len(times),
+        reference_stride=args.reference_stride,
         dt_s=dt,
         runtime_s=time.perf_counter() - start,
         rows=rows,

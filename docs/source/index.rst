@@ -63,6 +63,7 @@ If you are new to the project, start with the **Overview** and **Quick start** p
    finite_spin_pair
    full_spin_particles
    exact_macroparticle_sources
+   pic_correction_convergence
    multirate_return
    rfs_m5_optimization
    metal_gpu_kernel_study
