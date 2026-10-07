@@ -1995,6 +1995,7 @@ def _knot_light_cone_residual_mm(
     observer_position_low_mm: np.ndarray | None = None,
     observer_time_tail_ns: float = 0.0,
     observer_position_tail_mm: np.ndarray | None = None,
+    compiled: bool = False,
 ) -> float:
     """Return the light-cone residual at one stored source knot.
 
@@ -2028,7 +2029,12 @@ def _knot_light_cone_residual_mm(
                 segment.quadrature_weights,
             )
         else:
-            residual, kappa, _, _ = null_residual(
+            residual_fn = null_residual
+            if compiled:
+                from .strict_null_helpers import null_residual_strict
+
+                residual_fn = null_residual_strict
+            residual, kappa, _, _ = residual_fn(
                 segment.coefficients_mm, C_MMNS * segment.duration_ns, tau, geometry
             )
         if kappa > 0.0 and abs(residual) / (C_MMNS * kappa) <= 0.5 * abs(
@@ -2054,6 +2060,7 @@ def _find_retarded_knot_bracket(
     observer_time_tail_ns: float = 0.0,
     observer_position_tail_mm: np.ndarray | None = None,
     segment_hint: int = -2,
+    compiled: bool = False,
 ) -> int | None:
     """Return the latest knot segment bracketing the retarded event.
 
@@ -2087,6 +2094,7 @@ def _find_retarded_knot_bracket(
                 observer_position_low_mm=observer_position_low_mm,
                 observer_time_tail_ns=observer_time_tail_ns,
                 observer_position_tail_mm=observer_position_tail_mm,
+                compiled=compiled,
             )
             for knot in (segment_hint, segment_hint + 1)
         ]
@@ -2107,6 +2115,7 @@ def _find_retarded_knot_bracket(
         observer_position_low_mm=observer_position_low_mm,
         observer_time_tail_ns=observer_time_tail_ns,
         observer_position_tail_mm=observer_position_tail_mm,
+        compiled=compiled,
     )
     if lower_residual < 0.0:
         return None
@@ -2120,6 +2129,7 @@ def _find_retarded_knot_bracket(
         observer_position_low_mm=observer_position_low_mm,
         observer_time_tail_ns=observer_time_tail_ns,
         observer_position_tail_mm=observer_position_tail_mm,
+        compiled=compiled,
     )
     if upper_residual > 0.0:
         return None
@@ -2135,6 +2145,7 @@ def _find_retarded_knot_bracket(
             observer_position_low_mm=observer_position_low_mm,
             observer_time_tail_ns=observer_time_tail_ns,
             observer_position_tail_mm=observer_position_tail_mm,
+            compiled=compiled,
         )
         if middle_residual >= 0.0:
             lower = middle
@@ -2214,7 +2225,19 @@ def _solve_null_history_sample(
             "observer_position_tail_mm": observer_position_tail_mm,
         }
     )
+    residual_fn = null_residual
+    sample_fn = sample_null_quintic
+    if compiled:
+        from .strict_null_helpers import (
+            null_residual_strict,
+            sample_null_quintic_strict,
+        )
+
+        residual_fn = null_residual_strict
+        sample_fn = sample_null_quintic_strict
     bracket_options = dict(observer_remainders)
+    if compiled:
+        bracket_options["compiled"] = True
     if segment_hint >= 0:
         bracket_options["segment_hint"] = segment_hint
     index = _find_retarded_knot_bracket(
@@ -2253,7 +2276,7 @@ def _solve_null_history_sample(
                 segment.quadrature_nodes,
                 segment.quadrature_weights,
             )
-        return null_residual(segment.coefficients_mm, length, fraction, geometry)
+        return residual_fn(segment.coefficients_mm, length, fraction, geometry)
 
     if isinstance(segment, ProperVelocitySegment) and extrapolate_ns > 0:
         raise ValueError("proper_velocity does not support history extrapolation")
@@ -2268,6 +2291,7 @@ def _solve_null_history_sample(
             index + 1,
             observer_time_ns=observer_time_ns,
             observer_position_mm=observer_position_mm,
+            compiled=compiled,
             **observer_remainders,
         )
         <= 0.0
@@ -2296,6 +2320,7 @@ def _solve_null_history_sample(
                     knot,
                     observer_time_ns=observer_time_ns,
                     observer_position_mm=observer_position_mm,
+                    compiled=compiled,
                     **observer_remainders,
                 )
                 for knot in (index, index + 1)
@@ -2311,6 +2336,7 @@ def _solve_null_history_sample(
                 index,
                 observer_time_ns=observer_time_ns,
                 observer_position_mm=observer_position_mm,
+                compiled=compiled,
                 **observer_remainders,
             )
             != 0.0
@@ -2325,6 +2351,7 @@ def _solve_null_history_sample(
                 index + 1,
                 observer_time_ns=observer_time_ns,
                 observer_position_mm=observer_position_mm,
+                compiled=compiled,
                 **observer_remainders,
             )
             != 0.0
@@ -2387,9 +2414,7 @@ def _solve_null_history_sample(
             segment.null_sample(tau)
         )
     else:
-        values, first, second, third = sample_null_quintic(
-            segment.coefficients_mm, length, tau
-        )
+        values, first, second, third = sample_fn(segment.coefficients_mm, length, tau)
         invariant = first[0] * (2.0 - first[0]) - float(np.dot(first[1:], first[1:]))
         fourth = (
             24 * segment.coefficients_mm[4] + 120 * tau * segment.coefficients_mm[5]
@@ -2756,57 +2781,72 @@ def _validated_root_options(
     return tolerance, iterations
 
 
-def _resolved_source_jets(
-    prepared: _PreparedHistory,
-    event: ObserverEvent,
+class _ResolvedBatchIncomplete(Exception):
+    """Request ordered per-event handling of missing or terminated samples."""
+
+
+def _resolved_source_jet_batch(
+    prepared_events: Sequence[tuple[_PreparedHistory, ObserverEvent]],
     tolerance: float,
     iterations: int,
     extrapolate_ns: float,
-) -> tuple[dict[int, Any], dict[int, tuple[np.ndarray, np.ndarray, np.ndarray, float]]]:
-    """Keep resolved roots, and batch all precise jets for one observer.
+) -> tuple[tuple[dict[int, Any], dict[int, Any]], ...]:
+    """Stage owned pair inputs, then evaluate without reading accepted history.
 
-    Decimal coordinate resolution and inertial root certificates retain their
-    scalar oracle. No flattened legacy position polynomial substitutes for a
-    resolved segment. Missing and legacy samples are handled by the caller.
+    Preparation and all resolved roots finish on the caller before the kernel
+    starts. The synchronous kernel reads only newly allocated arrays. History
+    publication therefore remains outside its read interval. Reduction is left
+    to the original per-event consumers in source-index order.
     """
-    from .resolved_charge_batch import resolved_charge_jets_strict_serial
+    from .resolved_charge_batch import resolved_charge_jets_strict
 
-    position = np.asarray(event.position_mm)
-    low = np.asarray(event.position_low_mm)
-    tail = np.asarray(event.position_tail_mm)
-    samples = {
-        index: _solve_retarded_sample(
-            source,
-            observer_time_ns=float(event.time_ns),
-            observer_position_mm=position,
-            observer_time_low_ns=event.time_low_ns,
-            observer_position_low_mm=low,
-            observer_time_tail_ns=event.time_tail_ns,
-            observer_position_tail_mm=tail,
-            root_tolerance_mm=tolerance,
-            max_root_iterations=iterations,
-            extrapolate_ns=extrapolate_ns,
-            compiled=True,
-            _defer_ballistic_frame=True,
+    samples_by_event = []
+    rows = []
+    for event_index, (prepared, event) in enumerate(prepared_events):
+        position = np.asarray(event.position_mm)
+        low = np.asarray(event.position_low_mm)
+        tail = np.asarray(event.position_tail_mm)
+        samples = {
+            index: _solve_retarded_sample(
+                source,
+                observer_time_ns=float(event.time_ns),
+                observer_position_mm=position,
+                observer_time_low_ns=event.time_low_ns,
+                observer_position_low_mm=low,
+                observer_time_tail_ns=event.time_tail_ns,
+                observer_position_tail_mm=tail,
+                root_tolerance_mm=tolerance,
+                max_root_iterations=iterations,
+                extrapolate_ns=extrapolate_ns,
+                compiled=True,
+                _defer_ballistic_frame=True,
+            )
+            for index, source in prepared.sources.items()
+        }
+        if len(prepared_events) > 1 and any(
+            sample is None for sample in samples.values()
+        ):
+            # Preserve the original ordering of missing-history validation and
+            # singular-field errors instead of processing a later event first.
+            raise _ResolvedBatchIncomplete
+        samples_by_event.append(samples)
+        rows.extend(
+            (event_index, index, sample)
+            for index, sample in samples.items()
+            if sample is not None and sample.source_proper_velocity is not None
         )
-        for index, source in prepared.sources.items()
-    }
-    indices = [
-        index
-        for index, sample in samples.items()
-        if sample is not None and sample.source_proper_velocity is not None
-    ]
-    count = len(indices)
+    count = len(rows)
+    jets_by_event: list[dict[int, Any]] = [{} for _ in prepared_events]
     if count == 0:
-        return samples, {}
+        return tuple(zip(samples_by_event, jets_by_event))
     charges = np.empty(count)
     vectors = np.zeros((6, count, 3))
     has_frame = np.zeros(count, dtype=bool)
     has_snap = np.zeros(count, dtype=bool)
     ballistic_frames = np.zeros((count, 4))
     ballistic_mask = np.zeros(count, dtype=bool)
-    for row, index in enumerate(indices):
-        sample = samples[index]
+    for row, (event_index, index, sample) in enumerate(rows):
+        prepared = prepared_events[event_index][0]
         charges[row] = prepared.arrays.charge_native[index]
         vectors[0, row] = sample.precise_separation_mm
         vectors[1, row] = sample.source_proper_velocity
@@ -2822,13 +2862,30 @@ def _resolved_source_jets(
         if sample.ballistic_frame_components is not None:
             ballistic_frames[row] = sample.ballistic_frame_components
             ballistic_mask[row] = True
-    potential, electric, magnetic, kappa = resolved_charge_jets_strict_serial(
+    potential, electric, magnetic, kappa = resolved_charge_jets_strict(
         charges, *vectors, has_frame, has_snap, ballistic_frames, ballistic_mask
     )
-    return samples, {
-        index: (potential[row], electric[row], magnetic[row], float(kappa[row]))
-        for row, index in enumerate(indices)
-    }
+    for row, (event_index, index, _sample) in enumerate(rows):
+        jets_by_event[event_index][index] = (
+            potential[row],
+            electric[row],
+            magnetic[row],
+            float(kappa[row]),
+        )
+    return tuple(zip(samples_by_event, jets_by_event))
+
+
+def _resolved_source_jets(
+    prepared: _PreparedHistory,
+    event: ObserverEvent,
+    tolerance: float,
+    iterations: int,
+    extrapolate_ns: float,
+) -> tuple[dict[int, Any], dict[int, Any]]:
+    """Stage a single observer's sources through the immutable pair seam."""
+    return _resolved_source_jet_batch(
+        ((prepared, event),), tolerance, iterations, extrapolate_ns
+    )[0]
 
 
 def _evaluate_prepared_charge_field_native(
@@ -2840,6 +2897,7 @@ def _evaluate_prepared_charge_field_native(
     max_root_iterations: int,
     extrapolate_ns: float = 0.0,
     compiled: bool = False,
+    _resolved_batch: tuple[dict[int, Any], dict[int, Any]] | None = None,
 ) -> RetardedChargeFieldResult:
     """Evaluate one event without extracting or preparing its history again."""
 
@@ -2857,15 +2915,19 @@ def _evaluate_prepared_charge_field_native(
     time_error_bounds = np.full(arrays.n_sources, np.nan)
 
     batch_samples, batch_jets = (
-        _resolved_source_jets(
-            prepared,
-            observer_event,
-            root_tolerance_mm,
-            max_root_iterations,
-            extrapolate_ns,
+        _resolved_batch
+        if _resolved_batch is not None
+        else (
+            _resolved_source_jets(
+                prepared,
+                observer_event,
+                root_tolerance_mm,
+                max_root_iterations,
+                extrapolate_ns,
+            )
+            if compiled
+            else ({}, {})
         )
-        if compiled
-        else ({}, {})
     )
 
     for source_index, source in prepared.sources.items():
@@ -3183,17 +3245,49 @@ def _evaluate_prepared_charge_batch_numba_full_strict_serial(
     """Compile complete source events while retaining reference reductions."""
 
     if all(source.light_cone_segments for source in prepared.sources.values()):
-        return tuple(
-            _evaluate_prepared_charge_field_native(
-                prepared,
-                event,
-                require_complete_history=require_complete_history,
-                root_tolerance_mm=root_tolerance_mm,
-                max_root_iterations=max_root_iterations,
-                compiled=True,
+        # Bound temporary jet storage while grouping independent observers.
+        # A single observer with more sources still fits in one synchronous
+        # call, as it did before this seam. Accepted history is never passed
+        # into the worker kernel; publication can resume after it returns.
+        events_per_batch = max(1, 4096 // max(1, len(prepared.sources)))
+        resolved_results: list[RetardedChargeFieldResult] = []
+        for start in range(0, len(observer_events), events_per_batch):
+            events = observer_events[start : start + events_per_batch]
+            try:
+                resolved = _resolved_source_jet_batch(
+                    tuple((prepared, event) for event in events),
+                    root_tolerance_mm,
+                    max_root_iterations,
+                    0.0,
+                )
+            except (_ResolvedBatchIncomplete, ValueError, ArithmeticError):
+                # Exceptional batches use the original event order, including
+                # which event's missing-history or geometry error is reported.
+                resolved_results.extend(
+                    _evaluate_prepared_charge_field_native(
+                        prepared,
+                        event,
+                        require_complete_history=require_complete_history,
+                        root_tolerance_mm=root_tolerance_mm,
+                        max_root_iterations=max_root_iterations,
+                        compiled=True,
+                    )
+                    for event in events
+                )
+                continue
+            resolved_results.extend(
+                _evaluate_prepared_charge_field_native(
+                    prepared,
+                    event,
+                    require_complete_history=require_complete_history,
+                    root_tolerance_mm=root_tolerance_mm,
+                    max_root_iterations=max_root_iterations,
+                    compiled=True,
+                    _resolved_batch=batch,
+                )
+                for event, batch in zip(events, resolved)
             )
-            for event in observer_events
-        )
+        return tuple(resolved_results)
 
     from .exact_retarded_numba import (
         NUMBA_COMPILATION_ERRORS,
