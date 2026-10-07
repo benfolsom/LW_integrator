@@ -25,6 +25,115 @@ def source():
     )
 
 
+def test_midpoint_prediction_is_causal_isolated_and_matches_provisional_fields():
+    from copy import deepcopy
+
+    s = source()
+    cfg = CorrectionConfig(
+        clouds_per_species=2, subcharge_count=4, midpoint_predictor=True
+    )
+    corr = CloudCorrection([s], cfg)
+    s.position_m += 1e-12 * s.velocity_m_s
+    s.momentum_mc[:, 0] += 0.1
+    corr.accept([s], 1e-12)
+    before = corr.builder.build_current().x.copy()
+    predicted = corr.predict_midpoint(0.4e-12)
+    assert predicted.time_s == pytest.approx(1.2e-12)
+    assert corr.time_s == 1e-12
+    assert corr.accepted_steps == predicted.accepted_steps == 1
+    np.testing.assert_array_equal(corr.builder.build_current().x, before)
+    with pytest.raises(ValueError, match="accepted cloud history"):
+        predicted.predict_midpoint(1e-12)
+    with pytest.raises(ValueError, match="cannot accept"):
+        predicted.accept([s], 2e-12)
+    with pytest.raises(ValueError, match="subluminal"):
+        corr.predict_midpoint(1e-9)
+    np.testing.assert_allclose(predicted.beta, corr.beta + 0.2e-12 * corr.beta_dot_s)
+    # An independently appended provisional state exercises roots in the new
+    # interval as well as roots in the previously accepted source history.
+    oracle = deepcopy(corr)
+    provisional = deepcopy(s)
+    provisional.position_m[:] = predicted.position_m
+    provisional.momentum_mc[:] = predicted.history_u
+    oracle.accept([provisional], predicted.time_s)
+    probes = np.array(
+        [
+            predicted.position_m[0] + predicted.offsets_m[0, 0] + [0, 0, 1e-6],
+            [3e-3, 2e-3, 1e-3],
+        ]
+    )
+    for actual, expected in zip(predicted.direct(probes), oracle.direct(probes)):
+        np.testing.assert_allclose(actual, expected, rtol=1e-10, atol=1e-7)
+    assert (
+        corr.time_s * 1e9
+        < predicted._direct_warm_start.roots[0, 0]
+        <= predicted.time_s * 1e9
+    )
+    # Mutating live particles cannot change an already constructed prediction.
+    fields = predicted.direct(probes)
+    s.momentum_mc += 1
+    s.position_m += 1
+    for a, b in zip(fields, predicted.direct(probes)):
+        np.testing.assert_array_equal(a, b)
+    np.testing.assert_array_equal(corr.builder.build_current().x, before)
+
+
+def test_midpoint_uniform_zero_and_correction_work_closure():
+    s = source()
+    corr = CloudCorrection(
+        [s], CorrectionConfig(clouds_per_species=2, midpoint_predictor=True)
+    )
+    nodes = np.array([[3e-3, 2e-3, 1e-3]])
+    for j in range(3):
+        view = corr.predict_midpoint(1e-12)
+        assert all(np.array_equal(f, np.zeros_like(f)) for f in view.direct(nodes))
+        with pytest.raises(ValueError, match="coincides"):
+            view.direct((view.position_m[0] + view.offsets_m[0, 0])[None, :])
+        s.position_m += C * corr.beta * 1e-12
+        corr.accept([s], (j + 1) * 1e-12)
+    s.momentum_mc[:, 0] += 0.03
+    s.position_m += s.velocity_m_s * 1e-12
+    corr.accept([s], 4e-12)
+    view = corr.predict_midpoint(1e-12)
+    probes = Species("probe", nodes, np.zeros_like(nodes), s.charge_c, s.mass_kg, [2e5])
+    e, b = view.sample(probes)
+    assert np.linalg.norm(e) > 0
+    after = ElectrostaticPIC().push(probes, e, b, 1e-12)
+    ledger = correction_ledger(probes, probes.momentum_mc, after, e, b, 1e-12)
+    assert ledger["electric_work_j"] == pytest.approx(
+        ledger["kick_energy_j"], rel=1e-10
+    )
+    for dt in (0, -1, np.nan, np.inf):
+        with pytest.raises(ValueError, match="timestep"):
+            corr.predict_midpoint(dt)
+    for options in (
+        dict(refit_every=2),
+        dict(evaluation_every=2),
+        dict(midpoint_predictor="yes"),
+    ):
+        with pytest.raises(ValueError, match="midpoint_predictor"):
+            CorrectionConfig(**(dict(midpoint_predictor=True) | options))
+    from core.pic.nearfield import NearFieldConfig, NearFieldCorrection
+
+    with pytest.raises(ValueError, match="without midpoint prediction"):
+        NearFieldCorrection([s], NearFieldConfig(cutoff_m=1e-3), corr)
+
+
+@pytest.mark.slow
+def test_midpoint_accelerating_source_improves_lab_timestep_order():
+    from scripts.study_pic_correction_k_predictor import convergence
+
+    result = convergence(divisions=(16, 32, 64), reference_steps=256)
+    rows = result["rows"]
+    accepted = [r for r in rows if r["mode"] == "accepted"]
+    midpoint = [r for r in rows if r["mode"] == "midpoint"]
+    assert 0.8 < accepted[-1]["order"] < 1.2
+    assert midpoint[-1]["order"] > 1.7
+    assert (
+        midpoint[-1]["integrated_field_error"] < accepted[-1]["integrated_field_error"]
+    )
+
+
 def test_certified_skip_rejects_tiny_acceleration_and_moving_rounded_drift():
     from dataclasses import replace
 
@@ -206,6 +315,22 @@ def test_optional_runner_and_disabled_compatibility():
         == plain["diagnostics"][-1]["population"]
     )
     assert np.isfinite(enabled["diagnostics"][-1]["correction"]["electric_work_j"])
+    predicted = run_pic(
+        dict(config, correction=dict(clouds_per_species=2, midpoint_predictor=True))
+    )
+    assert predicted["correction"]["accepted_steps"] == 2
+    assert predicted["correction"]["midpoint_predictor"]
+    assert "predicted midpoint" in predicted["correction"]["temporal_rule"]
+    disabled = run_pic(
+        dict(
+            config,
+            correction=dict(
+                clouds_per_species=2, lattice_shape=[4] * 3, midpoint_predictor=False
+            ),
+        )
+    )
+    assert disabled["final_species"] == enabled["final_species"]
+    assert disabled["diagnostics"] == enabled["diagnostics"]
 
 
 def test_node_batch_parity_and_ambiguous_bracket_fallback():

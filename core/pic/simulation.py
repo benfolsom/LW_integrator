@@ -223,6 +223,9 @@ def run_pic(config: Mapping[str, Any]) -> dict[str, Any]:
             if correction is not None:
                 correction.accept(species, (step - 0.5) * dt)
         fields = solver.fields(species)
+        correction_at_push = correction
+        if correction is not None and correction.config.midpoint_predictor:
+            correction_at_push = correction.predict_midpoint(dt)
         updated = []
         for s in species:
             e, b = solver.sample(fields, s.position_m)
@@ -234,7 +237,8 @@ def run_pic(config: Mapping[str, Any]) -> dict[str, Any]:
                     de, db = near.sample(fields, s)
                 else:
                     assert correction is not None
-                    de, db = correction.sample(s)
+                    assert correction_at_push is not None
+                    de, db = correction_at_push.sample(s)
                 pushed = solver.push(s, e + de, b + db, dt)
                 ledger = correction_ledger(s, baseline, pushed, de, db, dt)
                 for key, value in ledger.items():
@@ -305,8 +309,13 @@ def run_pic(config: Mapping[str, Any]) -> dict[str, Any]:
                 temporal_rule=(
                     "accepted midpoint and endpoint source knots"
                     if near is not None
-                    else "last accepted source time; explicit first-order correction"
+                    else (
+                        "causal predicted midpoint from accepted cloud moments"
+                        if correction.config.midpoint_predictor
+                        else "last accepted source time; explicit first-order correction"
+                    )
                 ),
+                midpoint_predictor=correction.config.midpoint_predictor,
                 evaluation_every=correction.config.evaluation_every,
                 temporal_mode=correction.config.temporal_mode,
                 fit=(

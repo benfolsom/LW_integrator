@@ -11,13 +11,19 @@ Refit cadence must be converged: sparse fits can create artificial acceleration.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from copy import copy
 from typing import Any, Callable, Mapping, cast
 
 import numpy as np
 
 from ..exact_source_cloud import exact_cloud_history, transverse_offsets
 from ..external_fields import electric_field_native_to_v_per_m
-from ..types import GrowableTrajectoryBuilder, MacroparticleSmearingConfig
+from ..types import (
+    GrowableTrajectoryBuilder,
+    MacroparticleSmearingConfig,
+    TrajectoryArrays,
+    TrialTrajectoryHistory,
+)
 from .. import retarded_fields as rf
 from .correction_fields import (
     NodeWarmStart,
@@ -46,8 +52,15 @@ class CorrectionConfig:
     far_field_ratio: float | None = None
     evaluation_every: int = 1
     temporal_mode: str = "extrapolate"
+    midpoint_predictor: bool = False
 
     def __post_init__(self) -> None:
+        if not isinstance(self.midpoint_predictor, bool):
+            raise ValueError("midpoint_predictor must be boolean")
+        if self.midpoint_predictor and (
+            self.refit_every != 1 or self.evaluation_every != 1
+        ):
+            raise ValueError("midpoint_predictor requires full refits and evaluations")
         if not isinstance(self.certified_inertial_skip, bool):
             raise ValueError("certified_inertial_skip must be boolean")
         if self.far_field_ratio is not None and (
@@ -101,6 +114,7 @@ class CorrectionConfig:
             "far_field_ratio",
             "evaluation_every",
             "temporal_mode",
+            "midpoint_predictor",
         }
         if not isinstance(data, Mapping) or set(data) - allowed:
             raise ValueError("unknown correction keys or non-object correction")
@@ -224,8 +238,8 @@ class CloudCorrection:
 
     By default, fields are evaluated at the last accepted lab time. Sparse
     evaluation uses causal moving-node samples while refitting every step.
-    This is an explicit correction kick alongside the midpoint PIC kick; no
-    provisional or future source steps enter the exact retarded provider.
+    The opt-in midpoint view extends a private history with a causal
+    prediction. No future accepted source state enters the provider.
     """
 
     def __init__(self, species: list[Species], config: CorrectionConfig) -> None:
@@ -292,6 +306,10 @@ class CloudCorrection:
         self.builder.append_step(self._state(0.0, self.position_m, np.zeros_like(beta)))
         self.time_s = 0.0
         self.accepted_steps = 0
+        self.beta_dot_s = np.zeros_like(beta)
+        self._uniform_prediction = np.ones(len(beta), dtype=bool)
+        self._predicted_uniform = np.zeros(len(beta), dtype=bool)
+        self._trial_history: TrialTrajectoryHistory | None = None
         self.refits = 1
         self.source_populations = [s.population.copy() for s in species]
         self.particle_shapes = [s.position_m.shape for s in species]
@@ -357,6 +375,8 @@ class CloudCorrection:
         return state
 
     def accept(self, species: list[Species], time_s: float) -> None:
+        if self._trial_history is not None:
+            raise ValueError("a midpoint prediction cannot accept source states")
         if not np.isfinite(time_s) or time_s <= self.time_s:
             raise ValueError("cloud acceptance times must increase")
         if len(species) != len(self.particle_shapes):
@@ -386,12 +406,68 @@ class CloudCorrection:
             position = self.position_m + C * self.beta * (time_s - self.time_s)
             momentum = self.momentum_mc.copy()
             velocity_beta = self.beta.copy()
+        # A sufficient whole-history ballistic certificate, with no tolerance.
+        # Once lost, it cannot be recovered by a later coasting interval.
+        self._uniform_prediction &= np.all(velocity_beta == old_beta, axis=1) & np.all(
+            position == self.position_m + C * old_beta * (time_s - self.time_s),
+            axis=1,
+        )
         self.position_m, self.momentum_mc = position, momentum
         self.velocity_beta = velocity_beta
         prime = (self.beta - old_beta) / ((time_s - self.time_s) * C * 1e3)
+        self.beta_dot_s = (self.beta - old_beta) / (time_s - self.time_s)
         self.builder.append_step(self._state(time_s, position, prime))
         self.time_s = time_s
         self.accepted_steps += 1
+
+    def predict_midpoint(self, dt_s: float) -> CloudCorrection:
+        """Private working history at t + dt/2, from accepted moments only.
+
+        The velocity secant estimates lab acceleration; startup is ballistic.
+        Accepted storage and provider caches are never used as scratch space.
+        Both LW and boosted Coulomb terms use the predicted endpoint state.
+        """
+        if not self.config.midpoint_predictor:
+            raise ValueError("midpoint_predictor is disabled")
+        if self._trial_history is not None:
+            raise ValueError("predict only from accepted cloud history")
+        if not np.isfinite(dt_s) or dt_s <= 0:
+            raise ValueError("prediction timestep must be finite and positive")
+        half = dt_s / 2
+        predicted = copy(self)
+        predicted.velocity_beta = self.beta + half * self.beta_dot_s
+        if not np.all(np.isfinite(predicted.beta)):
+            raise ValueError("predicted cloud velocity must be finite")
+        # Validate before creating or publishing the provisional history.
+        _ = predicted.history_u
+        predicted.position_m = self.position_m + C * (
+            half * self.beta + 0.5 * half**2 * self.beta_dot_s
+        )
+        if not np.all(np.isfinite(predicted.position_m)):
+            raise ValueError("predicted cloud position must be finite")
+        predicted.time_s = self.time_s + half
+        if predicted.time_s <= self.time_s:
+            raise ValueError("prediction time must advance the accepted time")
+        predicted._trial_history = TrialTrajectoryHistory(
+            self.builder.build_current(),
+            (
+                predicted._state(
+                    predicted.time_s, predicted.position_m, self.beta_dot_s / (C * 1e3)
+                ),
+            ),
+        )
+        predicted._direct_warm_start = NodeWarmStart()
+        predicted._lattice_warm_starts = []
+        predicted._temporal_lattices = []
+        predicted._predicted_uniform = self._uniform_prediction.copy()
+        return predicted
+
+    def _history(self) -> TrajectoryArrays | TrialTrajectoryHistory:
+        return (
+            self._trial_history
+            if self._trial_history is not None
+            else self.builder.build_current()
+        )
 
     def quasi_static(self, position_m: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """Boosted Coulomb from the very same fixed transverse subcharges."""
@@ -439,9 +515,10 @@ class CloudCorrection:
         if (
             self.config.certified_inertial_skip
             or self.config.far_field_ratio is not None
+            or np.any(self._predicted_uniform)
         ):
             return self._cheap_direct(position)
-        history = exact_cloud_history(self.builder.build_current(), self.smearing)
+        history = exact_cloud_history(self._history(), self.smearing)
         e, b = correction_node_fields(
             history, self.time_s * 1e9, position * 1e3, warm_start=warm_start
         )
@@ -458,9 +535,9 @@ class CloudCorrection:
         center. This cutoff is an empirical control, not an error certificate.
         The symmetric transverse rule has exactly zero physical dipole.
         """
-        base = rf._prepare_history(self.builder.build_current(), ())
+        base = rf._prepare_history(self._history(), ())
         full = rf._prepare_history(
-            exact_cloud_history(self.builder.build_current(), self.smearing), ()
+            exact_cloud_history(self._history(), self.smearing), ()
         )
         e, b = np.zeros_like(position), np.zeros_like(position)
         skipped = compressed = roots = 0
@@ -469,8 +546,14 @@ class CloudCorrection:
             current_r = position[:, None, :] - self.position_m[j] - self.offsets_m[j]
             if np.any(np.all(current_r == 0, axis=-1)):
                 raise ValueError("correction node coincides with a cloud subcharge")
-            if self.config.certified_inertial_skip and certified_uniform_cloud(
-                source, self.time_s * 1e9, self.position_m[j] * 1e3, self.history_u[j]
+            if self._predicted_uniform[j] or (
+                self.config.certified_inertial_skip
+                and certified_uniform_cloud(
+                    source,
+                    self.time_s * 1e9,
+                    self.position_m[j] * 1e3,
+                    self.history_u[j],
+                )
             ):
                 skipped += len(position)
                 continue

@@ -79,15 +79,17 @@ class NodeWarmStart:
                 len(source.time_ns) - 2,
             )
             indices = hints[valid, column]
+            # Trial histories expose immutable prefix/tail views. Materialize
+            # only proposal geometry for NumPy's vector indexing.
+            source_times = np.asarray(source.time_ns)
+            source_positions = np.asarray(source.position_mm)
             local_times = times[valid]
             local_positions = positions[valid]
-            lower = C_MMNS * (local_times - source.time_ns[indices]) - np.linalg.norm(
-                local_positions - source.position_mm[indices], axis=1
+            lower = C_MMNS * (local_times - source_times[indices]) - np.linalg.norm(
+                local_positions - source_positions[indices], axis=1
             )
-            upper = C_MMNS * (
-                local_times - source.time_ns[indices + 1]
-            ) - np.linalg.norm(
-                local_positions - source.position_mm[indices + 1], axis=1
+            upper = C_MMNS * (local_times - source_times[indices + 1]) - np.linalg.norm(
+                local_positions - source_positions[indices + 1], axis=1
             )
             usable = (lower >= 0) & (upper <= 0)
             reused[valid, column] = usable
@@ -116,12 +118,14 @@ def node_segment_hints(
             continue
         lower = np.zeros(len(times), dtype=np.int64)
         upper = np.full(len(times), count - 1, dtype=np.int64)
+        source_times = np.asarray(source.time_ns)
+        source_positions = np.asarray(source.position_mm)
 
         def residual(indices: np.ndarray) -> np.ndarray:
             return cast(
                 np.ndarray,
-                C_MMNS * (times - source.time_ns[indices])
-                - np.linalg.norm(positions - source.position_mm[indices], axis=1),
+                C_MMNS * (times - source_times[indices])
+                - np.linalg.norm(positions - source_positions[indices], axis=1),
             )
 
         bracketed = (residual(lower) >= 0) & (residual(upper) <= 0)
