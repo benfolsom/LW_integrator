@@ -1,9 +1,10 @@
-"""One-way, float64 exact-LW minus identical-cloud quasi-static correction.
+"""Float64 exact-LW minus identical-cloud quasi-static correction.
 
 Clouds are persistent material cohorts, not newly sampled source worldlines.
 Charge, position first moments, and mechanical-momentum first moments match
-population-weighted particles at each refit. Clouds coast between refits;
-no correction force is applied to their independent trajectories. Re-fitting
+population-weighted particles at each refit, including their correction kicks.
+Clouds have no independent inertia: applying another cloud kick would count
+the force twice. Clouds coast between sparse refits. Re-fitting
 never changes source identity, charge, width, or transverse quadrature offsets.
 Refit cadence must be converged: sparse fits can create artificial acceleration.
 """
@@ -350,6 +351,54 @@ class CloudCorrection:
             for name in ("position_m", "momentum_mc")
         )
         return moments[0], moments[1]
+
+    def coupling_diagnostics(self, species: list[Species]) -> dict:
+        """Compare source moments with their material particles at this event.
+
+        Sparse refits can lag these moments. Centre kinetic energy is only a
+        diagnostic; the particle energy in the velocity spread is retained,
+        and clouds must never be added to the particle mechanical ledger.
+        """
+        position, momentum = self._fit(species)
+        beta = self._velocity_fit(species)
+        mass = np.array([species[si].mass_kg for si, _ in self.members])
+        cloud_momentum = np.sum(
+            (self.weights * mass * C)[:, None] * self.momentum_mc, axis=0
+        )
+        particle_momentum = np.sum(
+            (self.weights * mass * C)[:, None] * momentum, axis=0
+        )
+        particle_energy = 0.0
+        for si, idx in self.members:
+            s = species[si]
+            u2 = np.sum(s.momentum_mc[idx] ** 2, axis=1)
+            particle_energy += float(
+                np.sum(
+                    s.population[idx] * s.mass_kg * C**2 * u2 / (np.sqrt(1 + u2) + 1)
+                )
+            )
+        u2 = np.sum(self.momentum_mc**2, axis=1)
+        center_energy = float(
+            np.sum(self.weights * mass * C**2 * u2 / (np.sqrt(1 + u2) + 1))
+        )
+        return dict(
+            source_time_s=self.time_s,
+            refit_every=self.config.refit_every,
+            max_position_fit_error_m=float(np.max(np.abs(self.position_m - position))),
+            max_momentum_fit_error_mc=float(
+                np.max(np.abs(self.momentum_mc - momentum))
+            ),
+            max_velocity_fit_error_m_s=float(C * np.max(np.abs(self.beta - beta))),
+            cloud_momentum_kg_m_s=cloud_momentum.tolist(),
+            particle_momentum_kg_m_s=particle_momentum.tolist(),
+            cloud_minus_particle_momentum_kg_m_s=(
+                cloud_momentum - particle_momentum
+            ).tolist(),
+            particle_kinetic_energy_j=particle_energy,
+            cohort_center_kinetic_energy_j=center_energy,
+            kinetic_energy_above_cohort_centers_j=particle_energy - center_energy,
+            accounting="cloud moments summarize the particles; no additional cloud inertia",
+        )
 
     def _state(self, time_s: float, position: np.ndarray, prime: np.ndarray) -> dict:
         u = self.history_u

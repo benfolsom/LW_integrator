@@ -1,4 +1,4 @@
-"""Necessary behaviour controls for the optional one-way correction."""
+"""Necessary behaviour controls for the optional fitted-cloud correction."""
 
 import numpy as np
 import pytest
