@@ -381,6 +381,59 @@ representative deposition rewrites historical source charge, as explained in
 "Pseudo-grid consistency boundary" above. The supported source sum retains
 every macro cloud; no reduced-source performance claim is made.
 
+Fixed-step audit counterparts (2026-10-06)
+-----------------------------------------
+
+Persistent transverse charge clouds also support the fixed proper-step
+charge-only exact route with ``INERTIAL_PREHISTORY``. Initial canonical
+seeding, force histories, visibility event splitting, and accepted endpoint
+potentials use the same cloud wrapper. Many observers use the existing joint
+fixed-step gate splitter. Adaptive many-observer gate clocks remain rejected;
+no joint adaptive clock or reduced pseudo-grid source implementation is added.
+Intrinsic dipole-source clouds remain rejected.
+
+``scripts/check_exact_audit_sources.py`` records explicit counterparts to the
+resolved mini-synchrotron and light/heavy configurations. It preserves the
+particle realization, species, population, timestep, visibility geometry,
+and Medina/LAD mode, selects zero intrinsic moments and inertial prehistory,
+and uses the existing analytical exact charge-response backend. The light/heavy
+counterpart disables pseudo-grid and retains all 48 histories per bunch.
+It therefore does not reproduce the audit's approximate passive updates or
+rotating reduced source deposition.
+
+The mapping is explicit rather than an automatic conversion. Sampled smearing
+uses a spacing-dependent, population-dependent, clipped random cloud and may
+also displace observers. The exact model keeps representative observers at
+their centres and translates persistent Gaussian quadrature sources in each
+initial transverse plane. It ignores sampled observer and centroid displacement
+flags. Source fractions sum to the macro source charge; observer charge,
+inertia, and diagnostic population remain unchanged. The harness records the
+sampled initial spacing and requested rms widths before choosing exact widths.
+Exact widths are uncapped, and their units are millimetres per transverse axis.
+
+The mini-synchrotron counterpart uses 0.05 mm and 0.1 mm widths, with 4 and
+16 children at each width. Both original bunches have one numerical particle,
+so the sampled automatic spacing rule realizes zero width. The finite model
+is an explicit new source-size assumption, not an equivalent version of that
+point-source rule. Its common configuration applies the width to both source
+roles, including the proton source. The light/heavy counterpart uses 0.1 mm
+and 0.2 mm with the same two quadrature counts. These are model-sensitivity
+controls, not fitted widths or a recovered physical bunch microstructure.
+
+A zero realized transverse width returns the original source history for
+any child count. A one-child transverse rule likewise returns the original
+history because its only node is the centre. These limits retain point-source
+arithmetic bit for bit. A one-child nonzero-width request is a degenerate
+point representation, not a resolved finite Gaussian.
+
+Fixed-step endpoint continuation retains all existing history and subluminal
+speed checks. Gated continuation beyond the latest supplied source knot is
+still rejected because it requires additional gate events. Short-window
+acceptance cannot certify a complete encounter or a timestep-converged
+reference, and changing width is a physical-model comparison rather than
+quadrature convergence. The evidence and remaining gaps are recorded in
+``codex_report_exact_audit_sources.md``.
+
 ``scripts/check_exact_macroparticle_startup.py --route adaptive`` repeats the
 Part 1 point probe, with a common lab-time target covering twice the initial
 inertial encounter time. ``scripts/check_exact_macroparticle_clouds.py`` uses

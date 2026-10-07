@@ -3429,7 +3429,11 @@ def retarded_integrator(
         if any(
             cloud is not None
             and cloud.enabled
-            and not (cloud.subcharge_count == 1 and cloud.position_sigma_mm == 0.0)
+            and not (
+                cloud.subcharge_count == 1
+                or cloud.position_sigma_mm == 0.0
+                or cloud.sigma_multiplier == 0.0
+            )
             for cloud in (macroparticle_smearing, magnetic_dipole.exact_charge_cloud)
         ):
             raise ValueError(
@@ -3515,14 +3519,18 @@ def retarded_integrator(
         from .exact_source_cloud import validate_exact_cloud
 
         validate_exact_cloud(magnetic_dipole.exact_charge_cloud)
+        if driver_train.enabled:
+            raise NotImplementedError(
+                "Persistent train clouds require shared-clock and checkpoint validation"
+            )
         if (
-            not adaptive_pair_return.enabled
-            or dipole_source_active
+            dipole_source_active
             or not exact_magnetic_active
+            or startup_mode is not StartupMode.INERTIAL_PREHISTORY
         ):
             raise NotImplementedError(
-                "Persistent exact charge clouds require the adaptive charge-only "
-                "shared-lab-time route with INERTIAL_PREHISTORY"
+                "Persistent exact charge clouds require charge-only exact "
+                "dynamics with INERTIAL_PREHISTORY"
             )
 
     if (
@@ -3769,16 +3777,29 @@ def retarded_integrator(
                 macroparticle_smearing.momentum_sigma_amu_mm_ns,
             )
             if any(value is None or float(value) != 0.0 for value in smearing_widths):
-                if dipole_source_active or not adaptive_pair_return.enabled:
+                if dipole_source_active:
                     raise NotImplementedError(
-                        "Exact fixed-step/dipole dynamics require zero-width point "
-                        "sources; persistent charge clouds require the adaptive "
-                        "shared-lab-time route. See exact_macroparticle_sources.rst."
+                        "Exact dipole sources require zero-width point sources. "
+                        "See exact_macroparticle_sources.rst."
                     )
-            if adaptive_pair_return.enabled and not dipole_source_active:
+            if not dipole_source_active and (
+                adaptive_pair_return.enabled
+                or any(
+                    value is None or float(value) != 0.0 for value in smearing_widths
+                )
+            ):
+                if startup_mode is not StartupMode.INERTIAL_PREHISTORY:
+                    raise NotImplementedError(
+                        "Persistent exact charge clouds require INERTIAL_PREHISTORY"
+                    )
                 from .exact_source_cloud import validate_exact_cloud
 
                 validate_exact_cloud(macroparticle_smearing)
+                if driver_train.enabled:
+                    raise NotImplementedError(
+                        "Persistent train clouds require shared-clock and checkpoint "
+                        "validation"
+                    )
                 magnetic_dipole = replace(
                     magnetic_dipole, exact_charge_cloud=macroparticle_smearing
                 )

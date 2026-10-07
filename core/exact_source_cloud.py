@@ -94,7 +94,12 @@ def exact_cloud_history(
     if config is None or not config.enabled:
         return history
     validate_exact_cloud(config)
-    if config.subcharge_count == 1 and config.position_sigma_mm == 0.0:
+    # A one-node transverse rule is the centre, and coincident children do
+    # not resolve a finite source. Preserve point-source summation arithmetic.
+    if (
+        config.subcharge_count == 1
+        or config.position_sigma_mm * config.sigma_multiplier == 0.0
+    ):
         return history
     return ExactCloudHistory(history, config)
 
