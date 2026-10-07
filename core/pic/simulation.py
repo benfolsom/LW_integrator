@@ -10,7 +10,10 @@ import numpy as np
 from .backend import select_backend
 from .grid import ElectrostaticPIC, Species, diagnostics
 from .correction import CloudCorrection, CorrectionConfig, correction_ledger
+from .coupling import coupled_kick_ledger
 from .kernels import C
+from .medina import MedinaPIC
+from .nearfield import NearFieldConfig, NearFieldCorrection
 
 E_CHARGE = 1.602176634e-19
 
@@ -98,23 +101,46 @@ def run_pic(config: Mapping[str, Any]) -> dict[str, Any]:
     """Run a diagnostic quasi-static PIC simulation, returning JSON-safe data.
 
     Population is per simulated particle, including for Gaussian initialization.
-    The CLI requires RR off explicitly: Medina/LAD belongs to later coupling.
+    RR is explicitly off unless the restricted CPU Medina path is selected.
     dt is lab time, unlike the existing LW solver's proper-time step.
     """
     _keys(
         config,
         "mode backend precision grid species steps timestep_s propagation_distance_mm "
-        "sample_every radiation_reaction_mode correction",
+        "sample_every radiation_reaction_mode correction near_field",
         "PIC config",
     )
     if config.get("mode") != "pic":
         raise ValueError("native PIC config requires mode: pic")
-    if "correction" in config and config.get("backend", "auto") not in ("auto", "cpu"):
+    if ("correction" in config or "near_field" in config) and config.get(
+        "backend", "auto"
+    ) not in ("auto", "cpu"):
         raise ValueError("the exact-cloud LW correction runs only with the CPU backend")
-    if config.get("radiation_reaction_mode") != "off":
+    radiation_mode = config.get("radiation_reaction_mode")
+    if radiation_mode not in ("off", "medina_lad"):
         raise ValueError(
-            "native PIC diagnostic requires explicit radiation_reaction_mode: off"
+            "native PIC requires explicit radiation_reaction_mode: off or medina_lad"
         )
+    correction_config = (
+        CorrectionConfig.from_config(config["correction"])
+        if "correction" in config
+        else None
+    )
+    if radiation_mode == "medina_lad" and (
+        correction_config is None
+        or not correction_config.midpoint_predictor
+        or "near_field" in config
+    ):
+        raise ValueError(
+            "native PIC Medina requires the CPU correction with midpoint_predictor, "
+            "full refits and evaluations, and no near_field"
+        )
+    if (
+        "near_field" in config
+        and correction_config is not None
+        and correction_config.midpoint_predictor
+    ):
+        raise ValueError("near_field cannot be combined with midpoint_predictor")
     grid = config["grid"]
     _keys(grid, "shape half_extent_mm shape_order", "grid")
     solver = ElectrostaticPIC(
@@ -160,8 +186,15 @@ def run_pic(config: Mapping[str, Any]) -> dict[str, Any]:
     if not np.isfinite(dt) or dt <= 0:
         raise ValueError("lab timestep must be finite and positive")
     correction = (
-        CloudCorrection(species, CorrectionConfig.from_config(config["correction"]))
-        if "correction" in config
+        CloudCorrection(species, correction_config)
+        if correction_config is not None
+        else None
+    )
+    near = (
+        NearFieldCorrection(
+            species, NearFieldConfig.from_config(config["near_field"]), correction
+        )
+        if "near_field" in config
         else None
     )
     correction_totals: dict[str, Any] = dict(
@@ -170,16 +203,40 @@ def run_pic(config: Mapping[str, Any]) -> dict[str, Any]:
         kick_momentum_kg_m_s=np.zeros(3),
         lorentz_impulse_kg_m_s=np.zeros(3),
     )
+    coupling_totals: dict[str, Any] = {}
+    medina = MedinaPIC() if radiation_mode == "medina_lad" else None
+    medina_totals: dict[str, Any] = {}
     rows = []
+    diagnostic_errors: dict[str, str] = {}
+
+    def accumulate(totals: dict, ledger: dict) -> None:
+        for key, value in ledger.items():
+            value = np.asarray(value) if isinstance(value, list) else value
+            totals[key] = totals.get(key, 0) + value
+
+    def serialized(totals: dict) -> dict:
+        return {
+            key: value.tolist() if isinstance(value, np.ndarray) else value
+            for key, value in totals.items()
+        }
 
     def record(step: int) -> None:
         fields = solver.fields(species, potential=True)
         row = dict(step=step, time_s=step * dt, **diagnostics(species, fields, solver))
-        if correction is not None:
-            row["correction"] = {
-                key: value.tolist() if isinstance(value, np.ndarray) else value
-                for key, value in correction_totals.items()
-            }
+        row["radiation_reaction_mode"] = radiation_mode
+        if correction is not None or near is not None:
+            row["correction"] = serialized(correction_totals)
+            row["coupled_kick"] = serialized(coupling_totals)
+            if correction is not None:
+                if "cloud_projection" not in diagnostic_errors:
+                    try:
+                        row["cloud_projection"] = correction.coupling_diagnostics(
+                            species
+                        )
+                    except Exception as exc:
+                        diagnostic_errors["cloud_projection"] = (
+                            f"{type(exc).__name__}: {exc}"
+                        )
             row["correction"]["work_minus_kick_energy_j"] = (
                 correction_totals["electric_work_j"]
                 - correction_totals["kick_energy_j"]
@@ -191,9 +248,22 @@ def run_pic(config: Mapping[str, Any]) -> dict[str, Any]:
             row["missing_ledger_terms"].extend(
                 [
                     "correction field energy and momentum, including PIC cross terms",
-                    "cloud source reaction and radiated energy",
+                    (
+                        "finite-cloud internal work, radiation, and external work"
+                        if near is not None
+                        else "radiated energy and electromagnetic source reaction reservoir"
+                    ),
                 ]
             )
+        if medina is not None:
+            row["radiation_reaction"] = serialized(medina_totals)
+            row["radiation_reaction_samples"] = dict(medina.last_samples)
+            row["missing_ledger_terms"].append(
+                "Medina model-rate quadrature and first unprimed RR interval; "
+                "RR reservoir does not close collective hybrid field energy"
+            )
+        if diagnostic_errors:
+            row["diagnostic_errors"] = dict(diagnostic_errors)
         rows.append(row)
 
     record(0)
@@ -202,27 +272,54 @@ def run_pic(config: Mapping[str, Any]) -> dict[str, Any]:
         old = [s.position_m.copy() for s in species]
         for s in species:
             s.position_m += 0.5 * dt * s.velocity_m_s
+        if near is not None:
+            # The strict pair roots see accepted source coordinates at the
+            # actual push event, rather than an endpoint time-lagged snapshot.
+            near.accept(species, (step - 0.5) * dt)
+            if correction is not None:
+                correction.accept(species, (step - 0.5) * dt)
         fields = solver.fields(species)
+        correction_at_push = correction
+        if correction is not None and correction.config.midpoint_predictor:
+            correction_at_push = correction.predict_midpoint(dt)
         updated = []
         for s in species:
             e, b = solver.sample(fields, s.position_m)
             baseline = solver.push(s, e, b, dt)
-            if correction is None:
+            if correction is None and near is None:
                 updated.append(baseline)
             else:
-                de, db = correction.sample(s)
+                if near is not None:
+                    de, db = near.sample(fields, s)
+                else:
+                    assert correction is not None
+                    assert correction_at_push is not None
+                    de, db = correction_at_push.sample(s)
                 pushed = solver.push(s, e + de, b + db, dt)
                 ledger = correction_ledger(s, baseline, pushed, de, db, dt)
-                for key, value in ledger.items():
-                    correction_totals[key] += (
-                        np.asarray(value) if isinstance(value, list) else value
-                    )
+                accumulate(correction_totals, ledger)
+                if "coupled_kick" not in diagnostic_errors:
+                    try:
+                        accumulate(
+                            coupling_totals,
+                            coupled_kick_ledger(s, baseline, pushed, e, b, de, db, dt),
+                        )
+                    except Exception as exc:
+                        diagnostic_errors["coupled_kick"] = (
+                            f"{type(exc).__name__}: {exc}"
+                        )
+                        coupling_totals.clear()
+                if medina is not None:
+                    pushed, rr_ledger = medina.apply(s, pushed, (step - 0.5) * dt, dt)
+                    accumulate(medina_totals, rr_ledger)
                 updated.append(pushed)
         for s, u in zip(species, updated):
             s.momentum_mc = u
             s.position_m += 0.5 * dt * s.velocity_m_s
         if correction is not None:
             correction.accept(species, step * dt)
+        if near is not None:
+            near.accept(species, step * dt)
         # Use the same frozen midpoint frame at both endpoints. The current
         # is relative to that translating grid, not the physical lab current.
         for f in fields:
@@ -261,6 +358,7 @@ def run_pic(config: Mapping[str, Any]) -> dict[str, Any]:
             "auxiliary flux, not lab current"
         ),
         diagnostics=rows,
+        diagnostic_errors=diagnostic_errors,
         final_species=[
             dict(
                 name=s.name,
@@ -277,8 +375,17 @@ def run_pic(config: Mapping[str, Any]) -> dict[str, Any]:
                 accepted_steps=correction.accepted_steps,
                 refits=correction.refits,
                 temporal_rule=(
-                    "last accepted source time; explicit first-order correction"
+                    "accepted midpoint and endpoint source knots"
+                    if near is not None
+                    else (
+                        "causal predicted midpoint from accepted cloud moments"
+                        if correction.config.midpoint_predictor
+                        else "last accepted source time; explicit first-order correction"
+                    )
                 ),
+                midpoint_predictor=correction.config.midpoint_predictor,
+                evaluation_every=correction.config.evaluation_every,
+                temporal_mode=correction.config.temporal_mode,
                 fit=(
                     "persistent cohorts; first moments at refits, "
                     "ballistic between fits"
@@ -287,20 +394,70 @@ def run_pic(config: Mapping[str, Any]) -> dict[str, Any]:
                     "fixed transverse Gaussian quadrature; no longitudinal smoothing"
                 ),
                 accounting=(
-                    "kick difference versus PIC-only push at identical particle state"
+                    "correction: sampled Lorentz estimate versus PIC-only push; "
+                    "coupled_kick: discrete Boris stages including PIC response"
+                ),
+                coupling=(
+                    "particles feed their complete accepted motion back into cloud "
+                    "moments at refits; clouds have no independent inertia"
                 ),
             )
             if correction is not None
             else dict(enabled=False)
         ),
+        near_field=(
+            dict(
+                enabled=True,
+                cutoff_m=near.config.cutoff_m,
+                source_width_m=near.config.source_width_m,
+                subcharge_count=near.config.subcharge_count,
+                last_observer_counts=near.counts,
+                split=(
+                    "smooth directed-pair replacement; "
+                    "population-partitioned long cloud term"
+                ),
+                temporal_rule="accepted midpoint and endpoint source knots",
+            )
+            if near is not None
+            else dict(enabled=False)
+        ),
+        radiation_reaction=dict(
+            mode=radiation_mode,
+            force_derivative=(
+                "causal secant of accepted full non-RR Boris impulse / lab dt; "
+                "sampled at push midpoints, first-order derivative"
+                if medina is not None
+                else "disabled"
+            ),
+            scaling="physical species q and m; incoherent population N in diagnostics",
+            startup="first force sample primes history; no RR kick on that interval",
+            impulse_clipping=False,
+        ),
         limitations=[
             "GUI parity deferred",
             "quasi-static group snapshots",
-            "no near pairs, boundaries, or radiation reaction",
+            "no boundaries",
             (
-                "one-way correction lacks a closed electromagnetic ledger"
-                if correction is not None
-                else "no LW correction"
+                "Medina reduced-order charge RR with causal first-order force derivative"
+                if medina is not None
+                else "radiation reaction off"
+            ),
+            (
+                "EXPERIMENTAL near_field reference implementation; "
+                "cohort coefficient is an unbounded model approximation; "
+                "persistent finite transverse near sources; "
+                "no near correction potential ledger"
+                if near is not None
+                else "no near pairs"
+            ),
+            (
+                "finite-cloud hybrid fields lack a closed electromagnetic ledger"
+                if near is not None
+                else (
+                    "refit-coupled correction lacks a closed electromagnetic ledger"
+                    if correction is not None
+                    else "no LW correction"
+                )
             ),
             "field ledger covers a stated finite diagnostic domain",
         ],
