@@ -11,6 +11,7 @@ from .backend import select_backend
 from .grid import ElectrostaticPIC, Species, diagnostics
 from .correction import CloudCorrection, CorrectionConfig, correction_ledger
 from .kernels import C
+from .nearfield import NearFieldConfig, NearFieldCorrection
 
 E_CHARGE = 1.602176634e-19
 
@@ -104,12 +105,14 @@ def run_pic(config: Mapping[str, Any]) -> dict[str, Any]:
     _keys(
         config,
         "mode backend precision grid species steps timestep_s propagation_distance_mm "
-        "sample_every radiation_reaction_mode correction",
+        "sample_every radiation_reaction_mode correction near_field",
         "PIC config",
     )
     if config.get("mode") != "pic":
         raise ValueError("native PIC config requires mode: pic")
-    if "correction" in config and config.get("backend", "auto") not in ("auto", "cpu"):
+    if ("correction" in config or "near_field" in config) and config.get(
+        "backend", "auto"
+    ) not in ("auto", "cpu"):
         raise ValueError("the exact-cloud LW correction runs only with the CPU backend")
     if config.get("radiation_reaction_mode") != "off":
         raise ValueError(
@@ -164,6 +167,13 @@ def run_pic(config: Mapping[str, Any]) -> dict[str, Any]:
         if "correction" in config
         else None
     )
+    near = (
+        NearFieldCorrection(
+            species, NearFieldConfig.from_config(config["near_field"]), correction
+        )
+        if "near_field" in config
+        else None
+    )
     correction_totals: dict[str, Any] = dict(
         kick_energy_j=0.0,
         electric_work_j=0.0,
@@ -175,7 +185,7 @@ def run_pic(config: Mapping[str, Any]) -> dict[str, Any]:
     def record(step: int) -> None:
         fields = solver.fields(species, potential=True)
         row = dict(step=step, time_s=step * dt, **diagnostics(species, fields, solver))
-        if correction is not None:
+        if correction is not None or near is not None:
             row["correction"] = {
                 key: value.tolist() if isinstance(value, np.ndarray) else value
                 for key, value in correction_totals.items()
@@ -191,7 +201,11 @@ def run_pic(config: Mapping[str, Any]) -> dict[str, Any]:
             row["missing_ledger_terms"].extend(
                 [
                     "correction field energy and momentum, including PIC cross terms",
-                    "cloud source reaction and radiated energy",
+                    (
+                        "finite-cloud internal work, radiation, and external work"
+                        if near is not None
+                        else "cloud source reaction and radiated energy"
+                    ),
                 ]
             )
         rows.append(row)
@@ -202,15 +216,25 @@ def run_pic(config: Mapping[str, Any]) -> dict[str, Any]:
         old = [s.position_m.copy() for s in species]
         for s in species:
             s.position_m += 0.5 * dt * s.velocity_m_s
+        if near is not None:
+            # The strict pair roots see accepted source coordinates at the
+            # actual push event, rather than an endpoint time-lagged snapshot.
+            near.accept(species, (step - 0.5) * dt)
+            if correction is not None:
+                correction.accept(species, (step - 0.5) * dt)
         fields = solver.fields(species)
         updated = []
         for s in species:
             e, b = solver.sample(fields, s.position_m)
             baseline = solver.push(s, e, b, dt)
-            if correction is None:
+            if correction is None and near is None:
                 updated.append(baseline)
             else:
-                de, db = correction.sample(s)
+                if near is not None:
+                    de, db = near.sample(fields, s)
+                else:
+                    assert correction is not None
+                    de, db = correction.sample(s)
                 pushed = solver.push(s, e + de, b + db, dt)
                 ledger = correction_ledger(s, baseline, pushed, de, db, dt)
                 for key, value in ledger.items():
@@ -223,6 +247,8 @@ def run_pic(config: Mapping[str, Any]) -> dict[str, Any]:
             s.position_m += 0.5 * dt * s.velocity_m_s
         if correction is not None:
             correction.accept(species, step * dt)
+        if near is not None:
+            near.accept(species, step * dt)
         # Use the same frozen midpoint frame at both endpoints. The current
         # is relative to that translating grid, not the physical lab current.
         for f in fields:
@@ -277,7 +303,9 @@ def run_pic(config: Mapping[str, Any]) -> dict[str, Any]:
                 accepted_steps=correction.accepted_steps,
                 refits=correction.refits,
                 temporal_rule=(
-                    "last accepted source time; explicit first-order correction"
+                    "accepted midpoint and endpoint source knots"
+                    if near is not None
+                    else "last accepted source time; explicit first-order correction"
                 ),
                 evaluation_every=correction.config.evaluation_every,
                 temporal_mode=correction.config.temporal_mode,
@@ -295,14 +323,40 @@ def run_pic(config: Mapping[str, Any]) -> dict[str, Any]:
             if correction is not None
             else dict(enabled=False)
         ),
+        near_field=(
+            dict(
+                enabled=True,
+                cutoff_m=near.config.cutoff_m,
+                source_width_m=near.config.source_width_m,
+                subcharge_count=near.config.subcharge_count,
+                last_observer_counts=near.counts,
+                split=(
+                    "smooth directed-pair replacement; "
+                    "population-partitioned long cloud term"
+                ),
+                temporal_rule="accepted midpoint and endpoint source knots",
+            )
+            if near is not None
+            else dict(enabled=False)
+        ),
         limitations=[
             "GUI parity deferred",
             "quasi-static group snapshots",
-            "no near pairs, boundaries, or radiation reaction",
+            "no boundaries or radiation reaction",
             (
-                "one-way correction lacks a closed electromagnetic ledger"
-                if correction is not None
-                else "no LW correction"
+                "persistent finite transverse near sources; "
+                "no near correction potential ledger"
+                if near is not None
+                else "no near pairs"
+            ),
+            (
+                "finite-cloud hybrid fields lack a closed electromagnetic ledger"
+                if near is not None
+                else (
+                    "one-way correction lacks a closed electromagnetic ledger"
+                    if correction is not None
+                    else "no LW correction"
+                )
             ),
             "field ledger covers a stated finite diagnostic domain",
         ],

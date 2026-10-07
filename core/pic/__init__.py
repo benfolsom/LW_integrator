@@ -8,6 +8,7 @@ boundary fields, or the exact-path compute backends.
 from .backend import NumpyBackend, PICBackend, select_backend
 from .grid import Grid, Species, PICFields, ElectrostaticPIC
 from .correction import CloudCorrection, CorrectionConfig
+from .nearfield import NearFieldConfig, NearFieldCorrection
 from .simulation import run_pic
 
 __all__ = [
@@ -21,4 +22,6 @@ __all__ = [
     "run_pic",
     "CloudCorrection",
     "CorrectionConfig",
+    "NearFieldConfig",
+    "NearFieldCorrection",
 ]
