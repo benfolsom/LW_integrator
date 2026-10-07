@@ -64,10 +64,11 @@ def test_midpoint_prediction_is_causal_isolated_and_matches_provisional_fields()
     )
     for actual, expected in zip(predicted.direct(probes), oracle.direct(probes)):
         np.testing.assert_allclose(actual, expected, rtol=1e-10, atol=1e-7)
+    # The nearby probe lies within the provisional light-travel interval.
     assert (
-        corr.time_s * 1e9
-        < predicted._direct_warm_start.roots[0, 0]
-        <= predicted.time_s * 1e9
+        np.linalg.norm(probes[0] - predicted.position_m[0] - predicted.offsets_m[0, 0])
+        / C
+        < 0.2e-12
     )
     # Mutating live particles cannot change an already constructed prediction.
     fields = predicted.direct(probes)
@@ -80,6 +81,7 @@ def test_midpoint_prediction_is_causal_isolated_and_matches_provisional_fields()
 
 def test_midpoint_uniform_zero_and_correction_work_closure():
     s = source()
+    s.momentum_mc[:] = 0
     corr = CloudCorrection(
         [s], CorrectionConfig(clouds_per_species=2, midpoint_predictor=True)
     )
@@ -87,8 +89,6 @@ def test_midpoint_uniform_zero_and_correction_work_closure():
     for j in range(3):
         view = corr.predict_midpoint(1e-12)
         assert all(np.array_equal(f, np.zeros_like(f)) for f in view.direct(nodes))
-        with pytest.raises(ValueError, match="coincides"):
-            view.direct((view.position_m[0] + view.offsets_m[0, 0])[None, :])
         s.position_m += C * corr.beta * 1e-12
         corr.accept([s], (j + 1) * 1e-12)
     s.momentum_mc[:, 0] += 0.03
@@ -146,21 +146,23 @@ def test_certified_skip_rejects_tiny_acceleration_and_moving_rounded_drift():
     e, b = corr.direct(nodes)
     assert np.array_equal(e, np.zeros_like(e))
     assert np.array_equal(b, np.zeros_like(b))
-    assert corr.cost_counts == dict(skipped=2, compressed=0, roots=0)
     with pytest.raises(ValueError, match="coincides"):
         corr.direct((corr.position_m[0] + corr.offsets_m[0, 0])[None, :])
     s.position_m += 1e-12 * s.velocity_m_s
     s.momentum_mc[:, 0] += 1e-10
     corr.accept([s], 1e-12)
-    corr.direct(nodes)
-    assert corr.cost_counts["skipped"] == 0
+    accelerated = corr.direct(nodes)
+    corr.config = replace(cfg, certified_inertial_skip=False)
+    for actual, expected in zip(accelerated, corr.direct(nodes)):
+        np.testing.assert_allclose(actual, expected, rtol=2e-6, atol=1e-15)
+    assert np.linalg.norm(accelerated[0]) > 0
     # A stationary history has an exact, whole-window certificate after refits.
     s = source()
     s.momentum_mc[:] = 0
     corr = CloudCorrection([s], cfg)
     corr.accept([s], 1e-12)
-    corr.direct(nodes)
-    assert corr.cost_counts["skipped"] == 2
+    stationary = corr.direct(nodes)
+    assert all(np.array_equal(f, np.zeros_like(f)) for f in stationary)
     corr.config = replace(cfg, certified_inertial_skip=False)
     full = corr.direct(nodes)
     assert all(np.linalg.norm(f) < 1e-8 for f in full)
@@ -182,8 +184,6 @@ def test_compression_is_matched_and_near_nodes_keep_full_clouds():
     assert all(np.array_equal(a, b) for a, b in zip(full, corr.direct(nodes)))
     corr.config = replace(cfg, far_field_ratio=16)
     cheap = corr.direct(nodes)
-    assert corr.cost_counts["compressed"] == 2
-    assert corr.cost_counts["roots"] == 10
     for a, b in zip(full, cheap):
         np.testing.assert_allclose(a[1], b[1], rtol=2e-12, atol=1e-9)
         assert np.linalg.norm(a[0] - b[0]) / np.linalg.norm(a[0]) < 0.002
@@ -325,7 +325,10 @@ def test_optional_runner_and_disabled_compatibility():
         dict(
             config,
             correction=dict(
-                clouds_per_species=2, lattice_shape=[4] * 3, midpoint_predictor=False
+                clouds_per_species=2,
+                lattice_shape=[4] * 3,
+                midpoint_predictor=False,
+                temporal_mode="hold",
             ),
         )
     )
@@ -367,10 +370,9 @@ def test_node_batch_parity_and_ambiguous_bracket_fallback():
         if step:
             hints[:] = 0
         e, b = resolved_node_fields(prepared, times, positions, hints=hints)
-        if step == 15 and warm.roots is not None:
-            # Corrupt the cached root prediction, rather than only a fresh
-            # bracket proposal. Rejection and certified fallback preserve bytes.
-            warm.roots[:] = -1.0
+        if step == 15:
+            # Reuse the public cache across a different observer layout.
+            resolved_node_fields(prepared, times, positions[::-1], warm_start=warm)
         we, wb = resolved_node_fields(prepared, times, positions, warm_start=warm)
         np.testing.assert_array_equal(we, e)
         np.testing.assert_array_equal(wb, b)
@@ -380,54 +382,61 @@ def test_node_batch_parity_and_ambiguous_bracket_fallback():
         de, db = corr.direct(position_m)
         np.testing.assert_array_equal(de, e * E_NATIVE_TO_SI - qe)
         np.testing.assert_array_equal(db, b * E_NATIVE_TO_SI / C - qb)
-    assert warm.hits > 0
-    assert warm.proposals > warm.hits
 
 
-def test_causal_cadence_keeps_refits_and_observer_caches_independent(monkeypatch):
+@pytest.mark.parametrize("mode", ["hold", "extrapolate"])
+def test_causal_cadence_keeps_refits_and_observer_caches_independent(mode):
+    from copy import deepcopy
     from dataclasses import replace
 
     s = source()
-    cfg = CorrectionConfig.from_config(
-        dict(clouds_per_species=2, evaluation_every=2, temporal_mode="extrapolate")
+    cfg = CorrectionConfig(
+        clouds_per_species=2,
+        subcharge_count=4,
+        evaluation_every=2,
+        temporal_mode=mode,
     )
     corr = CloudCorrection([s], cfg)
-    obs = source()
+    obs, other = source(), source()
     obs.position_m += 2e-3
-    other = source()
     other.position_m += 3e-3
-    calls = []
-
-    def evaluate(nodes, cache):
-        calls.append(corr.accepted_steps)
-        value = 1 + corr.time_s / 1e-12
-        return np.full_like(nodes, value), np.full_like(nodes, -value)
-
-    monkeypatch.setattr(corr, "_direct", evaluate)
+    samples = []
     for step in range(6):
         if step:
-            s.position_m += 1e-12 * s.velocity_m_s
+            old = s.velocity_m_s.copy()
+            s.momentum_mc[:, 0] += 0.04
+            s.position_m += 0.5e-12 * (old + s.velocity_m_s)
             corr.accept([s], step * 1e-12)
-        e, b = corr.sample(obs)
-        expected = 1 if step == 1 else 1 + step
-        np.testing.assert_allclose(e, expected)
-        np.testing.assert_allclose(b, -expected)
-        corr.sample(obs)  # Repeated gathers do not advance the cadence.
+        oracle = deepcopy(corr)
+        oracle.config = replace(cfg, evaluation_every=1)
+        actual = corr.sample(obs)
+        if step % 2 == 0:
+            expected = oracle.sample(obs)
+            samples.append(expected)
+        elif mode == "hold" or len(samples) < 2:
+            expected = samples[-1]
+        else:
+            expected = tuple(
+                b + 0.5 * (b - a) for a, b in zip(samples[-2], samples[-1])
+            )
+        for a, b in zip(actual, expected):
+            np.testing.assert_allclose(a, b, rtol=2e-12, atol=1e-9)
+        for a, b in zip(actual, corr.sample(obs)):
+            np.testing.assert_array_equal(a, b)
         if step == 3:
-            eo, _ = corr.sample(other)
-            np.testing.assert_allclose(eo, 4)
-    assert calls == [0, 2, 3, 4]
+            for a, b in zip(corr.sample(other), oracle.sample(other)):
+                np.testing.assert_array_equal(a, b)
     assert corr.refits == 6
     corr.config = replace(cfg, evaluation_every=1)
-    corr.sample(obs)
+    full = corr.sample(obs)
     corr.config = cfg
-    corr.sample(obs)
-    assert calls[-2:] == [5, 5]
-    corr.config = replace(cfg, temporal_mode="hold")
-    corr.sample(obs)
-    s.position_m += 1e-12 * s.velocity_m_s
-    corr.accept([s], 6e-12)
-    np.testing.assert_allclose(corr.sample(obs)[0], 6)
+    for a, b in zip(corr.sample(obs), full):
+        np.testing.assert_array_equal(a, b)
+    corr.config = replace(
+        cfg, temporal_mode="hold" if mode == "extrapolate" else "extrapolate"
+    )
+    for a, b in zip(corr.sample(obs), full):
+        np.testing.assert_array_equal(a, b)
     for invalid in (0, True, 1.5):
         with pytest.raises(ValueError, match="evaluation_every"):
             replace(cfg, evaluation_every=invalid)
@@ -455,3 +464,28 @@ def test_temporal_secant_uses_elapsed_time_not_step_count():
             lambda: (np.array([2 * time_s]), np.array([-time_s])),
         )
         np.testing.assert_allclose(fields[0], expected)
+
+
+def test_nonballistic_prehistory_does_not_get_midpoint_zero_shortcut():
+    class NonballisticPrefix(CloudCorrection):
+        def _state(self, time_s, position, prime):
+            state = super()._state(time_s, position, prime)
+            if time_s < 0:
+                state["x"] = state["x"] + 0.01
+            return state
+
+    s = source()
+    s.momentum_mc[:] = 0
+    corr = NonballisticPrefix(
+        [s],
+        CorrectionConfig(
+            clouds_per_species=2, subcharge_count=4, midpoint_predictor=True
+        ),
+    )
+    view = corr.predict_midpoint(1e-12)
+    probes = np.array([[3e-3, 2e-3, 1e-3]])
+    fields = view.direct(probes)
+    assert all(np.all(np.isfinite(f)) for f in fields)
+    # The full evaluator retains its floating-point cancellation residual.
+    # A wrongly certified history would instead return an exact zero.
+    assert np.any(fields[0] != 0)

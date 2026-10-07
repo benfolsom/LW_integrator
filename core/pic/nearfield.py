@@ -27,6 +27,12 @@ from .kernels import C, integrated_green, stencil
 
 @dataclass(frozen=True)
 class NearFieldConfig:
+    """EXPERIMENTAL reference model for finite-source pair replacement.
+
+    The cohort coefficient is an unbounded model approximation: clipping
+    its value to [0, 1] supplies no bound on field or trajectory error.
+    """
+
     cutoff_m: float
     inner_fraction: float = 0.75
     source_width_m: float = 0.00016
@@ -212,11 +218,13 @@ def _qs_cloud(
 
 
 class NearFieldCorrection:
-    """Persistent per-particle histories plus an explicit cloud/near split.
+    """EXPERIMENTAL persistent histories with an explicit cloud/near split.
 
     Return additive fields. Self is excluded in the direct and coarse terms;
     the same-shape mesh self field vanishes by the odd Green function. This
     reference implementation stores all source histories, not just neighbours.
+    The cohort coefficient is an unbounded model approximation; its [0, 1]
+    range does not bound the approximation error.
     """
 
     def __init__(

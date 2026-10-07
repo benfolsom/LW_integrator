@@ -221,3 +221,53 @@ def test_medina_rejects_paths_without_resolved_cpu_midpoint_correction(change):
         config["backend"] = "metal"
     with pytest.raises(ValueError, match="CPU|cpu"):
         run_pic(config)
+
+
+@pytest.mark.parametrize("feature", ["correction", "near_field"])
+@pytest.mark.parametrize("backend", ["mlx", "cupy"])
+def test_correction_rejects_gpu_at_config_boundary(feature, backend):
+    # No grid/species supplied: rejection must precede device loading or setup.
+    with pytest.raises(ValueError, match="CPU backend"):
+        run_pic(dict(mode="pic", backend=backend, **{feature: {}}))
+
+
+def test_near_field_midpoint_rejected_at_config_boundary():
+    with pytest.raises(ValueError, match="near_field.*midpoint_predictor"):
+        run_pic(
+            dict(
+                mode="pic",
+                radiation_reaction_mode="off",
+                correction=dict(midpoint_predictor=True),
+                near_field=dict(cutoff_mm=1),
+            )
+        )
+
+
+@pytest.mark.parametrize("diagnostic", ["coupled_kick", "cloud_projection"])
+def test_optional_diagnostic_failure_preserves_particle_evolution(
+    monkeypatch, diagnostic
+):
+    from core.pic import simulation
+
+    config = coupled_config()
+    config["correction"]["midpoint_predictor"] = False
+    expected = run_pic(config)
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("diagnostic unavailable")
+
+    if diagnostic == "coupled_kick":
+        monkeypatch.setattr(simulation, "coupled_kick_ledger", fail)
+    else:
+        monkeypatch.setattr(simulation.CloudCorrection, "coupling_diagnostics", fail)
+    actual = run_pic(config)
+    assert actual["final_species"] == expected["final_species"]
+    assert actual["diagnostic_errors"] == {
+        diagnostic: "RuntimeError: diagnostic unavailable"
+    }
+    for a, b in zip(actual["diagnostics"], expected["diagnostics"]):
+        assert a["correction"] == b["correction"]
+        if diagnostic == "coupled_kick":
+            assert a["coupled_kick"] == {}
+        else:
+            assert "cloud_projection" not in a

@@ -164,6 +164,10 @@ def test_runner_opt_in_cpu_guard_and_new_history_time_contract():
     )
     assert not plain["near_field"]["enabled"]
     assert corrected["near_field"]["enabled"]
+    assert any(
+        "EXPERIMENTAL" in text and "unbounded model approximation" in text
+        for text in corrected["limitations"]
+    )
     json.dumps(corrected, allow_nan=False)
     json.dumps(combined, allow_nan=False)
     assert combined["correction"]["accepted_steps"] == 4

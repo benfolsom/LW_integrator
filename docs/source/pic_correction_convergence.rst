@@ -69,3 +69,29 @@ are in ``codex_report_pic_correction_k_7_convergence.md``. Scripts
 and assemble explicitly identified checkpoint evidence. Numerical arrays,
 JSON tables, figures, provenance hashes, and test logs are stored outside the
 checkout under ``~/compute-data/pic_correction_k/7_convergence/``.
+
+Experimental near-field reference
+---------------------------------
+
+``near_field`` is EXPERIMENTAL. It is a reference implementation, and its
+population-based cohort coefficient is an unbounded model approximation.
+Clipping that coefficient to [0, 1] does not bound field or trajectory error.
+Converge the finite-source model, quadrature, timestep, and source resolution
+before drawing physical conclusions. It cannot be combined with
+``midpoint_predictor``. Correction and near-field requests reject GPU backends
+before device loading; ``auto`` selects the authoritative CPU backend.
+
+Ballistic shortcuts are model-exact: the fitted ballistic model reproduces
+itself. They do not certify the physical particle distribution or accuracy.
+The stored prehistory is checked at construction, and any exact-equality
+mismatch disables the midpoint shortcut conservatively.
+
+``temporal_mode`` is ignored when ``evaluation_every == 1``, because every
+field sample is evaluated directly. With a larger interval it selects causal
+hold or extrapolation.
+
+The added coupled-kick and cloud-projection diagnostics are observational.
+If either raises an exception, the run reports ``diagnostic_errors`` and
+disables the failed diagnostic. A failed coupled-kick ledger is cleared, so
+an incomplete total is not presented as a complete ledger. Particle pushes
+and accepted source histories continue normally.

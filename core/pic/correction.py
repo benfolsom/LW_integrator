@@ -41,6 +41,13 @@ SOURCE_C_TO_NATIVE = COULOMB * 1e6 / E_NATIVE_TO_SI
 
 @dataclass(frozen=True)
 class CorrectionConfig:
+    """Optional cloud model controls.
+
+    temporal_mode is ignored when evaluation_every == 1. Ballistic shortcuts
+    are model-exact: the fitted model reproduces itself, without certifying
+    the underlying particle dynamics or physical accuracy.
+    """
+
     clouds_per_species: int = 8
     refit_every: int = 1
     lattice_shape: tuple[int, int, int] = (5, 5, 5)
@@ -308,7 +315,24 @@ class CloudCorrection:
         self.time_s = 0.0
         self.accepted_steps = 0
         self.beta_dot_s = np.zeros_like(beta)
-        self._uniform_prediction = np.ones(len(beta), dtype=bool)
+        # Check the stored prehistory against the analytic ballistic boundary
+        # in native units. Rounded drift mismatch conservatively disables
+        # the shortcut; this is model reproduction, not a physics certificate.
+        prehistory = self.builder.build_current()
+        prehistory_checks = []
+        for i, axis in enumerate("xyz"):
+            position = getattr(prehistory, axis)
+            tangent = getattr(prehistory, f"b{axis}")
+            acceleration = getattr(prehistory, f"bdot{axis}")
+            expected = self.initial_position_m[:, i] * 1e3 + (
+                C * 1e-6 * beta[:, i] * prehistory.t
+            )
+            prehistory_checks.append(
+                np.all(position == expected, axis=0)
+                & np.all(tangent == beta[:, i], axis=0)
+                & np.all(acceleration == 0, axis=0)
+            )
+        self._uniform_prediction = np.logical_and.reduce(prehistory_checks)
         self._predicted_uniform = np.zeros(len(beta), dtype=bool)
         self._trial_history: TrialTrajectoryHistory | None = None
         self.refits = 1
@@ -455,7 +479,7 @@ class CloudCorrection:
             position = self.position_m + C * self.beta * (time_s - self.time_s)
             momentum = self.momentum_mc.copy()
             velocity_beta = self.beta.copy()
-        # A sufficient whole-history ballistic certificate, with no tolerance.
+        # A model-exact whole-history ballistic check, with no tolerance.
         # Once lost, it cannot be recovered by a later coasting interval.
         self._uniform_prediction &= np.all(velocity_beta == old_beta, axis=1) & np.all(
             position == self.position_m + C * old_beta * (time_s - self.time_s),

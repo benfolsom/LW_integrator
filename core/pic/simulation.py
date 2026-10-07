@@ -135,6 +135,12 @@ def run_pic(config: Mapping[str, Any]) -> dict[str, Any]:
             "native PIC Medina requires the CPU correction with midpoint_predictor, "
             "full refits and evaluations, and no near_field"
         )
+    if (
+        "near_field" in config
+        and correction_config is not None
+        and correction_config.midpoint_predictor
+    ):
+        raise ValueError("near_field cannot be combined with midpoint_predictor")
     grid = config["grid"]
     _keys(grid, "shape half_extent_mm shape_order", "grid")
     solver = ElectrostaticPIC(
@@ -201,6 +207,7 @@ def run_pic(config: Mapping[str, Any]) -> dict[str, Any]:
     medina = MedinaPIC() if radiation_mode == "medina_lad" else None
     medina_totals: dict[str, Any] = {}
     rows = []
+    diagnostic_errors: dict[str, str] = {}
 
     def accumulate(totals: dict, ledger: dict) -> None:
         for key, value in ledger.items():
@@ -221,7 +228,15 @@ def run_pic(config: Mapping[str, Any]) -> dict[str, Any]:
             row["correction"] = serialized(correction_totals)
             row["coupled_kick"] = serialized(coupling_totals)
             if correction is not None:
-                row["cloud_projection"] = correction.coupling_diagnostics(species)
+                if "cloud_projection" not in diagnostic_errors:
+                    try:
+                        row["cloud_projection"] = correction.coupling_diagnostics(
+                            species
+                        )
+                    except Exception as exc:
+                        diagnostic_errors["cloud_projection"] = (
+                            f"{type(exc).__name__}: {exc}"
+                        )
             row["correction"]["work_minus_kick_energy_j"] = (
                 correction_totals["electric_work_j"]
                 - correction_totals["kick_energy_j"]
@@ -247,6 +262,8 @@ def run_pic(config: Mapping[str, Any]) -> dict[str, Any]:
                 "Medina model-rate quadrature and first unprimed RR interval; "
                 "RR reservoir does not close collective hybrid field energy"
             )
+        if diagnostic_errors:
+            row["diagnostic_errors"] = dict(diagnostic_errors)
         rows.append(row)
 
     record(0)
@@ -281,10 +298,17 @@ def run_pic(config: Mapping[str, Any]) -> dict[str, Any]:
                 pushed = solver.push(s, e + de, b + db, dt)
                 ledger = correction_ledger(s, baseline, pushed, de, db, dt)
                 accumulate(correction_totals, ledger)
-                accumulate(
-                    coupling_totals,
-                    coupled_kick_ledger(s, baseline, pushed, e, b, de, db, dt),
-                )
+                if "coupled_kick" not in diagnostic_errors:
+                    try:
+                        accumulate(
+                            coupling_totals,
+                            coupled_kick_ledger(s, baseline, pushed, e, b, de, db, dt),
+                        )
+                    except Exception as exc:
+                        diagnostic_errors["coupled_kick"] = (
+                            f"{type(exc).__name__}: {exc}"
+                        )
+                        coupling_totals.clear()
                 if medina is not None:
                     pushed, rr_ledger = medina.apply(s, pushed, (step - 0.5) * dt, dt)
                     accumulate(medina_totals, rr_ledger)
@@ -334,6 +358,7 @@ def run_pic(config: Mapping[str, Any]) -> dict[str, Any]:
             "auxiliary flux, not lab current"
         ),
         diagnostics=rows,
+        diagnostic_errors=diagnostic_errors,
         final_species=[
             dict(
                 name=s.name,
@@ -418,6 +443,8 @@ def run_pic(config: Mapping[str, Any]) -> dict[str, Any]:
                 else "radiation reaction off"
             ),
             (
+                "EXPERIMENTAL near_field reference implementation; "
+                "cohort coefficient is an unbounded model approximation; "
                 "persistent finite transverse near sources; "
                 "no near correction potential ledger"
                 if near is not None
