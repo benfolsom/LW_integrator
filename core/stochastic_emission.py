@@ -211,6 +211,43 @@ def bessel_integral(z: np.ndarray) -> np.ndarray:
     )
 
 
+def lcfa_spectral_brackets(
+    fraction: np.ndarray, chi: float
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Return the three dimensionless LCFA number-spectrum brackets.
+
+    ``fraction`` is the photon fraction of total electron energy, ``s = k/E``.
+    The returned arrays are, in order: spin-averaged quantum LCFA, the
+    recoil-only scalar diagnostic, and the classical spectrum.  The first is
+    the bracket sampled by ``quantum_lcfa``.  The latter two are exposed for
+    cross-code diagnostics; neither changes the runner's model choices.
+
+    This provides the direct mapping used by thread C's ``spectral_brackets``:
+    its ``quantum``, ``scalar``, and ``classical`` outputs respectively map to
+    these outputs.  All brackets are zero outside ``0 < s < 1``.
+    """
+    s = np.asarray(fraction, dtype=float)
+    quantum = np.zeros_like(s)
+    scalar = np.zeros_like(s)
+    classical = np.zeros_like(s)
+    if chi <= 0:
+        return quantum, scalar, classical
+    valid = (s > 0) & (s < 1)
+    sv = s[valid]
+    quantum_z = 2 * sv / (3 * chi * (1 - sv))
+    quantum_k = kv(2 / 3, quantum_z)
+    quantum_integral = bessel_integral(quantum_z)
+    scalar[valid] = np.maximum(2 * quantum_k - quantum_integral, 0)
+    quantum[valid] = np.maximum(
+        (1 - sv + 1 / (1 - sv)) * quantum_k - quantum_integral, 0
+    )
+    classical_z = 2 * sv / (3 * chi)
+    classical[valid] = np.maximum(
+        2 * kv(2 / 3, classical_z) - bessel_integral(classical_z), 0
+    )
+    return quantum, scalar, classical
+
+
 def differential_rate(
     fraction: np.ndarray,
     chi: float,
@@ -230,16 +267,10 @@ def differential_rate(
     out: np.ndarray = np.zeros_like(s)
     if chi <= 0:
         return out
-    valid = (s > 0) & (s < 1)
-    sv = s[valid]
-    quantum = model == "quantum_lcfa"
-    z = 2 * sv / (3 * chi * (1 - sv if quantum else 1))
-    coefficient = 1 - sv + 1 / (1 - sv) if quantum else 2.0
+    quantum, _, classical = lcfa_spectral_brackets(s, chi)
     alpha = charge**2 / (HBAR_NATIVE * C)
     prefactor = alpha * mass * C**2 / (np.sqrt(3) * np.pi * HBAR_NATIVE * gamma)
-    out[valid] = prefactor * np.maximum(
-        coefficient * kv(2 / 3, z) - bessel_integral(z), 0
-    )
+    out = prefactor * (quantum if model == "quantum_lcfa" else classical)
     return out
 
 

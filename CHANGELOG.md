@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Unify the public local constant-field diagnostic brackets with the thread C
+  strong-field-QED study through ``lcfa_spectral_brackets``.  Document the
+  quantum, recoil-only, and classical mapping, and record that current LW
+  external fields cannot yet validate E-146 or NA63 material and crystal
+  spectra end to end.  Default-off deterministic behaviour is unchanged.
+
 - Add opt-in stochastic electron/positron emission with local quantum and recoil
   thresholds, quantum LCFA and classical capped spectra, seeded photon logs,
   on-shell recoil with a background-impulse ledger, and checkpointed RNG state.

@@ -213,6 +213,68 @@ publication, not an unbiased physical emission yield. Scripts, event lists,
 checkpoints, and detailed results are in ``local/task_ao/validation/``.
 New unit tests remain deferred pending Ben's approval.
 
+Validation against thread C benchmarks
+--------------------------------------
+
+Thread C's ``strong_field_qed_tev`` study and this module now use one
+spin-averaged local constant-field spectrum definition.  For photon fraction
+:math:`s=k/E`, the shared quantum bracket is
+:math:`[1-s+(1-s)^{-1}]K_{2/3}(z)-\int_z^\infty K_{1/3}(y)dy`, with
+:math:`z=2s/[3\chi(1-s)]`.  The dimensional conversion is
+:math:`dW/ds=\alpha m c^2 B/(\sqrt{3}\pi\hbar\gamma)`: thread C expresses
+it per second as :math:`\alpha c B/(\sqrt{3}\pi\lambda_C\gamma)`, while
+this module expresses it per ns in native units.
+
+``lcfa_spectral_brackets(s, chi)`` is the maintained diagnostic adapter.  Its
+three results map, in order, to thread C's ``quantum``, recoil-only ``scalar``,
+and ``classical`` brackets.  The runner samples only the first for
+``quantum_lcfa``; the two comparison curves do not introduce another runner
+mode.  A shared grid of nine :math:`\chi` values from :math:`10^{-4}` to 10
+and 74 photon fractions found maximum relative differences of
+:math:`6.41\times10^{-6}` in the resolved quantum rate.  Relative differences
+in exponentially negligible high-energy tails reached 0.110 because the two
+independent finite Bessel-integral tables truncate and interpolate differently;
+the maximum absolute bracket difference was :math:`3.28\times10^{-7}`.
+The grid, constants, and exact results are recorded in
+``local/task_ap/thread_c_comparison.json``.
+
+None of thread C's experimental cases is currently a valid end-to-end
+stochastic-emission validation case for this runner.  The E-146 25 GeV,
+23 micrometre gold foil is thread C's cleanest thin-target result, but its
+observed spectrum depends on screened nuclear scattering, finite formation
+interference, dielectric interfaces, photon transport, and detector response.
+This local-field runner has none of those material models.  The corrected
+NA63 two-foil result has the same nonlocal scattering and formation issue.
+
+The closest high-field candidate is the 178.2 GeV positron Si
+:math:`\langle111\rangle` NA63 measurement, with :math:`\chi\lesssim1.4`
+and 3.8 mm and 10.0 mm targets [Wistisen2018]_.  Thread C reports that its
+published stochastic-spectrum-plus-RR comparison has reduced
+:math:`\chi^2=47.4`, 28.9, and 38.2 for those two targets and their combined
+fit, respectively, so even that published local model is not a statistically
+adequate detector-spectrum reproduction.  More importantly, LW has no
+continuum-crystal potential, incoherent scattering, dechanneling, photon
+transport, or detector response.
+
+A deliberately limited uniform-magnetic local proxy was prepared at its
+reported peak :math:`\chi=1.4`: 178.2 GeV, 3.8 mm, 17.72 kT, 140146 fixed
+steps, and initial :math:`W\Delta t=0.00200`.  It correctly reproduces the
+local initial rate of :math:`2.2113\times10^4` ns\ :sup:`-1` and mean photon
+fraction 0.13224, but it fails the unchanged two-iteration fixed-geometry
+mass-shell criterion at step 241 (residual :math:`3.09\times10^{-5}`).
+Reducing the interval probability by ten relative to the emission guard did
+not cure it.  We did not loosen the criterion or substitute that proxy for a
+crystal calculation.  It is therefore an unsuccessful interface check, not
+an ensemble result or a comparison with data.  The reproducible attempted
+configuration is ``local/task_ap/na63_local_proxy.py``.
+
+The 50 GeV Si (110) case is not a fallback: thread C found that its
+:math:`\chi<0.042` field changes materially during photon formation and that a
+local quantum cascade fails.  These are model limitations, rather than a
+reason to force a benchmark agreement.  A future validation needs a
+continuum-potential callback or prescribed crystal trajectories, then an
+independent formation-length, material-transport, and detector comparison.
+
 References
 ----------
 
@@ -236,3 +298,6 @@ References
    field approximation*, Phys. Rev. A **98**, 012134 (2018).
    https://doi.org/10.1103/PhysRevA.98.012134
    https://arxiv.org/abs/1708.08276
+
+.. [Wistisen2018] T. N. Wistisen *et al.*, Nature Communications **9**, 795
+   (2018). https://doi.org/10.1038/s41467-018-03165-4
