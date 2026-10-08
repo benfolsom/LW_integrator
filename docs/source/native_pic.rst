@@ -30,7 +30,7 @@ The runner defaults to 1,200 states and output every 100 steps.
 
 Input positions and grid extents use millimetres. ``charge_c`` and ``mass_kg``
 are physical species quantities, and ``momentum_mc`` is dimensionless
-$p/(mc)$. ``population`` is the number of physical particles represented by
+:math:`p/(mc)`. ``population`` is the number of physical particles represented by
 each simulated particle, including each Gaussian draw. Source charge is
 population-weighted; observer charge and mass remain physical. Diagnostics
 use population-weighted particle totals. The JSON output records backend,
@@ -117,7 +117,7 @@ or additional force.
 The cloud count must cover populated energy groups without exceeding active
 particles. Subcharge counts must be positive squares. The opt-in
 ``bunch_rms_k`` rule freezes a common initial RMS-derived width scaled by
-$K^{-1/3}$; it does not change the fixed-width default. The exterior study
+:math:`K^{-1/3}`; it does not change the fixed-width default. The exterior study
 supports a scoped starting choice of 64 clouds and four subcharges with
 that rule. See :doc:`pic_correction_convergence` for the tested geometry,
 error budget, and costs; this is not a universal accuracy setting.

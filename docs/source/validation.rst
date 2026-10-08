@@ -106,7 +106,8 @@ establish independent physics convergence.
 
 The report is ``codex_report_exact_cpu_speedup.md`` in the
 ``LW_integrator-exact-cpu-speedup`` checkout. The maintained reproduction
-harness is ``studies/exact_cpu_speedup/README.md``; evidence is under
+harness is ``studies/exact_cpu_speedup/README.md`` in that sibling checkout,
+not in this documentation branch; evidence is under
 ``~/compute-data/exact_cpu_speedup/``.
 
 Full-strict backend comparison

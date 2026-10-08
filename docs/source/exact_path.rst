@@ -28,7 +28,7 @@ use one-sided stencils near a boundary. An always-visible gate preserves
 the ungated trajectory bytes in the reported controls.
 
 At a switch, canonical momentum changes by
-$\Delta P=(q_{\mathrm{observer}}/c)\Delta A$, while mechanical momentum stays
+:math:`\Delta P=(q_{\mathrm{observer}}/c)\Delta A`, while mechanical momentum stays
 unchanged. The ``potential_inclusion_delta_A_*`` fields record this potential
 offset, which is excluded from force, radiation, and work diagnostics.
 Internal split knots and the selected boundary side survive endpoint
