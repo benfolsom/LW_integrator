@@ -250,10 +250,11 @@ conflicting values are rejected, and saved configurations emit only the
 canonical key.
 
 ``numba_roots_exact_serial`` is a cross-platform CPU opt-in.  It compiles only
-the independent light-cone root searches.  The final quintic worldline sample,
-light-cone residual, charge or Hertz event construction, source accumulation,
-and finite-difference assembly retain the Python reference arithmetic and
-order, giving complete-provider parity in the maintained tests.
+light-cone root searches, null-coordinate knot residuals, and polynomial
+sampling while preserving reference derivative normalization. Charge or Hertz
+event construction, source accumulation, and finite-difference assembly keep
+their reference arithmetic and order. Maintained tests check complete-provider
+parity. See :doc:`validation` for the October 2026 compiled-helper measurements.
 
 ``numba_full_strict_serial`` is the faster, tolerance-validated opt-in.  It
 also compiles the final worldline sample, spin interpolation, moment boost,
@@ -407,24 +408,31 @@ for source-field validation.
 Hard scope guards
 -----------------
 
-The first coupled implementation deliberately rejects combinations whose
-meaning has not yet been validated:
+The current implementation retains these limits. Exact visibility gates and
+fixed-step charge driver trains are described in :doc:`exact_path`.
 
-* RFS runs are limited to ``BUNCH_TO_BUNCH`` with point-charge cross-bunch
-  sources.  Conducting and switching image-source modes are not enabled.
+* RFS runs are limited to ``BUNCH_TO_BUNCH``. Conducting and switching
+  image-source modes are not enabled.
 * Charge-source RFS requires ``COLD_START`` or ``INERTIAL_PREHISTORY`` and
   explicit history.  Approximate back-history is not treated as a complete
   retarded derivative.  Inertial startup is limited to exact-field
-  ``BUNCH_TO_BUNCH`` RFS/retarded-dipole runs and rejects driver trains.
+  ``BUNCH_TO_BUNCH`` RFS/retarded-dipole runs. Fixed-step charge driver trains
+  are supported with ``INERTIAL_PREHISTORY``; intrinsic dipole-source trains
+  remain unsupported.
 * Dynamic recoil is limited to ``medina_lad``.  It is an explicitly named
   charge-only hybrid, not a complete RFS radiation-reaction theory.  ``off``
   and read-only ``diagnostic_only`` also remain available; other recoil modes
   are rejected.
-* Same-bunch RFS response is absent, so ``space_charge`` must be disabled.
-* Nonzero macroparticle smearing is unsupported.  Each displaced subcharge would
-  require its own light-cone solve before a smeared source could be supported.
-* Beamline visibility boundaries are not applied to a finite-difference
-  stencil, so beamline geometry must be disabled for charge-source RFS.
+* Exact same-bunch charge fields require ``INERTIAL_PREHISTORY``, retarded
+  evaluation, and zero softening for actual point-charge pairs. Same-bunch
+  dipole sources remain unsupported.
+* Nonzero fixed-step or dipole-source smearing is unsupported. Persistent
+  transverse charge clouds use the guarded adaptive shared-lab-time route;
+  see :doc:`exact_macroparticle_sources`.
+* Beamline visibility gates require ``INERTIAL_PREHISTORY`` and
+  ``light_cone_quintic`` histories. Adaptive gates support one observer per
+  bunch, including its persistent cloud. Independent causal dipole histories
+  and observer pipe changes within a step remain unsupported.
 * Adaptive timestep substeps are not yet supported by the exact source-history
   evaluator.  Exact inertial endpoint reconstruction also requires
   ``fixed_geometry`` self-consistency.

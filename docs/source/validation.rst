@@ -78,6 +78,41 @@ The report compares every public trajectory array and side channel for rider
 and driver, records cold and warm timings separately, and leaves the input
 configuration unchanged.
 
+Strict compiled helpers: October 2026
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The maintained compiled exact path now compiles null-coordinate knot residuals
+and polynomial sampling, retaining Python powers and NumPy derivative
+normalization. Independent observer–source jet work uses owned temporary
+arrays. Source sums retain their original order, and workers never read
+accepted-history buffers. Dispatch uses at most two Numba workers at 64 or
+more pairs; one-worker callers remain serial. The caller's worker mask is
+restored, and failed worker rows return to ordered serial error handling.
+
+Reported complete warm runs cover crossing and same-bunch cases with
+16, 64, and 256 particles, 12 accepted updates, inertial prehistory, Medina/LAD,
+and two fixed-geometry trials, without smearing. On Darwin arm64 the gains
+are 1.58–1.73× with one worker and 1.57–1.74× with two, roughly 1.6–1.7×.
+Compilation and cold startup are excluded; the 256-particle timings have only
+one repeat per worker setting.
+
+Every recorded state and field/response reduction matches its frozen
+``9e898dc`` backend baseline byte for byte. Precision controls include roots,
+samples, potentials, gradients, history failures, continuation, self exclusion,
+and Decimal fallback. Gate and train follow-up checks also exercise parallel
+dispatch with bit-identical outputs. This preserves each backend's earlier
+arithmetic; it does not assert bitwise equality between different backends or
+establish independent physics convergence.
+
+The report is ``codex_report_exact_cpu_speedup.md`` in the
+``LW_integrator-exact-cpu-speedup`` checkout. The maintained reproduction
+harness is ``studies/exact_cpu_speedup/README.md`` in that sibling checkout,
+not in this documentation branch; evidence is under
+``~/compute-data/exact_cpu_speedup/``.
+
+Full-strict backend comparison
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
 The explicit ``numba_full_strict_serial`` backend uses a physical tolerance
 contract because finite differences amplify event-level last-bit changes.  Its
 unit suite requires deterministic strict-serial execution, bounded charge and
@@ -134,10 +169,15 @@ components.  A provider-level guard proves that the smooth sparse route does
 not construct a center Hertz tensor, and direct packed charge/RFS contractions
 are compared with the dense tensor formulation.
 
-The first coupled RFS implementation has intentionally narrow integration
-guards: fixed-step ``COLD_START`` or ``INERTIAL_PREHISTORY``
-``BUNCH_TO_BUNCH`` point charges, no same-bunch RFS field, no nonzero smearing,
-no beamline visibility stencil, no pseudo-grid, and polarization zero or one.
+The current RFS integration guards retain ``BUNCH_TO_BUNCH`` source histories,
+fixed-geometry self-consistency on the exact endpoint route, no legacy adaptive
+substeps, and polarization zero or one. Exact same-bunch charge fields require
+inertial prehistory and unsoftened retarded point-charge pairs. Persistent
+charge clouds require the guarded adaptive shared-lab-time route; reduced
+pseudo-grid force histories remain unsupported. See
+:doc:`magnetic_dipole_moments` for the full restrictions. Exact visibility
+gates and fixed-step charge driver trains require ``INERTIAL_PREHISTORY``;
+see :doc:`exact_path`.
 Inertial prehistory is an exact RFS/retarded-dipole startup mode, not a general
 replacement for startup handling.  Dynamic recoil is limited to the explicit
 charge-only ``medina_lad`` hybrid; its :math:`q\mu` and :math:`\mu^2`

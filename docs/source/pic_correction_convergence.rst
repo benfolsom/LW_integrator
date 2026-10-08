@@ -2,7 +2,8 @@ K-cloud PIC correction convergence
 ========================================
 
 The correction is opt-in and CPU-authoritative. Its configuration defaults
-remain unchanged. Converge the correction field and the total PIC force
+remain unchanged; see :doc:`native_pic` for the runner and default settings.
+Converge the correction field and the total PIC force
 separately: the correction adds exact retarded fields minus a matched boosted
 Coulomb field, and cannot repair every error in the underlying PIC grid.
 
@@ -40,13 +41,13 @@ field solve. A 7³ lattice evaluates 5.36 times as many nodes as a 4³ lattice;
 a 13³ lattice evaluates 34.33 times as many. Larger patches need an explicit
 accuracy and cost reason.
 
-For prescribed acceleration, the opt-in midpoint predictor substantially
+For prescribed acceleration, the experimental opt-in midpoint predictor substantially
 reduces accepted-endpoint lag. It requires both cadences to be one, and cannot
 be combined with the near-field path. Timestep refinement remains necessary.
 Neither the predictor nor a small mass-shell residual certifies accuracy.
 
-For a close crossing, explicitly enable near-field replacement and converge
-its cutoff, the PIC spacing, the finite-source quadrature, the source
+For a close-crossing diagnostic, experimental near-field replacement needs
+convergence over its cutoff, the PIC spacing, the finite-source quadrature, the source
 timestep, and observation sampling together. A cutoff that covers every
 cross-bunch pair reproduces the finite reference algebraically. That identity
 says nothing about convergence of the source model or its trajectories.
@@ -87,8 +88,10 @@ The stored prehistory is checked at construction, and any exact-equality
 mismatch disables the midpoint shortcut conservatively.
 
 ``temporal_mode`` is ignored when ``evaluation_every == 1``, because every
-field sample is evaluated directly. With a larger interval it selects causal
-hold or extrapolation.
+field sample is evaluated directly. Evaluation cadence above one is not
+supported for physics use by the current evidence. The code retains causal
+hold or extrapolation at larger intervals for diagnostics; these controls
+failed the stated accuracy screen.
 
 The added coupled-kick and cloud-projection diagnostics are observational.
 If either raises an exception, the run reports ``diagnostic_errors`` and

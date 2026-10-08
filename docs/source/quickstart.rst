@@ -177,6 +177,10 @@ simulation, and confirm that the regression tooling works on your machine.
    root batches, but only as float32 bracket proposals certified against the
    original float64 data; the strict CPU root and fields remain authoritative.
    Small calls stay on the CPU and there is no automatic platform dispatch.
+   The October 2026 strict CPU helpers speed up the maintained compiled path
+   by about 1.6–1.7× in the reported warm runs, preserving each backend's
+   baseline bytes. This does not change the full-strict versus Python
+   tolerance contract. See :doc:`validation` for the measured scope.
    ``--exact-retarded-update second_order_start_taylor_endpoint`` opts the
    ordinary exact-source Lorentz translation into the experimental
    accepted-start second-order Taylor update; ``first_order_endpoint`` remains
@@ -202,10 +206,18 @@ simulation, and confirm that the regression tooling works on your machine.
    separation is moved outward.  Use ``cold-start`` instead for a physical
    field turn-on transient.
 
+   Exact visibility gates and fixed-step charge driver trains require
+   ``inertial-prehistory``. See :doc:`exact_path` for gate behavior and
+   remaining train restrictions.
+
    Replacing ``--radiation-reaction-mode off`` with ``medina_lad`` enables the
    charge-only RFS/Medina hybrid.  It does not include intrinsic-dipole
    self-recoil or charge--dipole radiation-interference recoil, and any run
    with a capped Medina impulse is unsuitable as capture evidence.
+
+   **Native PIC:** use ``--pic-config`` with a separate PIC JSON file.
+   See :doc:`native_pic` for lab-time stepping, NumPy/MLX/CuPy selection,
+   correction defaults, and experimental limits.
 
    **Running a parameter sweep from the CLI:**
 
