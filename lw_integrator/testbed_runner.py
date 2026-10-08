@@ -1010,6 +1010,12 @@ class SimulationOptions:
             except (TypeError, ValueError):
                 return default
 
+        def _source_count(name: str) -> int:
+            value = payload.get(name, 0)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(f"{name} must be a non-negative integer")
+            return value
+
         def _float(name: str, default: float) -> float:
             value = payload.get(name, default)
             try:
@@ -1762,11 +1768,11 @@ class SimulationOptions:
             exact_source_reduction_enabled=_bool(
                 "exact_source_reduction_enabled", False
             ),
-            exact_source_reduction_rider_count=_int(
-                "exact_source_reduction_rider_count", 0
+            exact_source_reduction_rider_count=_source_count(
+                "exact_source_reduction_rider_count"
             ),
-            exact_source_reduction_driver_count=_int(
-                "exact_source_reduction_driver_count", 0
+            exact_source_reduction_driver_count=_source_count(
+                "exact_source_reduction_driver_count"
             ),
             magnetic_dipole_enabled=bool(_magnetic_value("enabled", False)),
             magnetic_dipole_spin_precession_enabled=bool(

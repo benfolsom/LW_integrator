@@ -52,6 +52,13 @@ def save_result(directory, label, result):
     return arrays
 
 
+def wait_for_compute_capacity(cap_path=Path("/private/tmp/compute_cap")):
+    # The wrapper cap permits this single serial integration; no workers are used.
+    while cap_path.exists() and int(cap_path.read_text()) < 1:
+        print("Waiting for wrapper compute cap 1", flush=True)
+        time.sleep(5)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mode", choices=("light", "train", "parity"), required=True)
@@ -182,6 +189,7 @@ def main():
     (args.output / "provenance.json").write_text(
         json.dumps(
             dict(
+                mode=args.mode,
                 input=str(input_path),
                 input_sha256=hashlib.sha256(input_path.read_bytes()).hexdigest(),
                 source_root=str(args.source_root.resolve()),
@@ -275,12 +283,7 @@ def main():
     (args.output / "plan.json").write_text(json.dumps(trials, indent=2) + "\n")
     rows = []
     for trial in trials:
-        # One integration process, no workers. The user limit remains two,
-        # independently of a larger wrapper cap.
-        cap_path = Path("/private/tmp/compute_cap")
-        while cap_path.exists() and int(cap_path.read_text()) < 2:
-            print("Waiting for wrapper compute cap 2", flush=True)
-            time.sleep(5)
+        wait_for_compute_capacity()
         kw = copy.deepcopy(captured)
         if args.mode != "parity":
             kw["macroparticle_smearing"] = MacroparticleSmearingConfig(

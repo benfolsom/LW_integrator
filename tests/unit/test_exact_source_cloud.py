@@ -41,9 +41,24 @@ def history():
 
 
 @pytest.mark.parametrize("backend", ["python", "numba_full_strict_serial"])
-def test_zero_width_one_child_is_bitwise_point_field_and_gradient(backend):
+@pytest.mark.parametrize(
+    "count,width,multiplier",
+    [
+        (1, 0.0, 1.0),
+        (16, 0.0, 1.0),
+        (1, 0.2, 1.0),
+        (16, 0.2, 0.0),
+    ],
+)
+def test_zero_width_one_child_is_bitwise_point_field_and_gradient(
+    backend, count, width, multiplier
+):
     source = history()
-    wrapped = exact_cloud_history(source, cloud_config(1, 0))
+    from dataclasses import replace
+
+    wrapped = exact_cloud_history(
+        source, replace(cloud_config(count, width), sigma_multiplier=multiplier)
+    )
     assert wrapped is source
     event = ObserverEvent(0, (2, 1, 0))
     for provider in (

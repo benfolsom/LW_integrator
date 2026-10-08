@@ -12,6 +12,9 @@ from lw_integrator.testbed_runner import (
 
 def test_magnetic_dipole_nested_config_round_trip() -> None:
     options = SimulationOptions(
+        exact_source_reduction_enabled=True,
+        exact_source_reduction_rider_count=8,
+        exact_source_reduction_driver_count=12,
         magnetic_dipole_enabled=True,
         magnetic_dipole_spin_precession_enabled=True,
         magnetic_dipole_stern_gerlach_force_enabled=True,
@@ -40,6 +43,9 @@ def test_magnetic_dipole_nested_config_round_trip() -> None:
     config = build_magnetic_dipole_config(restored)
     external = build_external_field_config(restored)
 
+    assert config.exact_source_reduction.enabled is True
+    assert config.exact_source_reduction.rider_count == 8
+    assert config.exact_source_reduction.driver_count == 12
     assert config.enabled is True
     assert config.spin_precession_enabled is True
     assert config.stern_gerlach_force_enabled is True
@@ -87,6 +93,10 @@ def test_old_config_defaults_magnetic_dipoles_off() -> None:
     options = SimulationOptions.from_dict({"steps": 4})
     magnetic_payload = options.to_dict()["magnetic_dipole"]
 
+    assert options.exact_source_reduction_enabled is False
+    assert options.exact_source_reduction_rider_count == 0
+    assert options.exact_source_reduction_driver_count == 0
+    assert build_magnetic_dipole_config(options).exact_source_reduction is None
     assert options.magnetic_dipole_enabled is False
     assert options.magnetic_dipole_spin_model == "rfs_minimal_2021"
     assert options.magnetic_dipole_stern_gerlach_model == "rfs_full_g"

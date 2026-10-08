@@ -1,7 +1,6 @@
 """Initial moment accounting and exact-route isolation for fixed reduction."""
 
 import copy
-from dataclasses import replace
 
 import numpy as np
 import pytest
@@ -52,8 +51,11 @@ def momentum(state):
     )
 
 
-def test_reduction_preserves_initial_population_charge_position_and_momentum():
+@pytest.mark.parametrize("neutral", [False, True])
+def test_reduction_preserves_initial_population_charge_position_and_momentum(neutral):
     source = ensemble()
+    if neutral:
+        source["q_source"][:] = 0
     original = copy.deepcopy(source)
     reduced, mapping = reduce_exact_initial_state(source, 3)
     assert mapping["original_count"] == 8 and mapping["reduced_count"] == 3
@@ -92,15 +94,6 @@ def test_reduction_preserves_initial_population_charge_position_and_momentum():
         np.testing.assert_array_equal(source[name], original[name])
 
 
-def test_neutral_reduction_preserves_population():
-    source = ensemble()
-    source["q_source"][:] = 0
-    reduced, _ = reduce_exact_initial_state(source, 3)
-    assert not np.any(reduced["q_source"])
-    assert reduced["macro_population"].sum() == source["macro_population"].sum()
-    assert np.all(reduced["q_observer"] == 1)
-
-
 @pytest.mark.parametrize("count", [0, 8, 12])
 def test_full_count_returns_original_object_without_arithmetic(count):
     source = ensemble()
@@ -111,6 +104,7 @@ def test_partition_is_deterministic_nested_and_handles_coincident_parents():
     position = np.column_stack([ensemble()[a] for a in "xyz"])
     a, _ = fixed_spatial_partition(position, 3)
     b, _ = fixed_spatial_partition(position, 5)
+    # Seeds are nested; nearest-seed cell memberships need not be.
     np.testing.assert_array_equal(a, b[:3])
     a, cells = fixed_spatial_partition(np.zeros((8, 3)), 5)
     assert len(set(a)) == 5 and len(set(cells)) == 5
@@ -124,8 +118,19 @@ def test_heterogeneous_or_asynchronous_initial_states_reject(field):
         reduce_exact_initial_state(source, 3)
 
 
-@pytest.mark.parametrize("count", [-1, 1.5, True])
+@pytest.mark.parametrize("count", [-1, -0.5, 1.5, True, False, "bad", "2", None])
 def test_invalid_counts_reject(count):
+    from lw_integrator.testbed_runner import SimulationOptions
+
+    for role in ("rider", "driver"):
+        for enabled in (False, True):
+            with pytest.raises(ValueError, match="non-negative integer"):
+                SimulationOptions.from_dict(
+                    {
+                        "exact_source_reduction_enabled": enabled,
+                        f"exact_source_reduction_{role}_count": count,
+                    }
+                )
     with pytest.raises(ValueError):
         ExactSourceReductionConfig(enabled=True, rider_count=count)
     with pytest.raises(ValueError):
@@ -144,7 +149,9 @@ def magnetic(count):
     )
 
 
-def test_exact_full_count_route_is_bitwise_identity_and_reduced_route_uses_clouds():
+def test_exact_full_count_route_is_bitwise_identity_and_reduced_route_uses_clouds(
+    monkeypatch,
+):
     state = ensemble()
     options = dict(
         rider_state=state,
@@ -162,19 +169,25 @@ def test_exact_full_count_route_is_bitwise_identity_and_reduced_route_uses_cloud
     reduced = crossing_run(1, None, **options, magnetic_dipole=magnetic(3))
     assert len(reduced[0][0]["x"]) == len(reduced[1][0]["x"]) == 3
     assert reduced[0][0]["macro_population"].sum() == 36
+    explicit_state, _ = reduce_exact_initial_state(state, 3)
+    import tests.unit.test_exact_visibility_gates as helpers
 
+    integrate = helpers.retarded_integrator
 
-def test_options_round_trip():
-    from lw_integrator.testbed_runner import (
-        SimulationOptions,
-        build_magnetic_dipole_config,
+    def same_step(**kwargs):
+        # The helper normally derives the step from the first rider gamma,
+        # which coarsening changes. Compare at the original proper-time step.
+        kwargs["h_step"] = options["duration"] / state["gamma"][0]
+        return integrate(**kwargs)
+
+    monkeypatch.setattr(helpers, "retarded_integrator", same_step)
+    explicit = crossing_run(
+        1,
+        None,
+        **{**options, "rider_state": explicit_state, "driver_state": explicit_state},
     )
-
-    options = SimulationOptions(
-        exact_source_reduction_enabled=True,
-        exact_source_reduction_rider_count=8,
-        exact_source_reduction_driver_count=12,
-    )
-    restored = SimulationOptions.from_dict(options.to_dict())
-    config = build_magnetic_dipole_config(restored).exact_source_reduction
-    assert config.enabled and config.rider_count == 8 and config.driver_count == 12
+    for internal_role, explicit_role in zip(reduced[:2], explicit[:2]):
+        for internal, supplied in zip(internal_role, explicit_role):
+            for name, value in internal.items():
+                if isinstance(value, np.ndarray):
+                    assert value.tobytes() == supplied[name].tobytes(), name

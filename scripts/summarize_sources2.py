@@ -33,7 +33,17 @@ def momentum(state):
     )
 
 
-def analyze(directory):
+def analyze(directory, mode=None):
+    if mode is None:
+        provenance = json.loads((directory / "provenance.json").read_text())
+        mode = provenance.get("mode")
+        if mode is None:
+            # Older evidence recorded the input config, but no explicit mode.
+            mode = {"light_heavy.json": "light", "train.json": "train"}.get(
+                Path(provenance.get("input", "")).name
+            )
+    if mode not in ("light", "train"):
+        raise ValueError("Specify a light or train study mode")
     rows = json.loads((directory / "summary.json").read_text())
     metrics = {}
     kicks = {}
@@ -67,7 +77,7 @@ def analyze(directory):
                 ],
             )
     comparisons = []
-    if directory.name.startswith("light"):
+    if mode == "light":
         pairs = [
             ("a8_n4_w0.1_h1", "a8_n16_w0.1_h1", "children"),
             ("a8_n16_w0.1_h1", "a8_n36_w0.1_h1", "children"),
@@ -114,6 +124,8 @@ def analyze(directory):
                 )
             comparison["roles"][role] = values
         comparisons.append(comparison)
+    if rows and not comparisons:
+        raise ValueError("Nonempty study has no requested comparisons")
     summary = dict(
         metrics=metrics,
         comparisons=comparisons,
@@ -125,4 +137,6 @@ def analyze(directory):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("directory", type=Path)
-    analyze(parser.parse_args().directory)
+    parser.add_argument("--mode", choices=("light", "train"))
+    args = parser.parse_args()
+    analyze(args.directory, args.mode)
