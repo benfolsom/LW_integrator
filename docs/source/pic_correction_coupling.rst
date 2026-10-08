@@ -44,8 +44,8 @@ momentum, the PIC/correction cross terms, exterior flux, and a validated
 collective field reservoir. Retarded particle forces need not sum to zero
 at equal lab time. Re-fitting does not repair that missing field accounting.
 
-Explicit CPU Medina mode
--------------------------
+Experimental CPU Medina mode
+-----------------------------
 
 To select the reduced-order charge radiation reaction, set
 ``radiation_reaction_mode: "medina_lad"`` and enable

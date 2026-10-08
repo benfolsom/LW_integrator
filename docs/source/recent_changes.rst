@@ -3,11 +3,32 @@
 Recent Changes
 ==============
 
-*Last updated: September 2026*
+*Last updated: October 2026*
 
 This page summarizes recent improvements to the LW integrator, including
 optimization features, convergence enhancements, and critical physics
 corrections.
+
+October 2026: exact gates, strict CPU helpers, and native PIC
+-------------------------------------------------------------
+
+:doc:`exact_path` describes directional gates at retarded source events,
+split-step canonical offsets, and fixed-step driver-train inertial prehistory.
+Both gates and exact charge trains require ``INERTIAL_PREHISTORY``. Material
+screening and boundary radiation remain outside the ideal gate model.
+
+The strict compiled helpers give about 1.6–1.7× complete warm-run speedup
+in the reported crossing and same-bunch controls, with bit-identical outputs
+relative to each backend's earlier implementation. Backend choices and
+numerical defaults are unchanged; see :doc:`validation` for the scope.
+
+:doc:`native_pic` documents the separate quasi-static PIC runner with
+NumPy/Numba, MLX, and CuPy backends. ``auto`` remains CPU. Its opt-in K-cloud
+LW correction uses CPU float64 and retains its defaults. Near-field pair
+replacement, midpoint prediction, and restricted Medina/LAD are experimental.
+Evaluation cadence above one is not supported for physics use by the current
+evidence, and close-encounter convergence and a closed electromagnetic ledger
+remain open.
 
 September 2026: many-particle milestone (v0.10.0)
 --------------------------------------------------------

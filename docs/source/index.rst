@@ -62,7 +62,9 @@ If you are new to the project, start with the **Overview** and **Quick start** p
    checkpoints
    finite_spin_pair
    full_spin_particles
+   exact_path
    exact_macroparticle_sources
+   native_pic
    pic_correction_convergence
    pic_correction_coupling
    multirate_return

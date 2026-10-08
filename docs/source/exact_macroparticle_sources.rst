@@ -1,6 +1,11 @@
 Exact macroparticle sources: audit and persistent clouds
 ========================================================
 
+For current visibility gates and fixed-step charge driver trains, see
+:doc:`exact_path`. Those merged features supersede the historical visibility
+restriction below; intrinsic dipole-source trains and finite train clouds
+remain unsupported.
+
 The sections through "Many-particle full-spin runner" preserve the Part 1
 audit and its historical decisions. The Part 2 section at the end describes
 the decisions made on 2026-10-02 and the implementation in this worktree.
