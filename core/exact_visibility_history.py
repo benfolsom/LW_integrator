@@ -39,20 +39,10 @@ KNOT_FIELDS = (
     *RESOLVED_KNOT_FIELDS,
 )
 _EXPANSIONS = AppendAwarePreparedHistoryCache()
-# Set once a process integrates gated exact sources. Ungated runs then skip the
-# per-append metadata scan entirely, keeping their cost and arithmetic unchanged.
-_GATE_HISTORY_ACTIVE = False
-
-
-def mark_gate_history_active() -> None:
-    global _GATE_HISTORY_ACTIVE
-    _GATE_HISTORY_ACTIVE = True
 
 
 def save_visibility_knots(state: ParticleState, knots: Sequence[ParticleState]) -> None:
     """Publish split knots per source, preserving unrelated inclusion metadata."""
-    if knots:
-        mark_gate_history_active()
     count = len(state["t"])
     metadata = list(state.get("potential_inclusion_state", [""] * count))
     for particle in range(count):
@@ -155,11 +145,10 @@ def _expand(history: Any) -> list[ParticleState] | None:
 def expanded_visibility_history(history: Any) -> list[ParticleState] | None:
     """Return a cached expanded view only when accepted gate knots exist.
 
+    Persisted metadata is authoritative, including in a fresh interpreter.
     Rebuild on an append: neighbouring one-sided derivatives may change, but
     the original managed history and rejected trial histories stay untouched.
     """
-    if not _GATE_HISTORY_ACTIVE:
-        return None
     if isinstance(history, TrialTrajectoryHistory):
         return _expand(history)
     return _EXPANSIONS.prepare(

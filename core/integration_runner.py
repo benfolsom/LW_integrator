@@ -3646,9 +3646,6 @@ def retarded_integrator(
             and beamline_geometry is not None
             and beamline_geometry.enabled
         ):
-            from .exact_visibility_history import mark_gate_history_active
-
-            mark_gate_history_active()
             if source_history_representation == "proper_velocity":
                 raise NotImplementedError(
                     "Exact visibility event splitting requires light_cone_quintic "
