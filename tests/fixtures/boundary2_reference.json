@@ -1,0 +1,172 @@
+{
+  "feasibility_commit": "b3bc6227",
+  "conformal": {
+    "pair": {
+      "source_path": "results_shared/conformal/pair_coarse_cg/summary.json",
+      "sha256": "2c14496e30fc83741749dc44ff0ca55d08201562e4a5849bb18aeec289d8306d",
+      "work_eV_per_electron": 7.677362377361226e-07,
+      "physical_gather_eV_per_electron": 7.603019831572551e-07
+    },
+    "out": {
+      "source_path": "results_shared/conformal/out_fine_cg/summary.json",
+      "sha256": "705ad7d4be1ecd303acb8a1b20eac2c7b9e1ee7b3ae9574abd11a512ec82aa68",
+      "work_eV_per_electron": -0.5610837029722205,
+      "physical_gather_eV_per_electron": -0.5609815613917837
+    }
+  },
+  "step2m": {
+    "smooth_d02": {
+      "source_path": "results_shared/step2m/smooth_d02/summary.json",
+      "sha256": "b8805ba6b76b38cac8b2f7e27da73eb10f16ac12e40d901a79e9b2040c820efc",
+      "iterations": [
+        {
+          "work": -9.226800822335479e-07,
+          "impulse": -9.273502002974501e-07,
+          "kinetic": -9.226917748016724e-07,
+          "delta_momentum": -9.273618339689005e-07,
+          "medina_energy": 1.1692586870903021e-11,
+          "peak_energy_residual_relative": 5.199365612903434e-11,
+          "peak_momentum_residual_relative": 5.1472585393422115e-11,
+          "max_relative_gamma_change": 0.0055150721800712905
+        },
+        {
+          "work": -9.226801863888997e-07,
+          "impulse": -9.273503049824407e-07,
+          "kinetic": -9.226918789575576e-07,
+          "delta_momentum": -9.273619386544163e-07,
+          "medina_energy": 1.1692586366914959e-11,
+          "peak_energy_residual_relative": 5.199365025980942e-11,
+          "peak_momentum_residual_relative": 5.1472579582880955e-11,
+          "max_relative_gamma_change": 0.005515066845677698,
+          "relative_work_change": 1.1288348158749635e-07,
+          "relative_impulse_change": 1.128861338215985e-07
+        }
+      ]
+    },
+    "smooth_d04": {
+      "source_path": "results_shared/step2m/smooth_d04/summary.json",
+      "sha256": "423b8dc6985ec60e4ebfd26d8ee19f3271aae14fe4f38f5ec0b64b4d6a8e95f7",
+      "iterations": [
+        {
+          "work": -9.226904929590965e-07,
+          "impulse": -9.273606639658984e-07,
+          "kinetic": -9.22702185977926e-07,
+          "delta_momentum": -9.273722980857804e-07,
+          "medina_energy": 1.169298551504953e-11,
+          "peak_energy_residual_relative": 4.9631391161261506e-11,
+          "peak_momentum_residual_relative": 4.913266644604761e-11,
+          "max_relative_gamma_change": 0.005515078561992584
+        },
+        {
+          "work": -9.226903919436755e-07,
+          "impulse": -9.273605624367904e-07,
+          "kinetic": -9.227020849599698e-07,
+          "delta_momentum": -9.273721965541499e-07,
+          "medina_energy": 1.1692980444013736e-11,
+          "peak_energy_residual_relative": 4.963139659486731e-11,
+          "peak_momentum_residual_relative": 4.9132671825180606e-11,
+          "max_relative_gamma_change": 0.005515077174479021,
+          "relative_work_change": 1.094792162146903e-07,
+          "relative_impulse_change": 1.0948180468277034e-07
+        }
+      ]
+    },
+    "smooth_d02_dt001": {
+      "source_path": "results_shared/step2m/smooth_d02_dt001/summary.json",
+      "sha256": "499b7119b1239b0d6b7f8ac49951a25e93ec56fe38cb93e8df8f5634852bfefd",
+      "iterations": [
+        {
+          "work": -9.226877110815507e-07,
+          "impulse": -9.273578679466931e-07,
+          "kinetic": -9.226994045085669e-07,
+          "delta_momentum": -9.273695024727038e-07,
+          "medina_energy": 1.1693444127761197e-11,
+          "peak_energy_residual_relative": 3.584547025342819e-11,
+          "peak_momentum_residual_relative": 3.5485930060613095e-11,
+          "max_relative_gamma_change": 0.005515122624469373
+        },
+        {
+          "work": -9.226878470181242e-07,
+          "impulse": -9.2735800457451e-07,
+          "kinetic": -9.226995404459008e-07,
+          "delta_momentum": -9.273696391012765e-07,
+          "medina_energy": 1.1693430337937033e-11,
+          "peak_energy_residual_relative": 3.584546497243265e-11,
+          "peak_momentum_residual_relative": 3.548592483246482e-11,
+          "max_relative_gamma_change": 0.005515121535304923,
+          "relative_work_change": 1.4732671936764792e-07,
+          "relative_impulse_change": 1.4733017474692374e-07
+        }
+      ]
+    },
+    "smooth_d02_extended": {
+      "source_path": "results_shared/step2m/smooth_d02_extended/summary.json",
+      "sha256": "147dc2c478b733850939ace66aa602b86733dd529dc2a9faec0b302c42d6d81c",
+      "iterations": [
+        {
+          "work": -9.226808784000693e-07,
+          "impulse": -9.273510005124613e-07,
+          "kinetic": -9.226925709681929e-07,
+          "delta_momentum": -9.273626341839119e-07,
+          "medina_energy": 1.169258687086436e-11,
+          "peak_energy_residual_relative": 5.1993611264542936e-11,
+          "peak_momentum_residual_relative": 5.147254097751544e-11,
+          "max_relative_gamma_change": 0.0055150721800712905
+        },
+        {
+          "work": -9.226809855868307e-07,
+          "impulse": -9.27351108244277e-07,
+          "kinetic": -9.226926781554882e-07,
+          "delta_momentum": -9.273627419162526e-07,
+          "medina_energy": 1.1692586366876275e-11,
+          "peak_energy_residual_relative": 5.1993605224506466e-11,
+          "peak_momentum_residual_relative": 5.1472534997870566e-11,
+          "max_relative_gamma_change": 0.005515066845677698,
+          "relative_work_change": 1.1616882008678338e-07,
+          "relative_impulse_change": 1.1617155004290762e-07
+        }
+      ]
+    },
+    "smooth_d01": {
+      "source_path": "results_shared/step2m/smooth_d01/summary.json",
+      "sha256": "6481496bff3f13fc645d4fb77476e1966c87931458754efefeca254ce5c5fcc4",
+      "iterations": [
+        {
+          "work": -9.226749313053337e-07,
+          "impulse": -9.273450231746195e-07,
+          "kinetic": -9.226866236514512e-07,
+          "delta_momentum": -9.27356656625184e-07,
+          "medina_energy": 1.16924627666737e-11,
+          "peak_energy_residual_relative": 1.4261703437438546e-10,
+          "peak_momentum_residual_relative": 1.411864261554391e-10,
+          "max_relative_gamma_change": 0.005515069387585717
+        },
+        {
+          "work": -9.226749246949632e-07,
+          "impulse": -9.27345016530632e-07,
+          "kinetic": -9.226866170411291e-07,
+          "delta_momentum": -9.273566499812485e-07,
+          "medina_energy": 1.1692435763726259e-11,
+          "peak_energy_residual_relative": 1.426170353961445e-10,
+          "peak_momentum_residual_relative": 1.411864271669729e-10,
+          "max_relative_gamma_change": 0.00551507168131662,
+          "relative_work_change": 7.164354751955729e-09,
+          "relative_impulse_change": 7.164526046320667e-09
+        }
+      ]
+    }
+  },
+  "radiation_control": {
+    "source_path": "results_shared/step2m/smooth_d02_tight/summary.json",
+    "sha256": "df2c991196f976c15384406d0586b8d3f2784e86ddc1ddf8a111627f8845505a",
+    "tight_final": {
+      "work": -9.22680117017495e-07,
+      "impulse": -9.273502352582726e-07,
+      "medina_energy": 1.1692558516714713e-11,
+      "medina_momentum": 1.1633661893729367e-11,
+      "lienard_energy": 1.1693011112516007e-11
+    },
+    "base_radiation_rtol": 2e-06,
+    "tight_radiation_rtol": 2e-07
+  }
+}
