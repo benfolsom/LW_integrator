@@ -8,6 +8,7 @@ Cloud children have independent retarded roots and boundary events.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from math import fsum
 from typing import Any, Iterable
 
 import numpy as np
@@ -93,6 +94,99 @@ def selected_occluder(
     return max(geometry.occluders, key=lambda item: abs(np.dot(item.axis, vector)))
 
 
+def _relative_position(
+    high: np.ndarray,
+    low: np.ndarray,
+    tail: np.ndarray,
+    center: np.ndarray,
+    displacement: Iterable[float] = (0.0, 0.0, 0.0),
+) -> np.ndarray:
+    """Cancel the coordinate origin before rounding away its remainders."""
+    return np.array(
+        [
+            fsum((float(h), -float(c), float(l), float(t), float(dx)))
+            for h, l, t, c, dx in zip(high, low, tail, center, displacement)
+        ]
+    )
+
+
+def _relative_null_coefficients(segment: Any, center: np.ndarray) -> np.ndarray:
+    coefficients = np.array(segment.coefficients_mm, copy=True)
+    coefficients[:, 0] *= -1
+    coefficients[1, 0] += C_MMNS * segment.duration_ns
+    coefficients = coefficients @ segment.frame
+    coefficients[0] += _relative_position(
+        segment.origin_position_mm,
+        segment.origin_position_low_mm,
+        (
+            np.zeros(3)
+            if segment.origin_position_tail_mm is None
+            else segment.origin_position_tail_mm
+        ),
+        center,
+    )
+    return coefficients
+
+
+def _sample_relative_position(
+    source: Any, sample: Any, event: Any, center: np.ndarray
+) -> np.ndarray:
+    if sample.source_segment_index is not None and source.light_cone_segments:
+        segment = source.light_cone_segments[sample.source_segment_index]
+        fraction = sample.source_segment_fraction
+        if fraction == 0.0:
+            return _relative_position(
+                segment.origin_position_mm,
+                segment.origin_position_low_mm,
+                (
+                    np.zeros(3)
+                    if segment.origin_position_tail_mm is None
+                    else segment.origin_position_tail_mm
+                ),
+                center,
+            )
+        if fraction == 1.0 and segment.endpoint_coordinates is not None:
+            return _relative_position(*segment.endpoint_coordinates[:3], center)
+        values = np.polynomial.polynomial.polyval(fraction, segment.coefficients_mm)
+        displacement = (
+            np.array(
+                [
+                    C_MMNS * segment.duration_ns * fraction - values[0],
+                    values[1],
+                    values[2],
+                ]
+            )
+            @ segment.frame
+        )
+        return _relative_position(
+            segment.origin_position_mm,
+            segment.origin_position_low_mm,
+            (
+                np.zeros(3)
+                if segment.origin_position_tail_mm is None
+                else segment.origin_position_tail_mm
+            ),
+            center,
+            displacement,
+        )
+    # Analytic inertial samples carry a resolved separation instead of a
+    # segment fraction. Their diagnostic Cartesian position is rounded.
+    if sample.precise_separation_mm is not None:
+        return np.array(
+            [
+                fsum((float(h), -float(c), float(l), float(t), -float(r)))
+                for h, l, t, r, c in zip(
+                    event.position_mm,
+                    event.position_low_mm,
+                    event.position_tail_mm,
+                    sample.precise_separation_mm,
+                    center,
+                )
+            ]
+        )
+    return sample.position_mm - center
+
+
 def visible_prepared(
     prepared: Any,
     history: Any,
@@ -110,6 +204,13 @@ def visible_prepared(
         from .retarded_fields import _solve_retarded_sample
 
         indices = set()
+        occluder = selected_occluder(history.geometry, history.direction)
+        if occluder is None:
+            return prepared
+        local_geometry = replace(
+            history.geometry,
+            occluders=[replace(occluder, center_mm=(0.0, 0.0, 0.0))],
+        )
         for index, source in prepared.sources.items():
             worldline = getattr(source, "worldline", source)
             sample = _solve_retarded_sample(
@@ -128,7 +229,11 @@ def visible_prepared(
             if (
                 sample is None
                 or compute_directional_visibility_mask(
-                    sample.position_mm[None, :], history.geometry, history.direction
+                    _sample_relative_position(
+                        worldline, sample, event, np.asarray(occluder.center_mm)
+                    )[None, :],
+                    local_geometry,
+                    history.direction,
                 )[0]
             ):
                 indices.add(index)
@@ -144,6 +249,8 @@ class VisibilitySwitch:
     time_ns: float
     position_mm: np.ndarray
     visible_after: bool
+    position_low_mm: tuple[float, ...] = (0.0, 0.0, 0.0)
+    position_tail_mm: tuple[float, ...] = (0.0, 0.0, 0.0)
 
 
 def _polynomial_switches(coefficients: np.ndarray, occluder: Occluder) -> list[float]:
@@ -173,6 +280,31 @@ def _polynomial_switches(coefficients: np.ndarray, occluder: Occluder) -> list[f
     return sorted(set(roots))
 
 
+def _endpoint_on_boundary(coordinates: np.ndarray, occluder: Occluder) -> bool:
+    """Certify an intersection using accepted coordinates, without a tie band."""
+    from decimal import Decimal, localcontext
+
+    with localcontext() as context:
+        context.prec = 90
+
+        def d(value: float) -> Decimal:
+            return Decimal.from_float(float(value))
+
+        relative = [
+            d(h) + d(l) + d(t) - d(c)
+            for h, l, t, c in zip(*coordinates, occluder.center_mm)
+        ]
+        axis = [d(value) for value in occluder.axis]
+        axial = sum((r * a for r, a in zip(relative, axis)), Decimal(0))
+        radial_sq = sum(
+            ((r - axial * a) ** 2 for r, a in zip(relative, axis)), Decimal(0)
+        )
+        return (
+            radial_sq == d(occluder.radius_mm) ** 2
+            or abs(axial) == d(occluder.length_mm) / 2
+        )
+
+
 def source_visibility_switches(
     source: Any,
     index: int,
@@ -193,6 +325,9 @@ def source_visibility_switches(
     if occluder is None or upper <= lower:
         return []
     pieces = []
+    center = np.asarray(occluder.center_mm)
+    local_occluder = replace(occluder, center_mm=(0.0, 0.0, 0.0))
+    local_geometry = replace(geometry, occluders=[local_occluder])
     requested_lower = lower
     if source.inertial_boundary is not None:
         time, position, proper_velocity = source.inertial_boundary
@@ -206,10 +341,11 @@ def source_visibility_switches(
                     stop,
                     np.stack(
                         (
-                            position + (lower - time) * velocity,
+                            (position - center) + (lower - time) * velocity,
                             (stop - lower) * velocity,
                         )
                     ),
+                    (),
                 )
             )
         lower = max(lower, time)
@@ -222,19 +358,53 @@ def source_visibility_switches(
             segment = source.light_cone_segments[index_segment]
             # The solver evaluates displacement in this null frame. Transform
             # that very polynomial, rather than refitting its Cartesian knots.
-            coefficients = np.array(segment.coefficients_mm, copy=True)
-            coefficients[:, 0] *= -1
-            coefficients[1, 0] += C_MMNS * segment.duration_ns
-            coefficients = coefficients @ segment.frame
-            coefficients[0] += source.position_mm[index_segment]
-            start = segment.time_ns + segment.origin_time_low_ns
+            coefficients = _relative_null_coefficients(segment, center)
+            start = fsum(
+                (
+                    segment.time_ns,
+                    segment.origin_time_low_ns,
+                    segment.origin_time_tail_ns,
+                )
+            )
             stop = start + segment.duration_ns
+            endpoints = [
+                np.array(
+                    [
+                        segment.origin_position_mm,
+                        segment.origin_position_low_mm,
+                        (
+                            np.zeros(3)
+                            if segment.origin_position_tail_mm is None
+                            else segment.origin_position_tail_mm
+                        ),
+                    ]
+                ),
+                segment.endpoint_coordinates,
+            ]
         else:
-            coefficients = source.position_coefficients_mm[index_segment]
-        pieces.append((start, stop, coefficients))
+            coefficients = np.array(
+                source.position_coefficients_mm[index_segment], copy=True
+            )
+            coefficients[0] -= center
+            endpoints = [
+                np.array([position, np.zeros(3), np.zeros(3)])
+                for position in source.position_mm[index_segment : index_segment + 2]
+            ]
+        pieces.append((start, stop, coefficients, endpoints))
     result = []
-    for start, stop, coefficients in pieces:
-        roots = _polynomial_switches(coefficients, occluder)
+    for start, stop, coefficients, endpoints in pieces:
+        roots = _polynomial_switches(coefficients, local_occluder)
+        for endpoint, coordinates in enumerate(endpoints):
+            if coordinates is not None and _endpoint_on_boundary(
+                coordinates[:3], occluder
+            ):
+                # Snap nearby polynomial roots only to a certified endpoint;
+                # the strict [0, 1] filter still rejects genuinely later roots.
+                roots = [
+                    r for r in roots if abs(r - endpoint) > 128 * np.finfo(float).eps
+                ]
+                roots.append(float(endpoint))
+        roots = sorted(set(roots))
         for root in roots:
             if not 0.0 <= root <= 1.0:
                 continue
@@ -248,12 +418,29 @@ def source_visibility_switches(
             probes = np.array(((before + root) * 0.5, (after + root) * 0.5))
             positions = np.stack([polyval(r, coefficients) for r in probes])
             visibility = compute_directional_visibility_mask(
-                positions, geometry, direction
+                positions, local_geometry, direction
             )
             if visibility[0] != visibility[1]:
+                from .retarded_fields import _translate_resolved_position
+
+                if (
+                    root in (0.0, 1.0)
+                    and endpoints
+                    and endpoints[int(root)] is not None
+                ):
+                    position, low, tail = endpoints[int(root)][:3]
+                else:
+                    position, low, tail = _translate_resolved_position(
+                        center, np.zeros(3), np.zeros(3), polyval(root, coefficients)
+                    )
                 result.append(
                     VisibilitySwitch(
-                        index, time, polyval(root, coefficients), bool(visibility[1])
+                        index,
+                        time,
+                        position,
+                        bool(visibility[1]),
+                        tuple(low),
+                        tuple(tail),
                     )
                 )
     return sorted(result, key=lambda item: item.time_ns)

@@ -249,27 +249,105 @@ def test_switch_at_public_endpoint_is_rebased_once_and_keeps_boundary_mask(monke
         )
 
 
-def test_event_locator_uses_solver_null_polynomial():
+@pytest.mark.parametrize("origin", [0.0, float(2**53)])
+@pytest.mark.parametrize("crossing", ["interior", "lower", "upper", "beyond_upper"])
+def test_event_locator_uses_solver_null_polynomial(origin, crossing):
     from dataclasses import replace
+
     from core.exact_visibility import source_visibility_switches
+    from core.exact_visibility_step import _arrival_residual, _arrival_roundoff
+    from core.resolved_knot import initialize_resolved_result
     from core.retarded_fields import _prepare_history
 
-    first = _state(position_mm=(0.5, 0, 0), beta=(0.1, 0, 0), source_charge=1)
-    last = _state(position_mm=(1.5, 0, 0), beta=(0.1, 0, 0), source_charge=1)
-    last["t"][:] = 1 / (0.1 * C_MMNS)
-    source = _prepare_history([first, last], ()).sources[0]
+    speed = 1.4288733449786515
+    first_x, last_x, duration = {
+        "interior": (0.5, 1.5, 1 / (0.1 * C_MMNS)),
+        "lower": (1.0, 1.0 + speed, 1.0),
+        "upper": (1.0 - speed, 1.0, 1.0),
+        # The nearby polynomial root must not be snapped unless the accepted
+        # endpoint itself is on the boundary.
+        "beyond_upper": (1.0 - speed - 1e-14, 1.0 - 1e-14, 1.0),
+    }[crossing]
+    beta = 0.1 if crossing == "interior" else speed / C_MMNS
+    rows = []
+    for time, offset in ((0.0, first_x), (duration, last_x)):
+        row = _state(
+            position_mm=(origin + offset, 0, 0), beta=(beta, 0, 0), source_charge=1
+        )
+        row["t"][:] = time
+        initialize_resolved_result(row, row)
+        row["source_kinematics_ready"][:] = 1
+        row["source_u_x"][:] = row["gamma"] * beta
+        row["source_position_low_x"][:] = offset - (row["x"][0] - origin)
+        rows.append(row)
+    source = _prepare_history(rows, ()).sources[0]
     # A deliberately different Cartesian interior with identical positions at
     # both knots makes use of the wrong representation observable.
     coefficients = source.position_coefficients_mm.copy()
     coefficients[0, 1, 0] += 0.2
     coefficients[0, 2, 0] -= 0.2
     source = replace(source, position_coefficients_mm=coefficients)
-    switches = source_visibility_switches(source, 0, gate(), (0, 0, 1), 0, last["t"][0])
+    geometry = gate()
+    geometry.occluders[0] = replace(geometry.occluders[0], center_mm=(origin, 0, 0))
+    switches = source_visibility_switches(
+        source, 0, geometry, (0, 0, 1), -0.1, duration + 0.1
+    )
+    if crossing == "beyond_upper":
+        assert switches == []
+        return
     assert len(switches) == 1
     switch = switches[0]
-    np.testing.assert_allclose(switch.time_ns, last["t"][0] / 2, rtol=1e-14)
-    sample = source.light_cone_segments[0].sample(0.5)[0]
-    np.testing.assert_allclose(switch.position_mm, sample, rtol=0, atol=1e-15)
+    expected = {"interior": duration / 2, "lower": 0.0, "upper": duration}[crossing]
+    np.testing.assert_allclose(switch.time_ns, expected, rtol=1e-14, atol=1e-15)
+    assert not switch.visible_after
+    observer = _state(position_mm=(origin, 1, 0))
+    observer["t"][:] = expected + np.sqrt(2) / C_MMNS
+    assert abs(_arrival_residual(observer, 0, switch)) < 1e-13
+    assert _arrival_roundoff(observer, 0, switch) < 1e-13
+    if origin == 0 and crossing == "interior":
+        sample = source.light_cone_segments[0].sample(0.5)[0]
+        np.testing.assert_allclose(switch.position_mm, sample, rtol=0, atol=1e-15)
+
+
+@pytest.mark.parametrize("origin", [0.0, float(2**53)])
+@pytest.mark.parametrize("offset", [0.0625, 0.25])
+def test_gate_selection_retains_resolved_source_position(origin, offset):
+    from dataclasses import replace
+
+    from core.exact_visibility import visibility_history
+    from core.resolved_knot import initialize_resolved_result
+    from core.retarded_fields import (
+        ObserverEvent,
+        evaluate_retarded_charge_field_native,
+    )
+
+    rows = []
+    for time in (-1.0, 0.0):
+        row = _state(position_mm=(origin, 0, 0), source_charge=1)
+        row["t"][:] = time
+        initialize_resolved_result(row, row)
+        row["source_kinematics_ready"][:] = 1
+        row["source_position_low_x"][:] = offset * 0.75
+        row["source_position_tail_x"][:] = offset * 0.25
+        rows.append(row)
+    event = ObserverEvent(0.0, (origin, 1.0, 0.0))
+    geometry = gate(radius=0.1)
+    geometry.occluders[0] = replace(geometry.occluders[0], center_mm=(origin, 0, 0))
+    raw = evaluate_retarded_charge_field_native(rows, event)
+    gated = evaluate_retarded_charge_field_native(
+        visibility_history(rows, geometry, (0, 0, 1)), event
+    )
+    expected_e = np.array([-offset, 1, 0]) / (1 + offset**2) ** 1.5
+    np.testing.assert_allclose(raw.electric_field_native, expected_e, rtol=1e-14)
+    assert gated.valid_sources.tolist() == [offset < 0.1]
+    if offset < 0.1:
+        assert (
+            gated.electric_field_native.tobytes() == raw.electric_field_native.tobytes()
+        )
+        assert gated.four_potential.tobytes() == raw.four_potential.tobytes()
+    else:
+        np.testing.assert_array_equal(gated.electric_field_native, np.zeros(3))
+        np.testing.assert_array_equal(gated.four_potential, np.zeros(4))
 
 
 def test_unlocated_mask_change_is_rejected(monkeypatch):
@@ -355,6 +433,56 @@ def test_fast_switch_publishes_knot_and_restarts_medina_on_new_branch(tmp_path):
         tmp_path / "checkpoint", **arguments, resume=True
     ).restore_builder(restored, "rider")
     public = restored.build()
+    # Restore in a new interpreter: no preceding gated integration or global
+    # preparation cache may be needed to recover the persisted internal knot.
+    import subprocess
+    import sys
+
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            """
+import sys
+import numpy as np
+from core.integration_checkpoint import IntegrationCheckpointStore
+from core.potential_inclusion import decode_inclusion_state
+from core.retarded_fields import _prepare_history
+from core.retarded_dipole_fields import _prepare_dipole_history
+from core.types import TrajectoryBuilder
+from dataclasses import replace
+builder = TrajectoryBuilder(9, 1)
+store = IntegrationCheckpointStore(
+    sys.argv[1], compatibility_payload={"test": "gate-knots"}, total_steps=9,
+    requested_steps=9, active_start=0, interval_steps=1, interval_seconds=0,
+    resume=True,
+)
+store.restore_builder(builder, "rider")
+history = builder.build()
+knots = [k for row in (history.state_at(i) for i in range(history.n_steps))
+         for k in decode_inclusion_state(
+    str(row["potential_inclusion_state"][0])).get("exact_gate_history", {}).get("knots", [])]
+assert len(knots) == 1
+charge = _prepare_history(history, ()).sources[0]
+dipole = _prepare_dipole_history(
+    replace(history, magnetic_moment_native=np.ones(1),
+            magnetic_dipole_active=np.ones(1, dtype=bool), _storage_state=None,
+            _storage_array_revision=None),
+    source_identities=None, observer_source_identity=None,
+    excluded_source_identities=(),
+).sources[0].worldline
+assert knots[0]["t"] in dipole.time_ns
+index = np.flatnonzero(charge.time_ns == knots[0]["t"])[0]
+np.testing.assert_allclose(charge.light_cone_segments[index-1].sample(1)[2],
+                           knots[0]["before"], atol=1e-15)
+np.testing.assert_allclose(charge.light_cone_segments[index].sample(0)[2],
+                           knots[0]["after"], atol=1e-15)
+""",
+            str(tmp_path / "checkpoint"),
+        ],
+        check=True,
+        timeout=60,
+    )
     for history in (
         run[2],
         public,

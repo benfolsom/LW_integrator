@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from math import fsum
 from typing import Any, Callable
 
 import numpy as np
@@ -12,7 +13,6 @@ from .exact_pair_endpoint import (
     replace_exact_source_endpoint_potential,
 )
 from .exact_source_cloud import exact_cloud_history
-from .exact_visibility_history import save_visibility_knots
 from .exact_visibility import (
     boundary_visibility_overrides,
     save_boundary_visibility,
@@ -21,6 +21,7 @@ from .exact_visibility import (
     visibility_history,
     visible_prepared,
 )
+from .exact_visibility_history import save_visibility_knots
 from .potential_inclusion import LEDGER_FIELDS
 from .retarded_fields import (
     ObserverEvent,
@@ -70,31 +71,36 @@ def _sample(source: Any, event: ObserverEvent) -> Any:
     )
 
 
+def _arrival_separation(event: ObserverEvent, switch: Any) -> np.ndarray:
+    return np.array(
+        [
+            fsum((float(h), -float(s), float(l), -float(sl), float(t), -float(st)))
+            for h, l, t, s, sl, st in zip(
+                event.position_mm,
+                event.position_low_mm,
+                event.position_tail_mm,
+                switch.position_mm,
+                switch.position_low_mm,
+                switch.position_tail_mm,
+            )
+        ]
+    )
+
+
 def _arrival_residual(state: ParticleState, index: int, switch: Any) -> float:
     event = _event(state, index)
-    position = (
-        np.asarray(event.position_mm)
-        + event.position_low_mm
-        + np.asarray(event.position_tail_mm)
+    elapsed = fsum(
+        (event.time_ns, -switch.time_ns, event.time_low_ns, event.time_tail_ns)
     )
-    time = event.time_ns + event.time_low_ns + event.time_tail_ns
-    return C_MMNS * (time - switch.time_ns) - np.linalg.norm(
-        position - switch.position_mm
-    )
+    return C_MMNS * elapsed - np.linalg.norm(_arrival_separation(event, switch))
 
 
 def _arrival_roundoff(state: ParticleState, index: int, switch: Any) -> float:
-    """Floating-point tie band, independent of the integration timestep."""
-    position = np.array([state[axis][index] for axis in "xyz"])
+    """Floating-point tie band based on separation, independent of translation."""
     return (
         32.0
         * np.finfo(float).eps
-        * max(
-            np.linalg.norm(position),
-            np.linalg.norm(switch.position_mm),
-            np.linalg.norm(position - switch.position_mm),
-            1.0,
-        )
+        * max(np.linalg.norm(_arrival_separation(_event(state, index), switch)), 1.0)
     )
 
 
