@@ -504,3 +504,49 @@ zero error selects position and permits bounded growth. A Medina impulse cap
 can override the numerical estimator and is identified in the adaptive trace.
 Diagnostic values and signed energy increments are preserved in the ledger.
 The floor is a resolution allowance, not a proof of energy conservation.
+
+Fixed reduction for bounded exact references
+-------------------------------------------
+
+``ExactSourceReductionConfig`` is an opt-in initial discretization under
+``MagneticDipoleConfig.exact_source_reduction``. It supports charge-only,
+fixed-step ``BUNCH_TO_BUNCH`` runs with ``INERTIAL_PREHISTORY`` and zero
+intrinsic moments. Set ``enabled=True``, ``rider_count=8``, and
+``driver_count=8`` to replace a larger homogeneous initial ensemble with eight
+macros per role. A zero count keeps that role, and a count at or above the
+original count returns its original state without new arithmetic.
+
+This reduced pseudo-grid uses deterministic farthest-point seeds and fixed
+nearest-seed cells. Each new macro starts at its population-weighted cell
+centre, carries the cell's conserved source charge and diagnostic population,
+and retains physical species charge and inertia. Population-weighted spatial
+mechanical momentum is conserved by averaging momentum and reconstructing
+on-shell velocity. Internal velocity spread and cell self-fields are
+unresolved. Initial kinetic energy need not be conserved by this coarse model.
+
+Deposition happens once, before inertial prehistory and train expansion.
+Every new centre and transverse child then has a persistent accepted history.
+Startup potentials, forces, gate events, and canonical endpoints use the same
+sources. There is no rotating selection, past charge override, or passive
+particle reconstruction. The returned trajectories contain the reduced macros;
+they do not contain trajectories for all original parents. The original
+rotating pseudo-grid guard remains in force.
+
+The testbed JSON surface exposes ``exact_source_reduction_enabled``,
+``exact_source_reduction_rider_count``, and
+``exact_source_reduction_driver_count``. They default to disabled and zero.
+``scripts/check_sources2.py`` saves the initial mapping and resolved inputs.
+Refine macro count to the original ensemble as well as transverse child count,
+explicit width, and proper timestep before treating this as a useful reference.
+An exact root of a reduced worldline is not an accuracy certificate for the
+unreduced physical ensemble.
+
+Driver trains now accept persistent transverse clouds on the fixed-step exact
+route. Reduction, when requested, applies to the template before each bunch
+is translated. Within-bunch fields exclude the entire own macro cloud and all
+other train bunches. Cross-bunch fields retain every driver bunch. Fixed-step
+train checkpoints require ``INERTIAL_PREHISTORY`` and preserve cloud parameters,
+parent histories, and gate inclusion metadata. Cavity-exit checkpoints and
+adaptive train checkpoints retain their restrictions. Fixed proper steps do
+not promise a shared laboratory time across accelerating particles; check
+source coverage and refine the timestep near encounters.

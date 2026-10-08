@@ -860,6 +860,31 @@ class DipoleSourceConfig:
 
 
 @dataclass
+class ExactSourceReductionConfig:
+    """Fixed initial charge/population deposition for a reduced exact model.
+
+    Counts of zero retain that role unchanged. A request at or above the
+    original count preserves its original arithmetic. This is a coarse source
+    model requiring count, width, and timestep refinement, not an exact
+    evaluation of the unreduced ensemble.
+    """
+
+    enabled: bool = False
+    rider_count: int = 0
+    driver_count: int = 0
+
+    def __post_init__(self) -> None:
+        for name in ("rider_count", "driver_count"):
+            value = getattr(self, name)
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, np.integer))
+                or value < 0
+            ):
+                raise ValueError(f"{name} must be a non-negative integer")
+
+
+@dataclass
 class MagneticDipoleConfig:
     """Configuration for experimental intrinsic magnetic-moment dynamics.
 
@@ -880,6 +905,7 @@ class MagneticDipoleConfig:
     intrinsic_spin_self_reaction_mode: str = "off"
     # Bound by the integration runner for persistent charge-only clouds.
     exact_charge_cloud: MacroparticleSmearingConfig | None = None
+    exact_source_reduction: ExactSourceReductionConfig | None = None
     source: DipoleSourceConfig = field(default_factory=DipoleSourceConfig)
     rider: MagneticDipoleParticleConfig = field(
         default_factory=lambda: MagneticDipoleParticleConfig(species="electron")
@@ -891,6 +917,10 @@ class MagneticDipoleConfig:
     def __post_init__(self) -> None:
         self.enabled = bool(self.enabled)
         self.spin_precession_enabled = bool(self.spin_precession_enabled)
+        if isinstance(self.exact_source_reduction, dict):
+            self.exact_source_reduction = ExactSourceReductionConfig(
+                **self.exact_source_reduction
+            )
         if isinstance(self.exact_charge_cloud, dict):
             self.exact_charge_cloud = MacroparticleSmearingConfig(
                 **self.exact_charge_cloud

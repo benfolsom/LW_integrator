@@ -71,12 +71,17 @@ def test_fixed_step_cloud_supports_joint_observer_gate_events():
     assert np.all(last["potential_inclusion_delta_A_t"] != 0)
 
 
-def test_finite_train_clouds_retain_unvalidated_route_guard():
-    with pytest.raises(NotImplementedError, match="Persistent train clouds"):
-        crossing_run(
-            2,
-            gate(),
-            duration=0.001,
-            macroparticle_smearing=cloud_config(),
-            driver_train=DriverTrainConfig(enabled=True, bunch_count=2),
-        )
+def test_one_bunch_finite_train_cloud_is_bitwise_single_driver():
+    options = dict(macroparticle_smearing=cloud_config(), duration=0.001)
+    single = crossing_run(2, gate(), **options)
+    train = crossing_run(
+        2,
+        gate(),
+        **options,
+        driver_train=DriverTrainConfig(enabled=True, bunch_count=1),
+    )
+    for before_role, after_role in zip(single[:2], train[:2]):
+        for before, after in zip(before_role, after_role):
+            for key, value in before.items():
+                if isinstance(value, np.ndarray):
+                    assert value.tobytes() == after[key].tobytes(), key

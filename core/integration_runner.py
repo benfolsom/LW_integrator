@@ -3519,10 +3519,6 @@ def retarded_integrator(
         from .exact_source_cloud import validate_exact_cloud
 
         validate_exact_cloud(magnetic_dipole.exact_charge_cloud)
-        if driver_train.enabled:
-            raise NotImplementedError(
-                "Persistent train clouds require shared-clock and checkpoint validation"
-            )
         if (
             dipole_source_active
             or not exact_magnetic_active
@@ -3619,9 +3615,12 @@ def retarded_integrator(
             raise NotImplementedError(
                 "resumable checkpoints do not yet support pseudo-grid schedules"
             )
-        if driver_train.enabled:
+        if driver_train.enabled and (
+            startup_mode is not StartupMode.INERTIAL_PREHISTORY
+            or adaptive_pair_return.enabled
+        ):
             raise NotImplementedError(
-                "resumable checkpoints do not yet support driver trains"
+                "train checkpoints require fixed-step INERTIAL_PREHISTORY"
             )
         if cavity_exit.enabled:
             raise NotImplementedError(
@@ -3795,11 +3794,6 @@ def retarded_integrator(
                 from .exact_source_cloud import validate_exact_cloud
 
                 validate_exact_cloud(macroparticle_smearing)
-                if driver_train.enabled:
-                    raise NotImplementedError(
-                        "Persistent train clouds require shared-clock and checkpoint "
-                        "validation"
-                    )
                 magnetic_dipole = replace(
                     magnetic_dipole, exact_charge_cloud=macroparticle_smearing
                 )
@@ -3928,6 +3922,28 @@ def retarded_integrator(
                 len(np.asarray(state.get("x", []))),
                 dtype=bool,
             )
+    reduction = magnetic_dipole.exact_source_reduction
+    if reduction is not None and reduction.enabled:
+        if (
+            not exact_magnetic_active
+            or dipole_source_active
+            or startup_mode is not StartupMode.INERTIAL_PREHISTORY
+            or adaptive_pair_return.enabled
+            or pseudo_grid.enabled
+            or sim_type is not SimulationType.BUNCH_TO_BUNCH
+        ):
+            raise NotImplementedError(
+                "fixed exact source reduction requires charge-only fixed-step "
+                "BUNCH_TO_BUNCH with INERTIAL_PREHISTORY and no rotating pseudo-grid"
+            )
+        from .exact_source_reduction import reduce_exact_initial_state
+
+        init_rider, _ = reduce_exact_initial_state(init_rider, reduction.rider_count)
+        if init_driver is not None:
+            init_driver, _ = reduce_exact_initial_state(
+                init_driver, reduction.driver_count
+            )
+
     driver_train_bunch_ranges: tuple[slice, ...] = ()
     if driver_train_enabled and init_driver is not None:
         driver_train_bunch_ranges = _driver_train_bunch_slices(
@@ -4673,6 +4689,7 @@ def retarded_integrator(
                 "macroparticle_smearing": macroparticle_smearing,
                 "beamline_geometry": beamline_geometry,
                 "magnetic_dipole": magnetic_dipole,
+                **({"driver_train": driver_train} if driver_train.enabled else {}),
             }
         )
         checkpoint_directory = checkpoint.resume_from or checkpoint.directory

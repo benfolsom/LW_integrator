@@ -455,6 +455,9 @@ class SimulationOptions:
     # Intrinsic magnetic moment / spin options. Preset values are resolved by
     # the core species registry when a run starts.
     magnetic_dipole_enabled: bool = False
+    exact_source_reduction_enabled: bool = False
+    exact_source_reduction_rider_count: int = 0
+    exact_source_reduction_driver_count: int = 0
     magnetic_dipole_spin_precession_enabled: bool = True
     magnetic_dipole_stern_gerlach_force_enabled: bool = False
     magnetic_dipole_spin_model: str = "rfs_minimal_2021"
@@ -816,6 +819,9 @@ class SimulationOptions:
             "external_field_z_max": self.external_field_z_max,
             "external_field_t_min": self.external_field_t_min,
             "external_field_t_max": self.external_field_t_max,
+            "exact_source_reduction_enabled": self.exact_source_reduction_enabled,
+            "exact_source_reduction_rider_count": self.exact_source_reduction_rider_count,
+            "exact_source_reduction_driver_count": self.exact_source_reduction_driver_count,
             "magnetic_dipole": {
                 "enabled": self.magnetic_dipole_enabled,
                 "spin_precession_enabled": (
@@ -1753,6 +1759,15 @@ class SimulationOptions:
             external_field_z_max=_optional_float("external_field_z_max"),
             external_field_t_min=_optional_float("external_field_t_min"),
             external_field_t_max=_optional_float("external_field_t_max"),
+            exact_source_reduction_enabled=_bool(
+                "exact_source_reduction_enabled", False
+            ),
+            exact_source_reduction_rider_count=_int(
+                "exact_source_reduction_rider_count", 0
+            ),
+            exact_source_reduction_driver_count=_int(
+                "exact_source_reduction_driver_count", 0
+            ),
             magnetic_dipole_enabled=bool(_magnetic_value("enabled", False)),
             magnetic_dipole_spin_precession_enabled=bool(
                 _magnetic_value("spin_precession_enabled", True)
@@ -3163,12 +3178,22 @@ def build_magnetic_dipole_config(options: SimulationOptions) -> object:
     """Build the validated core magnetic-dipole configuration."""
     from core.types import (
         DipoleSourceConfig,
+        ExactSourceReductionConfig,
         MagneticDipoleConfig,
         MagneticDipoleParticleConfig,
     )
 
     return MagneticDipoleConfig(
         enabled=options.magnetic_dipole_enabled,
+        exact_source_reduction=(
+            ExactSourceReductionConfig(
+                enabled=True,
+                rider_count=options.exact_source_reduction_rider_count,
+                driver_count=options.exact_source_reduction_driver_count,
+            )
+            if options.exact_source_reduction_enabled
+            else None
+        ),
         spin_precession_enabled=options.magnetic_dipole_spin_precession_enabled,
         stern_gerlach_force_enabled=(
             options.magnetic_dipole_stern_gerlach_force_enabled
