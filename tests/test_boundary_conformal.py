@@ -13,34 +13,6 @@ from core.boundary.conformal_wake import conformal_wake, taper_profile
 from core.boundary.wake import PECWakeSolver
 
 
-@pytest.mark.parametrize(
-    "segments",
-    [
-        [(2.0, 0.4)],
-        [(0.0, 0.4), (0.4, 1.2), (2.0, 0.4)],
-        [(0.0, 0.4), (2.0, 0.8)],
-        [(0.0, 0.8), (2.0, 0.4)],
-    ],
-)
-def test_default_pec_is_bit_identical(segments):
-    g = AxisymmetricGrid(0.1, 0.1, 20, 40, -2.0)
-    original = PECWakeSolver(g, 0.01, segments)
-    selected = select_pec(g, 0.01, segments)
-    rng = np.random.default_rng(431)
-    for name, mask in (("er", "rmask"), ("ez", "zmask"), ("bt", "bmask")):
-        a = rng.normal(size=getattr(original.f, name).shape) * getattr(original, mask)
-        setattr(original.f, name, a.copy())
-        setattr(selected.f, name, a.copy())
-    for _ in range(5):
-        j = rng.normal(size=original.f.ez.shape)
-        e0, w0 = original.advance(j)
-        e1, w1 = selected.advance(j)
-        assert np.array_equal(e0, e1) and w0 == w1
-        for name in ("er", "ez", "bt"):
-            assert np.array_equal(getattr(original.f, name), getattr(selected.f, name))
-        assert original.energy() == selected.energy()
-
-
 def test_mapped_metric_adjoint_and_midpoint_energy():
     g = AxisymmetricGrid(0.1, 0.1, 20, 40, -2.0)
     wall = lambda z: (1.5 + 0.1 * np.sin(z), 0.1 * np.cos(z))
@@ -66,6 +38,24 @@ def test_mapped_metric_adjoint_and_midpoint_energy():
     for a, c in zip(fixed.physical_fields(), s.physical_fields()):
         assert np.allclose(a, c, rtol=2e-12, atol=2e-13)
     assert fixed_work == pytest.approx(work, abs=1e-13)
+
+    # A linear Maxwell update must be independent of normalized source amplitude.
+    j[:3] = np.random.default_rng(99).normal(size=j[:3].shape)
+    for method, dt in (("cg", 0.04), ("fixed_point", 0.01)):
+        reference = ConformalPEC(g, dt, wall, 0.2, solver=method)
+        _, reference_work = reference.advance(j)
+        assert np.max(abs(reference.f.bt)) > 0
+        for scale in (1e-12, 1e-16):
+            weak = ConformalPEC(g, dt, wall, 0.2, solver=method)
+            _, weak_work = weak.advance(scale * j)
+            for name in ("er", "ez", "bt"):
+                expected = getattr(reference.f, name)
+                actual = getattr(weak.f, name) / scale
+                assert np.max(abs(actual - expected)) <= 2e-12 * np.max(abs(expected))
+            assert weak_work / scale**2 == pytest.approx(reference_work, rel=2e-12)
+        zero = ConformalPEC(g, dt, wall, 0.2, solver=method)
+        _, zero_work = zero.advance(np.zeros_like(j))
+        assert zero_work == 0 and zero.energy() == 0
 
 
 def test_physical_mapped_gather_and_rejections():
@@ -109,7 +99,11 @@ def test_independently_mapped_uniform_pipe():
     # A map into the same radius has no shear and identity field metric.
     g = AxisymmetricGrid(0.1, 0.1, 20, 40, -2.0)
     s = ConformalPEC(g, 0.01, lambda z: taper_profile(z, "pipe2"), 0.2)
-    original = PECWakeSolver(g, 0.01, [(2.0, 2.0)])
+    segments = [(2.0, 2.0)]
+    original = select_pec(g, 0.01, segments)
+    assert type(original) is PECWakeSolver
+    assert original.g is g and original.dt == 0.01
+    assert np.array_equal(original.zmask, PECWakeSolver(g, 0.01, segments).zmask)
     rng = np.random.default_rng(120)
     er = rng.normal(size=s.f.er.shape) * s.rmask
     ez = rng.normal(size=s.f.ez.shape) * s.zmask

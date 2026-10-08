@@ -101,7 +101,7 @@ def integrate_axial_particle(
 
     def rhs(x: float, y: np.ndarray) -> np.ndarray:
         nonlocal calls
-        t = np.expm1(x)
+        t = min(float(np.expm1(x)), end)
         calls += 1
         if progress is not None and calls % 10000 == 0:
             progress(t)
@@ -109,7 +109,10 @@ def integrate_axial_particle(
         dp = momentum(t, w, dz)
         f, fd, pdot, v, dv, gm = force(t, dp, dz)
         acc = pdot / (mass * gm**3)
-        rr = native_rr(charge, mass, f, fd, v, acc)
+        # Use the same on-shell momentum gamma in both formulations. Recovering
+        # gamma from rounded v loses precision at high gamma; the kernel accepts
+        # gamma directly, and the axial acceleration terms cancel algebraically.
+        rr = native_rr(charge, mass, f, fd, v, acc, gamma=gm)
         prad = rr.far_radiated_power / C_MMNS**3
         native = f + rr.radiation_reaction_force[2] / C_MMNS**2
         if abs(native - pdot) > 1e-10 * max(1e-25, abs(pdot), abs(f)):
@@ -153,7 +156,13 @@ def integrate_axial_particle(
         return y
 
     times = np.unique(
-        np.r_[0.0, source_end, np.geomspace(0.001, end, 501), np.expm1(sol.t)]
+        np.r_[
+            0.0,
+            source_end,
+            np.geomspace(min(0.001, end), end, 501),
+            np.clip(np.expm1(sol.t), 0.0, end),
+            end,
+        ]
     )
     dp, dz, work, impulse, rad, radp, lienard, lienardp = actual(times)
     v, _, gm = velocity(dp)

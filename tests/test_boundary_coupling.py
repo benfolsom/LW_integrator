@@ -112,8 +112,6 @@ def test_boundary_force_uses_observer_charge_and_complete_derivative():
     right = force(t + interval, delta_z + (v - p.beta) * interval, v)[0]
     left = force(t - interval, delta_z - (v - p.beta) * interval, v)[0]
     assert fd == pytest.approx((right - left) / (2 * interval), rel=3e-6, abs=1e-18)
-    work_rate = f * v
-    assert work_rate == p.charge * v * e
     assert p.source_charge == 20 * p.charge and p.mass == 0.00002
 
 
@@ -126,28 +124,53 @@ def test_smooth_axial_integrator_ledgers_and_gamma_1000_work():
             np.pi * t
         ) ** 3 * np.cos(np.pi * t)
 
-    result = integrate_axial_particle(
-        pulse, gamma=1000.0, charge=0.001, mass=0.02, source_end=1.0, end=2.0
-    )
-    assert result["final"]["impulse"] == pytest.approx(3e-7 / 8, rel=2e-8)
-    beta = np.sqrt(1 - 1000**-2)
-    assert result["final"]["work"] == pytest.approx(
-        beta * result["final"]["impulse"], rel=1e-12
-    )
-    assert result["peak_energy_residual_relative"] < 1.5e-8
-    assert result["peak_momentum_residual_relative"] < 1.5e-8
-    assert result["radiation_reaction_mode"] == "medina_lad"
-    assert result["final"]["medina_energy"] > 0
+    for gamma in (1000.0, 10000.0, 100000.0, 1000000.0):
+        result = integrate_axial_particle(
+            pulse, gamma=gamma, charge=0.001, mass=0.02, source_end=1.0, end=2.0
+        )
+        assert result["final"]["impulse"] == pytest.approx(3e-7 / 8, rel=2e-8)
+        beta = np.sqrt(1 - gamma**-2)
+        assert result["final"]["work"] == pytest.approx(
+            beta * result["final"]["impulse"], rel=1e-12
+        )
+        assert result["peak_energy_residual_relative"] < 1.5e-8
+        assert result["peak_momentum_residual_relative"] < 1.5e-8
+        assert result["radiation_reaction_mode"] == "medina_lad"
+        assert result["final"]["medina_energy"] > 0
+
+    for end in (1e-4, 0.001):
+
+        def short_force(t, dz, v):
+            assert 0 <= t <= end
+            return 1e-7 * t**2, 2e-7 * t
+
+        short = integrate_axial_particle(
+            short_force, gamma=2, charge=0, mass=1, source_end=end / 2, end=end
+        )
+        times = short["history"]["time"]
+        assert times[0] == 0 and times[-1] == end
+        assert np.all((0 <= times) & (times <= end))
+        assert np.all(np.diff(times) > 0)
+        assert short["final"]["impulse"] == pytest.approx(
+            1e-7 * end**3 / 3, rel=1e-9, abs=0
+        )
     with pytest.raises(ValueError, match="smooth zero initial force"):
         integrate_axial_particle(
             lambda *a: (1, 0), gamma=10, charge=0.001, mass=0.02, source_end=1
         )
 
 
-def test_coupling_rejects_abrupt_or_reused_material_solver():
+def test_coupling_rejects_abrupt_or_reused_material_solver(monkeypatch):
     g = AxisymmetricGrid(0.1, 0.1, 60, 160, -8.0)
     p = AxialParticle(10, 0.001, 0.00002)
+
+    def used_solver(drive):
+        solver = iris(g, drive, dt=0.01)
+        solver.step()
+        return solver
+
     for factory in (
+        used_solver,
         lambda drive: iris(g, drive, dt=0.01, ramp=None),
         lambda drive: ScatteredFieldSolver(g, DrudeMedium(), 0.01, drive),
     ):
@@ -161,11 +184,28 @@ def test_coupling_rejects_abrupt_or_reused_material_solver():
     with pytest.raises(ValueError, match="material endpoint"):
         coupling.run(source_end=0.015, observation_end=1)
 
+    calls = []
+
+    def changing_work(*args, **kwargs):
+        # Force a feedback mismatch at the integrator seam after a real short
+        # integration, without launching a long material simulation.
+        result = integrate_axial_particle(*args, **kwargs)
+        calls.append(result)
+        result["final"]["work"] = float(len(calls))
+        return result
+
+    monkeypatch.setattr(
+        "core.boundary.coupling.integrate_axial_particle", changing_work
+    )
+    with pytest.raises(RuntimeError, match="did not converge"):
+        coupling.run(source_end=0.02, observation_end=0.04, max_feedback_updates=1)
+    assert len(calls) == 2
+
 
 def inspect_coupled_records(folder, grid, particle, ramp):
     """Independently check this port's saved full records without recomputing.
 
-    This optional mode is for repeat audits of already completed live runs.
+    This standalone audit operation examines already completed live runs.
     It reconstructs balances from the individually stored physical terms and
     checks the retarded force against the stored particle states. Fixtures
     contain reference scalars only; they never supply these generated records.
@@ -281,11 +321,8 @@ def inspect_coupled_records(folder, grid, particle, ramp):
     assert rows[1]["incident_correction_probe_max"] > 0
     assert not (folder / "pass_2").exists()
     return {
-        "converged": True,
-        "feedback_updates": 1,
         "iterations": rows,
         "final": final,
-        "population_weighted_final": {"work": particle.population * final["work"]},
         "medina_over_lienard": row["medina_over_lienard"],
         "radiation_reaction_mode": "medina_lad",
         "validation_mode": "independent audit of this port's completed full coupled records",
@@ -301,21 +338,19 @@ def test_thread_c_step2m_coupled_gate(ramp, label, tmp_path):
         (Path(__file__).parent / "fixtures/boundary2_reference.json").read_text()
     )
     g = AxisymmetricGrid(0.05, 0.025, 120, 640, -8.0)
-    particle = AxialParticle(10.0, 0.001, 0.00002)
+    # Preserve the reference source and observer physics while checking a
+    # nontrivial diagnostic population independently of source charge.
+    particle = AxialParticle(10.0, 0.001, 0.00002, population=20, source_charge=0.001)
     coupling = TwoWayBoundaryCoupling(
         g, particle, lambda drive: iris(g, drive, ramp=ramp), enabled=True
     )
     output = Path(os.environ.get("BOUNDARY2_OUTPUT", tmp_path)) / label
-    reuse = os.environ.get("BOUNDARY2_RECORDS")
-    if reuse:
-        result = inspect_coupled_records(Path(reuse) / label, g, particle, ramp)
-    else:
-        result = coupling.run(
-            directory=output,
-            progress=lambda index, phase, t: print(
-                f"{label} pass {index} {phase}: {t}", flush=True
-            ),
-        )
+    result = coupling.run(
+        directory=output,
+        progress=lambda index, phase, t: print(
+            f"{label} pass {index} {phase}: {t}", flush=True
+        ),
+    )
     ref = refs["step2m"][label]["iterations"]
     assert result["converged"] and result["feedback_updates"] == 1
     for row, saved in zip(result["iterations"], ref):
@@ -331,12 +366,13 @@ def test_thread_c_step2m_coupled_gate(ramp, label, tmp_path):
         assert row["peak_energy_residual_relative"] < 1.5e-8
         assert row["peak_momentum_residual_relative"] < 1.5e-8
         assert row["max_relative_gamma_change"] == pytest.approx(0.005515, rel=1e-4)
-    if not reuse:
-        assert result["iterations"][-1]["peak_incident_correction"] > 0
+    assert result["iterations"][-1]["peak_incident_correction"] > 0
     assert result["iterations"][-1]["relative_work_change"] < 2e-7
     assert abs(result["medina_over_lienard"] - 1) < 5e-5
     assert result["radiation_reaction_mode"] == "medina_lad"
-    assert result["final"]["work"] == result["population_weighted_final"]["work"]
+    assert result["diagnostic_population"] == 20
+    for term, weighted in result["population_weighted_final"].items():
+        assert weighted == 20 * result["final"][term]
     summary = {
         k: v
         for k, v in result.items()

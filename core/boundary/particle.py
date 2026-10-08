@@ -19,15 +19,21 @@ def native_rr(
     derivative: float,
     velocity: float,
     acceleration: float,
+    *,
+    gamma: float | None = None,
 ):
-    """Convert study HL units (c=1) to the maintained kernel's native units."""
+    """Convert study HL units (c=1) to the maintained kernel's native units.
+
+    Momentum-based callers can supply gamma to avoid the ill-conditioned
+    reconstruction from rounded velocity near c. Legacy callers retain it.
+    """
     c = C_MMNS
     return compute_medina_radiation_reaction(
         external_force=(0.0, 0.0, force * c * c),
         external_force_time_derivative=(0.0, 0.0, derivative * c**3),
         beta=(0.0, 0.0, velocity),
         acceleration=(0.0, 0.0, acceleration * c * c),
-        gamma=1 / np.sqrt(1 - velocity * velocity),
+        gamma=gamma if gamma is not None else 1 / np.sqrt(1 - velocity * velocity),
         mass=mass,
         charge=q * c / np.sqrt(4 * np.pi),
         coordinate_dt=0.0,

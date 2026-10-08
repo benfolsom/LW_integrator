@@ -272,7 +272,9 @@ class ConformalPEC:
             nr, nz = e0r + self.dt * dr, e0z + self.dt * dz
             error = max(float(np.max(abs(nr - er))), float(np.max(abs(nz - ez))))
             er, ez = nr, nz
-            if error < 2e-14 * max(1.0, float(np.max(abs(er))), float(np.max(abs(ez)))):
+            # Normalized fields have no absolute amplitude floor. Zero fields
+            # converge exactly; nonzero updates require relative accuracy.
+            if error <= 2e-14 * max(float(np.max(abs(er))), float(np.max(abs(ez)))):
                 break
         else:
             raise RuntimeError("Conformal midpoint solve failed")
@@ -317,7 +319,7 @@ class ConformalPEC:
 
         x = self.sqrt_hb * predictor
         residual = rhs - apply(x)
-        tolerance = 2e-14 * max(1.0, float(np.linalg.norm(rhs)))
+        tolerance = 2e-14 * float(np.linalg.norm(rhs))
         z = self.precondition(residual)
         direction = z.copy()
         rz = float(np.sum(residual * z))
