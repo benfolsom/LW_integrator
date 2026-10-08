@@ -61,8 +61,16 @@ class CorrectionConfig:
     evaluation_every: int = 1
     temporal_mode: str = "extrapolate"
     midpoint_predictor: bool = False
+    lattice_extent_mode: str = "fixed"
+    lattice_padding_cells: float = 1.0
+    prehistory_duration_s: float | None = None
 
     def __post_init__(self) -> None:
+        if self.prehistory_duration_s is not None and (
+            not np.isfinite(self.prehistory_duration_s)
+            or self.prehistory_duration_s <= 0
+        ):
+            raise ValueError("prehistory duration must be positive and finite")
         if not isinstance(self.midpoint_predictor, bool):
             raise ValueError("midpoint_predictor must be boolean")
         if self.midpoint_predictor and (
@@ -91,6 +99,18 @@ class CorrectionConfig:
             raise ValueError("sparse field evaluation requires refit_every=1")
         geometry = Grid(self.lattice_shape, np.ones(3), np.zeros(3))
         object.__setattr__(self, "lattice_shape", geometry.shape)
+        if self.lattice_extent_mode not in ("fixed", "bunch_extent"):
+            raise ValueError("lattice extent mode must be fixed or bunch_extent")
+        if (
+            not np.isfinite(self.lattice_padding_cells)
+            or self.lattice_padding_cells < 1
+        ):
+            raise ValueError("lattice padding must be finite and at least one cell")
+        if self.lattice_extent_mode == "bunch_extent":
+            if 2 * self.lattice_padding_cells >= min(self.lattice_shape) - 1:
+                raise ValueError("lattice padding leaves no interior nodes")
+            if self.evaluation_every != 1:
+                raise ValueError("bunch_extent requires evaluation_every=1")
         extent = np.asarray(self.half_extent_m)
         if (
             extent.shape != (3,)
@@ -123,10 +143,17 @@ class CorrectionConfig:
             "evaluation_every",
             "temporal_mode",
             "midpoint_predictor",
+            "lattice_extent_mode",
+            "lattice_padding_cells",
+            "prehistory_duration_ns",
         }
         if not isinstance(data, Mapping) or set(data) - allowed:
             raise ValueError("unknown correction keys or non-object correction")
         values = dict(data)
+        if "prehistory_duration_ns" in values:
+            values["prehistory_duration_s"] = (
+                float(values.pop("prehistory_duration_ns")) * 1e-9
+            )
         if "half_extent_mm" in values:
             values["half_extent_m"] = tuple(
                 np.asarray(values.pop("half_extent_mm")) * 1e-3
@@ -304,8 +331,11 @@ class CloudCorrection:
         self.offsets_m = np.array([rule[0] * 1e-3 for rule in rules])
         self.fractions = rules[0][1]
         self.builder = GrowableTrajectoryBuilder(16, len(self.members))
-        # A finite prefix plus an analytic inertial boundary covers all t < 0.
+        # The provider bounds analytic inertial roots by this finite prefix.
+        # Keep the original 1000 mm duration unless explicitly overridden.
         prefix_s = -1.0 / C  # 1000 mm prehistory separation.
+        if config.prehistory_duration_s is not None:
+            prefix_s = -config.prehistory_duration_s
         self.builder.append_step(
             self._state(
                 prefix_s, self.position_m + C * beta * prefix_s, np.zeros_like(beta)
@@ -687,16 +717,36 @@ class CloudCorrection:
         self.cost_counts = dict(skipped=skipped, compressed=compressed, roots=roots)
         return e, b
 
-    def sample(self, observers: Species) -> tuple[np.ndarray, np.ndarray]:
+    def observer_lattice(
+        self, observers: Species
+    ) -> tuple[Grid, np.ndarray, np.ndarray, np.ndarray]:
+        """Return grid, local observer positions, lab centre, and local basis.
+
+        Extents are in the translating, rotated lab snapshot (no Lorentz
+        stretch). The opt-in bounding mode fits every observer per axis at
+        each sample, including zero-weight observers. Configured half extents
+        are lower bounds. Padding reserves complete CIC cells on both sides;
+        changing node counts remains an independent resolution choice.
+        """
         weights = observers.population
         center = _mean(observers.position_m, weights)
         basis = rest_basis(_mean(observers.momentum_mc, weights))
         half = np.asarray(self.config.half_extent_m)
         shape = self.config.lattice_shape
+        local = (observers.position_m - center) @ basis
+        if self.config.lattice_extent_mode == "bunch_extent":
+            interior = 1 - 2 * self.config.lattice_padding_cells / (
+                np.asarray(shape) - 1
+            )
+            half = np.maximum(half, np.max(np.abs(local), axis=0) / interior)
         spacing = 2 * half / (np.asarray(shape) - 1)
         grid = Grid(shape, spacing, -half)
-        local = (observers.position_m - center) @ basis
         grid.require_inside(grid.coordinates(local))
+        return grid, local, center, basis
+
+    def sample(self, observers: Species) -> tuple[np.ndarray, np.ndarray]:
+        grid, local, center, basis = self.observer_lattice(observers)
+        shape, spacing = grid.shape, grid.spacing_m
         nodes = grid.origin_m + np.indices(shape).reshape(3, -1).T * spacing
         cache = next(
             (cache for s, cache in self._lattice_warm_starts if s is observers), None

@@ -248,9 +248,60 @@ def test_uniform_cloud_cancellation_and_persistent_moment_refits():
         corr.accept([s], corr.time_s)
     with pytest.raises(ValueError):
         CorrectionConfig(subcharge_count=3)
+    # Guard the existing initial-RMS/K^(1/3) option used by crossing studies.
+    scaled = CloudCorrection(
+        [s],
+        CorrectionConfig.from_config(
+            dict(
+                clouds_per_species=2,
+                cloud_width_rule="bunch_rms_k",
+                cloud_width_scale=1.5,
+                subcharge_count=4,
+            )
+        ),
+    )
+    center = np.average(s.position_m, axis=0, weights=s.population)
+    rms = np.sqrt(
+        np.average(np.sum((s.position_m - center) ** 2, axis=1), weights=s.population)
+        / 3
+    )
+    width = scaled.smearing.position_sigma_mm
+    assert width == pytest.approx(1e3 * 1.5 * rms / 2 ** (1 / 3))
+    offsets = scaled.offsets_m.copy()
+    s.position_m *= 2
+    scaled.accept([s], 1e-12)
+    assert scaled.smearing.position_sigma_mm == width
+    np.testing.assert_array_equal(scaled.offsets_m, offsets)
+    # A metre-separated fast source needs more than the default 1000 mm/c
+    # history. Extending the finite prefix must preserve inertial cancellation.
+    from core.retarded_fields import RetardedHistoryError
+
+    fast = source()
+    fast.position_m[:, 2] += 0.5
+    fast.momentum_mc[:] = [0, 0, -10.7]
+    distant = np.array([[1e-3, 2e-3, -0.5]])
+    short = CloudCorrection([fast], CorrectionConfig(clouds_per_species=2))
+    with pytest.raises(RetardedHistoryError, match="bracket"):
+        short.direct(distant)
+    long = CloudCorrection(
+        [fast],
+        CorrectionConfig.from_config(
+            dict(clouds_per_species=2, prehistory_duration_ns=2000)
+        ),
+    )
+    assert long.builder.build_current().t[0, 0] == pytest.approx(-2000)
+    qe, qb = long.quasi_static(distant)
+    de, db = long.direct(distant)
+    assert np.linalg.norm(de) / np.linalg.norm(qe) < 2e-12
+    assert np.linalg.norm(db) / np.linalg.norm(qb) < 2e-12
+    for duration in (0, -1, np.nan, np.inf):
+        with pytest.raises(ValueError, match="prehistory"):
+            CorrectionConfig(prehistory_duration_s=duration)
 
 
-def test_acceleration_interpolation_and_correction_bookkeeping():
+def test_acceleration_interpolation_and_correction_bookkeeping(monkeypatch):
+    from dataclasses import replace
+
     s = source()
     corr = CloudCorrection(
         [s], CorrectionConfig(clouds_per_species=2, lattice_shape=(9,) * 3)
@@ -282,6 +333,50 @@ def test_acceleration_interpolation_and_correction_bookkeeping():
     probes.position_m[0, 0] += 0.1
     with pytest.raises(ValueError, match="outside"):
         corr.sample(probes)
+    # The same long, tilted observers must fit the opt-in per-axis lattice.
+    # Affine lab fields give an independent, exact interpolation oracle.
+    corr.config = CorrectionConfig.from_config(
+        dict(
+            clouds_per_species=2,
+            lattice_shape=[4, 5, 17],
+            lattice_extent_mode="bunch_extent",
+            lattice_padding_cells=1.0,
+        )
+    )
+    probes.momentum_mc[:] = [1, 2, -3]
+    probes.position_m[1, 2] += 1.0
+    grid, local, center, basis = corr.observer_lattice(probes)
+    coordinates = grid.coordinates(local)
+    assert np.all(coordinates >= 1 - 1e-12)
+    assert np.all(coordinates <= np.asarray(grid.shape) - 2 + 1e-12)
+    np.testing.assert_allclose(local @ basis.T + center, probes.position_m)
+    assert np.max(-grid.origin_m) > 0.1
+
+    def affine_fields(position, cache):
+        return 2 * position + [1, 2, 3], -3 * position + [4, 5, 6]
+
+    monkeypatch.setattr(corr, "_direct", affine_fields)
+    for actual, expected in zip(
+        corr.sample(probes), affine_fields(probes.position_m, None)
+    ):
+        np.testing.assert_allclose(actual, expected, rtol=2e-15, atol=2e-15)
+    # Recompute after deformation, rather than retaining an obsolete box.
+    probes.position_m[:, 2] *= 3
+    enlarged, _, _, _ = corr.observer_lattice(probes)
+    assert np.max(-enlarged.origin_m) > np.max(-grid.origin_m)
+    for actual, expected in zip(
+        corr.sample(probes), affine_fields(probes.position_m, None)
+    ):
+        np.testing.assert_allclose(actual, expected, rtol=2e-15, atol=2e-15)
+    for options in (
+        dict(lattice_extent_mode="unknown"),
+        dict(lattice_padding_cells=0.5),
+        dict(lattice_padding_cells=np.nan),
+        dict(lattice_padding_cells=2),
+        dict(evaluation_every=2),
+    ):
+        with pytest.raises(ValueError, match="lattice|bunch_extent"):
+            replace(corr.config, **options)
 
 
 def test_optional_runner_and_disabled_compatibility():
@@ -329,6 +424,8 @@ def test_optional_runner_and_disabled_compatibility():
                 lattice_shape=[4] * 3,
                 midpoint_predictor=False,
                 temporal_mode="hold",
+                lattice_extent_mode="fixed",
+                lattice_padding_cells=1.0,
             ),
         )
     )
