@@ -119,7 +119,9 @@ class AxialTrajectory:
 
     def __call__(self, t: Any, order: int = 0) -> Any:
         t = np.asarray(t)
-        if not np.all(np.isfinite(t)) or np.any(t > self.x[-1] + 1e-8):
+        if np.any(t > self.x[-1] + 1e-8):
+            raise RuntimeError("Observation requires unsaved future source history")
+        if not np.all(np.isfinite(t)):
             raise ValueError(
                 "trajectory requires finite times within the saved source window"
             )
@@ -152,7 +154,8 @@ class RespondingDrive(BallisticDrive):
         if int(correction_order) != correction_order or correction_order < 1:
             raise ValueError("correction quadrature needs a positive integer order")
         if trajectory is not None and (
-            trajectory.beta != self.beta or trajectory.z0 != self.z0
+            not np.isclose(trajectory.beta, self.beta, rtol=0, atol=1e-15)
+            or trajectory.z0 != self.z0
         ):
             raise ValueError("responding trajectory and incident reference must match")
         self.path = trajectory
@@ -280,7 +283,7 @@ class AxialBoundaryForce:
         self, t: float, delta_z: float, velocity: float
     ) -> tuple[float, float]:
         h, p = self.history, self.particle
-        e, derivative = field(
+        e, derivative = field(  # type: ignore[call-arg]
             t,
             delta_z,
             velocity,
@@ -301,6 +304,11 @@ class TwoWayBoundaryCoupling:
     on the declared grid and smooth DrudeWall. No convergence means an error,
     rather than an implicitly accepted final iterate. The record ends at a
     declared source_end, then current stops smoothly and polarization freezes.
+    Convergence qualifies only pass-to-pass feedback, not window or spatial
+    accuracy. Results expose post-source-window work and impulse, and flag
+    unmeasured source_end/stop_duration sensitivity and force reconstruction
+    uncertainty. Repeat with longer source windows, varied stop durations, and
+    refined meshes before making accuracy claims.
     This is an axial experimental coupling entry point, not unrestricted 3D
     responding-source deposition, mapped coupling, or whole-system closure.
     """
@@ -322,7 +330,7 @@ class TwoWayBoundaryCoupling:
         source_end: float = 8.0,
         observation_end: float = 1e6,
         max_feedback_updates: int = 8,
-        tolerance: float = 1e-3,
+        tolerance: float = 1e-4,
         order: int = 4,
         correction_order: int = 2,
         stop_duration: float = 1.0,
@@ -419,6 +427,14 @@ class TwoWayBoundaryCoupling:
                 beta=self.particle.beta,
                 z_at_zero=self.particle.z_at_zero,
             )
+            history = result["history"]
+            source_index = int(np.searchsorted(history["time"], source_end))
+            continuation_terms = {
+                f"post_source_window_{term}": float(
+                    result["final"][term] - history[term][source_index]
+                )
+                for term in ("work", "impulse")
+            }
             row = dict(
                 iteration=index,
                 **result["final"],
@@ -429,6 +445,7 @@ class TwoWayBoundaryCoupling:
                 max_relative_gamma_change=result["max_relative_gamma_change"],
                 medina_over_lienard=result["medina_over_lienard"],
                 peak_incident_correction=drive.correction_max,
+                **continuation_terms,
             )
             converged = False
             if rows:
@@ -460,15 +477,13 @@ class TwoWayBoundaryCoupling:
                         )
                     )
                 )
-                converged = (
-                    max(
-                        row["relative_work_change"],
-                        row["relative_impulse_change"],
-                        row["source_position_change_on_incident_width"],
-                        row["source_gamma_change_relative"],
-                    )
-                    < tolerance
+                row["achieved_feedback_change"] = max(
+                    row["relative_work_change"],
+                    row["relative_impulse_change"],
+                    row["source_position_change_on_incident_width"],
+                    row["source_gamma_change_relative"],
                 )
+                converged = row["achieved_feedback_change"] < tolerance
             rows.append(row)
             if record_dir is not None:
                 np.save(record_dir / "times.npy", record.arrays[0])
@@ -480,6 +495,23 @@ class TwoWayBoundaryCoupling:
                 result.update(
                     converged=True,
                     feedback_updates=index,
+                    coupling_tolerance=tolerance,
+                    achieved_feedback_change=row["achieved_feedback_change"],
+                    convergence_scope="pass-to-pass feedback only; window and spatial accuracy unqualified",
+                    continuation_diagnostics=continuation_terms,
+                    uncertainties={
+                        "finite_window": {
+                            "source_end": source_end,
+                            "stop_duration": stop_duration,
+                            "sensitivity_measured": False,
+                            "qualification": "Vary source_end and stop_duration independently; post-window work includes retarded saved sources and terminal continuation, not an isolated frozen-tail estimate.",
+                        },
+                        "force_reconstruction": {
+                            "comparison_measured_for_this_run": False,
+                            "review_evidence": "Dipole P/J reconstruction versus FDTD on-axis Ez differed by 3–10% at h=0.1 and 1.7–2.6% at h=0.05 in the reviewed iris, gamma=10, dt=h/10 comparison.",
+                            "qualification": "Geometry- and resolution-dependent evidence, not an error bound for this run. Particle force uses dipole reconstruction; field/surface ledgers use FDTD. Require independent mesh and quadrature convergence.",
+                        },
+                    },
                     iterations=rows,
                     material_history=record,
                     material_feedback_iterated=True,

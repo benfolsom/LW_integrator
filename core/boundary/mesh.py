@@ -6,7 +6,8 @@ This is an r–z TM solver, not a general Cartesian Maxwell solver.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
@@ -28,7 +29,15 @@ class AxisymmetricGrid:
     nz: int
     z0: float
 
-    def __post_init__(self):
+    # Installed dynamically in __post_init__; keep the runtime dataclass
+    # fields (constructor, equality, and serialization) unchanged.
+    if TYPE_CHECKING:
+        r_node: np.ndarray = field(init=False)
+        r_half: np.ndarray = field(init=False)
+        z_node: np.ndarray = field(init=False)
+        z_half: np.ndarray = field(init=False)
+
+    def __post_init__(self) -> None:
         if (
             not np.all(np.isfinite([self.dr, self.dz, self.z0]))
             or min(self.dr, self.dz) <= 0
@@ -48,7 +57,9 @@ class AxisymmetricGrid:
             value.setflags(write=False)
             object.__setattr__(self, name, value)
 
-    def dual_bounds(self, component):
+    def dual_bounds(
+        self, component: int
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         r = self.r_node if component == 1 else self.r_half
         z = self.z_node if component == 0 else self.z_half
         return (
@@ -58,7 +69,7 @@ class AxisymmetricGrid:
             np.minimum(z + self.dz / 2, self.z_node[-1]),
         )
 
-    def require_aligned(self, value, axis):
+    def require_aligned(self, value: Any, axis: str) -> None:
         if axis not in ("r", "z"):
             raise ValueError("alignment axis must be r or z")
         spacing, origin = (self.dr, 0) if axis == "r" else (self.dz, self.z0)
@@ -73,14 +84,20 @@ class AxisymmetricGrid:
 
 
 class Fields:
-    def __init__(self, g, backend=None):
+    er: np.ndarray
+    ez: np.ndarray
+    bt: np.ndarray
+
+    def __init__(self, g: AxisymmetricGrid, backend: PICBackend | None = None) -> None:
         xp = cpu_backend(backend).xp
         self.er = xp.zeros((g.nr, g.nz + 1), dtype=xp.float64)
         self.ez = xp.zeros((g.nr + 1, g.nz), dtype=xp.float64)
         self.bt = xp.zeros((g.nr, g.nz), dtype=xp.float64)
 
 
-def volumes(g, control=None):
+def volumes(
+    g: AxisymmetricGrid, control: tuple[float, float, float] | None = None
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Actual dual-volume intersections, including half cells at end caps."""
     out = []
     for k in range(3):
@@ -96,4 +113,4 @@ def volumes(g, control=None):
             * np.maximum(rh**2 - rl**2, 0)[:, None]
             * np.maximum(zh - zl, 0)[None, :]
         )
-    return tuple(out)
+    return cast(tuple[np.ndarray, np.ndarray, np.ndarray], tuple(out))

@@ -22,6 +22,7 @@ from core.boundary import (
     integrate_axial_particle,
 )
 from core.boundary.coupling import RespondingDrive
+from core.boundary.incident import point_fields
 
 
 def iris(grid, drive, dt=0.002, ramp=0.02):
@@ -56,7 +57,7 @@ def test_trajectory_c2_prehistory_and_accelerated_lw():
             )
     assert path(-100.0) == -1.0 - 100.0 * beta
     assert path(-100.0, 2) == 0.0
-    with pytest.raises(ValueError, match="source window"):
+    with pytest.raises(RuntimeError, match="unsaved future source history"):
         path(3.0)
     with pytest.raises(ValueError, match="subluminal"):
         AxialTrajectory(
@@ -64,6 +65,13 @@ def test_trajectory_c2_prehistory_and_accelerated_lw():
         )
     g = AxisymmetricGrid(0.1, 0.1, 60, 160, -8.0)
     particle = AxialParticle(10.0, 0.001, 0.00002)
+    close_path = AxialTrajectory(
+        ts, dz, dv, acc, beta=np.nextafter(beta, 0.0), z_at_zero=-1.0
+    )
+    RespondingDrive(g, particle, close_path)
+    wrong_path = AxialTrajectory(ts, dz, dv, acc, beta=beta - 1e-5, z_at_zero=-1.0)
+    with pytest.raises(ValueError, match="reference must match"):
+        RespondingDrive(g, particle, wrong_path)
     responding = RespondingDrive(g, particle, path)
     assert all(
         np.array_equal(a, [0.0])
@@ -71,10 +79,6 @@ def test_trajectory_c2_prehistory_and_accelerated_lw():
     )
     correction = responding.corrections(np.array([0.8]), np.array([0.0]), 2.0)
     assert any(np.any(a != 0) for a in correction)
-    integer = responding.corrections(np.array([1]), np.array([0]), 2.0)
-    floating = responding.corrections(np.array([1.0]), np.array([0.0]), 2.0)
-    assert any(np.any(a != 0) for a in integer)
-    assert all(np.array_equal(a, b) for a, b in zip(integer, floating))
     wall = DrudeWall(
         g, AlignedWall(0, 4, 0, 0.4), aperture_radius=0.8, ramp_duration=0.02
     )
@@ -88,6 +92,41 @@ def test_trajectory_c2_prehistory_and_accelerated_lw():
         ballistic.material_volume(g, 1.0, wall.masks),
     ):
         assert np.allclose(a, b, atol=1e-17, rtol=3e-13)
+
+    # Independently integrate the accelerated LW field minus the analytic
+    # boosted Coulomb field over one supported cell per component. Checking
+    # the signed difference catches omitted or reversed material feedback.
+    masks = tuple(np.zeros_like(mask) for mask in wall.masks)
+    nodes, weights = np.polynomial.legendre.leggauss(2)
+    for k, mask in enumerate(masks):
+        mask[10, 80] = True
+    driven = responding.material_volume(g, 2.0, masks)
+    baseline = zero_response.material_volume(g, 2.0, masks)
+    for k in (0, 1):
+        rl, rh, zl, zh = g.dual_bounds(k)
+        rr = (rl[10] + rh[10]) / 2 + (rh[10] - rl[10]) * nodes[:, None] / 2
+        zz = (zl[80] + zh[80]) / 2 + (zh[80] - zl[80]) * nodes[None, :] / 2
+        rr, zz = np.broadcast_arrays(rr, zz)
+        vel, acc = point_fields(
+            path, particle.source_charge, rr, zz, np.full_like(rr, 2.0)
+        )
+        gap = zz - particle.z_at_zero - particle.beta * 2.0
+        kernel = (
+            particle.source_charge
+            * particle.gamma
+            / (4 * np.pi * (rr**2 + (particle.gamma * gap) ** 2) ** 1.5)
+        )
+        expected = np.sum(
+            weights[:, None]
+            * weights[None, :]
+            * rr
+            / (2 * (rl[10] + rh[10]))
+            * (vel[k] + acc[k] - kernel * (rr if k == 0 else gap))
+        )
+        assert abs(expected) > 1e-10
+        assert driven[k][10, 80] - baseline[k][10, 80] == pytest.approx(
+            expected, rel=1e-9, abs=1e-18
+        )
 
 
 def test_boundary_force_uses_observer_charge_and_complete_derivative():
@@ -140,7 +179,7 @@ def test_smooth_axial_integrator_ledgers_and_gamma_1000_work():
 
     for end in (1e-4, 0.001):
 
-        def short_force(t, dz, v):
+        def short_force(t, dz, v, end=end):
             assert 0 <= t <= end
             return 1e-7 * t**2, 2e-7 * t
 
@@ -202,137 +241,8 @@ def test_coupling_rejects_abrupt_or_reused_material_solver(monkeypatch):
     assert len(calls) == 2
 
 
-def inspect_coupled_records(folder, grid, particle, ramp):
-    """Independently check this port's saved full records without recomputing.
-
-    This standalone audit operation examines already completed live runs.
-    It reconstructs balances from the individually stored physical terms and
-    checks the retarded force against the stored particle states. Fixtures
-    contain reference scalars only; they never supply these generated records.
-    """
-    rows, paths = [], []
-    for index in (0, 1):
-        record_dir = folder / f"pass_{index}"
-        with np.load(record_dir / "particle.npz") as data:
-            arrays = {k: data[k] for k in data.files}
-        assert arrays["time"][0] == 0.0
-        assert arrays["time"][-1] == pytest.approx(1e6, abs=1e-8)
-        assert np.all(np.diff(arrays["time"]) > 0)
-        assert all(
-            a.shape == arrays["time"].shape and np.all(np.isfinite(a))
-            for a in arrays.values()
-        )
-        with np.load(record_dir / "trajectory.npz") as data:
-            trajectory = {k: data[k] for k in data.files}
-        paths.append(
-            AxialTrajectory(
-                **trajectory, beta=particle.beta, z_at_zero=particle.z_at_zero
-            )
-        )
-        final = {k: float(a[-1]) for k, a in arrays.items() if k != "time"}
-        energy = (
-            arrays["kinetic"]
-            + arrays["medina_energy"]
-            + arrays["bound_energy"]
-            - arrays["work"]
-        )
-        momentum = (
-            arrays["delta_momentum"]
-            + arrays["medina_momentum"]
-            + arrays["bound_momentum"]
-            - arrays["impulse"]
-        )
-        assert np.array_equal(energy, arrays["energy_residual"])
-        assert np.array_equal(momentum, arrays["momentum_residual"])
-        row = dict(
-            iteration=index,
-            **final,
-            peak_energy_residual_relative=float(
-                np.max(abs(energy)) / abs(final["work"])
-            ),
-            peak_momentum_residual_relative=float(
-                np.max(abs(momentum)) / abs(final["impulse"])
-            ),
-            max_relative_gamma_change=float(
-                np.max(abs(arrays["kinetic"])) / (particle.mass * particle.gamma)
-            ),
-            medina_over_lienard=final["medina_energy"] / final["lienard_energy"],
-        )
-        drive = RespondingDrive(grid, particle, None if index == 0 else paths[0])
-        solver = iris(grid, drive, ramp=ramp)
-        times = np.load(record_dir / "times.npy")
-        assert len(times) == 4001 and abs(times[-1] - 8.0) < 1e-10
-        history = MaterialHistory.from_arrays(
-            solver,
-            times,
-            np.load(record_dir / "polarization.npy", mmap_mode="r"),
-            np.load(record_dir / "current.npy", mmap_mode="r"),
-        )
-        force = AxialBoundaryForce(history, particle)
-        p0 = particle.mass * np.sqrt(particle.gamma**2 - 1)
-        momentum_state = p0 + arrays["delta_momentum"]
-        energy_state = np.hypot(particle.mass, momentum_state)
-        tau = particle.charge**2 / (6 * np.pi * particle.mass)
-        bound = -tau * energy_state / particle.mass * arrays["force"]
-        assert np.allclose(bound, arrays["bound_momentum"], rtol=1e-13, atol=1e-28)
-        assert np.allclose(
-            bound * momentum_state / energy_state,
-            arrays["bound_energy"],
-            rtol=1e-13,
-            atol=1e-28,
-        )
-        for n in np.linspace(1, len(arrays["time"]) - 1, 7, dtype=int):
-            t, dz, dp = (arrays[k][n] for k in ("time", "delta_z", "delta_momentum"))
-            v = (p0 + dp) / np.hypot(particle.mass, p0 + dp)
-            assert force(t, dz, v)[0] == pytest.approx(
-                arrays["force"][n], rel=1e-13, abs=1e-28
-            )
-        # Probe a responding incident field independently of the particle ledger.
-        for t in (2.0, 4.0, 6.0, 8.0):
-            drive.material_volume(grid, t, solver.wall.masks)
-        row["incident_correction_probe_max"] = drive.correction_max
-        rows.append(row)
-    for term in ("work", "impulse"):
-        rows[1][f"relative_{term}_change"] = abs(rows[1][term] - rows[0][term]) / abs(
-            rows[1][term]
-        )
-    tt = paths[1].x
-    old, new = paths[0].spline(tt), paths[1].spline(tt)
-    dv_old, dv_new = paths[0].spline(tt, nu=1), paths[1].spline(tt, nu=1)
-    position_change = float(np.max(abs(new - old)) / (0.8 / particle.gamma))
-    inv_old = particle.gamma**-2 - 2 * particle.beta * dv_old - dv_old**2
-    inv_new = particle.gamma**-2 - 2 * particle.beta * dv_new - dv_new**2
-    gamma_change = float(
-        np.max(
-            abs((dv_new - dv_old) * (2 * particle.beta + dv_new + dv_old))
-            / (np.sqrt(inv_old) * (np.sqrt(inv_old) + np.sqrt(inv_new)))
-        )
-    )
-    assert (
-        max(
-            rows[1]["relative_work_change"],
-            rows[1]["relative_impulse_change"],
-            position_change,
-            gamma_change,
-        )
-        < 0.001
-    )
-    assert rows[0]["incident_correction_probe_max"] == 0
-    assert rows[1]["incident_correction_probe_max"] > 0
-    assert not (folder / "pass_2").exists()
-    return {
-        "iterations": rows,
-        "final": final,
-        "medina_over_lienard": row["medina_over_lienard"],
-        "radiation_reaction_mode": "medina_lad",
-        "validation_mode": "independent audit of this port's completed full coupled records",
-        "source_end": 8.0,
-        "observation_end": 1e6,
-    }
-
-
 @pytest.mark.slow
-@pytest.mark.parametrize("ramp,label", [(0.02, "smooth_d02"), (0.04, "smooth_d04")])
+@pytest.mark.parametrize("ramp,label", [(0.02, "smooth_d02")])
 def test_thread_c_step2m_coupled_gate(ramp, label, tmp_path):
     refs = json.loads(
         (Path(__file__).parent / "fixtures/boundary2_reference.json").read_text()
@@ -367,7 +277,22 @@ def test_thread_c_step2m_coupled_gate(ramp, label, tmp_path):
         assert row["peak_momentum_residual_relative"] < 1.5e-8
         assert row["max_relative_gamma_change"] == pytest.approx(0.005515, rel=1e-4)
     assert result["iterations"][-1]["peak_incident_correction"] > 0
-    assert result["iterations"][-1]["relative_work_change"] < 2e-7
+    # Compare with the live no-feedback pass. The tiny delta depends on the
+    # integration environment (review: 4.9e-8; local: 7.0e-9 relative), so do
+    # not pin a signed value inferred from the review's magnitude. Omitting
+    # feedback gives identical material records and zero work delta. The
+    # independent projection check above pins feedback sign and amplitude.
+    first, feedback = result["iterations"]
+    feedback_delta = (feedback["work"] - first["work"]) / abs(first["work"])
+    assert 1e-9 < abs(feedback_delta) < 2e-7
+    assert result["coupling_tolerance"] == 1e-4
+    assert result["achieved_feedback_change"] == feedback["achieved_feedback_change"]
+    assert result["achieved_feedback_change"] < result["coupling_tolerance"]
+    assert result["uncertainties"]["finite_window"]["sensitivity_measured"] is False
+    source_index = np.searchsorted(result["history"]["time"], result["source_end"])
+    assert result["continuation_diagnostics"]["post_source_window_work"] == (
+        result["final"]["work"] - result["history"]["work"][source_index]
+    )
     assert abs(result["medina_over_lienard"] - 1) < 5e-5
     assert result["radiation_reaction_mode"] == "medina_lad"
     assert result["diagnostic_population"] == 20

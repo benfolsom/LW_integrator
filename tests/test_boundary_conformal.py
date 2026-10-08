@@ -87,6 +87,14 @@ def test_physical_mapped_gather_and_rejections():
         ConformalPEC(g, 0.01, lambda z: (z * 0 + 0.1, z * 0), 0.2)
     with pytest.raises(ValueError, match="radial node"):
         ConformalPEC(g, 0.01, wall, 0.23)
+    for sign in (0, -1):
+        with pytest.raises(ValueError, match="slope is inconsistent"):
+            ConformalPEC(
+                g,
+                0.01,
+                lambda z, sign=sign: (1.5 + 0.1 * np.sin(z), sign * 0.1 * np.cos(z)),
+                0.2,
+            )
     j = np.zeros_like(s.f.ez)
     j[5] = 1
     with pytest.raises(ValueError, match="source disk"):
@@ -139,6 +147,10 @@ def test_thread_c_taper_gate(case, dr, dz, dt, tmp_path):
     for key in ("work_eV_per_electron", "physical_gather_eV_per_electron"):
         assert result[key] == pytest.approx(ref[key], rel=1e-7, abs=2e-10)
     assert result["peak_energy_identity_residual_hl_mm"] < 1e-10
+    # These bounds qualify only the listed mesh and 300 mm taper. The pair
+    # has a physical, converging residual loss, not a cancellation identity
+    # (the reviewed 30 mm refinement tends to about -2.8e-5 eV/e).
+    # The expansion bound likewise includes resolution-dependent error.
     if case == "pair":
         assert abs(result["work_eV_per_electron"]) < 1.11e-6
         assert abs(result["physical_gather_eV_per_electron"]) < 1.11e-6

@@ -5,6 +5,11 @@ is left unmapped; the exterior annulus follows r=R(u,z). Stored electric
 fields are covariant components eu=R_u Er and ev=Ez+R_z Er; b=R_u Btheta.
 A positive discrete metric supplies the physical energy and its exact inverse.
 No partial cells, deleted cells, fitted work correction, or damping is used.
+The map is continuous at u=core, but its radial derivative jumps. The shear
+is zero at that node, although its dual ring straddles the mapped annulus;
+source weights there use the reference volume rather than the mapped volume.
+This local first-order inconsistency did not spoil global second-order
+convergence in the reviewed taper refinement; other geometries need checks.
 """
 
 from __future__ import annotations
@@ -67,6 +72,24 @@ class ConformalPEC:
             ):
                 raise ValueError(
                     "Smooth wall needs finite radius/slope arrays and aperture > source disk"
+                )
+            # A small central difference checks the supplied tangent independently
+            # of the grid spacing. Scale h with coordinate magnitude to limit
+            # subtraction error on meshes far from the coordinate origin.
+            h = np.cbrt(np.finfo(float).eps) * np.maximum(1.0, abs(z))
+            left = np.asarray(wall(z - h)[0], dtype=float)
+            right = np.asarray(wall(z + h)[0], dtype=float)
+            if (
+                left.shape != z.shape
+                or right.shape != z.shape
+                or not np.all(np.isfinite([left, right]))
+            ):
+                raise ValueError("Wall finite-difference radii must be finite arrays")
+            finite_slope = (right - left) / (2 * h)
+            slope_tolerance = 1e-6 * (np.max(abs(slope)) + g.dr / g.dz)
+            if np.any(abs(slope - finite_slope) > slope_tolerance):
+                raise ValueError(
+                    "Wall slope is inconsistent with its radius derivative"
                 )
             scale = (a - core) / (outer - core)
             outside = u[:, None] > core

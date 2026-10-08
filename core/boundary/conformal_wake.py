@@ -58,7 +58,10 @@ def conformal_wake(
     converts to eV per representative electron, not total bunch energy. The
     fixed disk's reference-volume weights and spectral continuity are retained.
     Positive current work denotes energy received by the prescribed source;
-    no background subtraction or fitted correction is made.
+    no background subtraction or fitted correction is made. The reference
+    0.563121173 eV/e is the analytic adiabatic electromagnetic-energy
+    difference N e ln(2)/(2 pi epsilon_0 * 2 sqrt(pi) sigma_z), with the
+    contraction/expansion sign; it is not an external simulation result.
     """
     if (
         case not in ("in", "out", "pair", "pipe1", "pipe2")
