@@ -9,6 +9,7 @@ or particle-kernel CPU fallback is used.
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from typing import Any
 
 import numpy as np
@@ -23,10 +24,13 @@ class GPUBackend:
     xp: Any
     dtype: str
     name: str
+    # Geometry remains float64 unless a backend explicitly selects its mesh
+    # precision. Canonicalization affects Green coefficients, not particles.
+    green_spacing_dtype: str | None = None
+    green_cache_size = 2
 
     def __init__(self) -> None:
-        self._key: tuple | None = None
-        self._spectra: dict[int | None, Any] = {}
+        self._spectrum_cache: OrderedDict[tuple, dict[int | None, Any]] = OrderedDict()
 
     def array(self, value: Any, dtype: str | None = None) -> Any:
         raise NotImplementedError
@@ -147,16 +151,27 @@ class GPUBackend:
     def _spectrum(
         self, shape: tuple[int, ...], spacing: Any, component: int | None
     ) -> Any:
+        if self.green_spacing_dtype is not None:
+            # Round once at the mesh precision, then evaluate the cancellation-
+            # sensitive cell integral in float64. Never round particle state,
+            # rest-frame transformations, or grid coordinates here.
+            spacing = np.asarray(spacing, dtype=self.green_spacing_dtype).astype(float)
+            if not np.all(np.isfinite(spacing)) or np.any(spacing <= 0):
+                raise ValueError("spacing cannot be represented at mesh precision")
         key = (tuple(shape), tuple(spacing))
-        if key != self._key:
-            self._spectra.clear()
-            self._key = key
-        if component not in self._spectra:
+        if key not in self._spectrum_cache:
+            # Evict before allocating another large padded Green mesh.
+            if len(self._spectrum_cache) >= self.green_cache_size:
+                self._spectrum_cache.popitem(last=False)
+            self._spectrum_cache[key] = {}
+        self._spectrum_cache.move_to_end(key)
+        spectra = self._spectrum_cache[key]
+        if component not in spectra:
             mesh = self.array(green_mesh(shape, spacing, component))
-            self._spectra[component] = self.xp.fft.rfftn(mesh)
+            spectra[component] = self.xp.fft.rfftn(mesh)
             # Materialize each spectrum and release the large host setup array.
-            self.synchronize(self._spectra[component])
-        return self._spectra[component]
+            self.synchronize(spectra[component])
+        return spectra[component]
 
     def solve(
         self, charge: Any, spacing: Any, potential: bool = False
