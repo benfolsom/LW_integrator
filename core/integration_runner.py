@@ -115,6 +115,11 @@ def _checkpoint_json_value(value: Any) -> Any:
         return {
             descriptor.name: _checkpoint_json_value(getattr(value, descriptor.name))
             for descriptor in fields(value)
+            if not (
+                isinstance(value, MacroparticleSmearingConfig)
+                and not value.breathing_enabled
+                and descriptor.name.startswith("breathing_")
+            )
         }
     if isinstance(value, dict):
         return {
@@ -910,6 +915,8 @@ def _estimate_inertial_prehistory_duration_ns(
     if not np.isfinite(safety) or safety < 1.0:
         raise ValueError("inertial prehistory safety_factor must be finite and >= 1")
     separation = _maximum_cross_bunch_separation_mm(rider, driver)
+    # Centre-only span is sufficient because persistent children inherit the
+    # analytic inertial boundary, which extends coasting beyond the first knot.
     if same_bunch_fields:
         separation = max(
             separation,
@@ -1478,6 +1485,17 @@ def _slice_trajectory_arrays(
     from .resolved_knot import RESOLVED_KNOT_FIELDS
 
     return TrajectoryArrays(
+        **{
+            name: getattr(arrays, name)
+            for name in (
+                "exact_source_cell_sigma_mm",
+                "exact_source_original_count",
+                "exact_source_cell_xv_mm2_ns",
+                "exact_source_cell_vv_mm2_ns2",
+                "exact_source_cell_epoch_ns",
+                "exact_source_breathing_ready",
+            )
+        },
         **{name: getattr(arrays, name)[start:stop] for name in RESOLVED_KNOT_FIELDS},
         x=arrays.x[start:stop],
         y=arrays.y[start:stop],
@@ -3499,6 +3517,14 @@ def retarded_integrator(
         magnetic_dipole.enabled and magnetic_dipole.source.active
     )
     exact_magnetic_active = bool(rfs_active or dipole_source_active)
+    if (
+        macroparticle_smearing.enabled
+        and macroparticle_smearing.breathing_enabled
+        and not exact_magnetic_active
+    ):
+        raise NotImplementedError(
+            "breathing source widths require the exact charge path"
+        )
     pseudo_grid_space_charge_reduction_supported = not _space_charge_enabled(
         space_charge
     ) or (pseudo_grid.active_rider_count >= 2 and pseudo_grid.active_driver_count >= 2)
@@ -3783,6 +3809,7 @@ def retarded_integrator(
                     )
             if not dipole_source_active and (
                 adaptive_pair_return.enabled
+                or macroparticle_smearing.breathing_enabled
                 or any(
                     value is None or float(value) != 0.0 for value in smearing_widths
                 )
@@ -3938,10 +3965,12 @@ def retarded_integrator(
             )
         from .exact_source_reduction import reduce_exact_initial_state
 
-        init_rider, _ = reduce_exact_initial_state(init_rider, reduction.rider_count)
+        init_rider, _ = reduce_exact_initial_state(
+            init_rider, reduction.rider_count, magnetic_dipole.exact_charge_cloud
+        )
         if init_driver is not None:
             init_driver, _ = reduce_exact_initial_state(
-                init_driver, reduction.driver_count
+                init_driver, reduction.driver_count, magnetic_dipole.exact_charge_cloud
             )
 
     driver_train_bunch_ranges: tuple[slice, ...] = ()

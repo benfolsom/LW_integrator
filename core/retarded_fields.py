@@ -31,7 +31,12 @@ from weakref import ref
 import numpy as np
 
 from .constants import C_MMNS
-from .exact_source_cloud import ExactCloudHistory, transverse_offsets
+from .exact_source_cloud import (
+    ExactCloudHistory,
+    breathing_separation_frame,
+    breathing_width_knots,
+    transverse_offsets,
+)
 from .exact_visibility import ExactVisibilityHistory, visible_prepared
 from .history_prefix_view import HistoryPrefixView
 from .light_cone_history import (
@@ -300,6 +305,7 @@ class _PreparedSourceHistory:
     _maximum_capacity: int | None = dataclass_field(default=None, repr=False)
     _metal_timelike_count: int = dataclass_field(default=0, repr=False)
     _metal_timelike_proof: bool = dataclass_field(default=True, repr=False)
+    breathing_child: bool = False
 
 
 @dataclass(frozen=True)
@@ -1606,16 +1612,30 @@ def _prepare_history(
             history.config.seed,
             history.config.position_sigma_mm,
             history.config.sigma_multiplier,
+            history.widths_mm,
         )
+        if history.config.breathing_enabled:
+            key += ("breathing", history.config.breathing_response_time_ns)
         cloud = macro.clouds.get(key)
         if (
             cloud is None
             or cloud.arrays.time_ns.shape[0] != macro.arrays.time_ns.shape[0]
         ):
+            if history.config.breathing_enabled:
+                # Deterministic reconstruction from immutable covariance
+                # constants and the accepted/trial knots. No trial publishes
+                # width state, and an append leaves earlier width knots intact.
+                cloud = _expand_breathing_cloud_history(macro, history)
+                macro.clouds[key] = cloud
+                while len(macro.clouds) > 4:
+                    del macro.clouds[next(iter(macro.clouds))]
+                return _exclude_prepared_sources(cloud, excluded_source_indices)
             provisional = isinstance(history.base, TrialTrajectoryHistory)
             if provisional:
                 cloud = _prepare_history(
-                    ExactCloudHistory(history.base.base, history.config),
+                    ExactCloudHistory(
+                        history.base.base, history.config, history.widths_mm
+                    ),
                     (),
                     source_acceleration_semantics=acceleration_semantics,
                 )
@@ -1623,7 +1643,11 @@ def _prepare_history(
             # translation must not leave a half-updated variant reusable.
             macro.clouds.pop(key, None)
             cloud = _expand_cloud_prepared_history(
-                macro, history.config, previous=cloud, provisional=provisional
+                macro,
+                history.config,
+                widths_mm=history.widths_mm,
+                previous=cloud,
+                provisional=provisional,
             )
             macro.clouds[key] = cloud
             while len(macro.clouds) > 4:
@@ -1711,6 +1735,7 @@ def _expand_cloud_prepared_history(
     macro: _PreparedHistory,
     config: MacroparticleSmearingConfig,
     *,
+    widths_mm: tuple[float, ...] | None = None,
     previous: _PreparedHistory | None = None,
     provisional: bool = False,
 ) -> _PreparedHistory:
@@ -1730,7 +1755,11 @@ def _expand_cloud_prepared_history(
         )
     parents = np.repeat(np.arange(macro.arrays.n_sources), count)
     offsets_and_weights = [
-        transverse_offsets(macro.arrays.beta[0, parent], config)
+        transverse_offsets(
+            macro.arrays.beta[0, parent],
+            config,
+            width_mm=None if widths_mm is None else widths_mm[parent],
+        )
         for parent in range(macro.arrays.n_sources)
     ]
     offsets = np.concatenate([item[0] for item in offsets_and_weights])
@@ -1871,6 +1900,122 @@ def _expand_cloud_prepared_history(
                 else (None if provisional else old_source._coefficient_buffer)
             ),
         )
+    return _PreparedHistory(
+        arrays, sources, macro.source_acceleration_semantics, parents
+    )
+
+
+def _expand_breathing_cloud_history(
+    macro: _PreparedHistory, cloud: ExactCloudHistory
+) -> _PreparedHistory:
+    """Prepare moving point children, including their expansion current.
+
+    Knot positions, velocities, and accelerations define C2 quintic child
+    worldlines. Inertial prehistory retains the original transverse offsets.
+    The field and all potential/gradient providers solve these child curves.
+    """
+    # Trial histories use prefix/tail views. Materialize the opt-in child
+    # reconstruction inputs without modifying either side of those views.
+    rows = replace(
+        macro.arrays,
+        **{
+            name: (
+                None
+                if getattr(macro.arrays, name) is None
+                else np.asarray(getattr(macro.arrays, name))
+            )
+            for name in (*_HISTORY_ROW_FIELDS, "gate_prime_before", "gate_prime_after")
+        },
+    )
+    if rows.resolved_knots is not None and np.any(rows.resolved_knots[..., 13] != 0):
+        raise ValueError("exact charge clouds do not support 'proper_velocity'")
+    widths, rates, accelerations = breathing_width_knots(
+        cloud, rows.time_ns, rows.position_mm, rows.beta, rows.dead
+    )
+    count = cloud.config.subcharge_count
+    parents = np.repeat(np.arange(rows.n_sources), count)
+    rules = [
+        transverse_offsets(rows.beta[0, parent], cloud.config, width_mm=1.0)
+        for parent in range(rows.n_sources)
+    ]
+    nodes = np.concatenate([rule[0] for rule in rules])
+    fractions = np.concatenate([rule[1] for rule in rules])
+    offsets = widths[:, parents, None] * nodes
+    beta = rows.beta[:, parents] + rates[:, parents, None] * nodes / C_MMNS
+    # Reuse the centre's actual reconstructed derivatives, including gate
+    # semantics, rather than the raw stored preceding-interval estimates.
+    centre_prime = np.array(rows.beta_prime_per_mm, copy=True)
+    for parent, source in macro.sources.items():
+        centre_prime[: len(source.time_ns), parent] = source.beta_prime_per_mm
+    prime = (
+        centre_prime[:, parents] + accelerations[:, parents, None] * nodes / C_MMNS**2
+    )
+    speed_squared = np.sum(beta**2, axis=2)
+    if not np.isfinite(beta).all() or np.any(speed_squared >= 1):
+        raise ValueError(
+            "breathing child velocity must be strictly subluminal; increase "
+            "breathing_response_time_ns or reduce the represented velocity spread"
+        )
+    arrays = _HistoryArrays(
+        time_ns=rows.time_ns[:, parents],
+        position_mm=rows.position_mm[:, parents] + offsets,
+        beta=beta,
+        beta_prime_per_mm=prime,
+        charge_native=rows.charge_native[parents] * fractions,
+        dead=rows.dead[:, parents],
+        resolved_knots=(
+            None
+            if rows.resolved_knots is None
+            else np.array(rows.resolved_knots[:, parents], copy=True)
+        ),
+        gate_prime_before=(
+            None
+            if rows.gate_prime_before is None
+            else rows.gate_prime_before[:, parents]
+            + accelerations[:, parents, None] * nodes / C_MMNS**2
+        ),
+        gate_prime_after=(
+            None
+            if rows.gate_prime_after is None
+            else rows.gate_prime_after[:, parents]
+            + accelerations[:, parents, None] * nodes / C_MMNS**2
+        ),
+    )
+    if arrays.resolved_knots is not None:
+        gamma = 1 / np.sqrt(1 - speed_squared)
+        arrays.resolved_knots[..., :3] = gamma[..., None] * beta
+        arrays.resolved_knots[..., 3] = 1
+        arrays.resolved_knots[..., 12] = 1 / (gamma**2 * (1 + np.sqrt(speed_squared)))
+        for knot, child in np.ndindex(arrays.time_ns.shape):
+            _, low, tail = _translate_resolved_position(
+                rows.position_mm[knot, parents[child]],
+                rows.resolved_knots[knot, parents[child], 4:7],
+                rows.resolved_knots[knot, parents[child], 8:11],
+                offsets[knot, child],
+            )
+            arrays.resolved_knots[knot, child, 4:7] = low
+            arrays.resolved_knots[knot, child, 8:11] = tail
+    sources = {}
+    for child, parent in enumerate(parents):
+        centre = macro.sources.get(int(parent))
+        if centre is None:
+            continue
+        boundary = centre.inertial_boundary
+        if boundary is not None:
+            boundary = (boundary[0], boundary[1] + offsets[0, child], boundary[2])
+        source = _prepare_source_history(
+            arrays,
+            child,
+            source_acceleration_semantics="instantaneous",
+            inertial_boundary=boundary,
+        )
+        source.breathing_child = True
+        if any(segment_speed_deficit_bound(s) <= 0 for s in source.light_cone_segments):
+            raise ValueError(
+                "breathing child segment cannot be certified subluminal; "
+                "refine the timestep or increase breathing_response_time_ns"
+            )
+        sources[child] = source
     return _PreparedHistory(
         arrays, sources, macro.source_acceleration_semantics, parents
     )
@@ -2437,8 +2582,10 @@ def _solve_null_history_sample(
         separation_mm=float(radius),
         source_proper_velocity=proper,
         precise_separation_mm=separation,
-        precise_separation_frame_mm=separation_in_velocity_frame(
-            segment, separation_frame, proper
+        precise_separation_frame_mm=(
+            breathing_separation_frame(segment, separation_frame, proper)
+            if source.breathing_child
+            else separation_in_velocity_frame(segment, separation_frame, proper)
         ),
         beta_jerk_per_mm2=jerk,
         beta_snap_per_mm3=snap,

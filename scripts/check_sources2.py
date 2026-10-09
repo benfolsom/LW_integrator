@@ -7,6 +7,7 @@ import copy
 from dataclasses import asdict, is_dataclass, replace
 import hashlib
 import json
+import math
 from pathlib import Path
 import sys
 import time
@@ -25,10 +26,12 @@ def encode(value):
     return str(value)
 
 
-def save_result(directory, label, result):
+def save_result(directory, label, result, sample_interval=1):
     arrays = {}
     for role, trajectory in zip(("rider", "driver"), result[:2]):
         for step, state in enumerate(trajectory):
+            if step % sample_interval and step != len(trajectory) - 1:
+                continue
             for name, value in state.items():
                 if isinstance(value, np.ndarray):
                     arrays[f"{role}_{step}_{name}"] = value
@@ -52,11 +55,102 @@ def save_result(directory, label, result):
     return arrays
 
 
-def wait_for_compute_capacity(cap_path=Path("/private/tmp/compute_cap")):
+def wait_for_compute_capacity(cap_path=Path("/tmp/compute_cap")):
     # The wrapper cap permits this single serial integration; no workers are used.
     while cap_path.exists() and int(cap_path.read_text()) < 1:
         print("Waiting for wrapper compute cap 1", flush=True)
         time.sleep(5)
+
+
+def setup_train_window(captured, trials, samples, half_widths, impact, window):
+    """Resolve the narrow pulse in lab time; seed a labelled inertial window."""
+    from core.constants import C_MMNS
+    from core.integration_runner import (
+        _build_driver_train_initial_state,
+        _coast_state_by_coordinate_time,
+    )
+    from core.resolved_knot import initialize_mechanical_knots
+
+    if (
+        samples < 1
+        or half_widths <= 0
+        or not np.isfinite([samples, half_widths, impact]).all()
+    ):
+        raise ValueError("train samples and half-window must be positive and finite")
+    rider = captured["init_rider"]
+    rider["x"] += impact
+    driver = _build_driver_train_initial_state(
+        captured["init_driver"], captured["driver_train"]
+    )
+    relative_speed = C_MMNS * abs(float(rider["bz"][0] - driver["bz"][0]))
+    widths = [trial["width"] for trial in trials]
+    if min(widths) <= 0 or not np.isfinite(widths).all() or relative_speed == 0:
+        raise ValueError(
+            "train pulse study requires positive finite widths and closing speed"
+        )
+    crossings = (driver["z"] - rider["z"][0]) / (
+        C_MMNS * (rider["bz"][0] - driver["bz"])
+    )
+    pulse_min = min(widths) / (float(driver["gamma"].max()) * relative_speed)
+    half_window = (
+        half_widths
+        * max(max(widths), abs(impact))
+        / (float(driver["gamma"].min()) * relative_speed)
+    )
+    start = (
+        max(0.0, float(crossings.min()) - half_window)
+        if window == "first-pulse"
+        else 0.0
+    )
+    end = (
+        float(crossings.min() if window == "first-pulse" else crossings.max())
+        + half_window
+    )
+    h_lab = pulse_min / samples
+    captured["h_step"] = h_lab / float(rider["gamma"].max())
+    captured["steps"] = math.ceil((end - start) / h_lab) + 1
+    for role in ("rider", "driver"):
+        state = _coast_state_by_coordinate_time(captured["init_" + role], start)
+        state["t"][:] = 0.0
+        initialize_mechanical_knots(state)
+        captured["init_" + role] = state
+    return dict(
+        window=window,
+        inertial_shift_ns=start,
+        duration_ns=(captured["steps"] - 1) * h_lab,
+        first_crossing_local_ns=float(crossings.min()) - start,
+        impact_parameter_mm=impact,
+        minimum_width_time_ns=pulse_min,
+        narrowest_requested_width_mm=min(widths),
+        initial_h_lab_ns=h_lab,
+        minimum_samples_per_width=pulse_min / h_lab,
+        interpretation="Prescribed inertial transport to the window start; coupled Medina/LAD evolution only inside the window. Full-train starts at the original initial state.",
+    )
+
+
+def expected_seconds(mode, trial, steps):
+    """Historical serial startup timings, scaled linearly; not a benchmark."""
+    if trial["neutral"]:
+        return None
+    if mode == "light":
+        measured = {
+            (8, 4): 2.82,
+            (8, 16): 7.80,
+            (8, 36): 16.85,
+            (16, 16): 29.21,
+            (24, 16): 64.12,
+            (48, 4): 76.80,
+            (48, 16): 266.83,
+        }
+        anchors = {4: 2.82, 16: 7.80, 36: 16.85}
+        startup = measured.get(
+            (trial["active"] or 48, trial["count"]),
+            anchors.get(trial["count"], 7.80 * trial["count"] / 16)
+            * ((trial["active"] or 48) / 8) ** 2,
+        )
+        return startup * (steps - 1) / 2
+    anchors = {4: 6.94, 16: 14.16, 36: 26.02}
+    return anchors.get(trial["count"], 14.16 * trial["count"] / 16) * (steps - 1) / 159
 
 
 def main():
@@ -68,11 +162,37 @@ def main():
     )
     parser.add_argument("--plan", type=Path)
     parser.add_argument(
+        "--input",
+        type=Path,
+        help="Input JSON; default is the inherited timestep-audit config",
+    )
+    parser.add_argument("--compute-cap", type=Path, default=Path("/tmp/compute_cap"))
+    parser.add_argument(
+        "--prepare-only",
+        action="store_true",
+        help="Write resolved plans and cost estimates without integrating",
+    )
+    parser.add_argument(
+        "--steps",
+        type=int,
+        help="Light/heavy states (default: input's 1,200); parity states default to five",
+    )
+    parser.add_argument(
+        "--train-window", choices=("first-pulse", "full-train"), default="first-pulse"
+    )
+    parser.add_argument("--train-samples-per-width", type=int, default=16)
+    parser.add_argument("--train-half-window-widths", type=float, default=12)
+    parser.add_argument("--train-impact-mm", type=float, default=0)
+    parser.add_argument(
         "--update",
         choices=("first_order_endpoint", "second_order_start_taylor_endpoint"),
         default="first_order_endpoint",
     )
     args = parser.parse_args()
+    if args.steps is not None and (args.steps < 2 or args.mode == "train"):
+        parser.error(
+            "--steps must be at least two and is only for light or parity mode"
+        )
     sys.path.insert(0, str(args.source_root.resolve()))
     import core.trajectory_integrator as integration
     from core.integration_runner import retarded_integrator
@@ -89,13 +209,15 @@ def main():
     )
 
     args.output.mkdir(parents=True, exist_ok=False)
-    input_path = Path(
-        "/Users/benjaminfolsom/work/extracurr/LW_feasibility_studies/studies/lw_eom_audit/timestep_audit/configs"
-    ) / ("train.json" if args.mode == "train" else "light_heavy.json")
+    input_path = args.input or (
+        Path.home()
+        / "work/extracurr/LW_feasibility_studies/studies/lw_eom_audit/timestep_audit/configs"
+        / ("train.json" if args.mode == "train" else "light_heavy.json")
+    )
     original = json.loads(input_path.read_text())
     config = copy.deepcopy(original)
     config.update(
-        steps=5 if args.mode == "parity" else 3,
+        steps=args.steps or (5 if args.mode == "parity" else original["steps"]),
         output_dir=str(args.output / "testbed"),
         trajectory_save=False,
         trajectory_interval=100,
@@ -135,7 +257,6 @@ def main():
         if args.mode == "train":
             config["space_charge_softening_mm"] = 0
             config["core_params"]["z_cutoff"] = 0
-            config["steps"] = 160
             # Express the inherited z-axis setup through the 3D input surface.
             for role in ("rider", "driver"):
                 old = config[role + "_params"]
@@ -183,9 +304,6 @@ def main():
     assert captured
     captured.pop("logger", None)
     captured.pop("progress_callback", None)
-    (args.output / "resolved_inputs.json").write_text(
-        json.dumps(captured, indent=2, default=encode) + "\n"
-    )
     (args.output / "provenance.json").write_text(
         json.dumps(
             dict(
@@ -238,17 +356,6 @@ def main():
             )
             for a, n, w, h in grid
         ]
-        trials += [
-            dict(
-                label=f"neutral_a{a}",
-                active=a,
-                count=4,
-                width=0.1,
-                refinement=1,
-                neutral=True,
-            )
-            for a in (8, 16, 24, 48)
-        ]
     else:
         grid = [
             (4, 0.1, 1),
@@ -270,20 +377,48 @@ def main():
             )
             for n, w, h in grid
         ]
+    if args.mode != "parity":
+        # Every charged variant has a neutral run on exactly the same cells,
+        # width, quadrature, and proper-time grid.
+        labels = {trial["label"] for trial in trials}
         trials += [
-            dict(
-                label="neutral_a0",
-                active=0,
-                count=4,
-                width=0.1,
-                refinement=1,
-                neutral=True,
-            )
+            {**trial, "label": "neutral_" + trial["label"], "neutral": True}
+            for trial in trials.copy()
+            if not trial["neutral"] and "neutral_" + trial["label"] not in labels
         ]
+    resolution = (
+        setup_train_window(
+            captured,
+            trials,
+            args.train_samples_per_width,
+            args.train_half_window_widths,
+            args.train_impact_mm,
+            args.train_window,
+        )
+        if args.mode == "train"
+        else None
+    )
+    (args.output / "resolved_inputs.json").write_text(
+        json.dumps(captured, indent=2, default=encode) + "\n"
+    )
+    (args.output / "probe_setup.json").write_text(
+        json.dumps(
+            dict(
+                mode=args.mode,
+                base_states=captured["steps"],
+                base_h_step_ns=captured["h_step"],
+                train_resolution=resolution,
+                prepare_only=args.prepare_only,
+            ),
+            indent=2,
+        )
+        + "\n"
+    )
     (args.output / "plan.json").write_text(json.dumps(trials, indent=2) + "\n")
     rows = []
     for trial in trials:
-        wait_for_compute_capacity()
+        if not args.prepare_only:
+            wait_for_compute_capacity(args.compute_cap)
         kw = copy.deepcopy(captured)
         if args.mode != "parity":
             kw["macroparticle_smearing"] = MacroparticleSmearingConfig(
@@ -311,19 +446,48 @@ def main():
         (args.output / f"{trial['label']}_inputs.json").write_text(
             json.dumps(kw, indent=2, default=encode) + "\n"
         )
-        started = time.monotonic()
-        print(f"Starting {trial['label']}", flush=True)
         if args.mode != "parity":
             mappings = {
-                role: reduce_exact_initial_state(kw["init_" + role], trial["active"])[1]
+                role: reduce_exact_initial_state(
+                    kw["init_" + role], trial["active"], kw["macroparticle_smearing"]
+                )[1]
                 for role in ("rider", "driver")
             }
             (args.output / f"{trial['label']}_mapping.json").write_text(
                 json.dumps(mappings, indent=2) + "\n"
             )
+        cost = expected_seconds(args.mode, trial, kw["steps"])
+        samples_per_width = (
+            resolution["minimum_samples_per_width"]
+            * trial["width"]
+            / resolution["narrowest_requested_width_mm"]
+            * trial["refinement"]
+            if resolution
+            else None
+        )
+        if args.prepare_only:
+            rows.append(
+                dict(
+                    **trial,
+                    accepted=False,
+                    prepared=True,
+                    states=kw["steps"],
+                    h_step=kw["h_step"],
+                    expected_serial_seconds=cost,
+                    samples_per_width=samples_per_width,
+                )
+            )
+            continue
+        started = time.monotonic()
+        print(f"Starting {trial['label']}", flush=True)
         try:
             result = retarded_integrator(**kw)
-            save_result(args.output, trial["label"], result)
+            save_result(
+                args.output,
+                trial["label"],
+                result,
+                sample_interval=100 if args.mode == "light" else 1,
+            )
             assert len(result[0]) == len(result[1]) == kw["steps"]
             row = dict(
                 **trial,
@@ -331,6 +495,13 @@ def main():
                 elapsed_s=time.monotonic() - started,
                 states=kw["steps"],
                 h_step=kw["h_step"],
+                expected_serial_seconds=cost,
+                samples_per_width=samples_per_width,
+                minimum_samples_per_width=(
+                    resolution["minimum_samples_per_width"] * trial["refinement"]
+                    if resolution
+                    else None
+                ),
             )
         except Exception as exc:
             (args.output / f"{trial['label']}_error.txt").write_text(
@@ -345,7 +516,9 @@ def main():
         rows.append(row)
         (args.output / "summary.json").write_text(json.dumps(rows, indent=2) + "\n")
         print(json.dumps(row), flush=True)
-    assert all(row["accepted"] for row in rows)
+    (args.output / "summary.json").write_text(json.dumps(rows, indent=2) + "\n")
+    if not args.prepare_only:
+        assert all(row["accepted"] for row in rows)
 
 
 if __name__ == "__main__":

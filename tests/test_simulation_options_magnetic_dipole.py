@@ -15,6 +15,8 @@ def test_magnetic_dipole_nested_config_round_trip() -> None:
         exact_source_reduction_enabled=True,
         exact_source_reduction_rider_count=8,
         exact_source_reduction_driver_count=12,
+        macroparticle_smearing_breathing_enabled=True,
+        macroparticle_smearing_breathing_response_time_ns=0.02,
         magnetic_dipole_enabled=True,
         magnetic_dipole_spin_precession_enabled=True,
         magnetic_dipole_stern_gerlach_force_enabled=True,
@@ -42,6 +44,11 @@ def test_magnetic_dipole_nested_config_round_trip() -> None:
     restored = SimulationOptions.from_dict(options.to_dict())
     config = build_magnetic_dipole_config(restored)
     external = build_external_field_config(restored)
+    from lw_integrator.testbed_runner import build_macroparticle_smearing_config
+
+    cloud = build_macroparticle_smearing_config(restored)
+    assert cloud.breathing_enabled is True
+    assert cloud.breathing_response_time_ns == 0.02
 
     assert config.exact_source_reduction.enabled is True
     assert config.exact_source_reduction.rider_count == 8
@@ -91,6 +98,8 @@ def test_magnetic_dipole_nested_config_round_trip() -> None:
 
 def test_old_config_defaults_magnetic_dipoles_off() -> None:
     options = SimulationOptions.from_dict({"steps": 4})
+    assert options.macroparticle_smearing_breathing_enabled is False
+    assert "breathing_enabled" not in options.to_dict()["macroparticle_smearing"]
     magnetic_payload = options.to_dict()["magnetic_dipole"]
 
     assert options.exact_source_reduction_enabled is False

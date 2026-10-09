@@ -14,13 +14,13 @@ from typing import Any
 import numpy as np
 
 from .constants import C_MMNS
-from .types import ParticleState
+from .types import MacroparticleSmearingConfig, ParticleState
 
 
 def fixed_spatial_partition(
     position: np.ndarray, count: int
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Nested farthest-point seeds and nearest-seed cells in laboratory mm."""
+    """Farthest-point seeds and nearest-seed cells in the supplied metric."""
     position = np.asarray(position, dtype=float)
     if position.ndim != 2 or position.shape[1] != 3 or not np.isfinite(position).all():
         raise ValueError("source partition requires finite positions of shape (n, 3)")
@@ -46,11 +46,13 @@ def fixed_spatial_partition(
 
 
 def reduce_exact_initial_state(
-    state: ParticleState, count: int
+    state: ParticleState,
+    count: int,
+    cloud: MacroparticleSmearingConfig | None = None,
 ) -> tuple[ParticleState, dict[str, Any]]:
     """Deposit homogeneous representative particles into fixed spatial cells.
 
-    Source charge, diagnostic population, charge-weighted position, and
+    Source charge, diagnostic population, population-weighted position, and
     population-weighted spatial mechanical momentum are conserved initially.
     Species charge and inertia stay physical. Group internal velocity spread
     and self-fields are unresolved; refining the count recovers the ensemble.
@@ -59,9 +61,11 @@ def reduce_exact_initial_state(
     if isinstance(count, bool) or not isinstance(count, (int, np.integer)) or count < 0:
         raise ValueError("exact source count must be a non-negative integer")
     total = len(state["x"])
-    mapping: dict[str, Any] = dict(
-        original_count=total, reduced_count=total, identity=True
-    )
+    mapping: dict[str, Any] = {
+        "original_count": total,
+        "reduced_count": total,
+        "identity": True,
+    }
     if count == 0 or count >= total:
         return state, mapping
     if np.any(state.get("_dead_particles", False)):
@@ -102,7 +106,19 @@ def reduce_exact_initial_state(
     if np.any(state["t"] != state["t"][0]):
         raise ValueError("initial source reduction requires a common initial lab time")
     position = np.column_stack([state[axis] for axis in "xyz"])
-    seeds, cells = fixed_spatial_partition(position, count)
+    beta = np.column_stack([state["b" + axis] for axis in "xyz"])
+    # One fixed bunch metric: stretch the longitudinal coordinate by the
+    # gamma of the population-weighted mean proper velocity. This is a
+    # geometric rest-frame proxy, not a Lorentz boost of asynchronous events.
+    mean_u = np.average(state["gamma"][:, None] * beta, axis=0, weights=population)
+    speed = np.linalg.norm(mean_u)
+    direction = mean_u / speed if speed else np.array([0.0, 0.0, 1.0])
+    metric_gamma = float(np.sqrt(1 + speed**2))
+    centred = position - np.average(position, axis=0, weights=population)
+    metric_position = (
+        centred + (metric_gamma - 1) * (centred @ direction)[:, None] * direction
+    )
+    seeds, cells = fixed_spatial_partition(metric_position, count)
     result = {
         key: (
             value[seeds].copy()
@@ -143,11 +159,56 @@ def reduce_exact_initial_state(
         result["b" + axis] = proper_speed[:, axis_index] / result["gamma"]
         result["P" + axis] = group_momentum[:, axis_index]
     result["Pt"] = result["m_species"] * C_MMNS * result["gamma"]
+    centres = np.column_stack([result[a] for a in "xyz"])
+    transverse_covariance = np.zeros((count, 3, 3))
+    cell_xv = np.zeros(count)
+    cell_vv = np.zeros(count)
+    for cell in range(count):
+        members = cells == cell
+        delta = position[members] - centres[cell]
+        u = proper_speed[cell]
+        norm = np.linalg.norm(u)
+        normal = u / norm if norm else np.array([0.0, 0.0, 1.0])
+        transverse = delta - (delta @ normal)[:, None] * normal
+        transverse_covariance[cell] = (
+            (transverse * population[members, None]).T
+            @ transverse
+            / group_population[cell]
+        )
+        if cloud is not None and cloud.enabled and cloud.breathing_enabled:
+            # Unresolved members share the accepted centre translation and
+            # retain their initial relative lab velocities (ballistic closure).
+            velocity = beta[members] * C_MMNS
+            velocity -= np.average(velocity, axis=0, weights=population[members])
+            velocity -= (velocity @ normal)[:, None] * normal
+            weights = population[members] / group_population[cell]
+            cell_xv[cell] = np.sum(weights * np.sum(transverse * velocity, axis=1)) / 2
+            cell_vv[cell] = np.sum(weights * np.sum(velocity**2, axis=1)) / 2
+    # Isotropic per-axis RMS in the initial plane normal to the cell velocity.
+    # The cloud provider floors this at the requested original effective width.
+    cell_sigma = np.sqrt(
+        np.maximum(0, np.trace(transverse_covariance, axis1=1, axis2=2) / 2)
+    )
+    result["exact_source_cell_sigma_mm"] = cell_sigma
+    result["exact_source_original_count"] = np.full(count, total, dtype=float)
+    if cloud is not None and cloud.enabled and cloud.breathing_enabled:
+        result["exact_source_cell_xv_mm2_ns"] = cell_xv
+        result["exact_source_cell_vv_mm2_ns2"] = cell_vv
+        result["exact_source_cell_epoch_ns"] = np.full(count, state["t"][0])
+        result["exact_source_breathing_ready"] = np.ones(count)
+        mapping.update(
+            breathing_covariance_model="ballistic_initial_cell_velocity_spread",
+            cell_xv_mm2_ns=cell_xv.tolist(),
+            cell_vv_mm2_ns2=cell_vv.tolist(),
+            cell_epoch_ns=float(state["t"][0]),
+        )
     # A coarse macro has new kinematics and a new centre. Seed caches from
     # those values, never from the selected parent's old resolved knot.
     for axis in "xyz":
         for part in ("low", "tail"):
             result[f"source_position_{part}_{axis}"] = np.zeros(count)
+    for part in ("low", "tail"):
+        result[f"source_time_{part}_ns"] = np.zeros(count)
     from .resolved_knot import initialize_mechanical_knots
 
     initialize_mechanical_knots(result)
@@ -158,6 +219,17 @@ def reduce_exact_initial_state(
         parent_cells=cells.tolist(),
         group_population=group_population.tolist(),
         group_source_charge=source_charge.tolist(),
-        centres_mm=np.column_stack([result[a] for a in "xyz"]).tolist(),
+        centres_mm=centres.tolist(),
+        partition_metric="population_mean_proper_velocity_gamma_scaled",
+        partition_gamma=metric_gamma,
+        partition_direction=direction.tolist(),
+        transverse_covariance_mm2=transverse_covariance.tolist(),
+        cell_sigma_mm=cell_sigma.tolist(),
     )
+    if cloud is not None and cloud.enabled:
+        original_width = cloud.position_sigma_mm * cloud.sigma_multiplier
+        mapping.update(
+            original_effective_width_mm=original_width,
+            group_effective_width_mm=np.maximum(cell_sigma, original_width).tolist(),
+        )
     return result, mapping

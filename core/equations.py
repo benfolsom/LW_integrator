@@ -353,6 +353,12 @@ def _initialize_result_state(current_state: ParticleState) -> ParticleState:
         "mass_shell_projection_energy": np.zeros_like(current_state["x"], dtype=float),
     }
 
+    from .types import EXACT_SOURCE_REDUCTION_FIELDS
+
+    for name in EXACT_SOURCE_REDUCTION_FIELDS:
+        if name in current_state:
+            result[name] = np.array(current_state[name], dtype=float, copy=True)
+
     magnetic_fields = (
         "spin_x",
         "spin_y",

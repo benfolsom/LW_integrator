@@ -11,7 +11,7 @@ from core.integration_checkpoint import (
     IntegrationCheckpointStore,
 )
 from core.resolved_knot import RESOLVED_KNOT_FIELDS
-from core.types import TrajectoryBuilder
+from core.types import EXACT_SOURCE_REDUCTION_FIELDS, TrajectoryBuilder
 from tests.unit.test_accepted_pair_checkpoint import _state
 
 pytestmark = pytest.mark.unit
@@ -23,6 +23,8 @@ def test_resolved_knots_checkpoint_round_trip(tmp_path, pair, legacy):
     builder = TrajectoryBuilder(3, 1)
     for step in range(3):
         state = _state(step, offset=1.0)
+        state["exact_source_cell_sigma_mm"] = np.array([0.3])
+        state["exact_source_original_count"] = np.array([12.0])
         for index, name in enumerate(RESOLVED_KNOT_FIELDS):
             state[name] = np.array([float(index + step + 1) * 1e-30])
         builder.set_step(step, state)
@@ -66,6 +68,17 @@ def test_resolved_knots_checkpoint_round_trip(tmp_path, pair, legacy):
                 }
             np.savez(path, **arrays)
             chunk["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+        # Older checkpoints have neither resolved knots nor reduction metadata.
+        constants = manifest["constants"]
+        path = directory / constants["file"]
+        with np.load(path) as archive:
+            arrays = {
+                name: archive[name]
+                for name in archive.files
+                if name.split("__")[-1] not in EXACT_SOURCE_REDUCTION_FIELDS
+            }
+        np.savez(path, **arrays)
+        constants["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
         store.manifest_path.write_text(json.dumps(manifest))
     reopened = store_class(directory, **arguments, resume=True)
     restored = TrajectoryBuilder(3, 1)
@@ -79,6 +92,10 @@ def test_resolved_knots_checkpoint_round_trip(tmp_path, pair, legacy):
             getattr(output, name), 0.0 if legacy else getattr(trajectory, name)
         )
     np.testing.assert_array_equal(output.x, trajectory.x)
+    for name in EXACT_SOURCE_REDUCTION_FIELDS:
+        np.testing.assert_array_equal(
+            getattr(output, name), 0.0 if legacy else getattr(trajectory, name)
+        )
 
 
 def test_legacy_empty_channels_work_in_indexed_history():

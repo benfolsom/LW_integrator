@@ -20,7 +20,12 @@ from typing import TYPE_CHECKING, Any, cast
 import numpy as np
 
 from .resolved_knot import RESOLVED_KNOT_FIELDS
-from .types import INERTIAL_CHARGE_BOUNDARY_FIELDS, TrajectoryArrays, TrajectoryBuilder
+from .types import (
+    EXACT_SOURCE_REDUCTION_FIELDS,
+    INERTIAL_CHARGE_BOUNDARY_FIELDS,
+    TrajectoryArrays,
+    TrajectoryBuilder,
+)
 
 if TYPE_CHECKING:
     from .causal_c5_dipole_provider import AcceptedPairCausalC5SourceHistory
@@ -38,28 +43,35 @@ class CheckpointCompatibilityError(CheckpointError):
     """Raised when a checkpoint belongs to different integration inputs."""
 
 
-_PARTICLE_CONSTANT_FIELDS = INERTIAL_CHARGE_BOUNDARY_FIELDS + (
-    "q",
-    "q_species",
-    "q_observer",
-    "q_source",
-    "macro_population",
-    "m",
-    "m_species",
-    "char_time",
-    "magnetic_moment_j_per_t",
-    "magnetic_moment_native",
-    "spin_quantum_number",
-    "gyromagnetic_ratio_rad_s_t",
-    "magnetic_dipole_active",
-    "spin_precession_active",
-    "stern_gerlach_active",
+_PARTICLE_CONSTANT_FIELDS = (
+    INERTIAL_CHARGE_BOUNDARY_FIELDS
+    + EXACT_SOURCE_REDUCTION_FIELDS
+    + (
+        "q",
+        "q_species",
+        "q_observer",
+        "q_source",
+        "macro_population",
+        "m",
+        "m_species",
+        "char_time",
+        "magnetic_moment_j_per_t",
+        "magnetic_moment_native",
+        "spin_quantum_number",
+        "gyromagnetic_ratio_rad_s_t",
+        "magnetic_dipole_active",
+        "spin_precession_active",
+        "stern_gerlach_active",
+    )
 )
 
 
 def _particle_constant(trajectory: TrajectoryArrays, name: str) -> np.ndarray:
     values: np.ndarray = np.asarray(getattr(trajectory, name))
-    if name in INERTIAL_CHARGE_BOUNDARY_FIELDS and values.size == 0:
+    if (
+        name in (INERTIAL_CHARGE_BOUNDARY_FIELDS + EXACT_SOURCE_REDUCTION_FIELDS)
+        and values.size == 0
+    ):
         # Manually constructed legacy SOA objects use empty optional defaults.
         # Their checkpoints represent an absent boundary as particle-sized zeros.
         values = np.zeros(trajectory.n_particles)
@@ -657,9 +669,9 @@ class AcceptedPairCheckpointStore:
             ) as archive:
                 for role, trajectory in (("rider", rider), ("driver", driver)):
                     for name in _PARTICLE_CONSTANT_FIELDS:
-                        if (
-                            f"{role}__{name}" not in archive
-                            and name in INERTIAL_CHARGE_BOUNDARY_FIELDS
+                        if f"{role}__{name}" not in archive and name in (
+                            INERTIAL_CHARGE_BOUNDARY_FIELDS
+                            + EXACT_SOURCE_REDUCTION_FIELDS
                         ):
                             continue
                         stored = np.asarray(archive[f"{role}__{name}"])

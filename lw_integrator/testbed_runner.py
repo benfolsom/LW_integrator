@@ -336,6 +336,8 @@ class SimulationOptions:
     macroparticle_smearing_apply_to_passive_updates: bool = False
     macroparticle_smearing_seed: int = 12345
     macroparticle_smearing_refresh_policy: str = "fixed_per_particle"
+    macroparticle_smearing_breathing_enabled: bool = False
+    macroparticle_smearing_breathing_response_time_ns: float = 0.01
 
     # Self-consistency options
     self_consistency_enabled: bool = True
@@ -748,6 +750,14 @@ class SimulationOptions:
                 "apply_to_passive_updates": self.macroparticle_smearing_apply_to_passive_updates,
                 "seed": self.macroparticle_smearing_seed,
                 "refresh_policy": self.macroparticle_smearing_refresh_policy,
+                **(
+                    {
+                        "breathing_enabled": True,
+                        "breathing_response_time_ns": self.macroparticle_smearing_breathing_response_time_ns,
+                    }
+                    if self.macroparticle_smearing_breathing_enabled
+                    else {}
+                ),
             },
             "self_consistency_enabled": self.self_consistency_enabled,
             "self_consistency_tolerance": self.self_consistency_tolerance,
@@ -1639,6 +1649,12 @@ class SimulationOptions:
             macroparticle_smearing_refresh_policy=str(
                 _smearing_value("refresh_policy", "fixed_per_particle")
             ).replace("-", "_"),
+            macroparticle_smearing_breathing_enabled=_smearing_bool(
+                "breathing_enabled", False
+            ),
+            macroparticle_smearing_breathing_response_time_ns=_smearing_float(
+                "breathing_response_time_ns", 0.01
+            ),
             self_consistency_enabled=_strict_bool("self_consistency_enabled", True),
             self_consistency_tolerance=_float("self_consistency_tolerance", 1e-4),
             self_consistency_convergence_mode=canonicalize_self_consistency_mode(
@@ -3074,6 +3090,8 @@ def build_macroparticle_smearing_config(options: SimulationOptions) -> object:
         refresh_policy=str(options.macroparticle_smearing_refresh_policy).replace(
             "-", "_"
         ),
+        breathing_enabled=bool(options.macroparticle_smearing_breathing_enabled),
+        breathing_response_time_ns=options.macroparticle_smearing_breathing_response_time_ns,
     )
 
 
