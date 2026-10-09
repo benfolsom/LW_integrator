@@ -277,7 +277,10 @@ def correction_node_fields(
     positions_mm: np.ndarray,
     *,
     warm_start: NodeWarmStart | None = None,
+    source_acceleration_semantics: str = "preceding_interval",
 ) -> tuple[np.ndarray, np.ndarray]:
-    prepared = rf._prepare_history(history, ())
+    prepared = rf._prepare_history(
+        history, (), source_acceleration_semantics=source_acceleration_semantics
+    )
     times = np.full(len(positions_mm), time_ns)
     return resolved_node_fields(prepared, times, positions_mm, warm_start=warm_start)

@@ -391,7 +391,10 @@ def run_pic(config: Mapping[str, Any]) -> dict[str, Any]:
                     "ballistic between fits"
                 ),
                 cloud_model=(
-                    "fixed transverse Gaussian quadrature; no longitudinal smoothing"
+                    "breathing 3D Gaussian quadrature; filtered rest-axis cohort "
+                    "moments; point-subcharge expansion worldlines"
+                    if correction.config.cloud_breathing
+                    else "fixed transverse Gaussian quadrature; no longitudinal smoothing"
                 ),
                 accounting=(
                     "correction: sampled Lorentz estimate versus PIC-only push; "

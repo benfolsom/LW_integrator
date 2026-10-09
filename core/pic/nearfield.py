@@ -234,7 +234,8 @@ class NearFieldCorrection:
         cloud: CloudCorrection | None = None,
     ) -> None:
         if cloud is not None and (
-            cloud.config.midpoint_predictor
+            cloud.config.cloud_breathing
+            or cloud.config.midpoint_predictor
             or cloud.config.refit_every != 1
             or cloud.config.evaluation_every != 1
             or cloud.config.far_field_ratio is not None
@@ -242,7 +243,7 @@ class NearFieldCorrection:
         ):
             raise ValueError(
                 "near/cloud split requires full refits and full cloud fields "
-                "without midpoint prediction"
+                "without midpoint prediction or breathing"
             )
         self.species = list(species)
         self.config, self.cloud = config, cloud

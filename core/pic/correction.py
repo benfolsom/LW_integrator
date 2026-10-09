@@ -5,7 +5,8 @@ Charge, position first moments, and mechanical-momentum first moments match
 population-weighted particles at each refit, including their correction kicks.
 Clouds have no independent inertia: applying another cloud kick would count
 the force twice. Clouds coast between sparse refits. Re-fitting
-never changes source identity, charge, width, or transverse quadrature offsets.
+never changes source identity or charge. Widths and transverse offsets stay
+fixed by default; opt-in breathing stores moving point-subcharge histories.
 Refit cadence must be converged: sparse fits can create artificial acceleration.
 """
 
@@ -46,12 +47,30 @@ class CorrectionConfig:
     temporal_mode is ignored when evaluation_every == 1. Ballistic shortcuts
     are model-exact: the fitted model reproduces itself, without certifying
     the underlying particle dynamics or physical accuracy.
+
+    Fixed geometry retains 4 mm default half extents and one-cell padding.
+    In bunch_extent mode, omitted half extents use only a 1 pm floor; select
+    e.g. lattice_padding_cells=1e-6 to use the outer layers. Opt-in local-z
+    densification enforces lattice_max_spacing_z_m, with a node-count limit.
+    The phase shift consumes existing padding, without changing box size.
+    A finite inertial prefix must cover all retarded roots. For a distance
+    dz ahead of an ultrarelativistic source, allow roughly 2*gamma**2*dz/c
+    (5 MeV electrons: about 0.78 us per metre), plus a margin for offsets.
+
+    cloud_breathing opts into three rest-axis moment targets, initialized
+    and floored by species RMS/K^(1/3) and cloud_width_m. The three-stage
+    causal filter has time constant cloud_breathing_response_time_s per
+    stage (low-frequency lag about three times that). Its lab deformation
+    includes smoothly changing contraction, without resetting offsets.
+    subcharge_count remains the transverse square count; breathing multiplies
+    it by cloud_breathing_longitudinal_order. Refit, time, quadrature, and
+    response-time convergence are separate validation requirements.
     """
 
     clouds_per_species: int = 8
     refit_every: int = 1
     lattice_shape: tuple[int, int, int] = (5, 5, 5)
-    half_extent_m: tuple[float, float, float] = (0.004, 0.004, 0.004)
+    half_extent_m: tuple[float, float, float] | None = None
     cloud_width_m: float = 0.0002
     subcharge_count: int = 16
     cloud_width_rule: str = "fixed"
@@ -63,14 +82,42 @@ class CorrectionConfig:
     midpoint_predictor: bool = False
     lattice_extent_mode: str = "fixed"
     lattice_padding_cells: float = 1.0
+    lattice_max_spacing_z_m: float | None = None
+    lattice_max_nodes_z: int = 65537
+    lattice_phase_z_cells: float = 0.0
     prehistory_duration_s: float | None = None
+    cloud_breathing: bool = False
+    cloud_breathing_response_time_s: float = 1e-11
+    cloud_breathing_max_speed_c: float = 0.05
+    cloud_breathing_longitudinal_order: int = 3
 
     def __post_init__(self) -> None:
-        if self.prehistory_duration_s is not None and (
-            not np.isfinite(self.prehistory_duration_s)
-            or self.prehistory_duration_s <= 0
+        if not isinstance(self.cloud_breathing, bool):
+            # Match the configuration API's ValueError convention.
+            raise ValueError("cloud_breathing must be boolean")  # noqa: TRY004
+        for name in ("cloud_breathing_response_time_s", "cloud_breathing_max_speed_c"):
+            value = getattr(self, name)
+            if (
+                isinstance(value, (bool, np.bool_))
+                or not isinstance(value, (int, float))
+                or not np.isfinite(value)
+                or value <= 0
+            ):
+                raise ValueError(f"{name} must be positive and finite")
+        if self.cloud_breathing_max_speed_c >= 1:
+            raise ValueError("cloud_breathing_max_speed_c must be less than one")
+        if self.cloud_breathing and (
+            self.certified_inertial_skip or self.far_field_ratio is not None
         ):
-            raise ValueError("prehistory duration must be positive and finite")
+            raise ValueError("breathing requires full subcharge fields")
+        if self.prehistory_duration_s is not None:
+            if (
+                isinstance(self.prehistory_duration_s, (bool, np.bool_))
+                or not isinstance(self.prehistory_duration_s, (int, float))
+                or not np.isfinite(self.prehistory_duration_s)
+                or self.prehistory_duration_s <= 0
+            ):
+                raise ValueError("prehistory duration must be positive and finite")
         if not isinstance(self.midpoint_predictor, bool):
             raise ValueError("midpoint_predictor must be boolean")
         if self.midpoint_predictor and (
@@ -88,11 +135,17 @@ class CorrectionConfig:
             "refit_every",
             "subcharge_count",
             "evaluation_every",
+            "lattice_max_nodes_z",
+            "cloud_breathing_longitudinal_order",
         ):
             value = getattr(self, key)
             if isinstance(value, bool) or int(value) != value or value < 1:
                 raise ValueError(f"{key} must be a positive integer")
             object.__setattr__(self, key, int(value))
+        if self.cloud_breathing and (
+            self.subcharge_count < 4 or self.cloud_breathing_longitudinal_order < 2
+        ):
+            raise ValueError("breathing requires at least two nodes on every axis")
         if self.temporal_mode not in ("hold", "extrapolate"):
             raise ValueError("temporal_mode must be hold or extrapolate (causal)")
         if self.evaluation_every > 1 and self.refit_every != 1:
@@ -103,14 +156,38 @@ class CorrectionConfig:
             raise ValueError("lattice extent mode must be fixed or bunch_extent")
         if (
             not np.isfinite(self.lattice_padding_cells)
-            or self.lattice_padding_cells < 1
+            or self.lattice_padding_cells <= 0
         ):
-            raise ValueError("lattice padding must be finite and at least one cell")
+            raise ValueError("lattice padding must be positive and finite")
+        if (
+            not np.isfinite(self.lattice_phase_z_cells)
+            or abs(self.lattice_phase_z_cells) > 0.5
+        ):
+            raise ValueError("lattice z phase must be finite and within half a cell")
+        if self.lattice_max_spacing_z_m is not None and (
+            isinstance(self.lattice_max_spacing_z_m, (bool, np.bool_))
+            or not np.isfinite(self.lattice_max_spacing_z_m)
+            or self.lattice_max_spacing_z_m <= 0
+        ):
+            raise ValueError("lattice maximum z spacing must be positive and finite")
+        if self.lattice_max_nodes_z < self.lattice_shape[2]:
+            raise ValueError("lattice z node limit is below the requested shape")
+        if self.lattice_extent_mode != "bunch_extent" and (
+            self.lattice_max_spacing_z_m is not None or self.lattice_phase_z_cells != 0
+        ):
+            raise ValueError("lattice z spacing and phase require bunch_extent")
         if self.lattice_extent_mode == "bunch_extent":
+            if abs(self.lattice_phase_z_cells) >= self.lattice_padding_cells:
+                raise ValueError("lattice z phase requires strictly larger padding")
             if 2 * self.lattice_padding_cells >= min(self.lattice_shape) - 1:
                 raise ValueError("lattice padding leaves no interior nodes")
             if self.evaluation_every != 1:
                 raise ValueError("bunch_extent requires evaluation_every=1")
+        if self.half_extent_m is None:
+            # Preserve fixed-mode defaults; bounding mode needs only a
+            # nonzero floor for collapsed axes, not an implicit 4 mm floor.
+            floor = 0.004 if self.lattice_extent_mode == "fixed" else 1e-12
+            object.__setattr__(self, "half_extent_m", (floor,) * 3)
         extent = np.asarray(self.half_extent_m)
         if (
             extent.shape != (3,)
@@ -145,15 +222,41 @@ class CorrectionConfig:
             "midpoint_predictor",
             "lattice_extent_mode",
             "lattice_padding_cells",
+            "lattice_max_spacing_z_mm",
+            "lattice_max_nodes_z",
+            "lattice_phase_z_cells",
             "prehistory_duration_ns",
+            "cloud_breathing",
+            "cloud_breathing_response_time_ps",
+            "cloud_breathing_max_speed_c",
+            "cloud_breathing_longitudinal_order",
         }
         if not isinstance(data, Mapping) or set(data) - allowed:
             raise ValueError("unknown correction keys or non-object correction")
         values = dict(data)
+        if "cloud_breathing_response_time_ps" in values:
+            response = values.pop("cloud_breathing_response_time_ps")
+            if isinstance(response, (bool, np.bool_)) or not isinstance(
+                response, (int, float)
+            ):
+                raise ValueError("cloud_breathing response time must be numeric")
+            values["cloud_breathing_response_time_s"] = response * 1e-12
         if "prehistory_duration_ns" in values:
-            values["prehistory_duration_s"] = (
-                float(values.pop("prehistory_duration_ns")) * 1e-9
-            )
+            duration = values.pop("prehistory_duration_ns")
+            if isinstance(duration, (bool, np.bool_)) or not isinstance(
+                duration, (int, float)
+            ):
+                raise ValueError("prehistory duration must be positive and finite")
+            values["prehistory_duration_s"] = duration * 1e-9
+        if "lattice_max_spacing_z_mm" in values:
+            spacing = values.pop("lattice_max_spacing_z_mm")
+            if isinstance(spacing, (bool, np.bool_)) or not isinstance(
+                spacing, (int, float)
+            ):
+                raise ValueError(
+                    "lattice maximum z spacing must be positive and finite"
+                )
+            values["lattice_max_spacing_z_m"] = spacing * 1e-3
         if "half_extent_mm" in values:
             values["half_extent_m"] = tuple(
                 np.asarray(values.pop("half_extent_mm")) * 1e-3
@@ -295,7 +398,7 @@ class CloudCorrection:
         self.velocity_beta = self._velocity_fit(species)
         self.initial_u = self.history_u.copy()
         width = config.cloud_width_m
-        if config.cloud_width_rule == "bunch_rms_k":
+        if config.cloud_width_rule == "bunch_rms_k" and not config.cloud_breathing:
             # One common, immutable transverse width, as required by the
             # existing exact-cloud provider. Use the largest species RMS.
             rms = max(
@@ -330,6 +433,8 @@ class CloudCorrection:
         rules = [transverse_offsets(b, self.smearing) for b in beta]
         self.offsets_m = np.array([rule[0] * 1e-3 for rule in rules])
         self.fractions = rules[0][1]
+        if config.cloud_breathing:
+            self._initialize_breathing(species)
         self.builder = GrowableTrajectoryBuilder(16, len(self.members))
         # The provider bounds analytic inertial roots by this finite prefix.
         # Keep the original 1000 mm duration unless explicitly overridden.
@@ -342,6 +447,18 @@ class CloudCorrection:
             )
         )
         self.builder.append_step(self._state(0.0, self.position_m, np.zeros_like(beta)))
+        if config.cloud_breathing:
+            self.subcharge_builder = GrowableTrajectoryBuilder(
+                16, len(self.members) * len(self.fractions)
+            )
+            self.subcharge_builder.append_step(
+                self._subcharge_state(
+                    prefix_s, self.position_m + C * beta * prefix_s, np.zeros_like(beta)
+                )
+            )
+            self.subcharge_builder.append_step(
+                self._subcharge_state(0.0, self.position_m, np.zeros_like(beta))
+            )
         self.time_s = 0.0
         self.accepted_steps = 0
         self.beta_dot_s = np.zeros_like(beta)
@@ -365,6 +482,7 @@ class CloudCorrection:
         self._uniform_prediction = np.logical_and.reduce(prehistory_checks)
         self._predicted_uniform = np.zeros(len(beta), dtype=bool)
         self._trial_history: TrialTrajectoryHistory | None = None
+        self._trial_subcharge_history: TrialTrajectoryHistory | None = None
         self.refits = 1
         self.source_populations = [s.population.copy() for s in species]
         self.particle_shapes = [s.position_m.shape for s in species]
@@ -406,6 +524,176 @@ class CloudCorrection:
         )
         return moments[0], moments[1]
 
+    @staticmethod
+    def _rest_rms(
+        s: Species, idx: np.ndarray, beta: np.ndarray, basis: np.ndarray
+    ) -> np.ndarray:
+        """Instantaneous inertial fit on the centroid's rest-time slice.
+
+        Lab-simultaneous particles are boosted, then coast to t'=0 using
+        their instantaneous velocities. This is a local moment estimate,
+        not a reconstruction of their accelerated rest-frame histories.
+        """
+        weights = s.population[idx]
+        dr = s.position_m[idx] - _mean(s.position_m[idx], weights)
+        speed = np.linalg.norm(beta)
+        axis = beta / speed if speed else np.array([0.0, 0.0, 1.0])
+        gamma = 1 / np.sqrt(1 - beta @ beta)
+        rest = dr + (gamma - 1) * (dr @ axis)[:, None] * axis
+        velocity = s.velocity_m_s[idx] / C
+        rest_beta = (
+            velocity + ((gamma - 1) * (velocity @ axis) - gamma * speed)[:, None] * axis
+        ) / (gamma * (1 - velocity @ beta))[:, None]
+        rest += (gamma * (dr @ beta))[:, None] * rest_beta
+        local = (rest - _mean(rest, weights)) @ basis
+        return cast(np.ndarray, np.sqrt(np.average(local**2, weights=weights, axis=0)))
+
+    def _width_maps(self, widths: np.ndarray) -> np.ndarray:
+        """Rest-axis widths mapped to contracted lab-snapshot offsets."""
+        maps = []
+        for beta, basis, width in zip(self.beta, self.breathing_basis, widths):
+            speed = np.linalg.norm(beta)
+            axis = beta / speed if speed else np.array([0.0, 0.0, 1.0])
+            contraction = np.eye(3) - (1 - np.sqrt(1 - beta @ beta)) * np.outer(
+                axis, axis
+            )
+            maps.append((contraction @ basis) * width)
+        return np.array(maps)
+
+    def _initialize_breathing(self, species: list[Species]) -> None:
+        # Axes retain their identities when the centroid changes direction.
+        self.breathing_basis = np.array([rest_basis(b) for b in self.beta])
+        self.width_floor_m = np.array(
+            [
+                np.maximum(
+                    self.config.cloud_width_m,
+                    self.config.cloud_width_scale
+                    * self._rest_rms(
+                        species[si],
+                        np.flatnonzero(species[si].population > 0),
+                        self.beta[j],
+                        self.breathing_basis[j],
+                    )
+                    / self.config.clouds_per_species ** (1 / 3),
+                )
+                for j, (si, _) in enumerate(self.members)
+            ]
+        )
+        order = int(np.sqrt(self.config.subcharge_count))
+        x, wx = np.polynomial.hermite.hermgauss(order)
+        z, wz = np.polynomial.hermite.hermgauss(
+            self.config.cloud_breathing_longitudinal_order
+        )
+        self.breathing_nodes = np.stack(
+            np.meshgrid(x, x, z, indexing="ij"), axis=-1
+        ).reshape(-1, 3) * np.sqrt(2)
+        self.fractions = (
+            wx[:, None, None] * wx[None, :, None] * wz[None, None, :]
+        ).ravel()
+        self.fractions /= self.fractions.sum()
+        initial = self._width_maps(self.width_floor_m)
+        self.breathing_filters = np.repeat(initial[None], 3, axis=0)
+        self.breathing_target = initial.copy()
+        self.width_target_m = self.width_floor_m.copy()
+        self._refresh_breathing_offsets()
+        self.initial_subcharge_position_m = (
+            self.position_m[:, None, :] + self.offsets_m
+        ).reshape(-1, 3)
+        self._refit_breathing_target(species)
+
+    def _refresh_breathing_offsets(self) -> None:
+        first, second, third = self.breathing_filters
+        tau = self.config.cloud_breathing_response_time_s
+        self.offsets_m = np.einsum("cij,nj->cni", third, self.breathing_nodes)
+        self.offset_velocity_m_s = np.einsum(
+            "cij,nj->cni", (second - third) / tau, self.breathing_nodes
+        )
+        self.offset_acceleration_m_s2 = np.einsum(
+            "cij,nj->cni",
+            (first - 2 * second + third) / tau**2,
+            self.breathing_nodes,
+        )
+
+    def _advance_breathing(self, dt_s: float) -> None:
+        # Exact three cascaded first-order filters for a held causal target.
+        # A target refit changes neither position, velocity, nor acceleration
+        # of the third stage. In particular, prehistory stays inertial.
+        a, b, d = self.breathing_filters - self.breathing_target
+        r = dt_s / self.config.cloud_breathing_response_time_s
+        decay = np.exp(-r)
+        self.breathing_filters = self.breathing_target + decay * np.stack(
+            (a, b + r * a, d + r * b + 0.5 * r**2 * a)
+        )
+        self._refresh_breathing_offsets()
+
+    def _refit_breathing_target(self, species: list[Species]) -> None:
+        self.width_target_m = np.array(
+            [
+                np.maximum(
+                    self.width_floor_m[j],
+                    self.config.cloud_width_scale
+                    * self._rest_rms(
+                        species[si], idx, self.beta[j], self.breathing_basis[j]
+                    ),
+                )
+                for j, (si, idx) in enumerate(self.members)
+            ]
+        )
+        desired = self._width_maps(self.width_target_m)
+        first = self.breathing_filters[0]
+        delta = desired - first
+        # Convex cascaded filters preserve this operator-speed bound for a
+        # fixed centroid velocity. Reserve additional lab-speed headroom.
+        speed = C * np.minimum(
+            self.config.cloud_breathing_max_speed_c,
+            0.25 * (1 - np.linalg.norm(self.beta, axis=1)),
+        )
+        limit = (
+            speed
+            * self.config.cloud_breathing_response_time_s
+            / np.max(np.linalg.norm(self.breathing_nodes, axis=1))
+        )
+        norm = np.linalg.norm(delta, axis=(1, 2))
+        factor = np.minimum(1, limit / np.maximum(norm, np.finfo(float).tiny))
+        self.breathing_target = first + factor[:, None, None] * delta
+
+    def _subcharge_state(
+        self, time_s: float, position: np.ndarray, beta_dot: np.ndarray
+    ) -> dict:
+        beta = (self.beta[:, None, :] + self.offset_velocity_m_s / C).reshape(-1, 3)
+        deficit = 1 - np.sum(beta**2, axis=1)
+        if not np.all(np.isfinite(beta)) or np.any(deficit <= 0):
+            raise ValueError(
+                "breathing subcharge velocity must be finite and subluminal"
+            )
+        u = beta / np.sqrt(deficit)[:, None]
+        gamma = 1 / np.sqrt(deficit)
+        charge = (self.charge_c[:, None] * self.fractions).ravel() * SOURCE_C_TO_NATIVE
+        state = {
+            "t": np.full(len(beta), time_s * 1e9),
+            "gamma": gamma,
+            "Pt": gamma,
+            "q": charge,
+            "q_source": charge,
+            "inertial_charge_boundary_ready": np.ones(len(beta)),
+            "inertial_charge_boundary_time_ns": np.zeros(len(beta)),
+        }
+        points = (position[:, None, :] + self.offsets_m).reshape(-1, 3)
+        prime = (beta_dot[:, None, :] + self.offset_acceleration_m_s2 / C).reshape(
+            -1, 3
+        ) / (C * 1e3)
+        initial_u = np.repeat(self.initial_u, len(self.fractions), axis=0)
+        for i, axis in enumerate("xyz"):
+            state[axis] = points[:, i] * 1e3
+            state[f"P{axis}"] = u[:, i]
+            state[f"b{axis}"] = beta[:, i]
+            state[f"bdot{axis}"] = prime[:, i]
+            state[f"inertial_charge_boundary_position_{axis}"] = (
+                self.initial_subcharge_position_m[:, i] * 1e3
+            )
+            state[f"inertial_charge_boundary_u_{axis}"] = initial_u[:, i]
+        return state
+
     def coupling_diagnostics(self, species: list[Species]) -> dict:
         """Compare source moments with their material particles at this event.
 
@@ -435,7 +723,7 @@ class CloudCorrection:
         center_energy = float(
             np.sum(self.weights * mass * C**2 * u2 / (np.sqrt(1 + u2) + 1))
         )
-        return dict(
+        result = dict(
             source_time_s=self.time_s,
             refit_every=self.config.refit_every,
             max_position_fit_error_m=float(np.max(np.abs(self.position_m - position))),
@@ -453,6 +741,18 @@ class CloudCorrection:
             kinetic_energy_above_cohort_centers_j=particle_energy - center_energy,
             accounting="cloud moments summarize the particles; no additional cloud inertia",
         )
+        if self.config.cloud_breathing:
+            result["breathing"] = {
+                "rest_width_target_m": self.width_target_m.tolist(),
+                "rest_width_floor_m": self.width_floor_m.tolist(),
+                "lab_deformation_m": self.breathing_filters[2].tolist(),
+                "response_time_s": self.config.cloud_breathing_response_time_s,
+                "subcharges_per_cloud": len(self.fractions),
+                "max_expansion_speed_c": float(
+                    np.max(np.linalg.norm(self.offset_velocity_m_s, axis=-1)) / C
+                ),
+            }
+        return result
 
     def _state(self, time_s: float, position: np.ndarray, prime: np.ndarray) -> dict:
         u = self.history_u
@@ -501,14 +801,40 @@ class CloudCorrection:
             ):
                 raise ValueError("cloud source weights and charge must remain fixed")
         old_beta = self.beta.copy()
-        if (self.accepted_steps + 1) % self.config.refit_every == 0:
+        refit = (self.accepted_steps + 1) % self.config.refit_every == 0
+        if refit:
             position, momentum = self._fit(species)
             velocity_beta = self._velocity_fit(species)
-            self.refits += 1
         else:
             position = self.position_m + C * self.beta * (time_s - self.time_s)
             momentum = self.momentum_mc.copy()
             velocity_beta = self.beta.copy()
+        if self.config.cloud_breathing:
+            # Validate privately: centroid acceleration can exhaust speed
+            # headroom. Never clip tangents or publish a partial acceptance.
+            working = copy(self)
+            working.position_m, working.momentum_mc = position, momentum
+            working.velocity_beta = velocity_beta
+            working.beta_dot_s = (velocity_beta - old_beta) / (time_s - self.time_s)
+            working._advance_breathing(time_s - self.time_s)
+            subcharge_state = working._subcharge_state(
+                time_s, position, working.beta_dot_s
+            )
+            if refit:
+                working._refit_breathing_target(species)
+            self.subcharge_builder.validate_append_step(subcharge_state)
+            self.builder.validate_append_step(
+                working._state(time_s, position, working.beta_dot_s / (C * 1e3))
+            )
+            for name in (
+                "breathing_filters",
+                "breathing_target",
+                "width_target_m",
+                "offsets_m",
+                "offset_velocity_m_s",
+                "offset_acceleration_m_s2",
+            ):
+                setattr(self, name, getattr(working, name))
         # A model-exact whole-history ballistic check, with no tolerance.
         # Once lost, it cannot be recovered by a later coasting interval.
         self._uniform_prediction &= np.all(velocity_beta == old_beta, axis=1) & np.all(
@@ -519,7 +845,11 @@ class CloudCorrection:
         self.velocity_beta = velocity_beta
         prime = (self.beta - old_beta) / ((time_s - self.time_s) * C * 1e3)
         self.beta_dot_s = (self.beta - old_beta) / (time_s - self.time_s)
+        if self.config.cloud_breathing:
+            self.subcharge_builder.append_step(subcharge_state)
         self.builder.append_step(self._state(time_s, position, prime))
+        if refit:
+            self.refits += 1
         self.time_s = time_s
         self.accepted_steps += 1
 
@@ -559,6 +889,16 @@ class CloudCorrection:
                 ),
             ),
         )
+        if self.config.cloud_breathing:
+            predicted._advance_breathing(half)
+            predicted._trial_subcharge_history = TrialTrajectoryHistory(
+                self.subcharge_builder.build_current(),
+                (
+                    predicted._subcharge_state(
+                        predicted.time_s, predicted.position_m, self.beta_dot_s
+                    ),
+                ),
+            )
         predicted._direct_warm_start = NodeWarmStart()
         predicted._lattice_warm_starts = []
         predicted._temporal_lattices = []
@@ -572,8 +912,42 @@ class CloudCorrection:
             else self.builder.build_current()
         )
 
+    def _field_history(self) -> Any:
+        if self.config.cloud_breathing:
+            return (
+                self._trial_subcharge_history
+                if self._trial_subcharge_history is not None
+                else self.subcharge_builder.build_current()
+            )
+        return exact_cloud_history(self._history(), self.smearing)
+
+    def _breathing_quasi_static(
+        self, position_m: np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Centroid-boosted Coulomb shape matched to electrostatic PIC.
+
+        PIC has no internal expansion current. Keep that current in the LW
+        correction by subtracting only the centroid-velocity Coulomb model.
+        """
+        positions = (self.position_m[:, None, :] + self.offsets_m).reshape(-1, 3)
+        betas = np.repeat(self.beta, len(self.fractions), axis=0)
+        charges = (self.charge_c[:, None] * self.fractions).ravel()
+        e, b = np.zeros_like(position_m), np.zeros_like(position_m)
+        for point, beta, charge in zip(positions, betas, charges):
+            r = position_m - point
+            deficit = 1 - beta @ beta
+            d2 = deficit * np.sum(r**2, axis=1) + (r @ beta) ** 2
+            if np.any(d2 == 0):
+                raise ValueError("correction node coincides with a cloud subcharge")
+            ee = COULOMB * charge * deficit * r / d2[:, None] ** 1.5
+            e += ee
+            b += np.cross(beta, ee) / C
+        return e, b
+
     def quasi_static(self, position_m: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        """Boosted Coulomb from the very same fixed transverse subcharges."""
+        """Boosted Coulomb from the same instantaneous point subcharges."""
+        if self.config.cloud_breathing:
+            return self._breathing_quasi_static(position_m)
         e, b = np.zeros_like(position_m), np.zeros_like(position_m)
         for center, beta, momentum, offsets, charge in zip(
             self.position_m, self.beta, self.history_u, self.offsets_m, self.charge_c
@@ -615,15 +989,22 @@ class CloudCorrection:
             raise ValueError("correction observers must be finite 3D positions")
         if len(position) == 0:
             return np.zeros((0, 3)), np.zeros((0, 3))
-        if (
+        if not self.config.cloud_breathing and (
             self.config.certified_inertial_skip
             or self.config.far_field_ratio is not None
             or np.any(self._predicted_uniform)
         ):
             return self._cheap_direct(position)
-        history = exact_cloud_history(self._history(), self.smearing)
+        history = self._field_history()
+        semantics = (
+            "instantaneous" if self.config.cloud_breathing else "preceding_interval"
+        )
         e, b = correction_node_fields(
-            history, self.time_s * 1e9, position * 1e3, warm_start=warm_start
+            history,
+            self.time_s * 1e9,
+            position * 1e3,
+            warm_start=warm_start,
+            source_acceleration_semantics=semantics,
         )
         e *= E_NATIVE_TO_SI
         b *= E_NATIVE_TO_SI
@@ -724,9 +1105,11 @@ class CloudCorrection:
 
         Extents are in the translating, rotated lab snapshot (no Lorentz
         stretch). The opt-in bounding mode fits every observer per axis at
-        each sample, including zero-weight observers. Configured half extents
-        are lower bounds. Padding reserves complete CIC cells on both sides;
-        changing node counts remains an independent resolution choice.
+        each sample, including zero-weight observers, around their bounding
+        box midpoint. Explicit half extents are lower bounds; the implicit
+        bounding-mode floor is 1 pm. Fractional CIC padding is allowed.
+        An optional maximum local-z spacing increases only the z node count,
+        up to a configured limit. This resolves geometry, not field accuracy.
         """
         weights = observers.population
         center = _mean(observers.position_m, weights)
@@ -734,13 +1117,38 @@ class CloudCorrection:
         half = np.asarray(self.config.half_extent_m)
         shape = self.config.lattice_shape
         local = (observers.position_m - center) @ basis
+        origin = -half
         if self.config.lattice_extent_mode == "bunch_extent":
-            interior = 1 - 2 * self.config.lattice_padding_cells / (
-                np.asarray(shape) - 1
-            )
-            half = np.maximum(half, np.max(np.abs(local), axis=0) / interior)
+            low, high = local.min(axis=0), local.max(axis=0)
+            midpoint = low + (high - low) / 2
+            radius = (high - low) / 2
+            padding = np.full(3, self.config.lattice_padding_cells)
+            # A phase shift consumes existing padding, keeping box width
+            # identical for phase comparisons at the same padding.
+            max_spacing = self.config.lattice_max_spacing_z_m
+            if max_spacing is not None:
+                intervals = max(
+                    2 * half[2] / max_spacing,
+                    2 * radius[2] / max_spacing + 2 * padding[2],
+                )
+                if (
+                    not np.isfinite(intervals)
+                    or intervals > self.config.lattice_max_nodes_z - 1
+                ):
+                    raise ValueError(
+                        "lattice maximum z spacing exceeds lattice_max_nodes_z; "
+                        "raise the limit explicitly or choose a coarser spacing"
+                    )
+                shape = (*shape[:2], max(shape[2], int(np.ceil(intervals)) + 1))
+            interior = 1 - 2 * padding / (np.asarray(shape) - 1)
+            if np.any(interior <= 0):
+                raise ValueError("lattice padding and phase leave no interior nodes")
+            half = np.maximum(half, radius / interior)
+            origin = midpoint - half
         spacing = 2 * half / (np.asarray(shape) - 1)
-        grid = Grid(shape, spacing, -half)
+        if self.config.lattice_extent_mode == "bunch_extent":
+            origin[2] += self.config.lattice_phase_z_cells * spacing[2]
+        grid = Grid(shape, spacing, origin)
         grid.require_inside(grid.coordinates(local))
         return grid, local, center, basis
 

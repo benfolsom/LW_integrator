@@ -25,12 +25,18 @@ def source():
     )
 
 
-def test_midpoint_prediction_is_causal_isolated_and_matches_provisional_fields():
+@pytest.mark.parametrize("breathing", [False, True])
+def test_midpoint_prediction_is_causal_isolated_and_matches_provisional_fields(
+    breathing,
+):
     from copy import deepcopy
 
     s = source()
     cfg = CorrectionConfig(
-        clouds_per_species=2, subcharge_count=4, midpoint_predictor=True
+        clouds_per_species=2,
+        subcharge_count=4,
+        midpoint_predictor=True,
+        cloud_breathing=breathing,
     )
     corr = CloudCorrection([s], cfg)
     s.position_m += 1e-12 * s.velocity_m_s
@@ -79,16 +85,26 @@ def test_midpoint_prediction_is_causal_isolated_and_matches_provisional_fields()
     np.testing.assert_array_equal(corr.builder.build_current().x, before)
 
 
-def test_midpoint_uniform_zero_and_correction_work_closure():
+@pytest.mark.parametrize("breathing", [False, True])
+def test_midpoint_uniform_zero_and_correction_work_closure(breathing):
     s = source()
     s.momentum_mc[:] = 0
     corr = CloudCorrection(
-        [s], CorrectionConfig(clouds_per_species=2, midpoint_predictor=True)
+        [s],
+        CorrectionConfig(
+            clouds_per_species=2, midpoint_predictor=True, cloud_breathing=breathing
+        ),
     )
     nodes = np.array([[3e-3, 2e-3, 1e-3]])
     for j in range(3):
         view = corr.predict_midpoint(1e-12)
-        assert all(np.array_equal(f, np.zeros_like(f)) for f in view.direct(nodes))
+        fields = view.direct(nodes)
+        if breathing:
+            assert max(np.linalg.norm(f) for f in fields) < 2e-12 * np.linalg.norm(
+                view.quasi_static(nodes)[0]
+            )
+        else:
+            assert all(np.array_equal(f, np.zeros_like(f)) for f in fields)
         s.position_m += C * corr.beta * 1e-12
         corr.accept([s], (j + 1) * 1e-12)
     s.momentum_mc[:, 0] += 0.03
@@ -294,9 +310,172 @@ def test_uniform_cloud_cancellation_and_persistent_moment_refits():
     de, db = long.direct(distant)
     assert np.linalg.norm(de) / np.linalg.norm(qe) < 2e-12
     assert np.linalg.norm(db) / np.linalg.norm(qb) < 2e-12
-    for duration in (0, -1, np.nan, np.inf):
+    for duration in (0, -1, np.nan, np.inf, True, False):
         with pytest.raises(ValueError, match="prehistory"):
             CorrectionConfig(prehistory_duration_s=duration)
+    for duration in (None, True, False, 0, -1, np.nan, np.inf, "2000"):
+        with pytest.raises(ValueError, match="prehistory"):
+            CorrectionConfig.from_config(dict(prehistory_duration_ns=duration))
+    assert CorrectionConfig.from_config({}).prehistory_duration_s is None
+
+    # Breathing must change worldline tangents, not just source locations.
+    # Adapt this persistent-cohort control rather than add a parallel suite.
+    from dataclasses import replace
+
+    from core import retarded_fields as rf
+    from core.pic.correction import E_NATIVE_TO_SI
+    from core.retarded_fields import ObserverEvent
+
+    expanding = source()
+    expanding.momentum_mc[:] = 0
+    cfg = CorrectionConfig.from_config(
+        {
+            "clouds_per_species": 1,
+            "subcharge_count": 4,
+            "cloud_breathing": True,
+            "cloud_breathing_response_time_ps": 1,
+            "refit_every": 2,
+        }
+    )
+    breathing = CloudCorrection([expanding], cfg)
+    assert breathing.fractions.sum() == pytest.approx(1)
+    assert len(breathing.fractions) == 12
+    initial = breathing.subcharge_builder.build_current()
+    before = initial.x.copy()
+    np.testing.assert_array_equal(initial.x[0], initial.x[1])
+    assert np.all(initial.bdotx == 0)
+    assert np.all(initial.bx == 0)
+    initial_map = breathing.breathing_filters.copy()
+    center = np.average(expanding.position_m, axis=0, weights=expanding.population)
+    expanding.position_m = center + 8 * (expanding.position_m - center)
+    breathing.accept([expanding], 1e-12)
+    np.testing.assert_array_equal(breathing.breathing_filters, initial_map)
+    breathing.accept([expanding], 2e-12)  # Refit sets a future target only.
+    np.testing.assert_array_equal(breathing.breathing_filters, initial_map)
+    expected_width = np.sqrt(
+        np.average(
+            ((expanding.position_m - center) @ breathing.breathing_basis[0]) ** 2,
+            axis=0,
+            weights=expanding.population,
+        )
+    )
+    np.testing.assert_allclose(
+        breathing.width_target_m[0],
+        np.maximum(breathing.width_floor_m[0], expected_width),
+    )
+    np.testing.assert_array_equal(breathing.offset_velocity_m_s, 0)
+    breathing.accept([expanding], 3e-12)
+    assert np.linalg.norm(breathing.offset_velocity_m_s) > 0
+    # Re-targeting preserves the shape, its velocity, and its acceleration.
+    shape = breathing.breathing_filters.copy()
+    velocity = breathing.offset_velocity_m_s.copy()
+    acceleration = breathing.offset_acceleration_m_s2.copy()
+    breathing._refit_breathing_target([expanding])
+    breathing._refresh_breathing_offsets()
+    np.testing.assert_array_equal(breathing.breathing_filters, shape)
+    np.testing.assert_array_equal(breathing.offset_velocity_m_s, velocity)
+    np.testing.assert_array_equal(breathing.offset_acceleration_m_s2, acceleration)
+    # Numerical derivative of a private envelope evolution checks the actual
+    # positions' tangent independently of the stored b values.
+    from copy import deepcopy
+
+    delta = 1e-17
+    left, right = deepcopy(breathing), deepcopy(breathing)
+    left._advance_breathing(-delta)
+    right._advance_breathing(delta)
+    np.testing.assert_allclose(
+        (right.offsets_m - left.offsets_m) / (2 * delta),
+        velocity,
+        rtol=1e-7,
+        atol=1e-3,
+    )
+    np.testing.assert_allclose(
+        (right.offset_velocity_m_s - left.offset_velocity_m_s) / (2 * delta),
+        acceleration,
+        rtol=1e-7,
+        atol=1e3,
+    )
+    np.testing.assert_array_equal(
+        breathing.subcharge_builder.build_current().x[:2], before
+    )
+    history = breathing._field_history()
+    np.testing.assert_allclose(
+        history.bx[-1], (velocity[:, :, 0] / C).ravel(), rtol=1e-15
+    )
+    assert (
+        np.max(np.linalg.norm(velocity, axis=-1)) <= cfg.cloud_breathing_max_speed_c * C
+    )
+    # The strict public LW provider sees every moving subcharge, including
+    # its expansion current and instantaneous acceleration.
+    breathing_probes = np.vstack(
+        (
+            probes,
+            breathing.position_m[0] + breathing.offsets_m[0, 0] + [0, 0, 2e-5],
+        )
+    )
+    qe, qb = breathing.quasi_static(breathing_probes)
+    de, db = breathing.direct(breathing_probes)
+    np.testing.assert_array_equal(qb, 0)  # Stationary PIC centroid has no current.
+    assert np.linalg.norm(db) > 0  # Expansion current survives the subtraction.
+    oracle = rf.evaluate_retarded_charge_fields_native(
+        history,
+        tuple(ObserverEvent(breathing.time_s * 1e9, p * 1e3) for p in breathing_probes),
+        source_acceleration_semantics="instantaneous",
+    )
+    np.testing.assert_allclose(
+        de + qe,
+        np.array([o.electric_field_native for o in oracle]) * E_NATIVE_TO_SI,
+        rtol=2e-12,
+        atol=1e-10,
+    )
+    np.testing.assert_allclose(
+        db + qb,
+        np.array([o.magnetic_field_native for o in oracle]) * E_NATIVE_TO_SI / C,
+        rtol=2e-12,
+        atol=1e-18,
+    )
+    # If acceleration exhausts speed headroom, reject without changing any
+    # accepted cloud or subcharge state; clipping would create a velocity kink.
+    saved = breathing.breathing_filters.copy()
+    old_steps = breathing.subcharge_builder.accepted_steps
+    fastest = velocity.reshape(-1, 3)[
+        np.argmax(np.linalg.norm(velocity.reshape(-1, 3), axis=1))
+    ]
+    fast_beta = 0.9999999 * fastest / np.linalg.norm(fastest)
+    expanding.momentum_mc[:] = fast_beta / np.sqrt(1 - fast_beta @ fast_beta)
+    with pytest.raises(ValueError, match="subluminal"):
+        breathing.accept([expanding], 4e-12)
+    np.testing.assert_array_equal(breathing.breathing_filters, saved)
+    assert breathing.subcharge_builder.accepted_steps == old_steps
+    assert breathing.time_s == 3e-12
+    for options in (
+        {"cloud_breathing": "yes"},
+        {"cloud_breathing_response_time_s": 0},
+        {"cloud_breathing_max_speed_c": 1},
+        {"subcharge_count": 1},
+        {"cloud_breathing_longitudinal_order": 1},
+        {"certified_inertial_skip": True},
+        {"far_field_ratio": 10},
+    ):
+        with pytest.raises(ValueError, match="breathing"):
+            replace(cfg, **options)
+
+    # Moving, unequal populations check the initial rest-axis RMS/K^(1/3).
+    moving = source()
+    moving.momentum_mc[:] = [0, 0, 10]
+    moving_cloud = CloudCorrection([moving], replace(cfg, clouds_per_species=2))
+    center = np.average(moving.position_m, axis=0, weights=moving.population)
+    rest = (moving.position_m - center) @ moving_cloud.breathing_basis[0]
+    rest[:, 2] *= np.sqrt(101)
+    expected_floor = np.maximum(
+        cfg.cloud_width_m,
+        np.sqrt(np.average(rest**2, axis=0, weights=moving.population)) / 2 ** (1 / 3),
+    )
+    np.testing.assert_allclose(moving_cloud.width_floor_m, [expected_floor] * 2)
+    qe, qb = moving_cloud.quasi_static(probes)
+    de, db = moving_cloud.direct(probes)
+    assert np.linalg.norm(de) / np.linalg.norm(qe) < 2e-12
+    assert C * np.linalg.norm(db) / np.linalg.norm(qe) < 2e-12
 
 
 def test_acceleration_interpolation_and_correction_bookkeeping(monkeypatch):
@@ -370,12 +549,90 @@ def test_acceleration_interpolation_and_correction_bookkeeping(monkeypatch):
         np.testing.assert_allclose(actual, expected, rtol=2e-15, atol=2e-15)
     for options in (
         dict(lattice_extent_mode="unknown"),
-        dict(lattice_padding_cells=0.5),
+        dict(lattice_padding_cells=0),
+        dict(lattice_padding_cells=-0.5),
         dict(lattice_padding_cells=np.nan),
         dict(lattice_padding_cells=2),
         dict(evaluation_every=2),
+        dict(lattice_max_spacing_z_m=0),
+        dict(lattice_max_spacing_z_m=np.nan),
+        dict(lattice_phase_z_cells=0.6),
+        dict(lattice_max_nodes_z=16),
     ):
         with pytest.raises(ValueError, match="lattice|bunch_extent"):
+            replace(corr.config, **options)
+    # A bounding box uses its midpoint, including zero-weight stragglers,
+    # rather than mirroring the long tail about the weighted centroid.
+    assert CorrectionConfig().half_extent_m == (0.004,) * 3
+    implicit = CorrectionConfig.from_config(dict(lattice_extent_mode="bunch_extent"))
+    assert implicit.half_extent_m == (1e-12,) * 3
+    corr.config = replace(
+        implicit, lattice_shape=(4, 5, 17), lattice_padding_cells=1e-6
+    )
+    probes.population[:] = [1, 0]
+    grid, local, _, _ = corr.observer_lattice(probes)
+    radius = np.ptp(local, axis=0) / 2
+    half = grid.spacing_m * (np.asarray(grid.shape) - 1) / 2
+    np.testing.assert_allclose(
+        half, np.maximum(1e-12, radius / (1 - 2e-6 / (np.asarray(grid.shape) - 1)))
+    )
+    np.testing.assert_allclose(grid.origin_m + half, (local.min(0) + local.max(0)) / 2)
+    # Unlike one-cell padding, fractional padding gives outer layers weight.
+    outer = np.ones((*grid.shape, 3))
+    outer[1:-1, 1:-1, 1:-1] = 0
+    assert np.all(grid.gather(local, outer) > 0.99)
+    for padding in (0.5, 1e-6):
+        replace(corr.config, lattice_padding_cells=padding)
+
+    # A narrow analytic z profile exercises actual interpolation error,
+    # unlike the affine geometry oracle above. It is not a LW physics test.
+    line = Species(
+        "line",
+        np.column_stack(
+            (np.zeros(1201), np.zeros(1201), np.linspace(-0.003, 0.003, 1201))
+        ),
+        np.tile([0, 0, 10], (1201, 1)),
+        s.charge_c,
+        s.mass_kg,
+        np.ones(1201),
+    )
+
+    def pancake(position, cache):
+        field = np.zeros_like(position)
+        field[:, 0] = np.exp(-0.5 * (position[:, 2] / 4e-5) ** 2)
+        return field, np.zeros_like(field)
+
+    monkeypatch.setattr(corr, "_direct", pancake)
+    truth = pancake(line.position_m, None)[0]
+    coarse = corr.sample(line)[0]
+    norm = np.linalg.norm(truth)
+    assert np.linalg.norm(coarse - truth) / norm > 0.1
+    corr.config = replace(corr.config, lattice_max_spacing_z_m=5e-6)
+    fine_grid, _, _, _ = corr.observer_lattice(line)
+    assert fine_grid.shape[:2] == corr.config.lattice_shape[:2]
+    assert fine_grid.shape[2] > 17
+    assert fine_grid.spacing_m[2] <= 5e-6
+    assert np.linalg.norm(corr.sample(line)[0] - truth) / norm < 0.01
+    corr.config = replace(corr.config, lattice_max_nodes_z=1000)
+    with pytest.raises(ValueError, match="lattice_max_nodes_z"):
+        corr.observer_lattice(line)
+    corr.config = replace(
+        corr.config, lattice_max_nodes_z=2048, lattice_padding_cells=0.500001
+    )
+    unshifted, _, _, _ = corr.observer_lattice(line)
+    corr.config = replace(corr.config, lattice_phase_z_cells=0.5)
+    shifted, local, _, _ = corr.observer_lattice(line)
+    np.testing.assert_array_equal(shifted.spacing_m, unshifted.spacing_m)
+    assert shifted.origin_m[2] - unshifted.origin_m[2] == pytest.approx(
+        shifted.spacing_m[2] / 2
+    )
+    shifted.require_inside(shifted.coordinates(local))
+    assert np.linalg.norm(corr.sample(line)[0] - truth) / norm < 0.01
+    for options in (
+        dict(lattice_extent_mode="fixed"),
+        dict(lattice_padding_cells=0.5),
+    ):
+        with pytest.raises(ValueError, match="lattice"):
             replace(corr.config, **options)
 
 
@@ -431,9 +688,27 @@ def test_optional_runner_and_disabled_compatibility():
     )
     assert disabled["final_species"] == enabled["final_species"]
     assert disabled["diagnostics"] == enabled["diagnostics"]
+    breathing = run_pic(
+        dict(
+            config,
+            correction={
+                "clouds_per_species": 2,
+                "lattice_shape": [4] * 3,
+                "subcharge_count": 4,
+                "cloud_breathing": True,
+            },
+        )
+    )
+    assert breathing["correction"]["accepted_steps"] == 2
+    assert "breathing 3D" in breathing["correction"]["cloud_model"]
+    projection = breathing["diagnostics"][-1]["cloud_projection"]["breathing"]
+    assert projection["subcharges_per_cloud"] == 12
+    assert not breathing["diagnostic_errors"]
 
 
 def test_node_batch_parity_and_ambiguous_bracket_fallback():
+    from dataclasses import replace
+
     from core import retarded_fields as rf
     from core.exact_source_cloud import exact_cloud_history
     from core.pic.correction import E_NATIVE_TO_SI
@@ -479,6 +754,34 @@ def test_node_batch_parity_and_ambiguous_bracket_fallback():
         de, db = corr.direct(position_m)
         np.testing.assert_array_equal(de, e * E_NATIVE_TO_SI - qe)
         np.testing.assert_array_equal(db, b * E_NATIVE_TO_SI / C - qb)
+    # Changing z node counts must invalidate warm-root proposals safely.
+    corr.config = replace(
+        corr.config,
+        lattice_extent_mode="bunch_extent",
+        half_extent_m=None,
+        lattice_shape=(4, 4, 4),
+        lattice_padding_cells=1e-6,
+        lattice_max_spacing_z_m=5e-5,
+    )
+    observers = Species(
+        "observers",
+        position_m.copy(),
+        np.tile([0, 0, 1], (2, 1)),
+        s.charge_c,
+        s.mass_kg,
+        np.ones(2),
+    )
+    previous_nodes = 0
+    for span_scale in (1, 10):
+        observers.position_m = position_m * [1, 1, span_scale]
+        grid, _, _, _ = corr.observer_lattice(observers)
+        assert grid.shape[2] > previous_nodes
+        previous_nodes = grid.shape[2]
+        cached = corr.sample(observers)
+        corr._lattice_warm_starts.clear()
+        fresh = corr.sample(observers)
+        for actual, expected in zip(cached, fresh):
+            np.testing.assert_array_equal(actual, expected)
 
 
 @pytest.mark.parametrize("mode", ["hold", "extrapolate"])
