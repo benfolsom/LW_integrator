@@ -817,27 +817,51 @@ def _coast_state_by_coordinate_time(
     return result
 
 
-def _clear_medina_force_history(state: ParticleState) -> None:
-    """Keep synthetic prehistory from priming a physical force derivative."""
+def _clear_medina_force_history(
+    state: ParticleState, *, particle_mask: np.ndarray | None = None
+) -> None:
+    """Restart accepted derivatives after synthetic history or a branch jump.
+
+    A masked restart detaches arrays so trial callers cannot change accepted
+    history. Invalid timestamps use the existing Medina priming gate.
+    """
 
     template = np.asarray(state.get("x", np.zeros(0)), dtype=float)
-    for name in (
+    history_names = (
         "medina_external_force_x",
         "medina_external_force_y",
         "medina_external_force_z",
-        "radiation_reaction_work",
-        "medina_cross_field_energy",
-        "medina_cross_field_energy_change",
-        "mass_shell_projection_energy",
-    ):
-        state[name] = np.zeros_like(template, dtype=float)
-    state["medina_external_force_sample_time"] = np.full_like(
-        template,
-        np.nan,
-        dtype=float,
     )
-    state["medina_force_derivative_ready"] = np.zeros_like(template, dtype=bool)
-    state["medina_impulse_capped"] = np.zeros_like(template, dtype=bool)
+    # Accepted kick rows keep their energy and work ledgers. Only synthetic
+    # prehistory needs those diagnostics zeroed along with the derivative.
+    diagnostic_names = (
+        (
+            "radiation_reaction_work",
+            "medina_cross_field_energy",
+            "medina_cross_field_energy_change",
+            "mass_shell_projection_energy",
+        )
+        if particle_mask is None
+        else ()
+    )
+    for name in history_names + diagnostic_names:
+        values = np.asarray(
+            state.get(name, np.zeros_like(template)), dtype=float
+        ).copy()
+        values[slice(None) if particle_mask is None else particle_mask] = 0.0
+        state[name] = values
+    flag_names = (
+        ("medina_external_force_sample_time", np.nan, float),
+        ("medina_force_derivative_ready", False, bool),
+    )
+    if particle_mask is None:
+        flag_names += (("medina_impulse_capped", False, bool),)
+    for name, fill, dtype in flag_names:
+        values = np.asarray(
+            state.get(name, np.full_like(template, fill, dtype=dtype)), dtype=dtype
+        ).copy()
+        values[slice(None) if particle_mask is None else particle_mask] = fill
+        state[name] = values
 
 
 def _maximum_cross_bunch_separation_mm(
@@ -4642,6 +4666,8 @@ def retarded_integrator(
         if emission_runtime is not None:
             for history in (rider_traj, driver_traj):
                 if history:
+                    for row in history[:-1]:
+                        row.pop("_stochastic_emission", None)
                     history[-1]["_stochastic_emission"] = emission_runtime.to_payload()
         loc = list(_pseudo_grid_charge_localization)
         hide_seed_prehistory = bool(
@@ -5358,6 +5384,7 @@ def retarded_integrator(
                 for previous_state in (trajectory[i - 1], trajectory_drv[i - 1]):
                     previous_state.pop("_stochastic_emission_config", None)
                     previous_state.pop("_stochastic_emission_active", None)
+                    previous_state.pop("_stochastic_emission_persistent_legacy", None)
             if inertial_prehistory_enabled:
                 if _traj_drv_builder is None:
                     raise RuntimeError(

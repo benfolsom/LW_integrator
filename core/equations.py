@@ -2113,9 +2113,10 @@ def retarded_equations_of_motion(
     if "_stochastic_emission_config" in current_state:
         from .stochastic_emission import (
             StochasticEmissionConfig,
-            crosses,
+            activation_state,
             indicators_from_fields,
             is_electron,
+            quantum_power_suppression,
             sampled_lw_fields,
         )
 
@@ -5054,6 +5055,8 @@ def retarded_equations_of_motion(
             result["radiation_energy"][particle_idx] = radiation_energy
 
             particle_radiation_mode = radiation_mode
+            quantum_reaction_scale = 1.0
+            medina_history_state = current_state
             if emission_config is not None and is_electron(
                 particle_mass, force_particle_charge
             ):
@@ -5095,11 +5098,30 @@ def retarded_equations_of_motion(
                     + exact_magnetic
                     + (0 if external_in_tensor else local_magnetic_field_native),
                 )
-                active = current_state["_stochastic_emission_active"][
+                previously_active = current_state["_stochastic_emission_active"][
                     particle_idx
-                ] or crosses(emission_config, indicators)
+                ]
+                active = activation_state(
+                    emission_config,
+                    indicators,
+                    previously_active,
+                    current_state.get("_stochastic_emission_persistent_legacy", False),
+                )
+                if previously_active and not active:
+                    from .integration_runner import _clear_medina_force_history
+
+                    medina_history_state = current_state.copy()
+                    _clear_medina_force_history(
+                        medina_history_state,
+                        particle_mask=np.arange(len(current_state["x"]))
+                        == particle_idx,
+                    )
                 if active:
                     particle_radiation_mode = "off"
+                elif emission_config.rate_model == "quantum_lcfa":
+                    quantum_reaction_scale = quantum_power_suppression(
+                        indicators["chi"]
+                    )
                 result["_stochastic_emission_samples"][particle_idx] = dict(
                     indicators=indicators, mechanical_momentum=momentum.tolist()
                 )
@@ -5129,7 +5151,7 @@ def retarded_equations_of_motion(
                     ),
                     float(particle_mass),
                     float(result["gamma"][particle_idx]),
-                    float(radiation_energy),
+                    float(radiation_energy * quantum_reaction_scale),
                 )
                 result["radiation_energy_applied"][
                     particle_idx
@@ -5247,7 +5269,7 @@ def retarded_equations_of_motion(
 
                     external_force_time_derivative, derivative_ready = (
                         _accepted_medina_force_derivative(
-                            current_state=current_state,
+                            current_state=medina_history_state,
                             particle_idx=particle_idx,
                             current_force=external_force,
                             current_sample_time=current_force_sample_time,
@@ -5354,6 +5376,11 @@ def retarded_equations_of_motion(
                                 )
                             )
                         )
+                        if quantum_reaction_scale != 1.0:
+                            medina_impulse = tuple(
+                                quantum_reaction_scale * value
+                                for value in medina_impulse
+                            )
                         applied_impulse_norm = float(
                             np.linalg.norm(np.asarray(medina_impulse, dtype=float))
                         )

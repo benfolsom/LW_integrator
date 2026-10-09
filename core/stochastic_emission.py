@@ -14,9 +14,11 @@ from typing import Any, cast
 
 import numpy as np
 from scipy.integrate import cumulative_trapezoid, trapezoid
-from scipy.special import gamma as gamma_function, kv
+from scipy.special import gamma as gamma_function
+from scipy.special import kv
 
-from .constants import C_MMNS as C, ELECTRON_MASS_AMU, ELEMENTARY_CHARGE
+from .constants import C_MMNS as C
+from .constants import ELECTRON_MASS_AMU, ELEMENTARY_CHARGE
 from .magnetic_dipole import HBAR_NATIVE
 
 
@@ -27,13 +29,15 @@ class StochasticEmissionConfig:
     enabled: bool = False
     chi_threshold: float = 0.1
     recoil_threshold: float = 0.1
+    deactivation_fraction: float = 0.8
     rate_model: str = "quantum_lcfa"
     seed: int = 0
     max_probability: float = 0.05
+    test_force_next_emission_fraction: float | None = None
 
     def __post_init__(self) -> None:
         if type(self.enabled) is not bool:
-            raise ValueError("stochastic emission enabled must be boolean")
+            raise TypeError("stochastic emission enabled must be boolean")
         for name in ("chi_threshold", "recoil_threshold", "max_probability"):
             value = getattr(self, name)
             if isinstance(value, (str, bool)) or not np.isfinite(value) or value <= 0:
@@ -42,12 +46,25 @@ class StochasticEmissionConfig:
                 )
         if self.max_probability > 0.1:
             raise ValueError("stochastic emission max_probability must be <= 0.1")
+        if (
+            isinstance(self.deactivation_fraction, (str, bool))
+            or not np.isfinite(self.deactivation_fraction)
+            or not 0 < self.deactivation_fraction <= 1
+        ):
+            raise ValueError(
+                "stochastic emission deactivation_fraction must be in (0, 1]"
+            )
         if type(self.seed) is not int or self.seed < 0:
             raise ValueError("stochastic emission seed must be a nonnegative integer")
         if self.rate_model not in ("quantum_lcfa", "classical_capped"):
             raise ValueError(
                 "emission rate_model must be quantum_lcfa or classical_capped"
             )
+        if self.test_force_next_emission_fraction is not None and (
+            not np.isfinite(self.test_force_next_emission_fraction)
+            or not 0 < self.test_force_next_emission_fraction <= 1
+        ):
+            raise ValueError("test forced emission fraction must be in (0, 1]")
 
     @classmethod
     def from_dict(cls, value: Any) -> StochasticEmissionConfig:
@@ -95,7 +112,7 @@ def local_indicators(
     kinetic = kinetic_energy(momentum, mass)
     # A resting particle has no available kinetic energy to radiate.
     recoil = characteristic / kinetic if kinetic > 0 else 0.0
-    return dict(chi=chi, recoil_parameter=recoil, gamma=gamma)
+    return {"chi": chi, "recoil_parameter": recoil, "gamma": gamma}
 
 
 def indicators_from_force(
@@ -121,8 +138,30 @@ def indicators_from_force(
 
 def crosses(config: StochasticEmissionConfig, indicators: dict[str, Any]) -> bool:
     return bool(
-        indicators["chi"] >= config.chi_threshold
-        or indicators["recoil_parameter"] >= config.recoil_threshold
+        indicators["chi"] > config.chi_threshold
+        or indicators["recoil_parameter"] > config.recoil_threshold
+    )
+
+
+def activation_state(
+    config: StochasticEmissionConfig,
+    indicators: dict[str, Any],
+    active: bool,
+    persistent_legacy: bool = False,
+) -> bool:
+    """Preview an accepted transition without changing state or consuming RNG."""
+    if persistent_legacy:
+        return bool(
+            active
+            or indicators["chi"] >= config.chi_threshold
+            or indicators["recoil_parameter"] >= config.recoil_threshold
+        )
+    if not active:
+        return crosses(config, indicators)
+    h = config.deactivation_fraction
+    return not (
+        indicators["chi"] < h * config.chi_threshold
+        and indicators["recoil_parameter"] < h * config.recoil_threshold
     )
 
 
@@ -332,6 +371,30 @@ def photon_spectrum(
     return PhotonSpectrum(t, s, integrated / rate if rate else integrated, rate, mean)
 
 
+def quantum_power_suppression(chi: float) -> float:
+    """LCFA Gaunt factor g(chi) = quantum power / classical Larmor power.
+
+    Integrate the same Ritus/Baier–Katkov bracket as ``photon_spectrum`` over
+    its full quantum support. No fitted or rounded-chi approximation is used.
+    This is the usual quantum correction to continuous LL reaction, applied
+    here to the selected classical reaction below stochastic activation.
+    The finite kinetic-energy cap remains a separate emission limitation.
+    """
+    if not np.isfinite(chi) or chi < 0:
+        raise ValueError("Finite nonnegative chi required")
+    if chi == 0:
+        return 1.0
+    t = np.linspace(0, np.cbrt(600.0), 2049)
+    z = t**3
+    fraction = 1.5 * chi * z / (1 + 1.5 * chi * z)
+    jacobian = 4.5 * chi * t**2 / (1 + 1.5 * chi * z) ** 2
+    power_density = np.zeros_like(t)
+    power_density[1:] = (
+        lcfa_spectral_brackets(fraction[1:], chi)[0] * jacobian[1:] * fraction[1:]
+    )
+    return float(trapezoid(power_density, t) / (2 * np.pi * chi**2 / np.sqrt(3)))
+
+
 def recoil(
     momentum: np.ndarray,
     mass: float,
@@ -364,17 +427,17 @@ def recoil(
     after_four = np.r_[np.hypot(mass * C, norm), after]
     photon = np.r_[energy / C, energy / C * direction]
     background = after_four + photon - before_four
-    return after, dict(
-        energy_native=float(energy),
-        kinetic_before_native=float(kinetic),
-        direction=direction.tolist(),
-        polarisation=None,
-        particle_before_four_momentum_native=before_four.tolist(),
-        particle_after_four_momentum_native=after_four.tolist(),
-        photon_four_momentum_native=photon.tolist(),
-        background_impulse_four_native=background.tolist(),
-        remainder_receiver="unresolved_field_source_system",
-    )
+    return after, {
+        "energy_native": float(energy),
+        "kinetic_before_native": float(kinetic),
+        "direction": direction.tolist(),
+        "polarisation": None,
+        "particle_before_four_momentum_native": before_four.tolist(),
+        "particle_after_four_momentum_native": after_four.tolist(),
+        "photon_four_momentum_native": photon.tolist(),
+        "background_impulse_four_native": background.tolist(),
+        "remainder_receiver": "unresolved_field_source_system",
+    }
 
 
 class EmissionRuntime:
@@ -385,10 +448,16 @@ class EmissionRuntime:
         self.rng = np.random.Generator(np.random.PCG64(config.seed))
         self.particles: dict[str, dict[str, Any]] = {}
         self.events: list[dict[str, Any]] = []
+        self.persistent_legacy = False
         if payload is not None:
-            if payload.get("schema_version") != 1 or payload.get("config") != asdict(
-                config
-            ):
+            saved_config = dict(payload.get("config", {}))
+            self.persistent_legacy = (
+                "deactivation_fraction" not in saved_config
+                or payload.get("activation_policy") == "persistent_legacy"
+            )
+            saved_config.setdefault("deactivation_fraction", 0.8)
+            saved_config.setdefault("test_force_next_emission_fraction", None)
+            if payload.get("schema_version") != 1 or saved_config != asdict(config):
                 raise ValueError("Incompatible stochastic emission checkpoint")
             self.rng.bit_generator.state = copy.deepcopy(payload["rng_state"])
             self.particles = copy.deepcopy(payload["particles"])
@@ -398,15 +467,27 @@ class EmissionRuntime:
         return bool(self.particles.get(key, {}).get("active", False))
 
     def observe(self, key: str, indicators: dict[str, Any], time_ns: float) -> bool:
-        row = self.particles.setdefault(key, dict(active=False, first_crossing=None))
+        row = self.particles.setdefault(key, {"active": False, "first_crossing": None})
         row["last"] = dict(indicators)
         row["max_chi"] = max(row.get("max_chi", 0.0), indicators["chi"])
         row["max_recoil_parameter"] = max(
             row.get("max_recoil_parameter", 0.0), indicators["recoil_parameter"]
         )
-        if not row["active"] and crosses(self.config, indicators):
-            row["active"] = True
-            row["first_crossing"] = dict(time_ns=float(time_ns), **indicators)
+        active = activation_state(
+            self.config, indicators, row["active"], self.persistent_legacy
+        )
+        if active != row["active"]:
+            row["active"] = active
+            crossing = {"time_ns": float(time_ns), **indicators}
+            if active and row["first_crossing"] is None:
+                row["first_crossing"] = crossing
+            self.events.append(
+                {
+                    "event_type": "activation" if active else "deactivation",
+                    "particle": key,
+                    **crossing,
+                }
+            )
         return bool(row["active"])
 
     def emit(
@@ -420,56 +501,95 @@ class EmissionRuntime:
         time_ns: float,
         position: np.ndarray,
     ) -> np.ndarray:
-        """One accepted interval. Raise before a draw if W dt is unresolved."""
+        """Subdivide an accepted interval into bounded Bernoulli emission trials.
+
+        The runner's field indicators and endpoint position are held fixed.
+        After each recoil, rebuild the spectrum with the updated momentum;
+        repartition the remaining lab time so every W dt stays below the cap.
+        All events are published at the accepted orbit endpoint, as before.
+        """
         if not np.isfinite(dt_ns) or dt_ns <= 0:
             raise ValueError("Positive finite lab emission interval required")
         if not self.config.enabled or not is_electron(mass, charge):
             return momentum
         if not self.observe(key, indicators, time_ns):
             return momentum
-        gamma = float(np.hypot(1.0, np.linalg.norm(momentum) / (mass * C)))
-        spectrum = photon_spectrum(
-            indicators["chi"], gamma, mass, charge, self.config.rate_model
-        )
-        probability = spectrum.rate_per_ns * dt_ns
-        self.particles[key]["last_probability"] = float(probability)
-        if probability > self.config.max_probability:
-            raise ValueError(
-                f"Unresolved stochastic emission probability {probability:.6g}; "
-                f"reduce timestep to keep W dt <= {self.config.max_probability}"
+        remaining = float(dt_ns)
+        after = momentum
+        spectrum = None
+        subintervals = 0
+        while remaining > 0:
+            if spectrum is None:
+                gamma = float(np.hypot(1.0, np.linalg.norm(after) / (mass * C)))
+                spectrum = photon_spectrum(
+                    indicators["chi"], gamma, mass, charge, self.config.rate_model
+                )
+            interval_probability = spectrum.rate_per_ns * remaining
+            if subintervals == 0:
+                self.particles[key]["last_interval_probability"] = float(
+                    interval_probability
+                )
+            count = max(
+                1, int(np.ceil(interval_probability / self.config.max_probability))
             )
-        if probability <= 0 or self.rng.random() >= probability:
-            return momentum
-        fraction = spectrum.sample_fraction(float(self.rng.random()))
-        energy = min(
-            fraction * gamma * mass * C**2,
-            np.nextafter(kinetic_energy(momentum, mass), 0),
-        )
-        if energy <= 0:
-            return momentum
-        direction = photon_direction(
-            momentum, mass, indicators.get("rest_force_direction", [0, 0, 1]), self.rng
-        )
-        after, event = recoil(momentum, mass, energy, direction)
-        event.update(
-            particle=key,
-            time_ns=float(time_ns),
-            position_mm=np.asarray(position).tolist(),
-            chi=float(indicators["chi"]),
-            rate_model=self.config.rate_model,
-        )
-        self.events.append(event)
+            duration = remaining / count
+            probability = spectrum.rate_per_ns * duration
+            # Roundoff must not place a sub-interval above the configured cap.
+            if probability > self.config.max_probability:
+                count += 1
+                duration = remaining / count
+                probability = spectrum.rate_per_ns * duration
+            self.particles[key]["last_probability"] = float(probability)
+            subintervals += 1
+            remaining = 0.0 if count == 1 else remaining - duration
+            force_fraction = self.config.test_force_next_emission_fraction
+            forced = force_fraction is not None and not self.particles[key].get(
+                "test_forced_emission_used", False
+            )
+            if not forced and (probability <= 0 or self.rng.random() >= probability):
+                continue
+            fraction = (
+                float(force_fraction)
+                if forced
+                else spectrum.sample_fraction(float(self.rng.random()))
+            )
+            if forced:
+                self.particles[key]["test_forced_emission_used"] = True
+            energy = min(
+                fraction * gamma * mass * C**2,
+                np.nextafter(kinetic_energy(after, mass), 0),
+            )
+            if energy <= 0:
+                continue
+            direction = photon_direction(
+                after, mass, indicators.get("rest_force_direction", [0, 0, 1]), self.rng
+            )
+            after, event = recoil(after, mass, energy, direction)
+            event.update(
+                event_type="photon",
+                particle=key,
+                time_ns=float(time_ns),
+                position_mm=np.asarray(position).tolist(),
+                chi=float(indicators["chi"]),
+                rate_model=self.config.rate_model,
+            )
+            self.events.append(event)
+            spectrum = None
+        self.particles[key]["last_subintervals"] = subintervals
         return after
 
     def to_payload(self) -> dict[str, Any]:
         return copy.deepcopy(
-            dict(
-                schema_version=1,
-                config=asdict(self.config),
-                rng_state=self.rng.bit_generator.state,
-                particles=self.particles,
-                events=self.events,
-            )
+            {
+                "schema_version": 1,
+                "activation_policy": (
+                    "persistent_legacy" if self.persistent_legacy else "hysteresis"
+                ),
+                "config": asdict(self.config),
+                "rng_state": self.rng.bit_generator.state,
+                "particles": self.particles,
+                "events": self.events,
+            }
         )
 
 
@@ -478,6 +598,7 @@ def prepare_general_state(
 ) -> None:
     """Attach immutable trial settings; stochastic state stays at the barrier."""
     state["_stochastic_emission_config"] = asdict(runtime.config)
+    state["_stochastic_emission_persistent_legacy"] = runtime.persistent_legacy
     state["_stochastic_emission_active"] = np.array(
         [runtime.active(f"{role}:{i}") for i in range(len(state["x"]))], dtype=bool
     )
@@ -511,6 +632,12 @@ def commit_general_state(
         )
         if np.array_equal(momentum, after):
             continue
+        # Reuse the accepted-force restart used for synthetic/gated branches.
+        # The next continuous interval must prime a post-kick sample.
+        from .integration_runner import _clear_medina_force_history
+
+        mask = np.arange(len(samples)) == i
+        _clear_medina_force_history(state, particle_mask=mask)
         before_pt = np.hypot(mass * C, np.linalg.norm(momentum))
         after_pt = np.hypot(mass * C, np.linalg.norm(after))
         state["Pt"][i] += after_pt - before_pt

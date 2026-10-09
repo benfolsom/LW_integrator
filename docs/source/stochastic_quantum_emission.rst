@@ -6,11 +6,26 @@ Design and physical scope
 
 The deterministic solver remains the default. An enabled run evaluates two
 local indicators for each electron or positron on each accepted interval.
-Either indicator can activate discrete emission. Activation is persistent for
-that particle: subsequent intervals use ordinary LW forces without continuous
-charge radiation reaction, including intervals with no photon. Below both
-thresholds, the existing deterministic calculation is retained exactly, and
-no random numbers are consumed.
+Either indicator can activate discrete emission when it exceeds its threshold.
+Activation is reversible per particle: an active particle deactivates when both
+indicators fall strictly below ``deactivation_fraction`` times their respective
+thresholds. The fraction defaults to 0.8; 1 removes the hysteresis band.
+Equality retains the current state. Active intervals use ordinary LW forces
+without continuous charge radiation reaction, including intervals with no
+photon. Inactive intervals consume no random numbers and return to continuous
+reaction. In enabled ``quantum_lcfa`` mode,
+the selected continuous classical reaction is multiplied by the quantum
+power-suppression (Gaunt) factor :math:`g(\chi)=P_{\rm quantum}/P_{\rm classical}`.
+This follows the quantum-corrected Landau–Lifshitz treatment used in strong-field
+particle-in-cell simulations [Gonoskov]_. Here the same correction scales the
+Medina/LAD impulse (or the selected continuous damping); it is a local
+mean-power approximation, not a derivation of quantum bound-field dynamics.
+The native pair adapter scales its classical reaction contribution and the
+corresponding applied reaction ledgers. Classical field diagnostics remain
+classical. ``classical_capped`` retains its classical continuous reaction.
+With stochastic emission disabled, the deterministic calculation is unchanged.
+The supported emitter species are electrons and positrons; muon emission is
+outside this interface's scope.
 
 The defaults are :math:`\chi_{\rm threshold}=0.1` and
 :math:`R_{\rm threshold}=0.1`. They mark the onset of appreciable recoil, rather than
@@ -28,6 +43,31 @@ The local synchrotron formation-time proxy is
 :math:`\hbar\omega_c=3\chi\gamma mc^2/2`.
 This is a curvature/synchrotron scale; it is not a calculation of the full
 formation integral through a nonrelativistic Coulomb encounter.
+
+Threshold hand-off
+-----------------
+
+The Gaunt factor is integrated from the same Ritus/Baier–Katkov LCFA functions
+as the photon rate, using the energy-weighted spectrum over full quantum
+support and the classical Larmor power as its denominator. It is not a fitted
+suppression formula. Before this correction, switching from classical reaction
+to quantum photons reduced mean power by 34.5044% at :math:`\chi=0.1`, and
+5.5170% at :math:`\chi=0.01`. The corrected mean-power limits agree to numerical
+roundoff in the relativistic local-spectrum probe. Four million independent
+frozen-momentum Bernoulli intervals at :math:`\gamma=1000` per threshold gave
+post-correction steps of :math:`-0.246\pm0.424`% and :math:`+0.269\pm0.456`%,
+respectively (one standard error). These are instantaneous-power checks,
+not full trajectory or formation-length validation. They isolate the chi
+crossing; the independent recoil threshold can activate emission earlier.
+The default chi threshold remains 0.1.
+
+Enabled runs below threshold are therefore no longer identical to Medina/LAD:
+:math:`g(\chi)-1` is of order :math:`\chi`. At
+:math:`\chi=10^{-4},10^{-3},10^{-2}`, the computed factors are
+0.99940415, 0.99409268, and 0.94483016, reducing continuous reaction by
+0.059585%, 0.590732%, and 5.516984%, respectively. Finite-energy photon caps,
+rapidly changing fields, and the chosen classical reaction can still limit
+the match to local mean power; the correction is not an accuracy certificate.
 
 Shared emission model
 ---------------------
@@ -51,11 +91,20 @@ The optional ``classical_capped`` model uses the classical bracket
 :math:`2K_{2/3}(z)-\int_z^\infty K_{1/3}(y)dy`, with
 :math:`z=2s/(3\chi)`, and the same kinematic support.
 
-The interval probability is :math:`P=W\Delta t`. Only small-probability Bernoulli
-intervals are accepted; a probability guard requires a smaller timestep
-instead of clipping :math:`P`. Rates are integrated and photon energies sampled
+The interval probability is :math:`P=W\Delta t`. An accepted orbit interval is
+split into :math:`\lceil W\Delta t/P_{\max}\rceil` emission sub-intervals when
+needed, with at most one photon per sub-interval and no probability clipping.
+After each photon, momentum is updated, the spectrum is rebuilt with its new
+gamma and kinetic-energy cap, and the remaining lab time is repartitioned to
+keep every sub-interval probability at or below ``max_probability``. Field
+indicators, including chi, remain fixed at the runner's sample for that orbit
+interval; these emission sub-steps do not integrate the orbit or resolve field
+variation. Rates are integrated and photon energies sampled
 from a numerical CDF that resolves the integrable low-energy singularity.
-Photons are placed at the accepted endpoint. For :math:`\gamma\geq10`, their
+All photons, including multiple photons within one orbit interval, are placed
+at the accepted endpoint. The Bernoulli approximation remains first order in
+the sub-interval probability; reducing ``max_probability`` controls that bias.
+For :math:`\gamma\geq10`, their
 direction is along the mechanical velocity (the ultrarelativistic beaming
 approximation). Below this boundary, a classical rest-frame dipole pattern,
 proportional to :math:`1-(\hat{n}\cdot\hat{a})^2`, is sampled and aberrated into the
@@ -90,6 +139,66 @@ Runner adapters suppress continuous reaction before the deterministic trial
 and draw random numbers only after acceptance. Checkpoints include settings,
 activation/crossing diagnostics, photons, and the complete generator state.
 Restoring these data must reproduce uninterrupted stepping exactly.
+Activation and deactivation consume no random numbers. They are recorded in
+the event log with ``event_type`` equal to ``activation`` or ``deactivation``;
+photon entries have ``event_type: photon``. Older photon entries without this
+tag remain readable. Consumers summing photon energy must select photon entries
+(or entries containing ``energy_native``), rather than count all events.
+
+Old checkpoints whose emission settings omit ``deactivation_fraction`` resume
+with the previous persistent activation semantics, including the inclusive
+threshold comparison. This is a checkpoint compatibility policy, not a fresh
+run option. Subsequent saves record ``activation_policy: persistent_legacy``;
+fresh runs record ``hysteresis``. The per-particle active state, event log,
+policy, and complete RNG state survive checkpoint/resume.
+The general runner's existing source/configuration fingerprint check still
+applies; runtime compatibility does not bypass that restart guard.
+
+On Medina/LAD re-entry, the accepted-force derivative restarts through the
+existing force-history clearing and priming gate. A photon kick invalidates
+the affected particle's force sample; deactivation also invalidates its trial
+history. The first continuous interval primes a new accepted force sample
+without applying a derivative impulse; subsequent intervals use only samples
+on that branch. No Medina force derivative is taken across a stochastic
+velocity jump. Source-field reconstruction is a separate issue, described below.
+The native pair runner uses analytic local charge-reaction derivatives and
+one-sided source histories at kicks, rather than this accepted-sample Medina
+derivative.
+
+Kick histories
+~~~~~~~~~~~~~~
+
+The emitted photon represents the discrete radiation loss. Its recoil must
+join incoming and outgoing source velocities without adding a classical
+acceleration pulse from the same jump. Smooth acceleration on either branch
+still contributes its usual radiation field.
+
+The native pair runner already records the incoming velocity separately from
+the outgoing accepted velocity. AO's version 9 history checkpoints preserve
+that split. Cubic position intervals near a kick use the appropriate one-sided
+endpoint velocities; they do not interpolate velocity across the jump.
+
+Task AT's passive-observer diagnostic confirms that the general exact runner
+does not yet publish this velocity split. Its default acceleration
+reconstruction differentiates accepted velocities through the kick. Halving
+the source timestep doubles the residual pulse's peak field and radiation
+fluence after subtracting the velocity-field change. The integrated impulse
+and signed work remain nearly constant. This is an additional classical
+radiation contribution from the event already represented by the photon.
+
+For the same isolated kick between coasting branches, the default sampled
+path has exactly zero residual radiation, and the native pair path is at
+roundoff. The sampled path reads stored continuous-interval acceleration,
+which excludes the endpoint recoil. This bounded check does not validate
+sampled trajectory accuracy or interpolation across kicks.
+
+Existing exact visibility knots store two one-sided accelerations but one
+continuous velocity. Correcting the general runner requires split velocities
+and matching resolved kinematics throughout source preparation and sampling.
+That broader history change is planned, not implemented. AS's Medina/LAD
+restart remains in place, but does not repair source radiation seen by other
+particles. Diagnostic commands, values, and the implementation scope are in
+``local/task_at/report.md`` and ``local/task_at/fix_plan.md``.
 
 The nonlinear momentum-center runner supports ``charge_ll`` and the
 full-dipole reaction selections for zero intrinsic spin. Finite-spin action
@@ -109,6 +218,7 @@ Use a nested ``stochastic_emission`` object in direct CLI and testbed configs::
        "enabled": true,
        "chi_threshold": 0.1,
        "recoil_threshold": 0.1,
+       "deactivation_fraction": 0.8,
        "rate_model": "quantum_lcfa",
        "seed": 83,
        "max_probability": 0.05
@@ -132,13 +242,19 @@ reports, testbed results, saved trajectory JSON, and the scalar
 do not themselves contain a variable-length event list.
 
 Each particle's diagnostics contain the first crossing (or ``null``), latest
-indicators, maxima, and most recent emission probability. Each photon records
+indicators, maxima, and most recent emission sub-interval probability
+(``last_probability``). ``last_interval_probability`` records the initial
+unsplit :math:`W\Delta t`, and ``last_subintervals`` records the number of
+emission trials on the most recent active interval. Each photon records
 native energy, pre-emission kinetic energy, time in ns, position in mm,
 direction, unavailable polarisation, before/after mechanical four-momenta,
 photon four-momentum, and background impulse. One native momentum unit is
 one amu mm/ns, and one native energy unit is one amu mm²/ns².
 
-Pairs evaluate the field at the interval start. The general runner uses the
+Pairs evaluate the field at the interval start, but sample photon energy from
+the end-of-interval momentum using that start-of-interval chi. This emission
+scheme is first order in the orbit timestep, even when the orbit uses RK4.
+The general runner uses the
 field sample from its final deterministic force trial, with the non-reaction
 mechanical momentum. Sampled LW fields use the accepted retarded source
 samples; exact fields use the exact provider tensor. Prescribed fields are
@@ -186,13 +302,17 @@ incident-energy bremsstrahlung endpoint or solve finite-ion recoil. Photon
 impulses are instantaneous. The pair history uses cubic intervals near a kick,
 which have lower smoothness and accuracy than the usual high-order intervals.
 It records the velocity discontinuity, but does not add a distributional
-classical radiation field for that kick. Retarded fields around these intervals
+classical radiation field for that kick. The reconstructed acceleration near
+the kick still contributes classical radiation to the partner's LW field;
+its separation from energy already carried by the photon is unresolved.
+Retarded fields around these intervals
 need an independent source-resolution study. None of these local rate or
 recoil approximations derive finite-spin quantum emission.
 
 Bounded implementation checks against the frozen ``c8b51b0`` baseline found
-bit-identical final states with emission off and with emission enabled below
-threshold, for one charge-LL pair case and one sampled general-runner case.
+bit-identical final states with emission off, for one charge-LL pair case and
+one sampled general-runner case. Earlier enabled-below-threshold parity was
+superseded by the quantum correction described above.
 Twelve recoil probes had a maximum relative four-momentum residual of
 :math:`5.74\times10^{-17}` with the explicit background ledger. Independent
 quantum-spectrum quadrature at :math:`\gamma=1000` and
@@ -211,7 +331,18 @@ An explicitly selected, reseeded midpoint branch produced one 77.49 keV
 photon, with identical pair resumes. That branch tests recoil and history
 publication, not an unbiased physical emission yield. Scripts, event lists,
 checkpoints, and detailed results are in ``local/task_ao/validation/``.
-New unit tests remain deferred pending Ben's approval.
+Two approved stochastic regression tests cover independent rate/power
+quadrature and forced-kick checkpoint identity.
+Review-fix scripts and results are in ``local/task_aq/``. Seeded and resumed
+identity includes the sub-interval RNG draws. Public general-runner trajectories
+retain the emission payload only on the final row, including after periodic
+checkpoint writes; intermediate partial event logs are removed.
+With ``max_probability=0.0005``, the sampled and exact 1,200-step magnetic
+checks emitted 14 and four photons, respectively. Both seeded repeats and
+checkpoint resumes matched all 182 SOA trajectory arrays byte for byte, as
+well as the event, diagnostic, and RNG payloads. The original 100 keV and
+20 keV Coulomb smoke scripts also completed with zero photons and identical
+JSON resumes, retaining their original numerical guards and tolerances.
 
 Validation against thread C benchmarks
 --------------------------------------
@@ -275,8 +406,39 @@ reason to force a benchmark agreement.  A future validation needs a
 continuum-potential callback or prescribed crystal trajectories, then an
 independent formation-length, material-transport, and detector comparison.
 
+Planned follow-up: encounter-based recoil trigger
+------------------------------------------------
+
+**Not implemented.** The present indicators are synchrotron-type quantities:
+$\chi$ and $R=\hbar\omega_c/T$, with $\omega_c$ inferred from local LCFA
+curvature. The chi trigger often stays below threshold in low-energy Coulomb
+bremsstrahlung; for example, $\chi$ is about 0.007 at 1 pm from carbon.
+The recoil trigger can nevertheless cross: at that chi and 20 keV,
+$R=3\chi\gamma mc^2/(2T)$ is about 0.28, above the default 0.1. Activation
+does not guarantee photons; the existing 20–100 keV carbon smoke runs produced
+none with their very small integrated emission probabilities. Neither a small
+chi nor a recoil crossing establishes an accurate encounter spectrum.
+The classical LW spectrum
+in the existing carbon comparison overshoots the Li et al. (2021) data by about
+50% near $k/T=0.9$ at 20–25 keV [Li2021]_.
+
+The planned work is to compare the encounter energy scale $\hbar v/r_{\min}$
+with the kinetic energy $T$, develop a non-local, formation-length-aware
+emission rate for encounters where LCFA does not hold, and validate against
+Sommerfeld at $\eta\geq1$ and the Li 2021 endpoint. This requires an encounter
+model and independent spectral validation; changing the present local
+thresholds alone cannot supply it. No encounter trigger or rate is provided
+by the current implementation.
+
 References
 ----------
+
+.. [Gonoskov] A. Gonoskov, T. G. Blackburn, M. Marklund, and S. S. Bulanov,
+   *Charged particle motion and radiation in strong electromagnetic fields*,
+   Rev. Mod. Phys. **94**, 045001 (2022).
+   Section III.C, Eq. (64), gives the Gaunt-factor correction to the LL force.
+   https://doi.org/10.1103/RevModPhys.94.045001
+   https://arxiv.org/abs/2107.02161
 
 .. [Ritus] V. I. Ritus, *Quantum effects of the interaction of elementary
    particles with an intense electromagnetic field*, J. Sov. Laser Res.
@@ -301,3 +463,8 @@ References
 
 .. [Wistisen2018] T. N. Wistisen *et al.*, Nature Communications **9**, 795
    (2018). https://doi.org/10.1038/s41467-018-03165-4
+
+.. [Li2021] L. Li *et al.*, *Absolute measurements of bremsstrahlung double
+   differential cross sections of C and Al atoms by 5–25 keV electron impact*,
+   Nucl. Instrum. Methods B **506**, 15 (2021).
+   https://doi.org/10.1016/j.nimb.2021.09.001

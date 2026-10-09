@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Diagnose a classical radiation pulse from stochastic velocity kicks on the
+  general exact path: its peak field and radiation fluence grow as the timestep
+  shrinks. The coasting-kick control is pulse-free on the default sampled path,
+  and at roundoff with AO's native pair split histories. Document kick histories
+  and the broader source-history fix plan; no production fix is implemented.
+
 - Unify the public local constant-field diagnostic brackets with the thread C
   strong-field-QED study through ``lcfa_spectral_brackets``.  Document the
   quantum, recoil-only, and classical mapping, and record that current LW
@@ -14,6 +20,19 @@
   Wire zero-spin fixed-RK4 native pairs and fixed-step general BUNCH_TO_BUNCH
   paths through configs and CLI flags. Keep deterministic defaults unchanged;
   finite-spin quantum recoil and closed electron–ion conservation remain open.
+  In enabled quantum mode, suppress continuous classical reaction below
+  activation by the LCFA quantum/classical power ratio, removing the mean-power
+  hand-off step. Subdivide emission intervals that exceed the probability cap,
+  updating momentum after each photon while preserving seeded checkpoint
+  continuation. Keep emission payloads on the final trajectory row, and allow
+  passive pair updates with disabled emission settings. Saved testbed and GUI
+  configs now include a disabled `stochastic_emission` settings block by default.
+  Make activation reversible with `deactivation_fraction` hysteresis (0.8 by
+  default), log each activation and deactivation, and restore quantum-scaled
+  continuous reaction on exit. Restart the existing Medina/LAD accepted-force
+  history after kicks and on re-entry. Preserve persistent activation only for
+  old checkpoints lacking the setting. Document the planned encounter-based
+  recoil trigger and non-local emission rate as not implemented.
 
 - Docs: add the physics discussion "Classical limit, bremsstrahlung, and
   validity" (`docs/source/classical_limit_bremsstrahlung.rst`, under Physics

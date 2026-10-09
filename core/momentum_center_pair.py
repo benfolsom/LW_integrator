@@ -933,17 +933,18 @@ def _advance_particles(
             EmissionRuntime,
             StochasticEmissionConfig,
             is_electron,
+            quantum_power_suppression,
         )
 
         emission_config = StochasticEmissionConfig.from_dict(
             payload["stochastic_emission"]["config"]
         )
         _validate_emission_pair(payload, emission_config)
-        if passive_selector is not None:
-            raise ValueError(
-                "Stochastic emission does not support passive pair updates"
-            )
         if emission_config.enabled:
+            if passive_selector is not None:
+                raise ValueError(
+                    "Stochastic emission does not support passive pair updates"
+                )
             emission_runtime = EmissionRuntime(
                 emission_config, payload["stochastic_emission"]
             )
@@ -1077,6 +1078,7 @@ def _advance_particles(
         ):
             emission_indicators = None
             reaction_suppressed = False
+            quantum_reaction_scale = 1.0
             if emission_runtime is not None and is_electron(
                 particle.mass_amu, particle.charge_native
             ):
@@ -1086,6 +1088,13 @@ def _advance_particles(
                 reaction_suppressed = emission_runtime.observe(
                     str(i), emission_indicators, state[0]
                 )
+                if (
+                    not reaction_suppressed
+                    and emission_runtime.config.rate_model == "quantum_lcfa"
+                ):
+                    quantum_reaction_scale = quantum_power_suppression(
+                        emission_indicators["chi"]
+                    )
 
             def step_dynamics(
                 value: np.ndarray,
@@ -1099,7 +1108,19 @@ def _advance_particles(
                         selected_provider,
                         suppress_radiation=True,
                     )
-                return dynamics_native(value, selected_particle, selected_provider)
+                rate, data = dynamics_native(
+                    value, selected_particle, selected_provider
+                )
+                if quantum_reaction_scale != 1.0:
+                    free_rate, _ = dynamics_native(
+                        value,
+                        selected_particle,
+                        selected_provider,
+                        suppress_radiation=True,
+                    )
+                    rate = free_rate + quantum_reaction_scale * (rate - free_rate)
+                    data["quantum_reaction_scale"] = quantum_reaction_scale
+                return rate, data
 
             stage_diagnostics = []
             passive = selected_passive is not None and i in selected_passive
@@ -1358,6 +1379,7 @@ def _advance_particles(
                 ):
                     increment = (
                         width_ns
+                        * quantum_reaction_scale
                         * c**2
                         / divisor
                         * sum(
@@ -1381,7 +1403,11 @@ def _advance_particles(
                 row = dipole_ledger[i]
                 for weight, data in zip(weights, stage_diagnostics):
                     factor = (
-                        weight * width_ns * c / (divisor * data["proper_velocity"][0])
+                        quantum_reaction_scale
+                        * weight
+                        * width_ns
+                        * c
+                        / (divisor * data["proper_velocity"][0])
                     )
                     reaction = data["reaction"]
                     for target, source in (
