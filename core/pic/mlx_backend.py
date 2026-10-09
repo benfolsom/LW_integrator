@@ -11,6 +11,9 @@ from .gpu_source import header, operations
 class MLXBackend(GPUBackend):
     dtype = "float32"
     name = "mlx_metal_float32_compensated"
+    # Sub-float32 gamma changes must not rebuild hundreds of MB of spectra.
+    # Cell integrals still use host float64 at this canonical mesh geometry.
+    green_spacing_dtype = "float32"
 
     def __init__(self) -> None:
         from .backend import require_host
