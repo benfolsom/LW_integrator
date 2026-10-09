@@ -9,12 +9,15 @@ optional magnetic-field gradient is stored directly in T/m.
 
 from __future__ import annotations
 
-from typing import Tuple
+from typing import TYPE_CHECKING, Tuple
 
 import numpy as np
 
 from .constants import ELEMENTARY_CHARGE
 from .types import ExternalFieldConfig
+
+if TYPE_CHECKING:
+    from .external_field_provider import ExternalFieldSample
 
 ELEMENTARY_CHARGE_COULOMB = 1.602176634e-19
 AMU_KG = 1.66053906660e-27
@@ -72,6 +75,15 @@ def evaluate_external_field_si(
     x, y, z = (float(value) for value in position_mm)
     if not external_field.is_active(x, y, z, float(time_ns)):
         return np.zeros(3), np.zeros(3), np.zeros((3, 3))
+    if external_field.provider is not None:
+        electric, magnetic, gradient = evaluate_external_field_native(
+            external_field, position_mm=position_mm, time_ns=time_ns
+        )
+        return (
+            np.array([electric_field_native_to_v_per_m(v) for v in electric]),
+            np.array([magnetic_field_native_to_tesla(v) for v in magnetic]),
+            gradient * 1000 / magnetic_field_tesla_to_native(1.0),
+        )
     electric_v_m = np.asarray(
         [
             electric_field_native_to_v_per_m(value)
@@ -108,6 +120,11 @@ def evaluate_external_field_native(
     x, y, z = (float(value) for value in position_mm)
     if not external_field.is_active(x, y, z, float(time_ns)):
         return np.zeros(3), np.zeros(3), np.zeros((3, 3))
+    if external_field.provider is not None:
+        sample = evaluate_external_provider(
+            external_field, position_mm=position_mm, time_ns=time_ns
+        )
+        return sample.electric, sample.magnetic, sample.partial_b[1:].T
     electric_native = np.asarray(
         external_field.electric_field_native, dtype=float
     ).copy()
@@ -153,16 +170,23 @@ def compute_uniform_external_field_impulse(
     x, y, z = (float(value) for value in position)
     if not external_field.is_active(x, y, z, float(time)):
         return 0.0, 0.0, 0.0, 0.0
-    # Keep the legacy uniform-field path bitwise stable. Only the new linear
-    # gradient contribution crosses the SI/native unit bridge.
-    electric = np.asarray(external_field.electric_field_native, dtype=float)
-    magnetic = np.asarray(external_field.magnetic_field_native, dtype=float).copy()
-    gradient = np.asarray(external_field.magnetic_field_gradient_t_per_m, dtype=float)
-    gradient_field_t = gradient @ (np.asarray((x, y, z), dtype=float) * 1.0e-3)
-    magnetic += np.asarray(
-        [magnetic_field_tesla_to_native(value) for value in gradient_field_t],
-        dtype=float,
-    )
+    if external_field.provider is not None:
+        electric, magnetic, _ = evaluate_external_field_native(
+            external_field, position_mm=position, time_ns=time
+        )
+    else:
+        # Keep the legacy uniform-field path bitwise stable. Only the new linear
+        # gradient contribution crosses the SI/native unit bridge.
+        electric = np.asarray(external_field.electric_field_native, dtype=float)
+        magnetic = np.asarray(external_field.magnetic_field_native, dtype=float).copy()
+        gradient = np.asarray(
+            external_field.magnetic_field_gradient_t_per_m, dtype=float
+        )
+        gradient_field_t = gradient @ (np.asarray((x, y, z), dtype=float) * 1.0e-3)
+        magnetic += np.asarray(
+            [magnetic_field_tesla_to_native(value) for value in gradient_field_t],
+            dtype=float,
+        )
     if not np.any(electric) and not np.any(magnetic):
         return 0.0, 0.0, 0.0, 0.0
     beta_vec = np.asarray(beta, dtype=float)
@@ -178,6 +202,30 @@ def compute_uniform_external_field_impulse(
         float(delta_p[2]),
         float(delta_pt),
     )
+
+
+def evaluate_external_provider(
+    external_field: ExternalFieldConfig,
+    *,
+    position_mm: Tuple[float, float, float],
+    time_ns: float,
+) -> ExternalFieldSample:
+    """Validate one pure provider evaluation at a native event."""
+    from .external_field_provider import ExternalFieldSample
+
+    if external_field.provider is None:
+        raise ValueError("external field config has no provider")
+    sample = external_field.provider(
+        position_mm=(
+            float(position_mm[0]),
+            float(position_mm[1]),
+            float(position_mm[2]),
+        ),
+        time_ns=float(time_ns),
+    )
+    if not isinstance(sample, ExternalFieldSample):
+        raise TypeError("external field provider must return ExternalFieldSample")
+    return sample
 
 
 __all__ = [

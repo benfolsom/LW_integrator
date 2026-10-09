@@ -14,7 +14,11 @@ import copy
 from dataclasses import dataclass, field, fields
 from enum import Enum, IntEnum, auto
 from itertools import count
-from typing import Dict, List, Mapping, Sequence, cast
+from typing import TYPE_CHECKING, Dict, List, Mapping, Sequence, cast
+
+if TYPE_CHECKING:
+    from .external_field_provider import ExternalFieldProvider
+
 
 import numpy as np
 
@@ -1371,8 +1375,9 @@ class ExternalFieldConfig:
 
     This first implementation supports uniform fields, plus an optional linear
     magnetic-field gradient in SI T/m, with simple spatial/temporal windows.
-    More general field maps or callable field providers can build on the same
-    integrator hook later.
+    ``provider`` optionally supplies smooth spatial fields and analytic first
+    field derivatives; see ``core.external_field_provider``. It replaces the
+    configured fields and cannot be combined with hard windows.
     """
 
     enabled: bool = True
@@ -1392,7 +1397,25 @@ class ExternalFieldConfig:
     t_min: float | None = None
     t_max: float | None = None
 
+    provider: ExternalFieldProvider | None = None
+
     def __post_init__(self) -> None:
+        if self.provider is not None:
+            if not callable(self.provider):
+                raise ValueError("external field provider must be callable")
+            if (
+                np.any(self.electric_field_native)
+                or np.any(self.magnetic_field_native)
+                or np.any(self.magnetic_field_gradient_t_per_m)
+                or any(
+                    getattr(self, f"{axis}_{side}") is not None
+                    for axis in "xyzt"
+                    for side in ("min", "max")
+                )
+            ):
+                raise ValueError(
+                    "provider replaces base fields and requires smooth provider-owned windows"
+                )
         gradient = np.asarray(self.magnetic_field_gradient_t_per_m, dtype=float)
         if gradient.shape != (3, 3) or not np.all(np.isfinite(gradient)):
             raise ValueError(
@@ -1526,6 +1549,16 @@ class TrajectoryArrays:
     halt_reason: list  # length n_steps, str or None
     particle_failure_info: dict  # keyed by (step, particle_idx)
     pseudo_grid_schedule: list  # length n_steps, object or None
+
+    medina_provider_force_x: np.ndarray = field(
+        default_factory=lambda: np.zeros((0, 0)), repr=False
+    )
+    medina_provider_force_y: np.ndarray = field(
+        default_factory=lambda: np.zeros((0, 0)), repr=False
+    )
+    medina_provider_force_z: np.ndarray = field(
+        default_factory=lambda: np.zeros((0, 0)), repr=False
+    )
 
     # Optional analytic inertial boundary constants. The quintic knots and
     # their derivatives retain their existing representation.
@@ -1772,6 +1805,17 @@ class TrajectoryArrays:
                     "medina_external_force_sample_time": (
                         self.medina_external_force_sample_time[step]
                     ),
+                }
+            )
+        if self.medina_provider_force_x.shape == self.x.shape and any(
+            np.any(getattr(self, f"medina_provider_force_{a}")[step]) for a in "xyz"
+        ):
+            s.update(
+                {
+                    f"medina_provider_force_{a}": getattr(
+                        self, f"medina_provider_force_{a}"
+                    )[step]
+                    for a in "xyz"
                 }
             )
         if np.any(self.magnetic_dipole_active):
@@ -2059,6 +2103,17 @@ class IndexedTrajectoryArrays:
                     ),
                 }
             )
+        if self.base.medina_provider_force_x.shape == self.base.x.shape and any(
+            np.any(self.row(f"medina_provider_force_{a}", step)) for a in "xyz"
+        ):
+            state.update(
+                {
+                    f"medina_provider_force_{a}": self.row(
+                        f"medina_provider_force_{a}", step
+                    )
+                    for a in "xyz"
+                }
+            )
         if self.base.halted_early[global_step]:
             metadata = cast(Dict[str, object], state)
             metadata["_halted_early"] = bool(self.base.halted_early[global_step])
@@ -2182,6 +2237,9 @@ class TrajectoryBuilder:
         "medina_external_force_x",
         "medina_external_force_y",
         "medina_external_force_z",
+        "medina_provider_force_x",
+        "medina_provider_force_y",
+        "medina_provider_force_z",
         "medina_external_force_sample_time",
     )
     _MEDINA_BOOL_FIELDS: tuple = (
@@ -2690,6 +2748,9 @@ class TrajectoryBuilder:
                 :s
             ],
             medina_impulse_capped=self._arrays["medina_impulse_capped"][:s],
+            medina_provider_force_x=self._arrays["medina_provider_force_x"][:s],
+            medina_provider_force_y=self._arrays["medina_provider_force_y"][:s],
+            medina_provider_force_z=self._arrays["medina_provider_force_z"][:s],
             medina_external_force_x=self._arrays["medina_external_force_x"][:s],
             medina_external_force_y=self._arrays["medina_external_force_y"][:s],
             medina_external_force_z=self._arrays["medina_external_force_z"][:s],
@@ -2809,6 +2870,9 @@ class TrajectoryBuilder:
             ],
             medina_force_derivative_ready=self._arrays["medina_force_derivative_ready"],
             medina_impulse_capped=self._arrays["medina_impulse_capped"],
+            medina_provider_force_x=self._arrays["medina_provider_force_x"],
+            medina_provider_force_y=self._arrays["medina_provider_force_y"],
+            medina_provider_force_z=self._arrays["medina_provider_force_z"],
             medina_external_force_x=self._arrays["medina_external_force_x"],
             medina_external_force_y=self._arrays["medina_external_force_y"],
             medina_external_force_z=self._arrays["medina_external_force_z"],

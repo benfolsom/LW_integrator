@@ -1515,6 +1515,9 @@ def _slice_trajectory_arrays(
         ],
         medina_force_derivative_ready=arrays.medina_force_derivative_ready[start:stop],
         medina_impulse_capped=arrays.medina_impulse_capped[start:stop],
+        medina_provider_force_x=arrays.medina_provider_force_x[start:stop],
+        medina_provider_force_y=arrays.medina_provider_force_y[start:stop],
+        medina_provider_force_z=arrays.medina_provider_force_z[start:stop],
         medina_external_force_x=arrays.medina_external_force_x[start:stop],
         medina_external_force_y=arrays.medina_external_force_y[start:stop],
         medina_external_force_z=arrays.medina_external_force_z[start:stop],
@@ -3347,9 +3350,10 @@ def retarded_integrator(
         refinement. When an energy jump is detected, the step is discarded
         and retried with a smaller timestep.
     external_field:
-        Optional prescribed external field configuration. The first supported
-        implementation is a uniform field in native solver units with simple
-        spatial/temporal gates.
+        Optional ``ExternalFieldConfig``. Constant fields and a linear magnetic
+        gradient retain their original path. ``ExternalFieldConfig(provider=...)``
+        supplies smooth fields, potentials, and analytic first field derivatives
+        at each force stage; see ``core.external_field_provider``.
     progress_callback:
         Optional callable invoked as ``progress_callback(current, steps)`` after
         each successful step. Used for progress bars or cancellation checks.

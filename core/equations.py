@@ -58,7 +58,10 @@ from .resolved_knot import (
     preserve_drift_remainders,
 )
 
-from typing import Any, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Optional, Sequence
+
+if TYPE_CHECKING:
+    from .external_field_provider import ExternalFieldSample
 
 import numpy as np
 from math import fsum
@@ -85,6 +88,7 @@ from .external_fields import (
     compute_uniform_external_field_impulse,
     evaluate_external_field_native,
     evaluate_external_field_si,
+    evaluate_external_provider,
 )
 from .macroparticle_smearing import fixed_cloud_offsets, smear_source_samples
 from .exact_source_cloud import exact_cloud_history, same_bunch_exclusions
@@ -395,7 +399,9 @@ def _initialize_result_state(current_state: ParticleState) -> ParticleState:
     return result
 
 
-def _initialize_medina_step_state(result: ParticleState) -> None:
+def _initialize_medina_step_state(
+    result: ParticleState, *, provider_enabled: bool = False
+) -> None:
     """Reset Medina diagnostics and accepted-force history for one trial step.
 
     The caller populates the force-history fields only after it has recomputed
@@ -415,6 +421,12 @@ def _initialize_medina_step_state(result: ParticleState) -> None:
         "medina_external_force_z",
     ):
         result[name] = np.zeros_like(particle_template, dtype=float)
+    for axis in "xyz":
+        key = f"medina_provider_force_{axis}"
+        if provider_enabled:
+            result[key] = np.zeros_like(particle_template, dtype=float)
+        else:
+            result.pop(key, None)
     result["medina_external_force_sample_time"] = np.full_like(
         particle_template,
         np.nan,
@@ -793,6 +805,7 @@ def _external_tensor_gradient(
     electric_field_native: np.ndarray,
     magnetic_field_native: np.ndarray,
     magnetic_gradient_native_per_mm: np.ndarray,
+    provider_sample: Optional["ExternalFieldSample"] = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Build native ``F`` and ``partial_lambda F`` from native field values."""
 
@@ -810,6 +823,12 @@ def _external_tensor_gradient(
                 float(value) for value in magnetic_gradient_native_per_mm[:, coordinate]
             ),
         )
+    if provider_sample is not None:
+        for coordinate in range(4):
+            partial_f[coordinate] = electromagnetic_field_tensor_native(
+                tuple(provider_sample.partial_e[coordinate]),
+                tuple(provider_sample.partial_b[coordinate]),
+            )
     return field_tensor, partial_f
 
 
@@ -2114,7 +2133,14 @@ def retarded_equations_of_motion(
     if medina_validity_guard:
         radiation_mode = "medina_lad"
     if radiation_mode == "medina_lad":
-        _initialize_medina_step_state(result)
+        _initialize_medina_step_state(
+            result,
+            provider_enabled=(
+                external_field is not None
+                and getattr(external_field, "enabled", False)
+                and getattr(external_field, "provider", None) is not None
+            ),
+        )
 
     num_particles = len(current_state["x"])
     instantaneous_endpoints = {}
@@ -3272,8 +3298,10 @@ def retarded_equations_of_motion(
                     accumulated_scalar_potential += sc_dscalar
 
             # ================================================================
-            # STEP 4c: Prescribed external uniform fields
+            # STEP 4c: Prescribed external fields
             # ================================================================
+            provider_sample = None
+            provider_impulse = np.zeros(3)
             if external_field is not None and getattr(external_field, "enabled", False):
                 if sc_convergence_mode == "variable_geometry" and sc_iteration > 0:
                     field_position = (
@@ -3287,13 +3315,26 @@ def retarded_equations_of_motion(
                         float(current_state["y"][particle_idx]),
                         float(current_state["z"][particle_idx]),
                     )
+                force_field = external_field
+                if getattr(external_field, "provider", None) is not None:
+                    from .types import ExternalFieldConfig
+
+                    provider_sample = evaluate_external_provider(
+                        external_field,
+                        position_mm=field_position,
+                        time_ns=float(current_state["t"][particle_idx]),
+                    )
+                    force_field = ExternalFieldConfig(
+                        electric_field_native=tuple(provider_sample.electric),
+                        magnetic_field_native=tuple(provider_sample.magnetic),
+                    )
                 if rfs_selected:
                     (
                         local_electric_field_native,
                         local_magnetic_field_native,
                         local_magnetic_gradient_native_per_mm,
                     ) = evaluate_external_field_native(
-                        external_field,
+                        force_field,
                         position_mm=field_position,
                         time_ns=float(current_state["t"][particle_idx]),
                     )
@@ -3303,7 +3344,7 @@ def retarded_equations_of_motion(
                         local_magnetic_field_t,
                         local_magnetic_gradient_t_per_m,
                     ) = evaluate_external_field_si(
-                        external_field,
+                        force_field,
                         position_mm=field_position,
                         time_ns=float(current_state["t"][particle_idx]),
                     )
@@ -3313,7 +3354,7 @@ def retarded_equations_of_motion(
                     ext_dp_z,
                     ext_dp_t,
                 ) = compute_uniform_external_field_impulse(
-                    external_field,
+                    force_field,
                     charge=float(force_particle_charge),
                     gamma=(
                         float(current_state["gamma"][particle_idx])
@@ -3331,7 +3372,7 @@ def retarded_equations_of_motion(
                 )
                 if not second_order_exact_source_selected and not rfs_selected:
                     rotated_impulse = boris_external_field_impulse(
-                        external_field,
+                        force_field,
                         charge=float(force_particle_charge),
                         mass=float(particle_mass),
                         gamma=float(current_state["gamma"][particle_idx]),
@@ -3346,6 +3387,21 @@ def retarded_equations_of_motion(
                         ext_dp_x,
                         ext_dp_y,
                         ext_dp_z,
+                    )
+                if provider_sample is not None:
+                    provider_beta = exact_ordinary_response_beta.copy()
+                    provider_gamma = (
+                        float(current_state["gamma"][particle_idx])
+                        if second_order_exact_source_selected
+                        else float(particle_gamma)
+                    )
+                    provider_force = float(force_particle_charge) * (
+                        provider_sample.electric
+                        + np.cross(provider_beta, provider_sample.magnetic)
+                    )
+                    provider_impulse = (
+                        np.asarray((ext_dp_x, ext_dp_y, ext_dp_z))
+                        + magnetic_rotation_correction
                     )
                 accumulated_momentum_x += ext_dp_x
                 accumulated_momentum_y += ext_dp_y
@@ -4164,6 +4220,7 @@ def retarded_equations_of_motion(
                     local_electric_field_native,
                     local_magnetic_field_native,
                     local_magnetic_gradient_native_per_mm,
+                    provider_sample=provider_sample,
                 )
                 rfs_field_tensor += external_tensor
                 rfs_partial_f += external_partial_f
@@ -4479,6 +4536,7 @@ def retarded_equations_of_motion(
                         local_electric_field_native,
                         local_magnetic_field_native,
                         local_magnetic_gradient_native_per_mm,
+                        provider_sample=provider_sample,
                     )
                     ordinary_force_derivative += (
                         mechanical_lorentz_four_force_derivative_native(
@@ -4488,6 +4546,10 @@ def retarded_equations_of_motion(
                             partial_f=external_partial_f,
                             charge_native=float(force_particle_charge),
                         )
+                    )
+                if provider_sample is not None:
+                    provider_impulse += (
+                        0.5 * float(h) ** 2 * ordinary_force_derivative[1:]
                     )
                 from .charge_source_interactions import cached_ordinary_force_derivative
 
@@ -5162,6 +5224,26 @@ def retarded_equations_of_motion(
                     current_force_sample_time = float(
                         current_state["t"][particle_idx] + 0.5 * predictor_coordinate_dt
                     )
+                    if provider_sample is not None:
+                        # The sampled collective remainder keeps accepted history.
+                        # The provider force and its analytic derivative share the
+                        # exact stage event and velocity used in STEP 4c.
+                        remainder = (
+                            np.asarray(external_force)
+                            - provider_impulse / predictor_coordinate_dt
+                        )
+                        scale = max(float(np.linalg.norm(provider_force)), 1e-300)
+                        remainder[
+                            np.abs(remainder) < 64 * np.finfo(float).eps * scale
+                        ] = 0.0
+                        external_force = tuple(remainder + provider_force)
+                        current_force_sample_time = float(
+                            current_state["t"][particle_idx]
+                        )
+                        for axis, value in zip("xyz", provider_force):
+                            result[f"medina_provider_force_{axis}"][
+                                particle_idx
+                            ] = value
                     result["medina_external_force_x"][particle_idx] = external_force[0]
                     result["medina_external_force_y"][particle_idx] = external_force[1]
                     result["medina_external_force_z"][particle_idx] = external_force[2]
@@ -5177,14 +5259,55 @@ def retarded_equations_of_motion(
                             current_sample_time=current_force_sample_time,
                         )
                     )
+                    medina_beta = beta_tuple
+                    medina_gamma = float(result["gamma"][particle_idx])
+                    if provider_sample is not None:
+                        from .external_field_provider import provider_force_derivative
+
+                        history = dict(current_state)
+                        for axis in "xyz":
+                            total = current_state.get(
+                                f"medina_external_force_{axis}", np.zeros(num_particles)
+                            )
+                            component = current_state.get(
+                                f"medina_provider_force_{axis}", np.zeros(num_particles)
+                            )
+                            history[f"medina_external_force_{axis}"] = total - component
+                        remainder_derivative, remainder_ready = (
+                            _accepted_medina_force_derivative(
+                                current_state=history,
+                                particle_idx=particle_idx,
+                                current_force=tuple(remainder),
+                                current_sample_time=current_force_sample_time,
+                            )
+                        )
+                        # No collective force needs priming in a pure channel.
+                        derivative_ready = remainder_ready or not np.any(remainder)
+                        medina_beta = tuple(provider_beta)
+                        medina_gamma = provider_gamma
+                        beta_dot, _ = _derive_relativistic_kinematics_from_force(
+                            external_force,
+                            medina_beta,
+                            medina_gamma,
+                            float(particle_mass),
+                        )
+                        external_force_time_derivative = tuple(
+                            np.asarray(remainder_derivative)
+                            + provider_force_derivative(
+                                provider_sample,
+                                charge=float(force_particle_charge),
+                                beta=medina_beta,
+                                beta_dot=beta_dot,
+                            )
+                        )
                     result["medina_force_derivative_ready"][
                         particle_idx
                     ] = derivative_ready
 
                     medina_beta_dot_t, _ = _derive_relativistic_kinematics_from_force(
                         external_force,
-                        beta_tuple,
-                        float(result["gamma"][particle_idx]),
+                        medina_beta,
+                        medina_gamma,
                         float(particle_mass),
                     )
                     medina_acceleration = tuple(
@@ -5198,9 +5321,9 @@ def retarded_equations_of_motion(
                                 if derivative_ready
                                 else (0.0, 0.0, 0.0)
                             ),
-                            beta=beta_tuple,
+                            beta=medina_beta,
                             acceleration=medina_acceleration,
-                            gamma=float(result["gamma"][particle_idx]),
+                            gamma=medina_gamma,
                             mass=float(particle_mass),
                             charge=float(force_particle_charge),
                             coordinate_dt=float(predictor_coordinate_dt),

@@ -578,3 +578,65 @@ def test_pure_magnetic_rotation_preserves_norm_during_self_consistency():
         soa.gamma[:, 0], initial["gamma"][0], rtol=0.0, atol=3e-12
     )
     assert abs(trajectory[-1]["Px"][0]) > 0.0
+
+
+@pytest.mark.parametrize("mode", ["off", "medina_lad"])
+def test_uniform_provider_reproduces_existing_external_path(mode):
+    """Protect the field-unit bridge and production RR hook against regressions."""
+    from core.external_field_provider import ExternalFieldSample
+
+    electric = np.array([2e7, -1e7, -1e8])
+    magnetic = np.array([0.0, 3e7, 0.0])
+
+    def uniform(*, position_mm, time_ns):
+        position = np.asarray(position_mm)
+        return ExternalFieldSample(
+            phi=-electric @ position,
+            vector_potential=0.5 * np.cross(magnetic, position),
+            electric=electric,
+            magnetic=magnetic,
+            partial_e=np.zeros((4, 3)),
+            partial_b=np.zeros((4, 3)),
+        )
+
+    kwargs = dict(
+        steps=64,
+        h_step=1e-6,
+        wall_z=0.0,
+        aperture_radius=1e9,
+        sim_type=SimulationType.BUNCH_TO_BUNCH,
+        init_driver=_empty_driver_state(),
+        mean=0.0,
+        cav_spacing=0.0,
+        z_cutoff=1e9,
+        startup_mode=StartupMode.COLD_START,
+        use_numba=True,
+        radiation_reaction_mode=mode,
+    )
+    reference, *_ = retarded_integrator(
+        **kwargs,
+        init_rider=_single_particle_state(gamma=20.0),
+        external_field=ExternalFieldConfig(
+            electric_field_native=tuple(electric), magnetic_field_native=tuple(magnetic)
+        ),
+    )
+    provided, *_ = retarded_integrator(
+        **kwargs,
+        init_rider=_single_particle_state(gamma=20.0),
+        external_field=ExternalFieldConfig(provider=uniform),
+    )
+    for key in ("x", "y", "z", "t", "Px", "Py", "Pz", "Pt", "gamma"):
+        np.testing.assert_allclose(
+            np.array([s[key] for s in provided]),
+            np.array([s[key] for s in reference]),
+            rtol=2e-7,
+            atol=2e-11,
+        )
+    if mode == "medina_lad":
+        # Agreement in trajectory alone could miss an inactive RR hook when
+        # its small impulse falls below the comparison tolerance.
+        assert provided[-1]["medina_force_derivative_ready"][0]
+        assert sum(float(s["radiation_energy_applied"][0]) for s in provided[1:]) > 0
+    assert not any(
+        s.get("medina_impulse_capped", np.array([False]))[0] for s in provided
+    )
