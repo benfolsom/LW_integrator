@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Refuse stochastic emission on the exact INERTIAL_PREHISTORY path
+  (`NotImplementedError`) until kicks are recorded as split velocity knots;
+  the sampled path and the nonlinear pair runner are unaffected.
 - Diagnose a classical radiation pulse from stochastic velocity kicks on the
   general exact path: its peak field and radiation fluence grow as the timestep
   shrinks. The coasting-kick control is pulse-free on the default sampled path,

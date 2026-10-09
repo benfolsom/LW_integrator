@@ -3521,6 +3521,17 @@ def retarded_integrator(
                     "Stochastic emission requires physical particles, "
                     "not macroparticles"
                 )
+        if startup_mode is StartupMode.INERTIAL_PREHISTORY:
+            # A recoil kick is not yet a split velocity knot in the exact
+            # source history, so the kick's classical radiation pulse would
+            # be published on top of the logged photon (double count).
+            raise NotImplementedError(
+                "Stochastic emission is not yet supported on the exact "
+                "INERTIAL_PREHISTORY path: kicks need split velocity knots in "
+                "the exact source history (planned; see "
+                "docs/source/stochastic_quantum_emission.rst, kick histories). "
+                "Use the sampled path or the nonlinear pair runner."
+            )
         emission_runtime = EmissionRuntime(emission_config)
     if (
         magnetic_dipole.intrinsic_spin_self_reaction_mode == "experimental_linear_spin"

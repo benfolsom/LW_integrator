@@ -168,6 +168,13 @@ derivative.
 Kick histories
 ~~~~~~~~~~~~~~
 
+.. note::
+
+   Until split velocity knots exist in the exact source history, enabling
+   stochastic emission with ``startup_mode=INERTIAL_PREHISTORY`` (the exact
+   retarded path) raises ``NotImplementedError``. Use the sampled path or
+   the nonlinear pair runner.
+
 The emitted photon represents the discrete radiation loss. Its recoil must
 join incoming and outgoing source velocities without adding a classical
 acceleration pulse from the same jump. Smooth acceleration on either branch
