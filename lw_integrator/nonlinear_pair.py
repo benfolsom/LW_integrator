@@ -58,6 +58,14 @@ def capabilities() -> dict[str, Any]:
             "gui": "resume prepared adaptive checkpoint",
             "limitation": "Local acceptance does not certify previously published source histories",
         },
+        stochastic_emission={
+            "default": "off",
+            "rate_models": ["quantum_lcfa", "classical_capped"],
+            "restriction": (
+                "zero intrinsic spin, fixed RK4; "
+                "full RNG and photon log in checkpoints"
+            ),
+        },
         pseudo_grid_supported=False,
         legacy_reaction_modes=["full_dipole_rr"],
         inapplicable_controls=[
@@ -86,6 +94,7 @@ def configure_checkpoint(
     derivatives: str | None = None,
     integration_method: str | None = None,
     internal_step_control: dict[str, Any] | None = None,
+    stochastic_emission: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Keep evolved trajectories on their recorded equations and reconstruction."""
     if not isinstance(payload, dict):
@@ -124,6 +133,23 @@ def configure_checkpoint(
         ):
             raise ValueError("Resume retains its internal error settings")
         payload = dict(payload, internal_step_control=selected)
+    if stochastic_emission is not None:
+        from core.stochastic_emission import StochasticEmissionConfig, EmissionRuntime
+        from core.momentum_center_pair import _validate_emission_pair
+        from dataclasses import asdict
+
+        config = StochasticEmissionConfig.from_dict(stochastic_emission)
+        previous = payload.get("stochastic_emission")
+        if payload.get("accepted_steps", 0) > 0:
+            if previous is None or previous["config"] != asdict(config):
+                raise ValueError(
+                    "Resume retains stochastic emission settings and RNG state"
+                )
+        elif previous is None or previous["config"] != asdict(config):
+            _validate_emission_pair(payload, config)
+            payload = dict(
+                payload, stochastic_emission=EmissionRuntime(config).to_payload()
+            )
     if payload.get("model") == "study_local_linear_coupled_history_v1":
         raise ValueError(
             "This is a coupled-study checkpoint, not an older reaction trajectory. "
@@ -260,6 +286,13 @@ def main(argv: list[str] | None = None, *, _multiparticle: bool = False) -> int:
         type=float,
         help="Explicit positive absolute endpoint-drift budget in native dipole units; not a radiation-accuracy tolerance. Resume preserves recorded budget",
     )
+    parser.add_argument("--stochastic-emission", action="store_true", default=None)
+    parser.add_argument("--emission-chi-threshold", type=float)
+    parser.add_argument("--emission-recoil-threshold", type=float)
+    parser.add_argument(
+        "--emission-rate-model", choices=("quantum_lcfa", "classical_capped")
+    )
+    parser.add_argument("--emission-seed", type=int)
     parser.add_argument("--step-ns", type=float)
     parser.add_argument(
         "--dipole-drift-relative",
@@ -384,6 +417,30 @@ def main(argv: list[str] | None = None, *, _multiparticle: bool = False) -> int:
             prepared = prepare_particles(json.loads(initial_conditions.read_text()))
         else:
             prepared = json.loads(args.checkpoint.read_text())
+        emission_options = None
+        if any(
+            getattr(args, name) is not None
+            for name in (
+                "stochastic_emission",
+                "emission_chi_threshold",
+                "emission_recoil_threshold",
+                "emission_rate_model",
+                "emission_seed",
+            )
+        ):
+            emission_options = dict(
+                prepared.get("stochastic_emission", {}).get("config", {})
+            )
+            for argument, field in (
+                ("stochastic_emission", "enabled"),
+                ("emission_chi_threshold", "chi_threshold"),
+                ("emission_recoil_threshold", "recoil_threshold"),
+                ("emission_rate_model", "rate_model"),
+                ("emission_seed", "seed"),
+            ):
+                value = getattr(args, argument)
+                if value is not None:
+                    emission_options[field] = value
         payload = configure_checkpoint(
             prepared,
             args.radiation_reaction,
@@ -395,6 +452,7 @@ def main(argv: list[str] | None = None, *, _multiparticle: bool = False) -> int:
                 if args.internal_error_settings
                 else None
             ),
+            stochastic_emission=emission_options,
         )
         payload = configure_run_history(
             payload,

@@ -700,6 +700,23 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--stochastic-emission",
+        action="store_true",
+        default=None,
+        help=(
+            "Enable discrete quantum synchrotron photons "
+            "(physical electrons; fixed B2B)."
+        ),
+    )
+    parser.add_argument("--emission-chi-threshold", type=float, default=None)
+    parser.add_argument("--emission-recoil-threshold", type=float, default=None)
+    parser.add_argument(
+        "--emission-rate-model",
+        choices=("quantum_lcfa", "classical_capped"),
+        default=None,
+    )
+    parser.add_argument("--emission-seed", type=int, default=None)
+    parser.add_argument(
         "--magnetic-dipoles",
         dest="magnetic_dipole_enabled",
         action="store_true",
@@ -1541,6 +1558,11 @@ def _build_testbed_report(
         "driver_gamma_final": result.driver_gamma_final,
         "energy_ledger_metrics": result.energy_ledger_metrics or {},
         "saved_paths": {name: str(path) for name, path in result.saved_paths.items()},
+        **(
+            {"stochastic_emission": result.stochastic_emission}
+            if getattr(result, "stochastic_emission", None) is not None
+            else {}
+        ),
     }
     if options is not None:
         source_report: dict[str, Any] = {
@@ -1650,6 +1672,23 @@ def run_testbed_config(args: argparse.Namespace) -> int:
         from .testbed_runner import load_config, run_testbed
 
         options = load_config(config_path)
+        emission = dict(options.stochastic_emission or {})
+        for argument, field in (
+            ("stochastic_emission", "enabled"),
+            ("emission_chi_threshold", "chi_threshold"),
+            ("emission_recoil_threshold", "recoil_threshold"),
+            ("emission_rate_model", "rate_model"),
+            ("emission_seed", "seed"),
+        ):
+            value = getattr(args, argument, None)
+            if value is not None:
+                emission[field] = value
+        from core.stochastic_emission import StochasticEmissionConfig
+        from dataclasses import asdict
+
+        options.stochastic_emission = asdict(
+            StochasticEmissionConfig.from_dict(emission)
+        )
         if args.space_charge_instantaneous_clock is not None:
             options.space_charge_instantaneous_clock = (
                 args.space_charge_instantaneous_clock
@@ -1737,12 +1776,25 @@ def _merge_simulation_payload(
             result[key] = file_payload[key]
     # These newer nested settings are not members of DEFAULT_SIMULATION.
     # Preserve file values before applying the explicit CLI overrides below.
-    for key in ("checkpoint", "adaptive_pair_return"):
+    for key in ("checkpoint", "adaptive_pair_return", "stochastic_emission"):
         if key in file_payload:
             value = file_payload[key]
             if value is not None and not isinstance(value, Mapping):
                 raise SimulationConfigError(f"'{key}' must be an object or null")
             result[key] = None if value is None else dict(value)
+    emission = dict(result.get("stochastic_emission") or {})
+    for argument, field in (
+        ("stochastic_emission", "enabled"),
+        ("emission_chi_threshold", "chi_threshold"),
+        ("emission_recoil_threshold", "recoil_threshold"),
+        ("emission_rate_model", "rate_model"),
+        ("emission_seed", "seed"),
+    ):
+        value = getattr(args, argument, None)
+        if value is not None:
+            emission[field] = value
+    if emission:
+        result["stochastic_emission"] = emission
     file_particle_loss = file_payload.get("particle_loss")
     if isinstance(file_particle_loss, Mapping):
         result["particle_loss"].update(file_particle_loss)
@@ -2342,6 +2394,17 @@ def _build_adaptive_pair_return_config(payload: Any) -> AdaptivePairReturnConfig
         ) from exc
 
 
+def _build_stochastic_emission_config(payload: Any) -> Any:
+    from core.stochastic_emission import StochasticEmissionConfig
+
+    try:
+        return StochasticEmissionConfig.from_dict(payload)
+    except (TypeError, ValueError) as exc:
+        raise SimulationConfigError(
+            f"Invalid stochastic_emission settings: {exc}"
+        ) from exc
+
+
 def _build_integrator_config(payload: Mapping[str, Any]) -> IntegratorConfig:
     try:
         simulation_type = _parse_simulation_type(payload["simulation_type"])
@@ -2423,6 +2486,9 @@ def _build_integrator_config(payload: Mapping[str, Any]) -> IntegratorConfig:
                 "radiation_reaction_mode",
                 DEFAULT_SIMULATION["radiation_reaction_mode"],
             )
+        ),
+        stochastic_emission=_build_stochastic_emission_config(
+            payload.get("stochastic_emission")
         ),
         pseudo_grid=pseudo_grid,
         macroparticle_smearing=macroparticle_smearing,
@@ -3530,6 +3596,7 @@ def run_simulation(request: SimulationRequest) -> tuple:
         image_subcharge_count=request.config.image_subcharge_count,
         use_conducting_image_weighting=request.config.use_image_weighting,
         radiation_reaction_mode=request.config.radiation_reaction_mode,
+        stochastic_emission=request.config.stochastic_emission,
         source_history_representation=request.config.source_history_representation,
         adaptive_timestep=request.adaptive_timestep,
         self_consistency=request.self_consistency,
@@ -3635,6 +3702,8 @@ def build_report(
             # Keep actual accepted-interval counts, restart status and lifetime
             # recoil work visible; public output-row counts are not step counts.
             report["adaptive_pair_return"] = dict(adaptive_summary)
+    if trajectory and "_stochastic_emission" in trajectory[-1]:
+        report["stochastic_emission"] = trajectory[-1]["_stochastic_emission"]
     if driver is not None:
         report["driver_summary"] = summarise_trajectory(driver)
     if magnetic_dipole is not None:
@@ -3822,11 +3891,35 @@ def _print_results_report(report: Mapping[str, Any]) -> None:
 
 def main(argv: Optional[list[str]] = None) -> int:
     args = parse_args(argv)
+    emission_flags = any(
+        getattr(args, name, None) is not None
+        for name in (
+            "stochastic_emission",
+            "emission_chi_threshold",
+            "emission_recoil_threshold",
+            "emission_rate_model",
+            "emission_seed",
+        )
+    )
+    if emission_flags and (
+        args.pic_config is not None
+        or args.sweep_config is not None
+        or args.results_file is not None
+    ):
+        print(
+            "Error: stochastic emission flags support direct and testbed "
+            "single runs only.",
+            file=sys.stderr,
+        )
+        return 2
 
     if args.pic_config is None and (
         args.pic_backend is not None or args.pic_precision is not None
     ):
-        print("Error: PIC backend/precision options require --pic-config.", file=sys.stderr)
+        print(
+            "Error: PIC backend/precision options require --pic-config.",
+            file=sys.stderr,
+        )
         return 2
 
     if args.pic_config is not None:
