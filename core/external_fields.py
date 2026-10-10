@@ -9,12 +9,15 @@ optional magnetic-field gradient is stored directly in T/m.
 
 from __future__ import annotations
 
-from typing import Tuple
+from typing import TYPE_CHECKING, Tuple
 
 import numpy as np
 
 from .constants import ELEMENTARY_CHARGE
 from .types import ExternalFieldConfig
+
+if TYPE_CHECKING:
+    from .external_field_provider import ExternalFieldSample
 
 ELEMENTARY_CHARGE_COULOMB = 1.602176634e-19
 AMU_KG = 1.66053906660e-27
@@ -62,16 +65,27 @@ def evaluate_external_field_si(
     *,
     position_mm: Tuple[float, float, float],
     time_ns: float,
+    sample: ExternalFieldSample | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Return local ``(E [V/m], B [T], dB_i/dx_j [T/m])``.
 
     The configured magnetic field is the value at the coordinate origin.  A
     supplied gradient is applied linearly to the position.  Outside the field
     window all three results are zero.
+    ``sample`` may reuse a provider evaluation at this position and time.
     """
     x, y, z = (float(value) for value in position_mm)
     if not external_field.is_active(x, y, z, float(time_ns)):
         return np.zeros(3), np.zeros(3), np.zeros((3, 3))
+    if external_field.provider is not None:
+        electric, magnetic, gradient = evaluate_external_field_native(
+            external_field, position_mm=position_mm, time_ns=time_ns, sample=sample
+        )
+        return (
+            np.array([electric_field_native_to_v_per_m(v) for v in electric]),
+            np.array([magnetic_field_native_to_tesla(v) for v in magnetic]),
+            gradient * 1000 / magnetic_field_tesla_to_native(1.0),
+        )
     electric_v_m = np.asarray(
         [
             electric_field_native_to_v_per_m(value)
@@ -97,17 +111,25 @@ def evaluate_external_field_native(
     *,
     position_mm: Tuple[float, float, float],
     time_ns: float,
+    sample: ExternalFieldSample | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Return local native ``(E, B, dB_i/dx_j)`` at one solver event.
 
     Base fields already stored in native units pass through exactly. The
     user-facing T/m gradient crosses the SI boundary once, becoming native
     magnetic field per millimetre before it is applied to the native position.
+    ``sample`` may reuse a provider evaluation at this position and time.
     """
 
     x, y, z = (float(value) for value in position_mm)
     if not external_field.is_active(x, y, z, float(time_ns)):
         return np.zeros(3), np.zeros(3), np.zeros((3, 3))
+    if external_field.provider is not None:
+        if sample is None:
+            sample = evaluate_external_provider(
+                external_field, position_mm=position_mm, time_ns=time_ns
+            )
+        return sample.electric, sample.magnetic, sample.partial_b[1:].T
     electric_native = np.asarray(
         external_field.electric_field_native, dtype=float
     ).copy()
@@ -137,8 +159,13 @@ def compute_uniform_external_field_impulse(
     h_step: float,
     position: Tuple[float, float, float],
     time: float,
+    sample: ExternalFieldSample | None = None,
 ) -> Tuple[float, float, float, float]:
-    """Return ``(delta_Px, delta_Py, delta_Pz, delta_Pt)`` from a uniform field.
+    """Return ``(delta_Px, delta_Py, delta_Pz, delta_Pt)`` from a local field.
+
+    Supports constant fields, linear magnetic gradients, and providers. A
+    supplied ``sample`` reuses the provider's force-stage event and avoids a
+    second evaluation. It must belong to the supplied position and time.
 
     The impulse is integrated over the proper-time step used by the integrator:
 
@@ -153,16 +180,23 @@ def compute_uniform_external_field_impulse(
     x, y, z = (float(value) for value in position)
     if not external_field.is_active(x, y, z, float(time)):
         return 0.0, 0.0, 0.0, 0.0
-    # Keep the legacy uniform-field path bitwise stable. Only the new linear
-    # gradient contribution crosses the SI/native unit bridge.
-    electric = np.asarray(external_field.electric_field_native, dtype=float)
-    magnetic = np.asarray(external_field.magnetic_field_native, dtype=float).copy()
-    gradient = np.asarray(external_field.magnetic_field_gradient_t_per_m, dtype=float)
-    gradient_field_t = gradient @ (np.asarray((x, y, z), dtype=float) * 1.0e-3)
-    magnetic += np.asarray(
-        [magnetic_field_tesla_to_native(value) for value in gradient_field_t],
-        dtype=float,
-    )
+    if external_field.provider is not None:
+        electric, magnetic, _ = evaluate_external_field_native(
+            external_field, position_mm=position, time_ns=time, sample=sample
+        )
+    else:
+        # Keep the legacy uniform-field path bitwise stable. Only the new linear
+        # gradient contribution crosses the SI/native unit bridge.
+        electric = np.asarray(external_field.electric_field_native, dtype=float)
+        magnetic = np.asarray(external_field.magnetic_field_native, dtype=float).copy()
+        gradient = np.asarray(
+            external_field.magnetic_field_gradient_t_per_m, dtype=float
+        )
+        gradient_field_t = gradient @ (np.asarray((x, y, z), dtype=float) * 1.0e-3)
+        magnetic += np.asarray(
+            [magnetic_field_tesla_to_native(value) for value in gradient_field_t],
+            dtype=float,
+        )
     if not np.any(electric) and not np.any(magnetic):
         return 0.0, 0.0, 0.0, 0.0
     beta_vec = np.asarray(beta, dtype=float)
@@ -178,6 +212,30 @@ def compute_uniform_external_field_impulse(
         float(delta_p[2]),
         float(delta_pt),
     )
+
+
+def evaluate_external_provider(
+    external_field: ExternalFieldConfig,
+    *,
+    position_mm: Tuple[float, float, float],
+    time_ns: float,
+) -> ExternalFieldSample:
+    """Validate one pure provider evaluation at a native event."""
+    from .external_field_provider import ExternalFieldSample
+
+    if external_field.provider is None:
+        raise ValueError("external field config has no provider")
+    sample = external_field.provider(
+        position_mm=(
+            float(position_mm[0]),
+            float(position_mm[1]),
+            float(position_mm[2]),
+        ),
+        time_ns=float(time_ns),
+    )
+    if not isinstance(sample, ExternalFieldSample):
+        raise TypeError("external field provider must return ExternalFieldSample")
+    return sample
 
 
 __all__ = [
@@ -206,16 +264,18 @@ def boris_external_field_impulse(
     h_step: float,
     position: Tuple[float, float, float],
     time: float,
+    sample: ExternalFieldSample | None = None,
 ) -> np.ndarray:
     """Symmetric electric kicks and a norm-preserving sampled magnetic rotation.
 
     In proper time the rotation vector is q h B / (2 m c). The force
     diagnostic continues to use the instantaneous Lorentz force.
+    ``sample`` may reuse a provider evaluation at the supplied position and time.
     """
     from .constants import C_MMNS
 
     electric, magnetic, _ = evaluate_external_field_native(
-        external_field, position_mm=position, time_ns=time
+        external_field, position_mm=position, time_ns=time, sample=sample
     )
     if not np.any(magnetic):
         return h_step * charge * gamma * electric

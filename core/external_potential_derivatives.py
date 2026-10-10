@@ -20,10 +20,14 @@ def supports_uniform_external_potential(field: ExternalFieldConfig) -> bool:
     """Return whether a globally smooth uniform potential describes this config."""
     if not field.enabled:
         return True
-    return not np.any(field.magnetic_field_gradient_t_per_m) and all(
-        getattr(field, f"{axis}_{side}") is None
-        for axis in "xyzt"
-        for side in ("min", "max")
+    return (
+        field.provider is None
+        and not np.any(field.magnetic_field_gradient_t_per_m)
+        and all(
+            getattr(field, f"{axis}_{side}") is None
+            for axis in "xyzt"
+            for side in ("min", "max")
+        )
     )
 
 

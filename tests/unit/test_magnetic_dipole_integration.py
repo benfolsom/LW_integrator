@@ -184,14 +184,31 @@ def test_charged_electron_precesses_without_translation_when_at_rest() -> None:
     np.testing.assert_allclose(soa.Pz, 0.0)
 
 
-def test_neutral_stern_gerlach_rest_gradient_changes_momentum() -> None:
+@pytest.mark.parametrize("provider", [False, True])
+def test_neutral_stern_gerlach_rest_gradient_changes_momentum(provider) -> None:
     neutron = get_species("neutron")
     gradient = (
         (-5.0e5, 0.0, 0.0),
         (0.0, -5.0e5, 0.0),
-        (0.0, 0.0, 1.0e6),
+        (3.0e5, 4.0e5, 1.0e6),
     )
     field = ExternalFieldConfig(magnetic_field_gradient_t_per_m=gradient)
+    if provider:
+        from core.external_field_provider import ExternalFieldSample
+
+        def linear(*, position_mm, time_ns):
+            position_m = np.asarray(position_mm) * 1e-3
+            magnetic_t = np.asarray(gradient) @ position_m
+            return ExternalFieldSample.from_si(
+                phi_volts=0.0,
+                vector_potential_t_m=np.cross(magnetic_t, position_m) / 3,
+                electric_v_m=np.zeros(3),
+                magnetic_t=magnetic_t,
+                partial_e_si=np.zeros((4, 3)),
+                partial_b_si=np.vstack((np.zeros(3), np.asarray(gradient).T)),
+            )
+
+        field = ExternalFieldConfig(provider=linear)
     magnetic = MagneticDipoleConfig(
         enabled=True,
         spin_precession_enabled=False,
@@ -215,17 +232,36 @@ def test_neutral_stern_gerlach_rest_gradient_changes_momentum() -> None:
     )
     assert float(trajectory[-1]["Pz"][0]) == pytest.approx(expected[2])
     assert float(trajectory[-1]["Pz"][0]) < 0.0
-    assert float(trajectory[-1]["Px"][0]) == pytest.approx(0.0)
-    assert float(trajectory[-1]["Py"][0]) == pytest.approx(0.0)
+    assert float(trajectory[-1]["Px"][0]) == pytest.approx(expected[0])
+    assert float(trajectory[-1]["Py"][0]) == pytest.approx(expected[1])
 
 
-def test_fixed_geometry_keeps_prescribed_gradient_at_start_position() -> None:
+@pytest.mark.parametrize("provider", [False, True])
+def test_fixed_geometry_keeps_prescribed_gradient_at_start_position(provider) -> None:
     gradient = (
         (0.0, 0.0, 0.0),
         (0.0, 0.0, 0.0),
         (1.0e12, 0.0, 0.0),
     )
     field = ExternalFieldConfig(magnetic_field_gradient_t_per_m=gradient)
+    events = []
+    if provider:
+        from core.external_field_provider import ExternalFieldSample
+
+        def linear(*, position_mm, time_ns):
+            events.append((position_mm, time_ns))
+            position_m = np.asarray(position_mm) * 1e-3
+            magnetic_t = np.asarray(gradient) @ position_m
+            return ExternalFieldSample.from_si(
+                phi_volts=0.0,
+                vector_potential_t_m=np.cross(magnetic_t, position_m) / 3,
+                electric_v_m=np.zeros(3),
+                magnetic_t=magnetic_t,
+                partial_e_si=np.zeros((4, 3)),
+                partial_b_si=np.vstack((np.zeros(3), np.asarray(gradient).T)),
+            )
+
+        field = ExternalFieldConfig(provider=linear)
     magnetic = MagneticDipoleConfig(
         enabled=True,
         stern_gerlach_force_enabled=True,
@@ -280,6 +316,10 @@ def test_fixed_geometry_keeps_prescribed_gradient_at_start_position() -> None:
     assert float(variable[-1]["local_magnetic_field_z_t"][0]) == pytest.approx(
         1.0e12 * float(variable[-1]["x"][0]) * 1.0e-3
     )
+    if provider:
+        trial_events = [(position, time) for position, time in events if position[0]]
+        assert trial_events
+        assert all(time > 0.0 for _, time in trial_events)
 
 
 def test_static_rest_gradient_rejects_relativistic_particle() -> None:

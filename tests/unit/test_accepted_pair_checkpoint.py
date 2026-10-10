@@ -390,11 +390,36 @@ def test_pair_checkpoint_rejects_mismatched_history_lengths(tmp_path: Path) -> N
         )
 
 
-def test_pair_checkpoint_rejects_incompatible_resume(tmp_path: Path) -> None:
+@pytest.mark.parametrize("provider", [False, True])
+def test_pair_checkpoint_rejects_incompatible_resume(tmp_path: Path, provider) -> None:
+    first_payload, second_payload = {"physics": "one"}, {"physics": "two"}
+    if provider:
+        from dataclasses import dataclass
+
+        from core.integration_runner import _checkpoint_json_value
+        from core.types import ExternalFieldConfig
+        from diagnostics.external_field_provider.providers import HarmonicChannel
+
+        @dataclass(frozen=True)
+        class OtherChannel(HarmonicChannel):
+            pass
+
+        first_payload = _checkpoint_json_value(
+            ExternalFieldConfig(provider=HarmonicChannel(3.0))
+        )
+        second_payload = _checkpoint_json_value(
+            ExternalFieldConfig(provider=OtherChannel(3.0))
+        )
+        assert (
+            first_payload["provider"]["fields"] == second_payload["provider"]["fields"]
+        )
+        assert first_payload == _checkpoint_json_value(
+            ExternalFieldConfig(provider=HarmonicChannel(3.0))
+        )
     directory = tmp_path / "pair.checkpoint"
     store = AcceptedPairCheckpointStore(
         directory,
-        compatibility_payload={"physics": "one"},
+        compatibility_payload=first_payload,
         interval_knots=1,
         interval_seconds=0.0,
         resume=False,
@@ -409,7 +434,7 @@ def test_pair_checkpoint_rejects_incompatible_resume(tmp_path: Path) -> None:
     with pytest.raises(CheckpointCompatibilityError, match="fingerprint"):
         AcceptedPairCheckpointStore(
             directory,
-            compatibility_payload={"physics": "two"},
+            compatibility_payload=second_payload,
             interval_knots=1,
             interval_seconds=0.0,
             resume=True,

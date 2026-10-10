@@ -37,6 +37,12 @@
   old checkpoints lacking the setting. Document the planned encounter-based
   recoil trigger and non-local emission rate as not implemented.
 
+- Add opt-in `ExternalFieldConfig(provider=...)` for smooth spatial and
+  time-dependent external fields, with analytic derivatives for Medina/LAD
+  radiation reaction and magnetic gradients for Stern–Gerlach forces. Existing
+  defaults are unchanged. The default provider update is first order; use the
+  exact second-order route and check timestep convergence for energy-loss claims.
+
 - Docs: add the physics discussion "Classical limit, bremsstrahlung, and
   validity" (`docs/source/classical_limit_bremsstrahlung.rst`, under Physics
   background). It covers:
