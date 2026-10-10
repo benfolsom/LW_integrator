@@ -92,6 +92,13 @@ _ROW_ARRAY_FIELDS = tuple(
 )
 
 
+def _absent_provider_array(name: str, values: np.ndarray) -> bool:
+    """Skip empty or broadcast-zero provider history in feature-off chunks."""
+    return name in TrajectoryBuilder._PROVIDER_FLOAT_FIELDS and (
+        values.size == 0 or (values.strides == (0, 0) and float(values.flat[0]) == 0.0)
+    )
+
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -339,6 +346,8 @@ class IntegrationCheckpointStore:
         for role, trajectory in (("rider", rider), ("driver", driver)):
             for name in _ROW_ARRAY_FIELDS:
                 values = np.asarray(getattr(trajectory, name))
+                if _absent_provider_array(name, values):
+                    continue
                 if name in RESOLVED_KNOT_FIELDS and values.size == 0:
                     values = np.zeros_like(trajectory.t)
                 arrays[f"{role}__{name}"] = np.array(values[start:stop], copy=True)
@@ -404,7 +413,11 @@ class IntegrationCheckpointStore:
                 row_arrays = {
                     name: np.array(archive[f"{role}__{name}"], copy=True)
                     for name in _ROW_ARRAY_FIELDS
-                    if name not in RESOLVED_KNOT_FIELDS or f"{role}__{name}" in archive
+                    if (
+                        name not in RESOLVED_KNOT_FIELDS
+                        and name not in TrajectoryBuilder._PROVIDER_FLOAT_FIELDS
+                    )
+                    or f"{role}__{name}" in archive
                 }
             builder.restore_checkpoint_rows(
                 start,
@@ -792,6 +805,8 @@ class AcceptedPairCheckpointStore:
         for role, trajectory in (("rider", rider), ("driver", driver)):
             for name in _ACCEPTED_PAIR_ROW_ARRAY_FIELDS:
                 values = np.asarray(getattr(trajectory, name))
+                if _absent_provider_array(name, values):
+                    continue
                 if name in RESOLVED_KNOT_FIELDS and values.size == 0:
                     values = np.zeros_like(trajectory.t)
                 arrays[f"{role}__{name}"] = np.array(values[start:stop], copy=True)
@@ -873,7 +888,11 @@ class AcceptedPairCheckpointStore:
                 row_arrays = {
                     name: np.array(archive[f"{role}__{name}"], copy=True)
                     for name in _ACCEPTED_PAIR_ROW_ARRAY_FIELDS
-                    if name not in RESOLVED_KNOT_FIELDS or f"{role}__{name}" in archive
+                    if (
+                        name not in RESOLVED_KNOT_FIELDS
+                        and name not in TrajectoryBuilder._PROVIDER_FLOAT_FIELDS
+                    )
+                    or f"{role}__{name}" in archive
                 }
             builder.restore_checkpoint_rows(
                 start,

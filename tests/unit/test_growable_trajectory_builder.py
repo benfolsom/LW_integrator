@@ -136,6 +136,10 @@ def test_append_api_rejects_arbitrary_rows_and_allows_unprimed_medina_time() -> 
     state["medina_external_force_sample_time"] = np.array([np.nan])
     builder.append_step(state)
     assert np.isnan(builder.build_current().medina_external_force_sample_time[0, 0])
+    for axis in "xyz":
+        values = getattr(builder.build_current(), f"medina_provider_force_{axis}")
+        assert values.strides == (0, 0)
+        assert not values.flags.writeable
 
     with pytest.raises(TypeError, match="append_step"):
         builder.set_step(0, _state(0))
@@ -286,8 +290,10 @@ def test_causal_spin_slopes_make_past_hertz_result_append_invariant() -> None:
     np.testing.assert_array_equal(before.hertz_tensor, after.hertz_tensor)
 
 
+@pytest.mark.parametrize("provider", [False, True])
 def test_existing_chunk_format_restores_growable_accepted_history(
     tmp_path: Path,
+    provider,
 ) -> None:
     source = GrowableTrajectoryBuilder(2, 1, magnetic_dipole=True)
     for step in range(5):
@@ -295,6 +301,9 @@ def test_existing_chunk_format_restores_growable_accepted_history(
         state["medina_external_force_sample_time"] = np.array(
             [np.nan if step == 0 else 0.01 * (step - 0.5)]
         )
+        if provider:
+            for axis in "xyz":
+                state[f"medina_provider_force_{axis}"] = np.array([step * 0.25])
         source.append_step(state)
 
     checkpoint_directory = tmp_path / "accepted-history.checkpoint"
@@ -341,3 +350,10 @@ def test_existing_chunk_format_restores_growable_accepted_history(
     assert reopened.loop_state == {"controller": "fine"}
     assert not np.any(restored.build_current().source_start_beta_prime_ready)
     _assert_public_arrays_equal(restored.build_current(), history)
+    for axis in "xyz":
+        name = f"medina_provider_force_{axis}"
+        values = getattr(restored.build_current(), name)
+        np.testing.assert_array_equal(values, getattr(history, name))
+        assert restored._provider_arrays_allocated == provider
+    with np.load(checkpoint_directory / store.manifest["chunks"][0]["file"]) as chunk:
+        assert ("rider__medina_provider_force_x" in chunk) == provider

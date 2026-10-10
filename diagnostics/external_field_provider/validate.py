@@ -358,6 +358,9 @@ def validate(output, baseline=None, reuse_harmonic=False):
             )
 
         e_off, e_rr = energy(off), energy(rr)
+        off_drift = float(e_off[-1] - e_off[0])
+        rr_change = float(e_rr[-1] - e_rr[0])
+        rr_work = float(np.sum(rr["radiation_reaction_work"]))
         ratio = e_rr / e_off
         select = rr["t"] > 2 * np.pi / omega
         rate = -np.polyfit(rr["t"][select], np.log(ratio[select]), 1)[0]
@@ -366,6 +369,14 @@ def validate(output, baseline=None, reuse_harmonic=False):
             h_ns=h,
             rr_off_max_energy_relative_error=float(
                 np.max(np.abs(e_off / e_off[0] - 1))
+            ),
+            rr_off_max_abs_delta_h=float(np.max(np.abs(e_off - e_off[0]))),
+            rr_off_terminal_delta_h=off_drift,
+            rr_on_terminal_delta_h=rr_change,
+            rr_on_summed_reaction_work=rr_work,
+            rr_on_delta_h_minus_work=rr_change - rr_work,
+            rr_budget_residual_relative_to_initial_energy=float(
+                (rr_change - rr_work - off_drift) / e_off[0]
             ),
             fitted_action_rate_per_ns=float(rate),
             action_rate_relative_error=float(abs(rate / (tau * omega**2) - 1)),
@@ -392,6 +403,17 @@ def validate(output, baseline=None, reuse_harmonic=False):
     refinements = summary["harmonic"]["refinements"]
     errors = [e["rr_off_max_energy_relative_error"] for e in refinements]
     assert errors[2] < errors[1] < errors[0]
+    summary["harmonic"]["rr_off_max_energy_observed_orders"] = [
+        float(np.log2(errors[i] / errors[i + 1])) for i in range(2)
+    ]
+    # Damping ratios cancel a shared integration error. Check the RR-off
+    # error's size and first-order refinement separately from that ratio.
+    assert errors[-1] < 0.015
+    assert all(
+        0.85 < order < 1.2
+        for order in summary["harmonic"]["rr_off_max_energy_observed_orders"]
+    )
+    assert abs(refinements[-1]["rr_budget_residual_relative_to_initial_energy"]) < 0.005
     assert refinements[-1]["action_rate_relative_error"] < 0.03
     summary["harmonic"]["terminal_refinement_differences"] = [
         float(np.linalg.norm(terminal[i + 1] - terminal[i])) for i in range(2)
@@ -400,6 +422,49 @@ def validate(output, baseline=None, reuse_harmonic=False):
         summary["harmonic"]["terminal_refinement_differences"][1]
         < summary["harmonic"]["terminal_refinement_differences"][0]
     )
+    # A finite region exposes permanent exit-energy errors that a harmonic
+    # damping ratio can hide. RR is explicitly off for this integration control.
+    exit_tube = SmoothTube(
+        depth=7e7, radius_mm=0.2, z_min_mm=0.05, z_max_mm=0.55, ramp_mm=0.1
+    )
+    exit_gamma = 2.0
+    exit_beta = np.sqrt(1 - exit_gamma**-2)
+    summary["tube_exit"] = {}
+    for exact in (False, True):
+        exit_refinements = []
+        for steps in (151, 301, 601):
+            h = 0.7 / (exit_gamma * exit_beta * C_MMNS * (steps - 1))
+            data = run(
+                ExternalFieldConfig(provider=exit_tube),
+                steps=steps,
+                h=h,
+                state=particle(gamma=exit_gamma, x=0.1),
+                mode="off",
+                exact=exact,
+            )
+            kinetic = sum(data[a] ** 2 for a in ("Px", "Py", "Pz")) / (
+                ELECTRON_MASS_AMU * (data["gamma"] + 1)
+            )
+            assert data["z"][-1] < exit_tube.z_min_mm
+            assert data["Pz"][-1] < 0.0
+            exit_refinements.append(
+                {
+                    "steps": steps,
+                    "h_ns": h,
+                    "terminal_z_mm": float(data["z"][-1]),
+                    "relative_exit_energy_error": float(
+                        (kinetic[-1] - kinetic[0]) / kinetic[0]
+                    ),
+                }
+            )
+        errors = [abs(e["relative_exit_energy_error"]) for e in exit_refinements]
+        orders = [float(np.log2(errors[i] / errors[i + 1])) for i in range(2)]
+        summary["tube_exit"]["exact_second_order" if exact else "default"] = {
+            "refinements": exit_refinements,
+            "exit_energy_observed_orders": orders,
+        }
+        assert errors[2] < errors[1] < errors[0]
+        assert all(order > (1.5 if exact else 0.8) for order in orders)
     # Species-neutral hook and exact second-order endpoint route smoke probes.
     ion = run(
         ExternalFieldConfig(provider=HarmonicChannel(3.0)),

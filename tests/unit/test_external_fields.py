@@ -580,13 +580,37 @@ def test_pure_magnetic_rotation_preserves_norm_during_self_consistency():
     assert abs(trajectory[-1]["Px"][0]) > 0.0
 
 
-@pytest.mark.parametrize("mode", ["off", "medina_lad"])
-def test_uniform_provider_reproduces_existing_external_path(mode):
+@pytest.mark.parametrize("mode", ["off", "medina_lad", "medina_lad_validity"])
+def test_uniform_provider_reproduces_existing_external_path(
+    mode, tmp_path, monkeypatch
+):
     """Protect the field-unit bridge and production RR hook against regressions."""
     from core.external_field_provider import ExternalFieldSample
 
     electric = np.array([2e7, -1e7, -1e8])
     magnetic = np.array([0.0, 3e7, 0.0])
+    guard_states = []
+    if mode == "medina_lad_validity":
+        original_medina = equations.compute_medina_radiation_reaction
+        original_guard = equations._medina_radiation_reaction_validity_guard
+        stage_state = {}
+
+        def record_medina(**kwargs):
+            stage_state.update(beta=tuple(kwargs["beta"]), gamma=kwargs["gamma"])
+            return original_medina(**kwargs)
+
+        def check_guard(**kwargs):
+            assert tuple(kwargs["beta"]) == stage_state["beta"]
+            assert kwargs["gamma"] == stage_state["gamma"]
+            guard_states.append(stage_state.copy())
+            return original_guard(**kwargs)
+
+        monkeypatch.setattr(
+            equations, "compute_medina_radiation_reaction", record_medina
+        )
+        monkeypatch.setattr(
+            equations, "_medina_radiation_reaction_validity_guard", check_guard
+        )
 
     def uniform(*, position_mm, time_ns):
         position = np.asarray(position_mm)
@@ -632,11 +656,26 @@ def test_uniform_provider_reproduces_existing_external_path(mode):
             rtol=2e-7,
             atol=2e-11,
         )
-    if mode == "medina_lad":
+    if mode != "off":
         # Agreement in trajectory alone could miss an inactive RR hook when
         # its small impulse falls below the comparison tolerance.
         assert provided[-1]["medina_force_derivative_ready"][0]
         assert sum(float(s["radiation_energy_applied"][0]) for s in provided[1:]) > 0
+    if mode == "medina_lad_validity":
+        assert guard_states
     assert not any(
         s.get("medina_impulse_capped", np.array([False]))[0] for s in provided
     )
+    if mode == "off":
+        from core.types import CheckpointConfig
+
+        with pytest.raises(ValueError, match="dataclass.*plain functions"):
+            retarded_integrator(
+                **dict(kwargs, steps=2),
+                init_rider=_single_particle_state(gamma=20.0),
+                external_field=ExternalFieldConfig(provider=uniform),
+                checkpoint=CheckpointConfig(
+                    enabled=True, directory=str(tmp_path / "function.checkpoint")
+                ),
+            )
+        assert not (tmp_path / "function.checkpoint").exists()

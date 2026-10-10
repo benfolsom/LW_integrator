@@ -1378,6 +1378,12 @@ class ExternalFieldConfig:
     ``provider`` optionally supplies smooth spatial fields and analytic first
     field derivatives; see ``core.external_field_provider``. It replaces the
     configured fields and cannot be combined with hard windows.
+    The default non-exact route is first order in dt for provider fields.
+    Prefer the exact ``second_order_start_taylor_endpoint`` route with
+    ``INERTIAL_PREHISTORY`` for channeling and energy-loss claims, and check
+    timestep convergence. Analytic Medina/LAD derivatives do not by themselves
+    make the trajectory update second order. Checkpointing requires a dataclass
+    provider with serializable fields; plain functions are unsupported there.
     """
 
     enabled: bool = True
@@ -2242,6 +2248,11 @@ class TrajectoryBuilder:
         "medina_provider_force_z",
         "medina_external_force_sample_time",
     )
+    _PROVIDER_FLOAT_FIELDS: tuple = (
+        "medina_provider_force_x",
+        "medina_provider_force_y",
+        "medina_provider_force_z",
+    )
     _MEDINA_BOOL_FIELDS: tuple = (
         "medina_force_derivative_ready",
         "medina_impulse_capped",
@@ -2271,6 +2282,7 @@ class TrajectoryBuilder:
         self._n_particles = n_particles
         self._magnetic_arrays_allocated = bool(magnetic_dipole)
         self._medina_arrays_allocated = False
+        self._provider_arrays_allocated = False
         self._storage_state = _TrajectoryStorageState(capacity=int(n_steps))
         self._published_stop = 0
 
@@ -2372,6 +2384,14 @@ class TrajectoryBuilder:
                     (new_capacity, self._n_particles),
                 )
             elif (
+                field_name in self._PROVIDER_FLOAT_FIELDS
+                and not self._provider_arrays_allocated
+            ):
+                replacement = np.broadcast_to(
+                    np.array(0.0, dtype=np.float64),
+                    (new_capacity, self._n_particles),
+                )
+            elif (
                 field_name in medina_float_fields and not self._medina_arrays_allocated
             ):
                 default = (
@@ -2452,6 +2472,8 @@ class TrajectoryBuilder:
             field_name in state for field_name in medina_fields
         ):
             for field_name in self._MEDINA_FLOAT_FIELDS:
+                if field_name in self._PROVIDER_FLOAT_FIELDS:
+                    continue
                 if field_name == "medina_external_force_sample_time":
                     self._arrays[field_name] = np.full(
                         (self._n_steps, self._n_particles),
@@ -2471,6 +2493,12 @@ class TrajectoryBuilder:
             self._medina_arrays_allocated = True
             self._storage_state.rewrite_epoch += 1
             self._storage_state.array_revision += 1
+
+        if not self._provider_arrays_allocated and any(
+            field_name in state for field_name in self._PROVIDER_FLOAT_FIELDS
+        ):
+            self._allocate_provider_arrays()
+            self._storage_state.rewrite_epoch += 1
 
         for field_name in self._KINEMATIC_FIELDS + magnetic_fields + medina_fields:
             if field_name in state:
@@ -2538,6 +2566,15 @@ class TrajectoryBuilder:
                 raise ValueError(f"{field_name} must contain only finite values")
             self._arrays[field_name][step] = values
 
+    def _allocate_provider_arrays(self) -> None:
+        """Materialize provider history only when a state or checkpoint has it."""
+        for field_name in self._PROVIDER_FLOAT_FIELDS:
+            self._arrays[field_name] = np.zeros(
+                (self._n_steps, self._n_particles), dtype=np.float64
+            )
+        self._provider_arrays_allocated = True
+        self._storage_state.array_revision += 1
+
     def restore_checkpoint_rows(
         self,
         start: int,
@@ -2586,6 +2623,8 @@ class TrajectoryBuilder:
             self._storage_state.array_revision += 1
         if not self._medina_arrays_allocated and medina_fields & row_arrays.keys():
             for field_name in self._MEDINA_FLOAT_FIELDS:
+                if field_name in self._PROVIDER_FLOAT_FIELDS:
+                    continue
                 fill = (
                     np.nan if field_name == "medina_external_force_sample_time" else 0.0
                 )
@@ -2598,6 +2637,10 @@ class TrajectoryBuilder:
                 )
             self._medina_arrays_allocated = True
             self._storage_state.array_revision += 1
+        if not self._provider_arrays_allocated and (
+            set(self._PROVIDER_FLOAT_FIELDS) & row_arrays.keys()
+        ):
+            self._allocate_provider_arrays()
 
         expected_row_fields = set(
             self._KINEMATIC_FIELDS
@@ -2614,6 +2657,7 @@ class TrajectoryBuilder:
             self._SOURCE_START_FLOAT_FIELDS + self._MAGNETIC_BOOL_FIELDS
         )
         optional_source_start_fields.update(self._INCLUSION_FIELDS)
+        optional_source_start_fields.update(self._PROVIDER_FLOAT_FIELDS)
         if "potential_inclusion_state" in row_arrays:
             self._ensure_inclusion_string_width(row_arrays["potential_inclusion_state"])
         missing = (

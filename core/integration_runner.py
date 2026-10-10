@@ -64,6 +64,7 @@ from .types import (
     ChronoMatchingMode,
     CavityExitConfig,
     DriverTrainConfig,
+    ExternalFieldConfig,
     DipoleSourceConfig,
     GrowableTrajectoryBuilder,
     IndexedTrajectoryArrays,
@@ -112,10 +113,29 @@ def _checkpoint_json_value(value: Any) -> Any:
     if isinstance(value, Enum):
         return {"enum": f"{type(value).__name__}.{value.name}"}
     if is_dataclass(value):
-        return {
+        encoded = {
             descriptor.name: _checkpoint_json_value(getattr(value, descriptor.name))
             for descriptor in fields(value)
+            if not (
+                isinstance(value, ExternalFieldConfig) and descriptor.name == "provider"
+            )
         }
+        if isinstance(value, ExternalFieldConfig):
+            provider = value.provider
+            if provider is None:
+                encoded["provider"] = None
+            elif is_dataclass(provider) and not isinstance(provider, type):
+                encoded["provider"] = {
+                    "class": f"{type(provider).__module__}.{type(provider).__qualname__}",
+                    "fields": _checkpoint_json_value(provider),
+                }
+            else:
+                raise ValueError(
+                    "checkpointing external field providers requires a dataclass "
+                    "callable with serializable fields; plain functions and other "
+                    "callables are unsupported"
+                )
+        return encoded
     if isinstance(value, dict):
         return {
             str(key): _checkpoint_json_value(item)
@@ -3354,6 +3374,13 @@ def retarded_integrator(
         gradient retain their original path. ``ExternalFieldConfig(provider=...)``
         supplies smooth fields, potentials, and analytic first field derivatives
         at each force stage; see ``core.external_field_provider``.
+        The default non-exact route is first order in dt for provider fields,
+        including region exit-energy errors. For channeling and energy-loss
+        claims, use the exact ``second_order_start_taylor_endpoint`` route with
+        ``INERTIAL_PREHISTORY`` and verify timestep convergence. Supplying analytic
+        derivatives to Medina/LAD alone does not upgrade trajectory accuracy.
+        Checkpointing requires a dataclass provider with serializable fields;
+        function providers raise ValueError when checkpointing is enabled.
     progress_callback:
         Optional callable invoked as ``progress_callback(current, steps)`` after
         each successful step. Used for progress bars or cancellation checks.

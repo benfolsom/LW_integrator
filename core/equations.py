@@ -2403,6 +2403,7 @@ def retarded_equations_of_motion(
         working_x = current_state["x"][particle_idx]
         working_y = current_state["y"][particle_idx]
         working_z = current_state["z"][particle_idx]
+        working_provider_time = current_state["t"][particle_idx]
 
         force_particle_charge: float = float(
             _get_particle_observer_charge(current_state, particle_idx)
@@ -3315,18 +3316,14 @@ def retarded_equations_of_motion(
                         float(current_state["y"][particle_idx]),
                         float(current_state["z"][particle_idx]),
                     )
-                force_field = external_field
+                field_time = float(current_state["t"][particle_idx])
                 if getattr(external_field, "provider", None) is not None:
-                    from .types import ExternalFieldConfig
-
+                    if sc_convergence_mode == "variable_geometry" and sc_iteration > 0:
+                        field_time = float(working_provider_time)
                     provider_sample = evaluate_external_provider(
                         external_field,
                         position_mm=field_position,
-                        time_ns=float(current_state["t"][particle_idx]),
-                    )
-                    force_field = ExternalFieldConfig(
-                        electric_field_native=tuple(provider_sample.electric),
-                        magnetic_field_native=tuple(provider_sample.magnetic),
+                        time_ns=field_time,
                     )
                 if rfs_selected:
                     (
@@ -3334,9 +3331,10 @@ def retarded_equations_of_motion(
                         local_magnetic_field_native,
                         local_magnetic_gradient_native_per_mm,
                     ) = evaluate_external_field_native(
-                        force_field,
+                        external_field,
                         position_mm=field_position,
-                        time_ns=float(current_state["t"][particle_idx]),
+                        time_ns=field_time,
+                        sample=provider_sample,
                     )
                 else:
                     (
@@ -3344,9 +3342,10 @@ def retarded_equations_of_motion(
                         local_magnetic_field_t,
                         local_magnetic_gradient_t_per_m,
                     ) = evaluate_external_field_si(
-                        force_field,
+                        external_field,
                         position_mm=field_position,
-                        time_ns=float(current_state["t"][particle_idx]),
+                        time_ns=field_time,
+                        sample=provider_sample,
                     )
                 (
                     ext_dp_x,
@@ -3354,7 +3353,7 @@ def retarded_equations_of_motion(
                     ext_dp_z,
                     ext_dp_t,
                 ) = compute_uniform_external_field_impulse(
-                    force_field,
+                    external_field,
                     charge=float(force_particle_charge),
                     gamma=(
                         float(current_state["gamma"][particle_idx])
@@ -3368,11 +3367,12 @@ def retarded_equations_of_motion(
                     ),
                     h_step=float(h),
                     position=field_position,
-                    time=float(current_state["t"][particle_idx]),
+                    time=field_time,
+                    sample=provider_sample,
                 )
                 if not second_order_exact_source_selected and not rfs_selected:
                     rotated_impulse = boris_external_field_impulse(
-                        force_field,
+                        external_field,
                         charge=float(force_particle_charge),
                         mass=float(particle_mass),
                         gamma=float(current_state["gamma"][particle_idx]),
@@ -3381,7 +3381,8 @@ def retarded_equations_of_motion(
                         ),
                         h_step=float(h),
                         position=field_position,
-                        time=float(current_state["t"][particle_idx]),
+                        time=field_time,
+                        sample=provider_sample,
                     )
                     magnetic_rotation_correction = np.asarray(rotated_impulse) - (
                         ext_dp_x,
@@ -5228,6 +5229,10 @@ def retarded_equations_of_motion(
                         # The sampled collective remainder keeps accepted history.
                         # The provider force and its analytic derivative share the
                         # exact stage event and velocity used in STEP 4c.
+                        # The interval-averaged remainder is labelled at that
+                        # event too, rather than the legacy midpoint. Constant
+                        # dt differences are unchanged; adaptive dt can shift
+                        # the remainder derivative by O(delta h).
                         remainder = (
                             np.asarray(external_force)
                             - provider_impulse / predictor_coordinate_dt
@@ -5237,9 +5242,7 @@ def retarded_equations_of_motion(
                             np.abs(remainder) < 64 * np.finfo(float).eps * scale
                         ] = 0.0
                         external_force = tuple(remainder + provider_force)
-                        current_force_sample_time = float(
-                            current_state["t"][particle_idx]
-                        )
+                        current_force_sample_time = field_time
                         for axis, value in zip("xyz", provider_force):
                             result[f"medina_provider_force_{axis}"][
                                 particle_idx
@@ -5352,8 +5355,8 @@ def retarded_equations_of_motion(
                                 ),
                                 external_force=external_force,
                                 coordinate_dt=float(predictor_coordinate_dt),
-                                beta=beta_tuple,
-                                gamma=float(result["gamma"][particle_idx]),
+                                beta=medina_beta,
+                                gamma=medina_gamma,
                                 mass=float(particle_mass),
                                 charge=float(force_particle_charge),
                                 momentum=(
@@ -5697,6 +5700,7 @@ def retarded_equations_of_motion(
             working_x = result["x"][particle_idx]
             working_y = result["y"][particle_idx]
             working_z = result["z"][particle_idx]
+            working_provider_time = result["t"][particle_idx]
 
             # Gamma blowup detection: ALL blowups now trigger retry attempts
             # The integration runner will reduce timestep and retry, only marking

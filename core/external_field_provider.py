@@ -9,6 +9,13 @@ partial_e[1:].T is minus the complete spatial Hessian of phi.
 A provider must be pure, finite, and at least C2 in its potentials, including
 region entrances/exits. It may be called repeatedly on rejected trials. No
 hard config windows or implicit numerical differentiation are applied.
+
+The default non-exact route samples the step-start force and is first order in
+dt for provider fields, including net energy errors after region exit. For
+channeling and energy-loss claims, prefer the exact
+``second_order_start_taylor_endpoint`` route with ``INERTIAL_PREHISTORY`` and
+verify timestep convergence. The analytic Medina/LAD derivative does not
+upgrade the underlying trajectory order.
 """
 
 from __future__ import annotations
