@@ -204,8 +204,8 @@ continuous velocity. Correcting the general runner requires split velocities
 and matching resolved kinematics throughout source preparation and sampling.
 That broader history change is planned, not implemented. AS's Medina/LAD
 restart remains in place, but does not repair source radiation seen by other
-particles. Diagnostic commands, values, and the implementation scope are in
-``local/task_at/report.md`` and ``local/task_at/fix_plan.md``.
+particles. Diagnostic commands, values, and the implementation scope are kept in local
+validation notes outside the repository.
 
 The nonlinear momentum-center runner supports ``charge_ll`` and the
 full-dipole reaction selections for zero intrinsic spin. Finite-spin action
@@ -337,10 +337,10 @@ provide a sampled spectrum or resolve the incident-energy endpoint question.
 An explicitly selected, reseeded midpoint branch produced one 77.49 keV
 photon, with identical pair resumes. That branch tests recoil and history
 publication, not an unbiased physical emission yield. Scripts, event lists,
-checkpoints, and detailed results are in ``local/task_ao/validation/``.
+checkpoints, and detailed results are kept in local validation notes.
 Two approved stochastic regression tests cover independent rate/power
 quadrature and forced-kick checkpoint identity.
-Review-fix scripts and results are in ``local/task_aq/``. Seeded and resumed
+Review-fix scripts and results are kept in local notes. Seeded and resumed
 identity includes the sub-interval RNG draws. Public general-runner trajectories
 retain the emission payload only on the final row, including after periodic
 checkpoint writes; intermediate partial event logs are removed.
@@ -373,8 +373,8 @@ and 74 photon fractions found maximum relative differences of
 in exponentially negligible high-energy tails reached 0.110 because the two
 independent finite Bessel-integral tables truncate and interpolate differently;
 the maximum absolute bracket difference was :math:`3.28\times10^{-7}`.
-The grid, constants, and exact results are recorded in
-``local/task_ap/thread_c_comparison.json``.
+The grid, constants, and exact results are recorded in local validation
+notes.
 
 None of thread C's experimental cases is currently a valid end-to-end
 stochastic-emission validation case for this runner.  The E-146 25 GeV,
@@ -404,7 +404,7 @@ Reducing the interval probability by ten relative to the emission guard did
 not cure it.  We did not loosen the criterion or substitute that proxy for a
 crystal calculation.  It is therefore an unsuccessful interface check, not
 an ensemble result or a comparison with data.  The reproducible attempted
-configuration is ``local/task_ap/na63_local_proxy.py``.
+configuration is kept in local validation notes.
 
 The 50 GeV Si (110) case is not a fallback: thread C found that its
 :math:`\chi<0.042` field changes materially during photon formation and that a
