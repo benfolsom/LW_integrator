@@ -95,3 +95,68 @@ If either raises an exception, the run reports ``diagnostic_errors`` and
 disables the failed diagnostic. A failed coupled-kick ledger is cleared, so
 an incomplete total is not presented as a complete ledger. Particle pushes
 and accepted source histories continue normally.
+
+Breathing cohort geometry
+-------------------------
+
+``cloud_breathing`` remains opt-in. It fits the full population-weighted
+covariance of each cohort's simultaneous lab positions, including cross-axis
+moments. A symmetric square root in fixed initial axes maps persistent
+Gaussian nodes into that shape. All three causal filters start at this
+fitted map, with zero internal velocity and acceleration. Rigid translation
+and a uniform transverse kick preserve the map; a change in centroid
+velocity does not rotate or contract it a second time.
+
+``cloud_width_m`` is the sole minimum principal-axis RMS width in the lab.
+``cloud_width_scale`` scales the fitted widths before that floor is applied.
+There is no species-RMS divided by K floor for breathing. The
+``cloud_width_rule`` continues to control frozen clouds only. Lab geometry
+already contains the contraction present in the particle snapshot. This is
+a lab covariance model, rather than a reconstruction of accelerated
+rest-frame density. Breathing diagnostics use ``lab_axis_rms_target_m`` and
+``lab_principal_width_floor_m``; the earlier rest-width labels no longer
+apply.
+
+The filter time constant is ``cloud_breathing_response_time_s`` (JSON uses
+``cloud_breathing_response_time_ps``). Low-frequency shape changes lag by
+about three time constants. The first-stage node velocity is limited
+independently parallel and transverse to the centroid velocity. Parallel
+motion is bounded by one quarter of the remaining speed headroom, and
+transverse motion by one quarter of c/gamma. Each component is also capped
+at ``cloud_breathing_max_speed_c`` times c divided by the square root of two,
+which bounds the total internal speed. At fixed centroid velocity the
+cascaded filters preserve these bounds. Later centroid acceleration can
+consume the reserve; invalid endpoints are rejected without publishing a
+partial history or clipping velocities.
+
+For a width change dw and an extreme node coordinate n, the rate-limited
+response takes at least abs(n)*dw/v_limit, plus filter lag. At gamma=10.785,
+the transverse allowance is about 6.95 mm/ns. A four-node transverse rule
+has extreme coordinate about 2.33, so a 0.5 mm width change needs at least
+0.17 ns, plus about 0.03 ns at the default time constant. Combined changes
+can take longer; measure the actual response and converge the time constant.
+
+``bunch_extent`` now defaults to 1e-6 cells of padding when padding is
+omitted; fixed mode retains one cell and its original default arithmetic.
+A half-cell phase study must explicitly use padding greater than 0.5 cells
+for both phases. The finite inertial prefix must include the furthest
+forward subcharge node in the longitudinal source-to-observer separation,
+not just the centroid, in the approximate 2*gamma**2*dz/c sizing rule.
+Strict retarded-root bracketing remains authoritative.
+
+``scripts/validate_pic_breathing.py`` defaults to 256 prescribed steps and
+reports both total-field and correction errors against an independent SI
+LW reference. Those errors include sample-and-hold timestep lag and
+quadrature error; refine steps and quadrature separately. ``--case rigid-kick``
+adds an analytic moving centroid at gamma approximately ten, a smooth
+transverse kick, and an unchanged lab Gaussian shape. Its independent
+reference includes the centroid velocity, acceleration, and boosted Coulomb
+subtraction; it also checks that the fitted map and internal current remain
+unchanged to numerical precision. These are bounded source-field controls,
+with radiation reaction explicitly off, rather than crossing validation.
+
+Longitudinal Gaussian quadrature still consists of point subcharges. It
+creates thin correction sheets at the node planes and does not smooth away
+z-aliasing. Converge z spacing, half-cell phase, timestep, cohort count,
+quadrature, and transverse resolution before using crossing ratios for a
+physics claim. No such convergence campaign accompanies these fixes.

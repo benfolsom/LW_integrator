@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add opt-in per-axis, bunch-sized PIC correction lattices with longitudinal
+  refinement and phase controls, configurable prehistory, and breathing clouds
+  fitted to full cohort covariance. Fixed-mode defaults are unchanged; crossing
+  accuracy still requires independent convergence checks.
+
 - Docs: add the physics discussion "Classical limit, bremsstrahlung, and
   validity" (`docs/source/classical_limit_bremsstrahlung.rst`, under Physics
   background). It covers:

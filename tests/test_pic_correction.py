@@ -352,16 +352,14 @@ def test_uniform_cloud_cancellation_and_persistent_moment_refits():
     np.testing.assert_array_equal(breathing.breathing_filters, initial_map)
     breathing.accept([expanding], 2e-12)  # Refit sets a future target only.
     np.testing.assert_array_equal(breathing.breathing_filters, initial_map)
-    expected_width = np.sqrt(
-        np.average(
-            ((expanding.position_m - center) @ breathing.breathing_basis[0]) ** 2,
-            axis=0,
-            weights=expanding.population,
-        )
+    local = (expanding.position_m - center) @ breathing.breathing_basis[0]
+    covariance = (local.T * expanding.population) @ local / expanding.population.sum()
+    values, vectors = np.linalg.eigh(covariance)
+    root = (vectors * np.maximum(cfg.cloud_width_m, np.sqrt(np.maximum(values, 0)))) @ (
+        vectors.T
     )
     np.testing.assert_allclose(
-        breathing.width_target_m[0],
-        np.maximum(breathing.width_floor_m[0], expected_width),
+        breathing.width_target_m[0], np.sqrt(np.diag(root @ root.T))
     )
     np.testing.assert_array_equal(breathing.offset_velocity_m_s, 0)
     breathing.accept([expanding], 3e-12)
@@ -460,22 +458,94 @@ def test_uniform_cloud_cancellation_and_persistent_moment_refits():
         with pytest.raises(ValueError, match="breathing"):
             replace(cfg, **options)
 
-    # Moving, unequal populations check the initial rest-axis RMS/K^(1/3).
-    moving = source()
-    moving.momentum_mc[:] = [0, 0, 10]
-    moving_cloud = CloudCorrection([moving], replace(cfg, clouds_per_species=2))
-    center = np.average(moving.position_m, axis=0, weights=moving.population)
-    rest = (moving.position_m - center) @ moving_cloud.breathing_basis[0]
-    rest[:, 2] *= np.sqrt(101)
-    expected_floor = np.maximum(
-        cfg.cloud_width_m,
-        np.sqrt(np.average(rest**2, axis=0, weights=moving.population)) / 2 ** (1 / 3),
+    # Ballistic gamma~10 cohorts start at their fitted full covariance,
+    # rather than expanding from a smaller species/K floor (P1-A).
+    nodes = np.stack(np.meshgrid([-1.0, 1.0], [-1.0, 1.0], [-1.0, 1.0]), -1).reshape(
+        -1, 3
     )
-    np.testing.assert_allclose(moving_cloud.width_floor_m, [expected_floor] * 2)
-    qe, qb = moving_cloud.quasi_static(probes)
-    de, db = moving_cloud.direct(probes)
-    assert np.linalg.norm(de) / np.linalg.norm(qe) < 2e-12
-    assert C * np.linalg.norm(db) / np.linalg.norm(qe) < 2e-12
+    moving = Species(
+        "moving",
+        nodes * [1e-3, 0.7e-3, 0.4e-3],
+        np.tile([0, 0, 10], (8, 1)),
+        s.charge_c,
+        s.mass_kg,
+        np.arange(1, 9),
+    )
+    moving.position_m[:, 0] += 0.3 * moving.position_m[:, 2]
+    moving_cfg = replace(cfg, clouds_per_species=2, refit_every=1, cloud_width_m=1e-6)
+    moving_cloud = CloudCorrection([moving], moving_cfg)
+    np.testing.assert_array_equal(moving_cloud.width_floor_m, 1e-6)
+    fitted = moving_cloud.breathing_filters[2].copy()
+    for j, (si, idx) in enumerate(moving_cloud.members):
+        points = moving.position_m[idx]
+        dr = points - np.average(points, axis=0, weights=moving.population[idx])
+        expected = (dr.T * moving.population[idx]) @ dr / moving.population[idx].sum()
+        actual = fitted[j] @ fitted[j].T
+        # A collapsed principal direction has the explicitly requested floor.
+        np.testing.assert_allclose(actual, expected, rtol=1e-10, atol=1.1e-12)
+    for step in range(1, 4):
+        moving.position_m += 1e-12 * moving.velocity_m_s
+        moving_cloud.accept([moving], step * 1e-12)
+        assert np.max(np.abs(moving_cloud.offset_velocity_m_s)) < 1e-6
+        qe, qb = moving_cloud.quasi_static(probes)
+        de, db = moving_cloud.direct(probes)
+        assert np.linalg.norm(de) / np.linalg.norm(qe) < 2e-11
+        assert C * np.linalg.norm(db) / np.linalg.norm(qe) < 2e-11
+    # A rigid transverse kick translates the lab covariance. It must not
+    # produce the old (gamma-1)*theta shear or an offset current (P1-B).
+    for step in range(4, 7):
+        moving.momentum_mc[:, 0] += 0.001
+        moving.position_m += 1e-12 * moving.velocity_m_s
+        moving_cloud.accept([moving], step * 1e-12)
+        np.testing.assert_allclose(
+            moving_cloud.breathing_target, fitted, atol=1e-17, rtol=0
+        )
+        assert np.max(np.abs(moving_cloud.offset_velocity_m_s)) < 1e-6
+    # Cohort compression below the former species/K floor remains visible.
+    widths = moving_cloud.width_target_m.copy()
+    moving.position_m *= 0.1
+    moving_cloud._refit_breathing_target([moving])
+    active = widths > 10 * moving_cfg.cloud_width_m
+    assert np.all(moving_cloud.width_target_m[active] < 0.2 * widths[active])
+    # Relativistic transverse rates use transverse headroom, independently
+    # of longitudinal demand. Check actual node speeds, including mixed nodes.
+    moving.position_m *= 1000
+    moving_cloud._refit_breathing_target([moving])
+    beta = moving_cloud.beta
+    axes = beta / np.linalg.norm(beta, axis=1)[:, None]
+    velocity = (
+        np.einsum(
+            "cij,nj->cni",
+            (moving_cloud.breathing_target - moving_cloud.breathing_filters[0])
+            / moving_cfg.cloud_breathing_response_time_s,
+            moving_cloud.breathing_nodes,
+        )
+        / C
+    )
+    parallel = np.sum(velocity * axes[:, None], axis=-1)
+    transverse = velocity - parallel[..., None] * axes[:, None]
+    longitudinal_limit = 0.25 * (1 - np.linalg.norm(beta, axis=1))
+    transverse_limit = np.minimum(
+        moving_cfg.cloud_breathing_max_speed_c / np.sqrt(2),
+        0.25 * np.sqrt(1 - np.sum(beta**2, axis=1)),
+    )
+    assert np.all(np.max(np.abs(parallel), axis=1) <= longitudinal_limit * (1 + 1e-12))
+    assert np.all(
+        np.max(np.linalg.norm(transverse, axis=-1), axis=1)
+        <= transverse_limit * (1 + 1e-12)
+    )
+    assert np.max(np.linalg.norm(transverse, axis=-1)) > 10 * longitudinal_limit.max()
+    assert np.all(np.linalg.norm(beta[:, None] + velocity, axis=-1) < 1)
+    assert (
+        np.max(np.linalg.norm(velocity, axis=-1))
+        <= moving_cfg.cloud_breathing_max_speed_c
+    )
+    # Frozen tau and zero deltas must not emit overflow warnings (P3-2).
+    with np.errstate(over="raise", divide="raise", invalid="raise"):
+        frozen = CloudCorrection(
+            [moving], replace(moving_cfg, cloud_breathing_response_time_s=1)
+        )
+        frozen._refit_breathing_target([moving])
 
 
 def test_acceleration_interpolation_and_correction_bookkeeping(monkeypatch):
@@ -566,6 +636,8 @@ def test_acceleration_interpolation_and_correction_bookkeeping(monkeypatch):
     assert CorrectionConfig().half_extent_m == (0.004,) * 3
     implicit = CorrectionConfig.from_config(dict(lattice_extent_mode="bunch_extent"))
     assert implicit.half_extent_m == (1e-12,) * 3
+    assert implicit.lattice_padding_cells == 1e-6
+    assert CorrectionConfig().lattice_padding_cells == 1.0
     corr.config = replace(
         implicit, lattice_shape=(4, 5, 17), lattice_padding_cells=1e-6
     )

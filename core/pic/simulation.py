@@ -391,7 +391,7 @@ def run_pic(config: Mapping[str, Any]) -> dict[str, Any]:
                     "ballistic between fits"
                 ),
                 cloud_model=(
-                    "breathing 3D Gaussian quadrature; filtered rest-axis cohort "
+                    "breathing 3D Gaussian quadrature; filtered full lab cohort "
                     "moments; point-subcharge expansion worldlines"
                     if correction.config.cloud_breathing
                     else "fixed transverse Gaussian quadrature; no longitudinal smoothing"
