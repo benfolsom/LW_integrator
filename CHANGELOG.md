@@ -2,6 +2,57 @@
 
 ## Unreleased
 
+- Add the opt-in stage-2 exact-cloud Liénard–Wiechert (LW) correction to
+  native PIC: fit persistent, population-weighted clouds, subtract their
+  matched quasi-static fields from their exact retarded fields, and interpolate
+  the difference to particles. Keep correction off by default; close crossings
+  remain unvalidated.
+- Batch CPU correction-node fields with certified bracket hints and strict
+  compiled charge jets. Preserve bit-identical saved fields and states relative
+  to stage 2, with about 2× faster corrected steps in the reported controls.
+- Add exact-path directional visibility gates for charge fields, dipole fields,
+  and canonical potentials at each retarded source event. Split steps at gate
+  changes, publish history knots, rebase canonical momentum, and restart
+  Medina/LAD on the new branch. Support fixed-step charge driver trains with
+  translated `INERTIAL_PREHISTORY`; keep ungated behavior unchanged. Gates
+  remain an ideal visibility model without material screening.
+- Compile strict exact-path root and sampling helpers, and batch source jets
+  while preserving source-reduction order. Report about 1.6–1.7× faster complete
+  warm runs with bit-identical outputs in the tested controls; keep backend
+  choices and numerical defaults unchanged.
+- Extend opt-in K-cloud correction with matched far-field monopole compression,
+  certified inertial skipping, and a frozen RMS-derived width scaled by
+  $K^{-1/3}$. Keep fixed-width defaults and full refit/evaluation cadence
+  unchanged; retain sparse causal hold/extrapolation for diagnostics only.
+  Add experimental finite-source near-field pair replacement and a causal
+  midpoint predictor. Record population-weighted cloud projection and
+  `coupled_kick` work/impulse ledgers, including the changed PIC response.
+  Add restricted experimental CPU `medina_lad` with midpoint prediction,
+  both cadences equal to one, and near-field replacement disabled. Mechanical
+  kick closure does not establish a closed electromagnetic energy ledger.
+- Add the experimental one-way `core/boundary` module for CPU float64
+  axisymmetric scattered fields from prescribed LW drives and grid-aligned
+  Drude walls. Include saved material histories, particle replay, field/particle
+  ledgers, and an explicit SI adapter for PIC observers. Keep production
+  integrator and PIC defaults unchanged.
+- Fix exact-gate history reload in a fresh process using persisted split-knot
+  metadata. Select gates using resolved source positions relative to the
+  occluder, and recognize certified crossings at accepted segment endpoints.
+- Document exact gates, driver trains, native PIC backends, and K-cloud
+  correction settings and limits; update validation guidance and math rendering.
+- Add experimental conformal perfect-conductor walls with physical-field
+  gathering on a smooth wall-following mesh, separately from opt-in finite-window
+  axial two-way Drude boundary coupling. Feed responding trajectories back into
+  fresh material passes, require feedback convergence, and reject unsaved
+  future source history. Keep aligned-wall and production solver defaults
+  unchanged; mapped material coupling and whole-system closure remain open.
+- Cache Green spectra for two mesh geometries on GPU PIC backends, avoiding
+  rebuilds when alternating between bunch frames. Report about 30× faster MLX
+  driver phases. Round MLX Green mesh spacing once to float32, then evaluate
+  cell integrals in float64; preserve particle states, frame transformations,
+  and grid coordinates at their existing precision. Keep `auto` on CPU.
+- Remove private validation-note paths from the stochastic-emission page.
+
 - Refuse stochastic emission on the exact INERTIAL_PREHISTORY path
   (`NotImplementedError`) until kicks are recorded as split velocity knots;
   the sampled path and the nonlinear pair runner are unaffected.
