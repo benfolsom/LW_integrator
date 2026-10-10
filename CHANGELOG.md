@@ -5,6 +5,14 @@
 Includes the v0.11.0 changes released on 2026-10-10 (exact histories, native PIC,
 and boundary studies), plus subsequent integration updates.
 
+- Add opt-in photon transport to fixed-step sampled and native pair runs:
+  photons fly at c, scatter with rest-frame Klein–Nishina target recoil,
+  convert through a spin-averaged LCFA rate, and escape a configured domain.
+  Photon state, provenance, interaction ledgers, and a separate seeded RNG
+  survive checkpoints. Pair conversion records on-shell outgoing momenta and
+  unresolved field exchange; dynamic pair insertion remains unsupported.
+  Disabled transport leaves deterministic outputs unchanged.
+
 ### Exact retarded fields and source histories
 
 - Add directional visibility gates for exact charge fields, trajectory-based

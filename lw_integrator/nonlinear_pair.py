@@ -95,6 +95,7 @@ def configure_checkpoint(
     integration_method: str | None = None,
     internal_step_control: dict[str, Any] | None = None,
     stochastic_emission: dict[str, Any] | None = None,
+    photon_transport: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Keep evolved trajectories on their recorded equations and reconstruction."""
     if not isinstance(payload, dict):
@@ -150,6 +151,32 @@ def configure_checkpoint(
             payload = dict(
                 payload, stochastic_emission=EmissionRuntime(config).to_payload()
             )
+    if photon_transport is not None:
+        from core.photon_transport import PhotonTransportConfig, PhotonTransportRuntime
+        from core.photon_transport_adapters import validate_transport_emission
+        from core.stochastic_emission import StochasticEmissionConfig
+
+        config = PhotonTransportConfig.from_dict(photon_transport)
+        emission = StochasticEmissionConfig.from_dict(
+            payload.get("stochastic_emission", {}).get("config")
+        )
+        validate_transport_emission(config, emission)
+        previous = payload.get("photon_transport")
+        if payload.get("accepted_steps", 0) > 0:
+            if (
+                previous is None
+                or PhotonTransportConfig.from_dict(previous["config"]) != config
+            ):
+                raise ValueError(
+                    "Resume retains photon transport settings and RNG state"
+                )
+        elif config.enabled:
+            payload = dict(
+                payload, photon_transport=PhotonTransportRuntime(config).to_payload()
+            )
+        elif previous is not None:
+            payload = dict(payload)
+            payload.pop("photon_transport")
     if payload.get("model") == "study_local_linear_coupled_history_v1":
         raise ValueError(
             "This is a coupled-study checkpoint, not an older reaction trajectory. "
@@ -293,6 +320,11 @@ def main(argv: list[str] | None = None, *, _multiparticle: bool = False) -> int:
         "--emission-rate-model", choices=("quantum_lcfa", "classical_capped")
     )
     parser.add_argument("--emission-seed", type=int)
+    parser.add_argument(
+        "--photon-transport-settings",
+        type=Path,
+        help="Opt-in photon transport JSON; evolved checkpoints retain settings",
+    )
     parser.add_argument("--step-ns", type=float)
     parser.add_argument(
         "--dipole-drift-relative",
@@ -453,6 +485,11 @@ def main(argv: list[str] | None = None, *, _multiparticle: bool = False) -> int:
                 else None
             ),
             stochastic_emission=emission_options,
+            photon_transport=(
+                json.loads(args.photon_transport_settings.read_text())
+                if args.photon_transport_settings
+                else None
+            ),
         )
         payload = configure_run_history(
             payload,
