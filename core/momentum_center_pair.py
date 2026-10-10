@@ -570,6 +570,7 @@ def initialize_pair(
     integration_method: str = "rk4",
     internal_step_settings=None,
     stochastic_emission: Any = None,
+    photon_transport: Any = None,
 ) -> dict[str, Any]:
     """Initialize the backward-compatible, exactly two-particle runner."""
     if len(particles) != 2 or len(histories) != 2:
@@ -585,6 +586,7 @@ def initialize_pair(
         integration_method=integration_method,
         internal_step_settings=internal_step_settings,
         stochastic_emission=stochastic_emission,
+        photon_transport=photon_transport,
     )
 
 
@@ -600,6 +602,7 @@ def _initialize_particles(
     integration_method: str = "rk4",
     internal_step_settings: Any = None,
     stochastic_emission: Any = None,
+    photon_transport: Any = None,
     checkpoint_model: str = MODEL,
 ) -> dict[str, Any]:
     """Checkpoint accepted native states and their already prepared source past."""
@@ -654,6 +657,13 @@ def _initialize_particles(
     if emission.enabled:
         _validate_emission_pair(payload, emission)
         payload["stochastic_emission"] = EmissionRuntime(emission).to_payload()
+    from .photon_transport import PhotonTransportConfig, PhotonTransportRuntime
+    from .photon_transport_adapters import validate_transport_emission
+
+    transport = PhotonTransportConfig.from_dict(photon_transport)
+    validate_transport_emission(transport, emission)
+    if transport.enabled:
+        payload["photon_transport"] = PhotonTransportRuntime(transport).to_payload()
     return payload
 
 
@@ -947,6 +957,26 @@ def _advance_particles(
                 )
             emission_runtime = EmissionRuntime(
                 emission_config, payload["stochastic_emission"]
+            )
+    transport_runtime = None
+    if "photon_transport" in payload:
+        from .photon_transport import PhotonTransportConfig, PhotonTransportRuntime
+        from .photon_transport_adapters import (
+            validate_transport_emission,
+            commit_pair_transport,
+        )
+
+        transport_config = PhotonTransportConfig.from_dict(
+            payload["photon_transport"]["config"]
+        )
+        if emission_runtime is None:
+            raise ValueError(
+                "Photon transport checkpoint requires enabled stochastic emission"
+            )
+        validate_transport_emission(transport_config, emission_config)
+        if transport_config.enabled:
+            transport_runtime = PhotonTransportRuntime(
+                transport_config, payload["photon_transport"]
             )
     if passive_method not in ("midpoint", "rk3"):
         raise ValueError("Passive method must be midpoint or rk3")
@@ -1439,6 +1469,22 @@ def _advance_particles(
                                 np.asarray(row["sectors"][key][target])
                                 + c * factor * value
                             ).tolist()
+        if transport_runtime is not None:
+            commit_pair_transport(
+                transport_runtime,
+                emission_runtime,
+                payload,
+                particles,
+                histories,
+                trials,
+                diagnostics,
+                candidate_histories,
+                (
+                    (source_reference, source_high, source_low)
+                    if source_components is not None
+                    else None
+                ),
+            )
         states, histories = np.asarray(trials), candidate_histories
         records.append(
             dict(
@@ -1495,6 +1541,8 @@ def _advance_particles(
         result["stochastic_emission"] = emission_runtime.to_payload()
     elif "stochastic_emission" in payload:
         result["stochastic_emission"] = copy.deepcopy(payload["stochastic_emission"])
+    if transport_runtime is not None:
+        result["photon_transport"] = transport_runtime.to_payload()
     return result, records
 
 

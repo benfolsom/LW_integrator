@@ -1564,6 +1564,8 @@ def _build_testbed_report(
             else {}
         ),
     }
+    if getattr(result, "photon_transport", None) is not None:
+        payload["photon_transport"] = result.photon_transport
     if options is not None:
         source_report: dict[str, Any] = {
             "model": str(options.magnetic_dipole_source_model),
@@ -1776,7 +1778,12 @@ def _merge_simulation_payload(
             result[key] = file_payload[key]
     # These newer nested settings are not members of DEFAULT_SIMULATION.
     # Preserve file values before applying the explicit CLI overrides below.
-    for key in ("checkpoint", "adaptive_pair_return", "stochastic_emission"):
+    for key in (
+        "checkpoint",
+        "adaptive_pair_return",
+        "stochastic_emission",
+        "photon_transport",
+    ):
         if key in file_payload:
             value = file_payload[key]
             if value is not None and not isinstance(value, Mapping):
@@ -2405,6 +2412,17 @@ def _build_stochastic_emission_config(payload: Any) -> Any:
         ) from exc
 
 
+def _build_photon_transport_config(payload: Any) -> Any:
+    from core.photon_transport import PhotonTransportConfig
+
+    try:
+        return PhotonTransportConfig.from_dict(payload)
+    except (TypeError, ValueError) as exc:
+        raise SimulationConfigError(
+            f"Invalid photon_transport settings: {exc}"
+        ) from exc
+
+
 def _build_integrator_config(payload: Mapping[str, Any]) -> IntegratorConfig:
     try:
         simulation_type = _parse_simulation_type(payload["simulation_type"])
@@ -2486,6 +2504,9 @@ def _build_integrator_config(payload: Mapping[str, Any]) -> IntegratorConfig:
                 "radiation_reaction_mode",
                 DEFAULT_SIMULATION["radiation_reaction_mode"],
             )
+        ),
+        photon_transport=_build_photon_transport_config(
+            payload.get("photon_transport")
         ),
         stochastic_emission=_build_stochastic_emission_config(
             payload.get("stochastic_emission")
@@ -3597,6 +3618,7 @@ def run_simulation(request: SimulationRequest) -> tuple:
         use_conducting_image_weighting=request.config.use_image_weighting,
         radiation_reaction_mode=request.config.radiation_reaction_mode,
         stochastic_emission=request.config.stochastic_emission,
+        photon_transport=request.config.photon_transport,
         source_history_representation=request.config.source_history_representation,
         adaptive_timestep=request.adaptive_timestep,
         self_consistency=request.self_consistency,
@@ -3704,6 +3726,8 @@ def build_report(
             report["adaptive_pair_return"] = dict(adaptive_summary)
     if trajectory and "_stochastic_emission" in trajectory[-1]:
         report["stochastic_emission"] = trajectory[-1]["_stochastic_emission"]
+    if trajectory and "_photon_transport" in trajectory[-1]:
+        report["photon_transport"] = trajectory[-1]["_photon_transport"]
     if driver is not None:
         report["driver_summary"] = summarise_trajectory(driver)
     if magnetic_dipole is not None:

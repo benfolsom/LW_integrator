@@ -3286,6 +3286,7 @@ def retarded_integrator(
     use_numba: bool = True,
     radiation_reaction_mode: str = "off",
     stochastic_emission: Any = None,
+    photon_transport: Any = None,
     pseudo_grid: Optional[PseudoGridConfig] = None,
     driver_train: Optional[DriverTrainConfig] = None,
     cavity_exit: Optional[CavityExitConfig] = None,
@@ -3481,6 +3482,17 @@ def retarded_integrator(
     from .stochastic_emission import StochasticEmissionConfig
 
     emission_config = StochasticEmissionConfig.from_dict(stochastic_emission)
+    from .photon_transport import PhotonTransportConfig, PhotonTransportRuntime
+    from .photon_transport_adapters import (
+        validate_transport_emission,
+        commit_general_transport,
+    )
+
+    transport_config = PhotonTransportConfig.from_dict(photon_transport)
+    validate_transport_emission(transport_config, emission_config)
+    transport_runtime = None
+    if transport_config.enabled:
+        transport_runtime = PhotonTransportRuntime(transport_config)
     emission_runtime = None
     if emission_config.enabled:
         from .stochastic_emission import (
@@ -4680,6 +4692,10 @@ def retarded_integrator(
                     for row in history[:-1]:
                         row.pop("_stochastic_emission", None)
                     history[-1]["_stochastic_emission"] = emission_runtime.to_payload()
+                    if transport_runtime is not None:
+                        history[-1][
+                            "_photon_transport"
+                        ] = transport_runtime.to_payload()
         loc = list(_pseudo_grid_charge_localization)
         hide_seed_prehistory = bool(
             inertial_prehistory_enabled
@@ -4709,6 +4725,11 @@ def retarded_integrator(
                 **(
                     {"stochastic_emission": emission_config}
                     if emission_config.enabled
+                    else {}
+                ),
+                **(
+                    {"photon_transport": transport_config}
+                    if transport_config.enabled
                     else {}
                 ),
                 "steps": requested_steps,
@@ -4796,6 +4817,10 @@ def retarded_integrator(
                 emission_runtime = EmissionRuntime(
                     emission_config, restored_loop_state["stochastic_emission"]
                 )
+            if transport_runtime is not None:
+                transport_runtime = PhotonTransportRuntime(
+                    transport_config, restored_loop_state["photon_transport"]
+                )
             previous_energy_value = restored_loop_state.get("previous_energy")
             previous_energy = (
                 None if previous_energy_value is None else float(previous_energy_value)
@@ -4831,6 +4856,11 @@ def retarded_integrator(
 
     def _checkpoint_loop_state() -> dict[str, Any]:
         return {
+            **(
+                {"photon_transport": transport_runtime.to_payload()}
+                if transport_runtime is not None
+                else {}
+            ),
             "previous_energy": previous_energy,
             "reduced_timestep_mode": _adaptive_state.reduced_timestep_mode,
             "reduced_h_step": _adaptive_state.reduced_h_step,
@@ -5390,6 +5420,14 @@ def retarded_integrator(
                 commit_general_state(
                     trajectory_drv[i - 1], trajectory_drv[i], "driver", emission_runtime
                 )
+                if transport_runtime is not None:
+                    commit_general_transport(
+                        transport_runtime,
+                        emission_runtime,
+                        trajectory[: i + 1],
+                        trajectory_drv[: i + 1],
+                        external_field,
+                    )
                 _traj_builder.set_step(i, trajectory[i])
                 _traj_drv_builder.set_step(i, trajectory_drv[i])
                 for previous_state in (trajectory[i - 1], trajectory_drv[i - 1]):
@@ -5796,6 +5834,7 @@ def run_integrator(
         use_conducting_image_weighting=config.use_image_weighting,
         radiation_reaction_mode=config.radiation_reaction_mode,
         stochastic_emission=config.stochastic_emission,
+        photon_transport=config.photon_transport,
         source_history_representation=config.source_history_representation,
         macroparticle_charge_multiplier=config.macroparticle_charge_multiplier,
         macroparticle_sigma_multiplier=config.macroparticle_sigma_multiplier,

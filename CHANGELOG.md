@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Add opt-in photon transport to fixed-step sampled and native pair runs:
+  photons fly at c, scatter with rest-frame Klein–Nishina target recoil,
+  convert through a spin-averaged LCFA rate, and escape a configured domain.
+  Photon state, provenance, interaction ledgers, and a separate seeded RNG
+  survive checkpoints. Pair conversion records on-shell outgoing momenta and
+  unresolved field exchange; dynamic pair insertion remains unsupported.
+  Disabled transport leaves deterministic outputs unchanged.
+
 - Refuse stochastic emission on the exact INERTIAL_PREHISTORY path
   (`NotImplementedError`) until kicks are recorded as split velocity knots;
   the sampled path and the nonlinear pair runner are unaffected.

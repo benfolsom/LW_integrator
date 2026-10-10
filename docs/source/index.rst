@@ -46,6 +46,7 @@ If you are new to the project, start with the **Overview** and **Quick start** p
    theory
    classical_limit_bremsstrahlung
    stochastic_quantum_emission
+   photon_transport
    magnetic_dipole_moments
    radiation_reaction_plan
    radiation_flux_oracle

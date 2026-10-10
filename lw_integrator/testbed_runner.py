@@ -560,8 +560,15 @@ class SimulationOptions:
     log_file_path: Optional[str] = None  # If None, auto-generate in output_dir
 
     stochastic_emission: dict | None = None
+    photon_transport: dict | None = None
 
     def __post_init__(self) -> None:
+        from core.photon_transport import PhotonTransportConfig
+
+        if self.photon_transport is not None:
+            self.photon_transport = asdict(
+                PhotonTransportConfig.from_dict(self.photon_transport)
+            )
         from core.stochastic_emission import StochasticEmissionConfig
 
         self.stochastic_emission = asdict(
@@ -913,6 +920,11 @@ class SimulationOptions:
                 },
             },
             "radiation_reaction_mode": self.radiation_reaction_mode,
+            **(
+                {"photon_transport": dict(self.photon_transport)}
+                if self.photon_transport is not None
+                else {}
+            ),
             "stochastic_emission": dict(self.stochastic_emission or {}),
             "source_history_representation": self.source_history_representation,
             "particle_loss": {
@@ -1875,6 +1887,7 @@ class SimulationOptions:
                 "radiation_reaction_mode", default_radiation_reaction_mode
             ),
             stochastic_emission=payload.get("stochastic_emission"),
+            photon_transport=payload.get("photon_transport"),
             particle_loss_enabled=_particle_loss_enabled(True),
             particle_loss_radius_mm=_particle_loss_optional_float(
                 "loss_radius_mm",
@@ -2483,6 +2496,7 @@ class RunResult:
     driver_trajectory: Optional[Dict[str, Any]] = None
     energy_ledger_metrics: Optional[Dict[str, Any]] = None
     stochastic_emission: dict | None = None
+    photon_transport: dict | None = None
     # Beam optics parameters (initial)
     rider_emittance_x_mm_mrad: Optional[float] = None
     rider_emittance_y_mm_mrad: Optional[float] = None
@@ -3686,6 +3700,7 @@ def run_testbed(
             use_numba=getattr(options, "use_numba", True),
             radiation_reaction_mode=options.radiation_reaction_mode,
             stochastic_emission=options.stochastic_emission,
+            photon_transport=options.photon_transport,
             source_history_representation=options.source_history_representation,
             pseudo_grid=pseudo_grid_config,
             driver_train=driver_train_config,
@@ -3722,6 +3737,8 @@ def run_testbed(
 
         if core_traj_rider and "_stochastic_emission" in core_traj_rider[-1]:
             payload["stochastic_emission"] = core_traj_rider[-1]["_stochastic_emission"]
+        if core_traj_rider and "_photon_transport" in core_traj_rider[-1]:
+            payload["photon_transport"] = core_traj_rider[-1]["_photon_transport"]
         result = ({}, payload)  # Empty metrics dict, payload with trajectories
 
     # Store captured stdout/stderr separately for verbose logs button
@@ -5445,6 +5462,8 @@ def run_testbed(
 
             if "stochastic_emission" in payload:
                 traj_data["stochastic_emission"] = payload["stochastic_emission"]
+            if "photon_transport" in payload:
+                traj_data["photon_transport"] = payload["photon_transport"]
             label_prefix = config_label if config_label else "trajectory"
 
             # Save as JSON for the maintained single-run plotting toolchain.
@@ -5508,6 +5527,10 @@ def run_testbed(
             if "stochastic_emission" in payload:
                 npz_payload["stochastic_emission_json"] = np.array(
                     json.dumps(payload["stochastic_emission"])
+                )
+            if "photon_transport" in payload:
+                npz_payload["photon_transport_json"] = np.array(
+                    json.dumps(payload["photon_transport"])
                 )
             np.savez(traj_path_npz, **npz_payload)
             saved_paths["trajectory_npz"] = traj_path_npz
@@ -5582,6 +5605,7 @@ def run_testbed(
         driver_trajectory=driver_trajectory_data,
         energy_ledger_metrics=energy_ledger_metrics,
         stochastic_emission=payload.get("stochastic_emission"),
+        photon_transport=payload.get("photon_transport"),
         pseudo_grid_charge_localization=_pseudo_grid_charge_localization,
         rider_emittance_x_mm_mrad=rider_emittance_x,
         rider_emittance_y_mm_mrad=rider_emittance_y,
