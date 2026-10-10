@@ -84,22 +84,24 @@ Variable-length exact-pair checkpoint
 -------------------------------------
 
 The exact-retarded adaptive pair path has a second checkpoint format for a
-variable number of accepted electron--proton history knots. It
-stores equal rider and driver chunks together with the adaptive-controller
+variable number of accepted pair or charge-bunch history knots. It
+stores jointly accepted rider and driver chunks together with the adaptive-controller
 state and the sparse public-output cursor. A focused interrupted/resumed run
 reproduces the uninterrupted accepted histories, controller, and output-row
 selection bit-for-bit.
 
-Accepted-pair checkpoint schema 3 also reserves an optional JSON state for the
-causal intrinsic-spin reduction history.  Second-order exact-retarded adaptive
+Accepted-pair checkpoints currently write schema 5 and can read schema 4,
+subject to the physics/configuration fingerprint. They retain visibility split
+knots and optional JSON state for the causal intrinsic-spin reduction history.  Second-order exact-retarded adaptive
 runs record it automatically; its rider and driver histories advance in the
 same joint acceptance transaction and are restored exactly on resume.
 First-order runs write ``null`` and follow the unchanged trajectory path.
 When intrinsic-spin self-reaction diagnostics are explicitly selected, the
 same state includes bounded recent analytical/causal route records and
-lifetime route counters.  Schema-1 and schema-2 accepted-pair checkpoints were
-alpha-development artifacts and must be restarted rather than silently
-interpreted without these state boundaries.
+lifetime route counters.  Accepted-pair schemas 1–3 are not accepted by the current loader. They must
+be restarted rather than silently interpreted without the current state
+boundaries. Fixed-step checkpoints separately write schema 2 and can read
+schema 1, subject to their own fingerprint check.
 
 Enable it in a testbed configuration with ``adaptive_pair_return.enabled`` or
 on the direct CLI with ``--adaptive-pair-return``. A direct CLI launch also

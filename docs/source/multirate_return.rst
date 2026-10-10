@@ -6,14 +6,15 @@ Purpose and scope
 
 A weakly bound electron--proton orbit can spend most of its time far from
 periapsis. Reusing the smallest encounter timestep over an entire orbit is not
-practical. The experimental return substrate therefore advances one electron
-and one proton to shared lab-time barriers while solving a separate proper-time
+practical. The experimental return substrate advances a pair, or charge-only
+bunches, to shared lab-time barriers while solving a separate proper-time
 increment for each particle.
 
 This is a separate, deliberately narrow production path. It does not reuse the
 legacy adaptive-timestep feature. The CLI, testbed JSON, and GUI expose it as
 **Adaptive exact pair return**, with strict guards that keep unsupported
-particle counts and scheduler combinations out of the solver.
+source and scheduler combinations out of the solver. The option retains its
+historical ``adaptive_pair_return`` name for charge bunches.
 
 Three independent data cadences
 -------------------------------
@@ -99,17 +100,31 @@ diagnostics remain summable.
 
 The public runner currently requires all of the following:
 
-* ``BUNCH_TO_BUNCH`` with exactly one rider and one driver;
+* ``BUNCH_TO_BUNCH`` with both bunches present; intrinsic dipole sources require
+  exactly one rider and one driver, while charge sources support multiple
+  particles and retarded same-bunch charge fields;
 * ``INERTIAL_PREHISTORY`` and the second-order accepted-start Taylor endpoint;
 * exact RFS/dipole dynamics and the causal-frozen spin interpolation model;
-* no pseudo-grid, driver train, cavity, smearing, same-bunch space charge,
-  particle-loss scheduler, energy monitor, or legacy adaptive timestep; and
+* no actual pseudo-grid reduction, driver train, cavity tail, particle-loss
+  scheduler, energy monitor, or legacy adaptive timestep; and
 * a checkpoint directory, because the variable-length causal history is part
   of the production contract rather than an optional afterthought.
 
 Unsupported combinations fail before integration. The GUI toggle applies the
 startup, endpoint, checkpoint, and legacy-adaptive prerequisites, but it does
 not silently enable magnetic source physics.
+
+Charge bunches require intrinsic dipole sources and intrinsic spin self-reaction
+off. Same-bunch point-charge pairs require retarded evaluation and zero
+softening. Persistent finite charge clouds have their own guards in
+:doc:`exact_macroparticle_sources`; ordinary nonzero smearing is not a general
+replacement. Adaptive visibility gates still require one observer per bunch.
+Complete unequal-spaced source histories survive checkpoint restart.
+
+Optional ``diagnostics_absolute_tolerance_native`` gives diagnostics a separate
+absolute energy tolerance without changing position or momentum tolerances.
+It defaults to ``null``. Step-doubling error control covers all particles; the
+midpoint and endpoint are committed jointly for both bunches.
 
 Validation status
 -----------------

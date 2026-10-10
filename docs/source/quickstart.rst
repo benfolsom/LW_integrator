@@ -4,37 +4,26 @@ Quick start
 Follow the steps below to prepare a development environment, run a minimal
 simulation, and confirm that the regression tooling works on your machine.
 
-1. Clone the repository and create a virtual environment (``.venv`` is assumed
-   throughout the project scripts):
+1. Use a compatible existing environment if one is available. For a shared
+   Pixi workspace, select its compatible environment and run from this checkout;
+   do not install this checkout as editable into a shared environment. Otherwise,
+   create a project-specific environment outside the synchronized work tree:
 
    .. code-block:: bash
 
       git clone https://github.com/benfolsom/LW_integrator/
       cd LW_integrator
-      python -m venv .venv
-      source .venv/bin/activate
-      pip install --upgrade pip
+      python3 -m venv "$HOME/.venvs/lw-integrator"
+      source "$HOME/.venvs/lw-integrator/bin/activate"
+      python -m pip install --upgrade pip
+      python -m pip install -e ".[dev,docs]"
 
-2. Install the project in editable mode together with the optional extra used by
-   the validation notebooks:
+   Keep environments and package caches outside synchronized source directories.
+   The ``dev`` extra supplies testing and development tools; ``docs`` supplies
+   Sphinx and notebook rendering dependencies. Interactive notebooks also need
+   the ``examples`` extra. Existing project-specific environments can be reused.
 
-   .. code-block:: bash
-
-      pip install -e .[dev]
-
-   The ``dev`` extra mirrors the dependencies used in CI (NumPy, SciPy,
-   Matplotlib, pytest, Sphinx, nbsphinx, etc.).
-
-4. (Optional) Open the historical validation notebook for reference:
-
-   .. code-block:: bash
-
-      code examples/validation/core_vs_legacy_benchmark.ipynb
-
-   Use it as a historical reference for the archived comparison workflow.  For
-   current validation, prefer the pytest and CLI checks in :doc:`validation`.
-
-5. Launch the GUI application:
+2. Launch the GUI application:
 
    .. code-block:: bash
 
@@ -56,7 +45,7 @@ simulation, and confirm that the regression tooling works on your machine.
      Genetic Algorithm, Differential Evolution, Nelder-Mead, or Multi-start
      methods with convergence detection and top-N result saving.
 
-6. Exercise the command-line entry point:
+3. Exercise the command-line entry point:
 
    .. code-block:: bash
 
@@ -67,11 +56,11 @@ simulation, and confirm that the regression tooling works on your machine.
    (35 MeV electron approaching a conducting aperture). Override parameters
    inline or provide a JSON configuration file:
 
-   **Inline parameter overrides:**
+   **Inspect the available parameter overrides:**
 
    .. code-block:: bash
 
-      lw-simulate --steps 250 --time-step 5e-4 --aperture-radius 0.5 --output run.json
+      lw-simulate --help
 
    **Using a native direct-integrator configuration file:**
 
@@ -83,7 +72,7 @@ simulation, and confirm that the regression tooling works on your machine.
 
    .. code-block:: bash
 
-      lw-simulate --testbed-config configs/run_configs/study_config.json \
+      lw-simulate --testbed-config configs/run_configs/example_b2b_counter_propagating_proton_bunches.json \
         --output testbed_report.json
 
    Use ``--testbed-config`` for the full GUI/testbed JSON schema
@@ -97,7 +86,7 @@ simulation, and confirm that the regression tooling works on your machine.
    separate native direct-integrator schema. See :doc:`checkpoints` for restart
    commands and the fixed-step and exact-pair checkpoint boundaries.
 
-   For the guarded one-rider/one-driver exact-retarded return path, add an
+   For the guarded exact-retarded pair or charge-bunch return path, add an
    absolute shared lab-time target and a checkpoint directory:
 
    .. code-block:: bash
@@ -109,39 +98,31 @@ simulation, and confirm that the regression tooling works on your machine.
         --checkpoint-every-seconds 900
 
    This path is independent of the legacy adaptive-timestep option and rejects
-   unsupported scheduler or particle-count combinations before integration.
+   unsupported source and scheduler combinations before integration.
    See :doc:`multirate_return` for the complete guard list.
 
-   Example native direct-integrator JSON configuration structure:
+   For a new testbed run, prefer full 3D bunch fields (``momentum_axis``,
+   ``starting_position_mm``, ``transverse_distance_mm``, and
+   ``longitudinal_span_mm``), around 1,200 steps, auto timestep selection from
+   relative closing speed, 1,000 mm prehistory separation, and output every
+   100 steps. Start from a maintained config and keep its schema. Use
+   ``COLD_START`` for a turn-on model and ``INERTIAL_PREHISTORY`` for the exact
+   endpoint route. Keep ``medina_lad`` unless explicitly running an RR-off
+   diagnostic. The LW step is proper time; native PIC uses lab time.
 
-   .. code-block:: json
-
-      {
-        "steps": 1000,
-        "time_step": 3e-7,
-        "simulation_type": "conducting-wall",
-        "aperture_radius": 0.01,
-        "wall_position": 100.0,
-        "rider": {
-          "kinetic_energy_mev": 5.0,
-          "mass_amu": 1.0,
-          "charge_sign": 1.0,
-          "particle_count": 5,
-          "starting_position_mm": [0.05, 0.0, 0.0],
-          "momentum_axis": [0.0, 0.0, 1.0],
-          "transverse_distance_mm": 0.01,
-          "longitudinal_span_mm": 0.02
-        }
-      }
+   Missing self-consistency keys now select enabled ``fixed_geometry`` with
+   two trials, gamma reconciliation ``DISABLED``, and chrono interpolation
+   off. See :doc:`self_consistency` for the full defaults and migration effects.
 
    Additional options include ``--chrono-mode``, ``--startup-mode``,
    ``--image-weighting``, and ``--self-consistency``. Run ``lw-simulate --help``
    for the complete list.
 
    Intrinsic magnetic moments are experimental and off by default.  The
-   selected RFS model is currently guarded to fixed-step
-   ``BUNCH_TO_BUNCH`` point-charge runs using ``COLD_START`` or
-   ``INERTIAL_PREHISTORY``, with same-bunch space charge disabled.
+   selected RFS model supports guarded ``BUNCH_TO_BUNCH`` runs using
+   ``COLD_START`` or ``INERTIAL_PREHISTORY``. Exact same-bunch charge fields
+   require inertial prehistory, retarded evaluation, and zero point-charge
+   softening. The adaptive shared-lab-time route has separate guards.
    Dynamic recoil is either off or the explicit charge-only ``medina_lad``
    hybrid.  For example, add these switches to a
    suitable electron--proton BUNCH_TO_BUNCH run:
@@ -219,6 +200,12 @@ simulation, and confirm that the regression tooling works on your machine.
    See :doc:`native_pic` for lab-time stepping, NumPy/MLX/CuPy selection,
    correction defaults, and experimental limits.
 
+   **Other opt-in features:** :doc:`external_fields` describes the smooth
+   provider API and recommended exact update. :doc:`boundary` covers
+   experimental material and conformal-wall APIs. Stochastic emission remains
+   off by default and is rejected on the general exact inertial path; see
+   :doc:`stochastic_quantum_emission` before enabling it.
+
    **Running a parameter sweep from the CLI:**
 
    .. code-block:: bash
@@ -259,12 +246,11 @@ simulation, and confirm that the regression tooling works on your machine.
    ``lw_integrator.cli.main`` with a list of CLI-style arguments; see
    ``examples/entrypoint_demo.py`` for a minimal example.
 
-7. Generate the HTML documentation locally:
+4. Generate the HTML documentation locally:
 
    .. code-block:: bash
 
-      cd docs
-      ./build_docs.sh --clean --type html
+      bash docs/build_docs.sh
 
    Open ``docs/build/html/index.html`` in a browser to browse the rendered pages.
 

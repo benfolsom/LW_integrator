@@ -8,9 +8,9 @@ development, but the notebooks remain useful for understanding older studies.
 Environment setup
 -----------------
 
-* Activate the project’s virtual environment (``source .venv/bin/activate``) and
-  install the editable package with the ``dev,docs`` extras to pull in
-  ``nbsphinx`` and notebook-friendly dependencies.
+* Use the environment setup in :doc:`quickstart`, with the ``examples,docs``
+  extras for Jupyter, widgets, and notebook rendering. Keep environment and
+  cache payloads outside the synchronized source tree.
 * Launch VS Code or Jupyter Lab from the repository root when inspecting
   historical notebooks.
 

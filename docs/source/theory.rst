@@ -201,40 +201,16 @@ denominator—the time dilation is already accounted for in the position update.
 Self-consistency iterations
 ---------------------------
 
-For ultra-relativistic particles (:math:`\gamma \gg 1`), forces depend strongly
-on :math:`\gamma` through the retarded field geometry (via :math:`\kappa` and
-field Lorentz contraction). This creates a circular dependency:
+The default two fixed-geometry force trials use a one-way mass-shell check
+from the second trial onward. Force-updated mechanical spatial momentum sets
+on-shell gamma and beta in every radiation mode. There is no independent
+energy-versus-velocity gamma convergence criterion, and the check does not
+measure successive-force differences.
 
-.. math::
-
-   \gamma \rightarrow \text{forces} \rightarrow \mathcal{P} \rightarrow \gamma.
-
-The integrator resolves this through self-consistency iterations at each timestep.
-Within iteration :math:`n`:
-
-1. Use :math:`\gamma_{n-1}` from the previous iteration to compute retarded forces
-2. Update conjugate momentum :math:`\mathcal{P}_{n}` from those forces
-3. Compute positions using the **same** :math:`\gamma_{n-1}`:
-   :math:`\Delta \mathbf{x} = (\mathbf{P}_{\text{kinetic}}/(\gamma_{n-1} m)) h`
-4. Compute velocity: :math:`\boldsymbol{\beta}_{n} = \Delta \mathbf{x}/(c h)`
-5. Derive two independent estimates of :math:`\gamma_{n}`:
-
-   * From energy: :math:`\gamma_{\text{E}} = (\mathcal{P}^{0} - e\Phi)/(mc)`
-   * From velocity: :math:`\gamma_{\text{V}} = 1/\sqrt{1 - \beta^{2}}`
-
-6. Check convergence: :math:`|\gamma_{\text{E}} - \gamma_{\text{V}}|/\gamma_{\text{E}} < \epsilon`
-
-If not converged, iteration :math:`n+1` uses :math:`\gamma_{n} = \gamma_{\text{E}}`
-and repeats. Typical tolerance :math:`\epsilon = 10^{-6}` achieves convergence
-within 1–3 iterations even after large energy jumps.
-
-The key to stable convergence is using a **consistent** :math:`\gamma` throughout
-each iteration for both force calculation and position updates, ensuring that
-the velocity extracted from :math:`\Delta \mathbf{x}` corresponds physically to
-the momentum computed from those forces.
-
-Implementation details are in :class:`core.self_consistency.SelfConsistencyConfig`
-and :func:`core.equations.retarded_equations_of_motion`.
+Keep gamma reconciliation disabled and omit mass-shell relaxation, which is
+unused on the corrected path. Changing iteration count cannot replace
+trajectory, timestep, or conservation checks. See :doc:`self_consistency` for
+current defaults, failure behavior, and chrono options.
 
 Radiation pressure and reaction
 -------------------------------
@@ -331,9 +307,10 @@ interaction.
 ``INERTIAL_PREHISTORY`` differs from ``APPROXIMATE_BACK_HISTORY`` because the
 former supplies finite, explicit source events to the exact retarded-time
 solver.  The latter retains the archived analytic extrapolation and remains a
-benchmarking mode.  The exact mode is currently limited to fixed-step
-``BUNCH_TO_BUNCH`` RFS/retarded-dipole runs and cannot be combined with driver
-trains.  ``COLD_START`` remains appropriate when the desired model is a genuine
+diagnostic mode. The exact mode supports fixed-step ``BUNCH_TO_BUNCH``
+RFS/retarded-dipole runs, fixed-step charge driver trains, and the guarded
+adaptive shared-lab-time route. See :doc:`exact_path` for train and gate
+restrictions, and :doc:`multirate_return` for adaptive charge bunches.  ``COLD_START`` remains appropriate when the desired model is a genuine
 turn-on transient.
 
 COLD_START gating mechanism

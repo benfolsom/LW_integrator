@@ -1,7 +1,7 @@
 :orphan:
 
 Unequal-gamma pair causality investigation
-========================================
+============================================
 
 .. note::
 
@@ -13,7 +13,7 @@ Unequal-gamma pair causality investigation
    isolated worktree afterwards. This page is kept as the investigation record.
 
 Scope and branch dependency
----------------------------
+-----------------------------
 
 This investigation was authorized on 2026-09-05. The isolated worktree
 ``LW_integrator-aneutronic-pair-causality`` is based on
@@ -24,7 +24,7 @@ depend on the shared-lab-time pair implementation in that feature revision;
 they are not a stand-alone retrofit to development's fixed-step driver.
 
 Reproducer and causal diagnosis
-------------------------------
+---------------------------------
 
 The study launcher ``run_pair_startup.py`` in the sibling aneutronic feasibility
 worktree reproduces the old failure with a 0.5 MeV counterpropagating electron,
@@ -42,7 +42,7 @@ coordinate-time barrier and commits both histories jointly. It resolves this
 scheduling limitation without relaxing complete-history checks.
 
 Endpoint-solver fixes
----------------------
+-----------------------
 
 Three additional issues were found while validating the shared-time path:
 
@@ -61,7 +61,7 @@ Three additional issues were found while validating the shared-time path:
   proposals outside the bracket still bisect. Acceptance tolerances are unchanged.
 
 Regression coverage
--------------------
+---------------------
 
 The three added endpoint regressions were run before their fixes and failed.
 The cancellation window test now also injects cancellation inside a trial after
@@ -88,7 +88,7 @@ The executed JUnit report is
 ``/Users/benjaminfolsom/compute/aneutronic-shared-regressions-20260905-03.xml``.
 
 Study validation and limitations
--------------------------------
+----------------------------------
 
 The study contains bounded full-encounter and interrupted/resumed checks with
 source hashes, explicit backend and controller settings, saved trajectory arrays,

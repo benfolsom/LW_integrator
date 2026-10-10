@@ -1,36 +1,33 @@
-LW Integrator Guide (v0.8.5)
-=============================
+LW Integrator Guide
+===================
 
-The LW (Liénard–Wiechert) Integrator is a first-principles electromagnetic particle tracking code that computes retarded Liénard–Wiechert potentials directly from the covariant equations of motion. Unlike conventional tracking codes that rely on field maps or wake function tabulations, this solver evaluates exact electromagnetic fields from moving charged particles and their image charges, making it particularly suited for studying beam-aperture interactions where relativistic particles pass within microns of conducting surfaces.
+Documentation for release |release|.
 
-**Physical phenomena captured:**
+LW Integrator tracks relativistic charged particles using retarded
+Liénard–Wiechert fields. It includes image-source models, bunch-to-bunch
+interactions, experimental intrinsic magnetic moments, and a separate native
+particle-in-cell (PIC) solver. Each route has its own numerical and physical
+limits; an exact light-cone root is not an exact trajectory or a complete
+energy balance.
 
-* **Relativistic beam-wall interactions** – Asymptotic field enhancement as high-β particles approach conducting surfaces, producing strong longitudinal forces at small angles from the particle's direction of travel
-* **Residual wake acceleration** – After breaking line-of-sight with a conductor or charged body, particles continue accelerating in residual fields while recoil on the enclosing structure is reduced
-* **Conducting-wall boundary conditions** – Method-of-images for flat conducting surfaces perpendicular to the beam axis, with optional macroparticle simulation including charge scaling and stochastic emittance effects
-* **Bunch-to-bunch dynamics** – Trailing particles experiencing reflected wakes
-  from leading particles near aperture exits. The maintained B2B example sweeps
-  use proton-mass, opposite-charge beams (proton/H- in the current configs)
-  and illustrate screening after the driver bunch passes through a virtual exit
-  aperture, which blocks direct line of sight shortly downstream of the
-  interaction point.
+Start with :doc:`overview` and :doc:`quickstart`. For exact charge histories,
+visibility gates, and driver trains, see :doc:`exact_path`. For NumPy, MLX,
+and CuPy PIC and the opt-in K-cloud correction, see :doc:`native_pic`.
+Experimental material and conformal-wall studies use :doc:`boundary`.
+Smooth prescribed fields use :doc:`external_fields`. Stochastic emission is
+opt-in and currently rejected on the general exact inertial-prehistory path;
+see :doc:`stochastic_quantum_emission` for the supported alternatives.
 
-**Computational features:**
+Spatial mechanical momentum determines gamma and velocity. The default two
+self-consistency trials check the mass shell; they do not certify force
+accuracy or energy conservation. Validate timestep, source resolution, and
+the applicable population-weighted ledgers for each study.
 
-* **Adaptive timestep control** – Automatic refinement near conducting surfaces or particle-particle close approaches
-* **Parameter optimization** – Built-in genetic algorithm, differential evolution, and gradient-free methods for finding optimal geometries
-* **Self-consistency iterations** – Iterative solver enforcing the relativistic mass-shell constraint (Pt² = P² + (mc)²) by projecting particle four-momentum onto the correct energy surface at each timestep
-
-The underlying physics approach and covariant equations of motion are described in *Relativistic beam loading, recoil-reduction, and residual-wake acceleration with a covariant retarded-potential integrator* (`Nucl. Instrum. Methods Phys. Res. A 1069 (2024) 169988 <https://doi.org/10.1016/j.nima.2024.169988>`_ / `arXiv:2310.03850 <https://arxiv.org/abs/2310.03850>`_). The codebase includes significant numerical methods and features developed since publication.
-
-**Applications:**
-
-* Accelerator aperture design – beam losses, halo scraping, collimation systems
-* Cavity exit-aperture optimization – minimizing power deposition while maintaining beam quality
-* Novel acceleration schemes – combining conducting-surface choppers with dielectric laser acceleration or other staged acceleration concepts
-* Validation of simplified models – checking wake function approximations or impedance calculations against exact retarded-field solutions
-
-If you are new to the project, start with the **Overview** and **Quick start** pages below.
+The original method is described in *Relativistic beam loading,
+recoil-reduction, and residual-wake acceleration with a covariant
+retarded-potential integrator*
+(`NIM A 1069 (2024) 169988 <https://doi.org/10.1016/j.nima.2024.169988>`_).
+The maintained code includes substantial changes since that publication.
 
 .. toctree::
    :maxdepth: 1
@@ -66,9 +63,12 @@ If you are new to the project, start with the **Overview** and **Quick start** p
    exact_path
    exact_macroparticle_sources
    native_pic
+   boundary
+   external_fields
    pic_correction_convergence
    pic_correction_coupling
    multirate_return
+   high_gamma_numerics
    rfs_m5_optimization
    metal_gpu_kernel_study
    metal_gpu_capture_root_study

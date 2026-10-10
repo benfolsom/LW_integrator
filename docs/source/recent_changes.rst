@@ -5,9 +5,23 @@ Recent Changes
 
 *Last updated: October 2026*
 
-This page summarizes recent improvements to the LW integrator, including
-optimization features, convergence enhancements, and critical physics
-corrections.
+This page retains dated implementation history. Older examples and numerical
+claims describe their named revisions, not the current defaults. Use
+:doc:`self_consistency`, :doc:`exact_path`, and :doc:`native_pic` for maintained
+configuration guidance, and ``CHANGELOG.md`` for the consolidated release notes.
+
+v0.11.0: release documentation
+------------------------------
+
+The release adds :doc:`boundary` for experimental Drude response, conformal
+perfect conductors, and opt-in axial feedback, and :doc:`external_fields` for
+the smooth provider API and recommended exact update. :doc:`native_pic` covers
+the two-geometry MLX Green cache, long-bunch lattices, and experimental breathing
+clouds. :doc:`stochastic_quantum_emission` now states the general exact-path
+guard throughout; earlier enabled exact-path probes are historical only.
+The overview, quickstart, and self-consistency guidance describe the corrected
+momentum-based shell and the two-trial default without claiming force or
+energy convergence from it.
 
 October 2026: exact gates, strict CPU helpers, and native PIC
 -------------------------------------------------------------
@@ -1521,7 +1535,7 @@ settings:
 
 .. code-block:: python
 
-   from lw_integrator.core.self_consistency import SelfConsistencyConfig
+   from core.self_consistency import SelfConsistencyConfig
 
    # Default configuration (recommended)
    config = SelfConsistencyConfig(
@@ -1558,7 +1572,7 @@ enable energy monitoring and adaptive timestep:
 
 .. code-block:: python
 
-   from lw_integrator.core.integration_runner import (
+   from core.integration_runner import (
        EnergyMonitorConfig,
        AdaptiveTimestepConfig
    )
@@ -1607,7 +1621,7 @@ Self-consistency is now **enabled by default**. If you need the old behavior:
 
 .. code-block:: python
 
-   from lw_integrator.core.self_consistency import SelfConsistencyConfig
+   from core.self_consistency import SelfConsistencyConfig
 
    trajectory = retarded_integrator(
        h_step, n_step, init_state,
@@ -1710,7 +1724,7 @@ Updating Existing Code
 
 .. code-block:: python
 
-   from lw_integrator.core.self_consistency import SelfConsistencyConfig
+   from core.self_consistency import SelfConsistencyConfig
 
    # Self-consistency now enabled by default
    trajectory = retarded_integrator(
@@ -1723,8 +1737,8 @@ Updating Existing Code
 
 .. code-block:: python
 
-   from lw_integrator.core.self_consistency import SelfConsistencyConfig
-   from lw_integrator.core.integration_runner import (
+   from core.self_consistency import SelfConsistencyConfig
+   from core.integration_runner import (
        EnergyMonitorConfig,
        AdaptiveTimestepConfig
    )
