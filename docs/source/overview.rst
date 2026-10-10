@@ -24,10 +24,9 @@ High-level anatomy
     ``pseudo_grid.py`` contains the experimental active/passive reduced-solver
     helpers for ``BUNCH_TO_BUNCH`` studies, including causal-history retention
     metadata for supported reduced runs.
-    ``self_consistency.py`` holds the fixed-point
-    iteration used for radiation-reaction corrections and ensuring gamma
-    consistency between energy and velocity calculations (enabled by default
-    as of December 2025).  ``images.py`` implements conducting-wall image charge
+    ``self_consistency.py`` configures the force trials and mass-shell check.
+    Spatial mechanical momentum determines gamma and beta in every radiation
+    mode; the check alone does not establish force convergence.  ``images.py`` implements conducting-wall image charge
     generation with optional macroparticle simulation support, applying stochastic
     position and momentum spread errors to model beam emittance effects.
 
@@ -188,7 +187,7 @@ Key ideas to keep in mind
   ``input_output.bunch_initialization.create_bunch_from_energy`` to obtain a
   correctly shaped state.
 * **Simulation modes are enumerated.**  ``SimulationType`` enumerates the three
-  supported wall configurations.  The enum still accepts the historical integer
+  configurations: conducting wall, switching wall, and bunch-to-bunch.  The enum still accepts the historical integer
   values for compatibility.
 * **Startup modes are configurable.**  ``StartupMode`` switches between
   ``COLD_START`` (the default, suppressing early retarded forces),
@@ -233,12 +232,21 @@ Key ideas to keep in mind
   ``results/archive/incomplete/<sweep_dir_name>`` on save.  This applies to all
   save paths (CLI, GUI mixin, GUI plugin, library API) and also fires on
   ``KeyboardInterrupt`` in the CLI runner.
-* **Self-consistency is enabled by default.**  As of December 2025, self-
-  consistency iterations are enabled by default to ensure energy conservation in
-  high-energy simulations. These iterations verify that gamma derived from
-  energy matches gamma derived from velocity (γ = 1/√(1 - β²)), which is
-  critical for physical correctness. See ``SelfConsistencyConfig`` in the API
-  documentation.
+* **Self-consistency is enabled by default.** The maintained settings use two
+  ``fixed_geometry`` trials, gamma reconciliation disabled, and chrono
+  interpolation off. Mass-shell relaxation is unused on the corrected path.
+  Check trajectory convergence and conservation separately; see
+  :doc:`self_consistency`.
+* **Boundary response is experimental.** :doc:`boundary` covers prescribed
+  Drude drives, conformal perfect conductors, and opt-in finite-window axial
+  feedback. It is separate from the production LW and PIC runners.
+* **Smooth external fields use a provider.** For energy-loss studies, prefer
+  the second-order exact route and verify timestep convergence; see
+  :doc:`external_fields`.
+* **Stochastic quantum emission is opt-in.** The general exact
+  ``INERTIAL_PREHISTORY`` path rejects it until velocity jumps can be stored
+  correctly. The sampled diagnostic and guarded native pair routes remain
+  available; see :doc:`stochastic_quantum_emission`.
 * **Macroparticle simulation for conducting walls.**  The integrator supports
   macroparticle mode where test particle charges are scaled and image subcharges
   receive stochastic position/momentum errors. Position spread applies constant
@@ -257,11 +265,11 @@ Key ideas to keep in mind
   ``transv_dist`` remain available for compatibility and older studies,
   including optimization-plugin offset fractions converted to absolute
   positions (offset = fraction × aperture_radius).
-* **GUI application for all workflows.**  The Tkinter-based GUI (``python -m
+* **GUI application for single runs and sweeps.**  The Tkinter-based GUI (``python -m
   lw_integrator.gui``) supports single runs, parameter sweeps, and optimization
   with real-time progress tracking and trajectory visualization. It provides
-  full control over particle properties, boundary conditions, physics parameters,
-  and numerical methods. Results can be exported in CSV, JSON, or NPZ formats.
+  controls for particle properties and supported solver settings. Native PIC
+  and the experimental boundary module use separate entry points. Results can be exported in CSV, JSON, or NPZ formats.
   The GUI is the recommended interface for interactive work, with the CLI
   (``lw-simulate``) available for scripting and batch processing.
 * **Heatmap and contour tools.**  ``lw-generate-sweep-heatmap`` is the

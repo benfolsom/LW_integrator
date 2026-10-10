@@ -1,5 +1,5 @@
 Exact visibility gates and driver trains
-========================================
+==========================================
 
 The exact endpoint charge route requires ``BUNCH_TO_BUNCH``, an enabled
 ``rfs_minimal_2021`` magnetic response configuration, and
@@ -9,8 +9,48 @@ select the same endpoint charge translation. See
 :doc:`magnetic_dipole_moments` for backend choices and response limits, and
 :doc:`exact_macroparticle_sources` for persistent finite charge clouds.
 
+Updates, same-bunch fields, and strict helpers
+------------------------------------------------
+
+``magnetic_dipole.exact_retarded_update`` defaults to
+``first_order_endpoint``. The experimental
+``second_order_start_taylor_endpoint`` uses accepted-start derivatives and is
+required by the adaptive shared-lab-time route. Backend selection is independent
+of update order. An exact light-cone solve describes the supplied interpolated
+history; trajectories still need timestep and source-history convergence.
+
+Exact same-bunch charge fields exclude the observer itself and enter force,
+canonical potentials, startup preflight, and endpoint reconstruction. They
+require inertial prehistory, retarded evaluation, and zero softening for actual
+point-charge pairs. They do not supply same-bunch dipole sources. Close
+same-bunch queries can continue the last accepted segment on the Python
+provider; this bounded continuation needs timestep checks and is rejected
+when gate-aware future history would be needed.
+
+The experimental ``adaptive_pair_return`` route also supports charge bunches
+with multiple particles and same-bunch charge fields. All particles reach a
+shared lab-time barrier, step doubling checks every particle, and both bunches
+commit their midpoint and endpoint together. Intrinsic dipole-source runs
+remain limited to one particle per bunch; see :doc:`multirate_return`.
+
+The default exact backend remains ``python``. Explicit serial Numba backends
+compile roots, strict field evaluation, or analytic response derivatives;
+see :doc:`magnetic_dipole_moments` for their separate contracts.
+``core.strict_null_helpers`` compiles null residuals and polynomial sampling
+without fast math. Powers and derivative normalization retain reference
+rounding. Batched source jets preserve source-reduction order. These internal
+helpers do not select a different physical model or enable automatic GPU
+dispatch. Bounded warm-run checks preserved each backend's prior output bytes;
+this does not make all backends bitwise identical to Python.
+
+Stochastic emission is guarded off on this general exact path. Enabling it
+with ``INERTIAL_PREHISTORY`` raises ``NotImplementedError`` until source
+histories preserve recoil velocity jumps; see
+:doc:`stochastic_quantum_emission`. Smooth prescribed fields are supported
+through the separate :doc:`external_fields` provider contract.
+
 Directional visibility
-----------------------
+------------------------
 
 Enabled ``beamline_geometry`` now gates exact charge fields, trajectory-based
 dipole fields, and canonical potentials at the retarded source event. Each
@@ -54,7 +94,7 @@ The supported gates require ``INERTIAL_PREHISTORY`` and
   checkpointed shared-lab-time route retains its own guards.
 
 Inertial driver-train prehistory
---------------------------------
+----------------------------------
 
 Fixed-step exact charge runs now support ``driver_train`` with
 ``INERTIAL_PREHISTORY``. The train is expanded before constructing history,
@@ -80,7 +120,7 @@ checks establish the tested startup and field behavior, rather than
 long-term train accuracy or energy gain.
 
 Evidence
---------
+----------
 
 ``tests/unit/test_exact_visibility_gates.py`` and
 ``tests/unit/test_inertial_driver_train.py`` cover the maintained behavior.
@@ -89,6 +129,5 @@ with the Taylor endpoint update, both with radiation off and with Medina/LAD.
 It also records an adaptive charge-cloud crossing at unchanged tolerances.
 Dipole finite-difference roundoff grows at very small stencil widths; the
 standalone dipole check does not establish trajectory convergence.
-The detailed evidence is in ``codex_report_exact_gates.md`` in the
-``LW_integrator-exact-gates`` checkout, with artifacts under
-``~/compute-data/exact_gates/``.
+These bounded checks do not validate material screening or whole-system
+energy closure.

@@ -118,8 +118,9 @@ Charge-field and gradient evaluation
 
 The charge-generated RFS field is evaluated independently of observer charge,
 so a neutron is not lost through the ordinary Lorentz-force ``q=0`` shortcut.
-The integration seam currently applies this evaluator to the opposing bunch
-only; it does not yet supply same-bunch RFS response.
+The evaluator supplies opposing-bunch charge fields and, on the supported
+exact inertial route, same-bunch charge fields with self-sources excluded.
+Same-bunch dipole sources remain unsupported; see :doc:`exact_path`.
 
 For each observer event the dedicated evaluator:
 
@@ -128,10 +129,11 @@ For each observer event the dedicated evaluator:
 2. solves the light-cone equation against that interpolated worldline;
 3. evaluates both the velocity and acceleration terms of the native Gaussian
    Lienard--Wiechert field; and
-4. forms a centred spacetime finite difference of :math:`F^{\mu\nu}`.
+4. forms the spacetime gradient from analytic charge jets on the maintained
+   exact endpoint path, or the explicit finite-difference provider where selected.
 
-Every one of the eight displaced stencil events re-solves every source light
-cone.  The time stencil displaces :math:`ct`, not merely the stored source
+For the finite-difference provider, every one of the eight displaced stencil
+events re-solves every source light cone.  The time stencil displaces :math:`ct`, not merely the stored source
 sample.  Consequently the numerical derivative includes the variation of
 retarded time.  Differencing a field while freezing a previously selected
 retarded source state would omit that chain rule and is not used by RFS.
@@ -140,7 +142,9 @@ Prescribed native :math:`\mathbf E` and :math:`\mathbf B` pass through without
 renormalization and are added to the charge field.  The current schema can also
 express a static spatial magnetic-field gradient in T/m; that boundary is
 converted to native field per mm before the gradient is applied to the native
-position.  Unconfigured electric and time derivatives are zero.
+position.  Unconfigured electric and time derivatives are zero for that static schema.
+The opt-in :doc:`external_fields` provider supplies smooth spatial and time
+variation with analytic derivatives.
 
 The charge-canonical state definition derived in ``main.tex`` remains
 authoritative.  Under ``INERTIAL_PREHISTORY``, one exact charge provider returns
@@ -239,7 +243,7 @@ is active only when magnetic-dipole dynamics are enabled.  The advanced
 ``--dipole-source-cutoff-mm`` option sets the strict minimum separation abort
 boundary.  It does not soften the point field.
 
-The exact retarded charge and dipole providers share five explicit backend
+The exact retarded charge and dipole providers share six explicit backend
 choices.  ``python`` is the default and remains the reference on every
 platform.  The canonical JSON setting is
 ``magnetic_dipole.exact_retarded_backend`` and the direct CLI option is

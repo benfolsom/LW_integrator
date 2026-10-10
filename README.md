@@ -1,13 +1,17 @@
 # LW Integrator
 
-Version **0.10.0** adds physical-particle and seeded bunch JSON input, a shared
-GUI launcher, and optional mixed RK4/RK3 stepping with preserved histories,
-full dipole reaction, internal error control, and resumable checkpoints.
-Every particle remains an individual retarded source; this is not weighted
-bunch pseudogrid aggregation. The full RK4 default and older solver defaults
-remain unchanged. See the [many-particle guide](docs/source/full_spin_particles.rst)
-and [implementation plan](docs/multiparticle_integration_plan.md) for usage,
-bounded validation results, and remaining physical limitations.
+Version **0.11.0** adds exact visibility gates and charge driver trains,
+NumPy/MLX/CuPy native PIC, and opt-in K-cloud corrections. Experimental boundary
+APIs cover Drude response, conformal perfect conductors, and axial feedback.
+Smooth external-field providers should use the exact second-order route for
+energy-loss studies, with timestep checks. Stochastic emission remains off by
+default and is guarded off on the general exact inertial-prehistory path.
+
+See the [documentation overview](docs/source/overview.rst) and
+[release notes](CHANGELOG.md) for supported routes, defaults, and limitations.
+The [many-particle guide](docs/source/full_spin_particles.rst) covers the
+physical-particle input, full-spin histories, and checkpoint workflow introduced
+in v0.10.0. Numerical and physical convergence remain study-specific checks.
 
 ## Finite-spin pair solver — September 2026
 

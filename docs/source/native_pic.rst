@@ -1,5 +1,5 @@
 Native PIC and K-cloud LW correction
-====================================
+======================================
 
 Native particle-in-cell (PIC) is a separate lab-time solver in ``core.pic``.
 It deposits source charge on bunch-local rest-frame grids, solves free-space
@@ -7,7 +7,9 @@ electrostatic fields with FFT convolution, boosts the fields into the lab,
 and advances particles with a relativistic Boris push. These are quasi-static
 group snapshots, not a time-dependent Maxwell solver. Refine the energy
 groups for momentum chirps and converge the mesh and timestep separately.
-Conducting boundaries and GUI parity are not implemented.
+The native runner has no conducting-wall solve or GUI parity. The separate
+experimental :doc:`boundary` module offers an explicit snapshot adapter for
+callers assembling their own PIC field updates.
 
 ``grid.shape_order`` selects cloud-in-cell (CIC, 1, the default) or triangular
 shaped clouds (TSC, 2) for matched deposition and gathering. The cell-integrated
@@ -37,7 +39,7 @@ use population-weighted particle totals. The JSON output records backend,
 precision, timestep method, diagnostics, final particles, and model limits.
 
 Backends
---------
+----------
 
 PIC backend selection is separate from ``magnetic_dipole.exact_retarded_backend``.
 Set ``backend`` in the PIC JSON, or use ``--pic-backend`` and
@@ -70,14 +72,32 @@ certify real GPU execution. Float32 results need their own precision checks.
 The LW correction and near-field replacement require CPU float64 and reject
 MLX or CuPy requests before loading a device framework.
 
+GPU Green-spectrum cache
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The GPU backends retain Green spectra for two mesh geometries, keyed by grid
+shape and spacing. Alternating rider and driver rest frames can therefore
+reuse both sets; a third geometry evicts the least recently used set. Field
+components and the optional potential spectrum are populated on demand.
+
+MLX rounds Green mesh spacing once to float32 before forming the key and
+evaluating the cell-integrated kernel. The cell integrals are still evaluated
+in CPU float64 before transfer to the device. This prevents sub-float32 spacing
+changes from repeatedly rebuilding large spectra and avoids float32
+cancellation inside the integral. It does not round particle states, frame
+transformations, or grid coordinates to the cache's spacing. CuPy retains its
+unrounded spacing keys. This cache changes setup cost, not the ``auto`` CPU
+selection or the requirement for independent float32 accuracy checks.
+
 Opt-in K-cloud correction
--------------------------
+---------------------------
 
 Omitting ``correction`` leaves the ordinary PIC solver. Adding
 ``"correction": {}`` selects the defaults below. Persistent clouds summarize
 fixed particle cohorts, with population-weighted position and momentum and
-mean velocity fitted from accepted particles. Each cloud retains its charge,
-width, transverse quadrature offsets, and source identity.
+mean velocity fitted from accepted particles. Each cloud retains its charge
+and source identity. Width and transverse quadrature offsets stay fixed by
+default; experimental breathing is described below.
 
 On an observer-local lattice, the correction evaluates exact retarded LW
 fields and subtracts the boosted Coulomb fields of the same clouds. That
@@ -139,7 +159,62 @@ endorsement. Sparse refits also introduce ballistic source lag and require
 their own convergence checks.
 
 Experimental options and open limits
-------------------------------------
+--------------------------------------
+
+Long-bunch correction lattice
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The correction lattice is distinct from the PIC deposition grid. Its default
+``lattice_extent_mode: "fixed"`` uses the per-axis ``lattice_shape`` and
+``half_extent_mm`` listed above, with one padding cell. Opt-in
+``"bunch_extent"`` fits all observers, including zero-weight observers, in a translating,
+rotated lab snapshot without Lorentz stretching.
+Omitted half extents then provide only a 1 pm floor on collapsed axes, and
+``lattice_padding_cells`` defaults to ``1e-6``. Explicit half extents set
+per-axis floors. This mode requires ``evaluation_every=1``.
+
+``lattice_max_spacing_z_mm`` optionally adds local longitudinal nodes to keep
+the spacing below a declared maximum. ``lattice_max_nodes_z`` defaults to
+65,537; exceeding it raises rather than silently coarsening. The local z axis
+follows the bunch frame, not necessarily the laboratory z axis.
+``lattice_phase_z_cells`` defaults to zero and can shift the lattice by up to
+half a cell using existing padding. Its magnitude must be strictly less than
+``lattice_padding_cells``. Longitudinal refinement and nonzero phase require
+``bunch_extent``. Vary spacing and phase to expose grid-dependent errors.
+
+``prehistory_duration_ns`` optionally replaces the finite inertial prefix;
+the default duration is the light-travel time over 1,000 mm. Long relativistic
+bunches can need much longer source history, especially for nodes ahead of a
+source. Include the furthest subcharge and lattice node when setting that
+window. Missing causal coverage is an error, not an invitation to extrapolate
+an arbitrary past. A longer inertial prefix does not reconstruct prior
+interactions.
+
+Breathing clouds
+~~~~~~~~~~~~~~~~~~
+
+``cloud_breathing: true`` is experimental and off by default. It fits the full
+population-weighted lab-frame cohort covariance and uses its symmetric square
+root to define moving subcharges. ``cloud_width_mm`` floors the lab-frame
+principal-axis RMS widths, and ``cloud_width_scale`` scales the fit;
+``cloud_width_rule`` applies only to frozen clouds.
+
+The causal three-stage shape filter uses
+``cloud_breathing_response_time_ps: 10`` per stage by default; the low-frequency
+lag is about three times that value. ``cloud_breathing_max_speed_c: 0.05``
+caps shape motion, with additional velocity-dependent longitudinal and
+transverse limits to keep subcharge histories subluminal. This is a model
+response time, not instantaneous agreement with every refitted covariance.
+
+``cloud_breathing_longitudinal_order`` defaults to 3 and multiplies the
+transverse ``subcharge_count``. Breathing requires at least four transverse
+subcharges and longitudinal order two. It rejects ``certified_inertial_skip``
+and ``far_field_ratio`` because the moving subcharges need full field
+evaluation. Converge refit cadence, timestep, quadrature, and response time
+separately. Breathing does not establish close-crossing accuracy.
+
+Midpoint, near-field, and radiation options
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 ``midpoint_predictor: true`` predicts a causal midpoint from accepted cloud
 moments. It reduces endpoint lag in the prescribed acceleration control,

@@ -20,7 +20,7 @@ of the LW Integrator.  Please keep the following ground rules in mind:
 Process
 -------
 
-1. Fork and branch from ``main``.
+1. Branch from ``development``; releases are merged into ``master``.
 2. Make changes with accompanying tests and documentation.
 3. Run the pytest, CLI, plotting, or docs checks relevant to your change.
 4. Submit a pull request summarising the physics context and validation output.

@@ -5,9 +5,23 @@ Recent Changes
 
 *Last updated: October 2026*
 
-This page summarizes recent improvements to the LW integrator, including
-optimization features, convergence enhancements, and critical physics
-corrections.
+This page retains dated implementation history. Older examples and numerical
+claims describe their named revisions, not the current defaults. Use
+:doc:`self_consistency`, :doc:`exact_path`, and :doc:`native_pic` for maintained
+configuration guidance, and ``CHANGELOG.md`` for the consolidated release notes.
+
+v0.11.0: release documentation
+------------------------------
+
+The release adds :doc:`boundary` for experimental Drude response, conformal
+perfect conductors, and opt-in axial feedback, and :doc:`external_fields` for
+the smooth provider API and recommended exact update. :doc:`native_pic` covers
+the two-geometry MLX Green cache, long-bunch lattices, and experimental breathing
+clouds. :doc:`stochastic_quantum_emission` now states the general exact-path
+guard throughout; earlier enabled exact-path probes are historical only.
+The overview, quickstart, and self-consistency guidance describe the corrected
+momentum-based shell and the two-trial default without claiming force or
+energy convergence from it.
 
 October 2026: exact gates, strict CPU helpers, and native PIC
 -------------------------------------------------------------
@@ -23,12 +37,85 @@ relative to each backend's earlier implementation. Backend choices and
 numerical defaults are unchanged; see :doc:`validation` for the scope.
 
 :doc:`native_pic` documents the separate quasi-static PIC runner with
-NumPy/Numba, MLX, and CuPy backends. ``auto`` remains CPU. Its opt-in K-cloud
-LW correction uses CPU float64 and retains its defaults. Near-field pair
-replacement, midpoint prediction, and restricted Medina/LAD are experimental.
+NumPy/Numba, MLX, and CuPy backends. ``auto`` remains CPU. Its opt-in stage-2
+K-cloud LW correction subtracts the matched quasi-static cloud fields from exact
+retarded fields on an observer-local lattice. Batched CPU float64 node fields
+preserve bit-identical saved fields and states, with about 2× faster corrected
+steps in the reported controls. Correction remains off by default.
+
+Optional controls add matched far-field monopoles, certified inertial skipping,
+and a width derived from the initial root-mean-square bunch size and scaled by
+the inverse cube root of the cloud count. Fixed-width defaults are unchanged.
+Near-field pair replacement, midpoint prediction, and restricted Medina/LAD
+are experimental. See :doc:`pic_correction_convergence` for convergence and
+cadence limits, and :doc:`pic_correction_coupling` for population-weighted
+projection and mechanical kick ledgers. Medina/LAD requires CPU correction,
+midpoint prediction, both cadences equal to one, and no near-field replacement.
 Evaluation cadence above one is not supported for physics use by the current
-evidence, and close-encounter convergence and a closed electromagnetic ledger
+evidence. Close-encounter convergence and a closed electromagnetic ledger
 remain open.
+
+October 2026: exact-gate fixes
+------------------------------
+
+Persisted split-knot metadata now restores gate histories in a fresh process.
+Visibility selection uses resolved source positions relative to the occluder,
+and certified crossings at accepted segment endpoints are recognized. These
+fixes preserve the ideal-gate scope described in :doc:`exact_path`; they do
+not add material screening.
+
+October 2026: one-way boundary module
+-------------------------------------
+
+The experimental ``core/boundary`` module adds CPU float64 axisymmetric
+scattered fields driven by prescribed LW fields and grid-aligned Drude walls,
+a dispersive material model. Saved material histories supply scattered fields
+to observers and responding particle replays, with separate field and particle
+ledgers. An explicit SI unit adapter supports PIC observers. Production
+integrator and :doc:`native_pic` defaults are unchanged; ideal visibility
+gates remain separate, as explained in :doc:`exact_path`.
+
+October 2026: conformal walls and two-way boundary coupling
+-----------------------------------------------------------
+
+Experimental conformal perfect-conductor walls use a smooth wall-following
+mesh and gather physical field components for prescribed-current controls.
+Separately, opt-in finite-window axial Drude coupling feeds responding particle
+trajectories back into fresh material passes and requires feedback convergence.
+It rejects unsaved future source history and reports source-window limitations.
+Conformal material coupling and whole-system energy closure remain open.
+Aligned-wall and production solver defaults are unchanged. The focused checks
+are ``tests/test_boundary_conformal.py`` and ``tests/test_boundary_coupling.py``;
+see :doc:`validation` for the repository's regression workflow.
+
+October 2026: GPU Green-spectrum cache
+--------------------------------------
+
+GPU PIC backends cache Green spectra for two mesh geometries, avoiding repeated
+rebuilds when alternating between bunch frames. The merge reports about 30×
+faster MLX driver phases. MLX rounds Green mesh spacing once to float32 before
+computing cell integrals in float64; particle states, frame transformations,
+and grid coordinates retain their existing precision. Distinct float32
+spacings remain distinct cache entries. Backend selection is unchanged:
+``auto`` remains CPU. See :doc:`native_pic` for backend precision and scope.
+
+October 2026: stochastic quantum emission
+-----------------------------------------
+
+:doc:`stochastic_quantum_emission` describes opt-in electron/positron emission
+using the locally constant field approximation (LCFA), seeded photon logs,
+on-shell recoil, an unresolved-background impulse ledger, and checkpointed
+random-generator state. Zero-spin fixed-RK4 native pairs and fixed-step sampled
+``BUNCH_TO_BUNCH`` runs are supported. Reversible threshold activation uses
+hysteresis; enabled quantum mode scales continuous reaction below activation,
+and emission intervals are subdivided to respect the probability cap.
+Disabled deterministic behavior is unchanged.
+
+The general exact ``INERTIAL_PREHISTORY`` path rejects stochastic emission
+until recoil kicks can be recorded as split velocity knots. Finite-spin recoil,
+closed electron–ion conservation, and material/crystal spectrum validation
+remain open. The emission guide also replaces private validation-note paths
+with descriptions of the notes held outside the repository.
 
 September 2026: many-particle milestone (v0.10.0)
 --------------------------------------------------------
@@ -1448,7 +1535,7 @@ settings:
 
 .. code-block:: python
 
-   from lw_integrator.core.self_consistency import SelfConsistencyConfig
+   from core.self_consistency import SelfConsistencyConfig
 
    # Default configuration (recommended)
    config = SelfConsistencyConfig(
@@ -1485,7 +1572,7 @@ enable energy monitoring and adaptive timestep:
 
 .. code-block:: python
 
-   from lw_integrator.core.integration_runner import (
+   from core.integration_runner import (
        EnergyMonitorConfig,
        AdaptiveTimestepConfig
    )
@@ -1534,7 +1621,7 @@ Self-consistency is now **enabled by default**. If you need the old behavior:
 
 .. code-block:: python
 
-   from lw_integrator.core.self_consistency import SelfConsistencyConfig
+   from core.self_consistency import SelfConsistencyConfig
 
    trajectory = retarded_integrator(
        h_step, n_step, init_state,
@@ -1637,7 +1724,7 @@ Updating Existing Code
 
 .. code-block:: python
 
-   from lw_integrator.core.self_consistency import SelfConsistencyConfig
+   from core.self_consistency import SelfConsistencyConfig
 
    # Self-consistency now enabled by default
    trajectory = retarded_integrator(
@@ -1650,8 +1737,8 @@ Updating Existing Code
 
 .. code-block:: python
 
-   from lw_integrator.core.self_consistency import SelfConsistencyConfig
-   from lw_integrator.core.integration_runner import (
+   from core.self_consistency import SelfConsistencyConfig
+   from core.integration_runner import (
        EnergyMonitorConfig,
        AdaptiveTimestepConfig
    )

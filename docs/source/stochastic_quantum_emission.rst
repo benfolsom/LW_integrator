@@ -1,8 +1,16 @@
 Stochastic quantum emission (opt-in)
-====================================
+======================================
+
+This experimental feature is off by default. The general runner supports only
+its guarded sampled ``BUNCH_TO_BUNCH`` diagnostic route; enabling emission
+with ``INERTIAL_PREHISTORY`` raises ``NotImplementedError``. The separate
+nonlinear native pair runner supports fixed RK4 with zero intrinsic spin and
+split velocity histories. Exact source reconstruction in that pair runner is
+not the general exact endpoint route.
+
 
 Design and physical scope
--------------------------
+---------------------------
 
 The deterministic solver remains the default. An enabled run evaluates two
 local indicators for each electron or positron on each accepted interval.
@@ -45,7 +53,7 @@ This is a curvature/synchrotron scale; it is not a calculation of the full
 formation integral through a nonrelativistic Coulomb encounter.
 
 Threshold hand-off
------------------
+--------------------
 
 The Gaunt factor is integrated from the same Ritus/Baier–Katkov LCFA functions
 as the photon rate, using the energy-weighted spectrum over full quantum
@@ -55,7 +63,7 @@ to quantum photons reduced mean power by 34.5044% at :math:`\chi=0.1`, and
 5.5170% at :math:`\chi=0.01`. The corrected mean-power limits agree to numerical
 roundoff in the relativistic local-spectrum probe. Four million independent
 frozen-momentum Bernoulli intervals at :math:`\gamma=1000` per threshold gave
-post-correction steps of :math:`-0.246\pm0.424`% and :math:`+0.269\pm0.456`%,
+post-correction steps of :math:`-0.246\pm0.424\%` and :math:`+0.269\pm0.456\%`,
 respectively (one standard error). These are instantaneous-power checks,
 not full trajectory or formation-length validation. They isolate the chi
 crossing; the independent recoil threshold can activate emission earlier.
@@ -70,7 +78,7 @@ rapidly changing fields, and the chosen classical reaction can still limit
 the match to local mean power; the correction is not an accuracy certificate.
 
 Shared emission model
----------------------
+-----------------------
 
 The default is the spin-averaged, unpolarised, locally constant field
 approximation (LCFA) to quantum synchrotron emission [Ritus]_ [BK]_ [Review]_.
@@ -114,7 +122,7 @@ Polarisation is recorded as unavailable. Neither an angular distribution at
 low energy nor spin-flip transitions are modeled.
 
 Recoil and the remainder
-------------------------
+--------------------------
 
 A free on-shell electron cannot emit a real photon and conserve its own
 four-momentum. Each event sets :math:`E'=E-k` and reconstructs the exact on-shell
@@ -131,7 +139,7 @@ Emission diagnostics describe single physical particles; weighted or coherent
 macroparticle emission needs a separate model.
 
 Runner and persistence contract
--------------------------------
+---------------------------------
 
 One shared ``core/stochastic_emission.py`` module owns the validated settings,
 local indicators, spectrum, recoil, event log, and seeded PCG64 generator.
@@ -166,7 +174,7 @@ one-sided source histories at kicks, rather than this accepted-sample Medina
 derivative.
 
 Kick histories
-~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~
 
 .. note::
 
@@ -181,11 +189,11 @@ acceleration pulse from the same jump. Smooth acceleration on either branch
 still contributes its usual radiation field.
 
 The native pair runner already records the incoming velocity separately from
-the outgoing accepted velocity. AO's version 9 history checkpoints preserve
+the outgoing accepted velocity. Version 9 history checkpoints preserve
 that split. Cubic position intervals near a kick use the appropriate one-sided
 endpoint velocities; they do not interpolate velocity across the jump.
 
-Task AT's passive-observer diagnostic confirms that the general exact runner
+The passive-observer kick diagnostic confirms that the general exact runner
 does not yet publish this velocity split. Its default acceleration
 reconstruction differentiates accepted velocities through the kick. Halving
 the source timestep doubles the residual pulse's peak field and radiation
@@ -202,7 +210,7 @@ sampled trajectory accuracy or interpolation across kicks.
 Existing exact visibility knots store two one-sided accelerations but one
 continuous velocity. Correcting the general runner requires split velocities
 and matching resolved kinematics throughout source preparation and sampling.
-That broader history change is planned, not implemented. AS's Medina/LAD
+That broader history change is planned, not implemented. The Medina/LAD
 restart remains in place, but does not repair source radiation seen by other
 particles. Diagnostic commands, values, and the implementation scope are kept in local
 validation notes outside the repository.
@@ -211,12 +219,13 @@ The nonlinear momentum-center runner supports ``charge_ll`` and the
 full-dipole reaction selections for zero intrinsic spin. Finite-spin action
 mass and quantum spin transitions require a separate recoil derivation and
 are rejected explicitly. The general runner supports fixed-step
-``BUNCH_TO_BUNCH`` sampled and exact retarded paths with zero intrinsic moment
-and spin. Unsupported adaptive or reduced-history combinations fail explicitly.
+``BUNCH_TO_BUNCH`` sampled runs with zero intrinsic moment and spin.
+The general exact path is guarded off, including exact same-bunch runs.
+Unsupported adaptive or reduced-history combinations fail explicitly.
 Config and CLI settings remain off by default.
 
 Settings and output
--------------------
+---------------------
 
 Use a nested ``stochastic_emission`` object in direct CLI and testbed configs::
 
@@ -264,18 +273,14 @@ scheme is first order in the orbit timestep, even when the orbit uses RK4.
 The general runner uses the
 field sample from its final deterministic force trial, with the non-reaction
 mechanical momentum. Sampled LW fields use the accepted retarded source
-samples; exact fields use the exact provider tensor. Prescribed fields are
-included once. RNG draws occur at the pair acceptance barrier, before exact
+samples. Prescribed fields are included once. RNG draws occur at the pair acceptance barrier, before exact
 canonical endpoint reconstruction and checkpoint publication.
 
 The general runner rejects walls, adaptive steps, pseudo-grids, driver trains,
 cavity tails, dipole sources, beamline occlusion, sampled same-bunch fields,
-and population-weighted particles in this first implementation. Exact
-same-bunch charge fields can use the existing fixed-step framework. Exact
-charge-only runs currently select that framework through the RFS configuration:
-use custom species with an explicit zero moment and unspecified spin quantum
-number (which initialises to zero), while retaining the precession framework
-switch. This is a framework requirement, not physical spin precession.
+and population-weighted particles in this implementation. The exact
+``INERTIAL_PREHISTORY`` guard is unconditional when emission is enabled;
+zero moments or below-threshold settings do not bypass it.
 
 The pair adapter requires fixed RK4, zero intrinsic spin, and endpoint source
 histories with consecutive derivative sampling. It rejects internal adaptive
@@ -294,7 +299,7 @@ Existing continuous radiation-power diagnostics remain classical field
 diagnostics. Use the photon event sum for the realised discrete energy loss.
 
 Limitations and review criteria
--------------------------------
+---------------------------------
 
 The local rate assumes that the formation length is short compared with the
 field variation scale. This assumption can fail for soft photons even in
@@ -328,7 +333,8 @@ better than :math:`1.64\times10^{-7}` relatively, and with the mean power to
 better than :math:`9.38\times10^{-7}`. At :math:`\chi=10^{-4}`, mean quantum
 power was 0.999405 of the classical value.
 
-Uniform-magnetic-field runs at initial :math:`\gamma=100` and :math:`\chi=0.1`
+Historical checks before the exact-path guard was added used
+uniform-magnetic-field runs at initial :math:`\gamma=100` and :math:`\chi=0.1`
 produced 25 photons on the sampled path and five on the exact path, with seeded
 and checkpoint-resumed identity in both cases. Single-seed 100 keV and 20 keV
 carbon encounters at :math:`b/b_{\rm crit}=8` produced zero photons; integrated
@@ -344,7 +350,8 @@ Review-fix scripts and results are kept in local notes. Seeded and resumed
 identity includes the sub-interval RNG draws. Public general-runner trajectories
 retain the emission payload only on the final row, including after periodic
 checkpoint writes; intermediate partial event logs are removed.
-With ``max_probability=0.0005``, the sampled and exact 1,200-step magnetic
+Before that guard, with ``max_probability=0.0005``, sampled and exact
+1,200-step magnetic
 checks emitted 14 and four photons, respectively. Both seeded repeats and
 checkpoint resumes matched all 182 SOA trajectory arrays byte for byte, as
 well as the event, diagnostic, and RNG payloads. The original 100 keV and
@@ -352,7 +359,7 @@ well as the event, diagnostic, and RNG payloads. The original 100 keV and
 JSON resumes, retaining their original numerical guards and tolerances.
 
 Validation against thread C benchmarks
---------------------------------------
+----------------------------------------
 
 Thread C's ``strong_field_qed_tev`` study and this module now use one
 spin-averaged local constant-field spectrum definition.  For photon fraction
@@ -414,7 +421,7 @@ continuum-potential callback or prescribed crystal trajectories, then an
 independent formation-length, material-transport, and detector comparison.
 
 Planned follow-up: encounter-based recoil trigger
-------------------------------------------------
+---------------------------------------------------
 
 **Not implemented.** The present indicators are synchrotron-type quantities:
 $\chi$ and $R=\hbar\omega_c/T$, with $\omega_c$ inferred from local LCFA
@@ -427,7 +434,7 @@ none with their very small integrated emission probabilities. Neither a small
 chi nor a recoil crossing establishes an accurate encounter spectrum.
 The classical LW spectrum
 in the existing carbon comparison overshoots the Li et al. (2021) data by about
-50% near $k/T=0.9$ at 20–25 keV [Li2021]_.
+50% near $k/T=0.9$ at 20–25 keV [EmissionLi2021]_.
 
 The planned work is to compare the encounter energy scale $\hbar v/r_{\min}$
 with the kinetic energy $T$, develop a non-local, formation-length-aware
@@ -438,7 +445,7 @@ thresholds alone cannot supply it. No encounter trigger or rate is provided
 by the current implementation.
 
 References
-----------
+------------
 
 .. [Gonoskov] A. Gonoskov, T. G. Blackburn, M. Marklund, and S. S. Bulanov,
    *Charged particle motion and radiation in strong electromagnetic fields*,
@@ -471,7 +478,7 @@ References
 .. [Wistisen2018] T. N. Wistisen *et al.*, Nature Communications **9**, 795
    (2018). https://doi.org/10.1038/s41467-018-03165-4
 
-.. [Li2021] L. Li *et al.*, *Absolute measurements of bremsstrahlung double
+.. [EmissionLi2021] L. Li *et al.*, *Absolute measurements of bremsstrahlung double
    differential cross sections of C and Al atoms by 5–25 keV electron impact*,
    Nucl. Instrum. Methods B **506**, 15 (2021).
    https://doi.org/10.1016/j.nimb.2021.09.001
