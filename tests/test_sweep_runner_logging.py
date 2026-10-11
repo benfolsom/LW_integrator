@@ -14,7 +14,6 @@ from lw_integrator.sweep_runner import (
     _build_cli_start_log_lines,
     _build_cli_sweep_start_log_lines,
     _build_cli_timestep_log_lines,
-    _evaluate_cli_stability,
     _format_aperture_for_start_log,
     _resolve_cli_driver_setup,
     _resolve_cli_rider_overrides,
@@ -357,97 +356,6 @@ def test_build_cli_start_log_lines_formats_start_and_params_lines():
         "[OPTIMIZATION] [START] Run 2/9: a=0.0123mm, E=5.00GeV",
         "[OPTIMIZATION]   [PARAMS] z=10.00mm, h=1.0000e-07ns, N=100",
     ]
-
-
-def test_evaluate_cli_stability_reports_disabled_without_metric_updates():
-    outcome = _evaluate_cli_stability(
-        _config(smoothness_enabled=False),
-        SimpleNamespace(rider_trajectory={"gamma": [1.0, 2.0]}),
-        {"existing": 1.0},
-        rider_m_particle=1.0,
-        run_num=4,
-        aperture=0.01,
-        energy_gev=5.0,
-        start_z=10.0,
-        transv_offset=0.0,
-    )
-
-    assert outcome.metrics_updates == {}
-    assert outcome.rejection_record is None
-    assert outcome.log_lines == [
-        "[OPTIMIZATION]   [DEBUG] Processing trajectory data for Run 4...",
-        "[OPTIMIZATION]   [INFO] Stability analysis DISABLED for Run 4",
-    ]
-
-
-def test_evaluate_cli_stability_reports_missing_trajectory():
-    outcome = _evaluate_cli_stability(
-        _config(),
-        SimpleNamespace(rider_trajectory=None),
-        {},
-        rider_m_particle=1.0,
-        run_num=4,
-        aperture=0.01,
-        energy_gev=5.0,
-        start_z=10.0,
-        transv_offset=0.0,
-    )
-
-    assert outcome.metrics_updates == {}
-    assert outcome.rejection_record is None
-    assert outcome.log_lines[-1] == (
-        "[OPTIMIZATION]   [WARNING] No trajectory data for Run 4"
-    )
-
-
-def test_evaluate_cli_stability_builds_rejection_record(monkeypatch):
-    def fake_analyze_trajectory_smoothness(*_args, **_kwargs):
-        return SimpleNamespace(
-            passed=False,
-            violations=["oscillation", "trend"],
-            quality_summary="bad quality",
-        )
-
-    monkeypatch.setattr(
-        "lw_integrator.sweep_runner.analyze_trajectory_smoothness",
-        fake_analyze_trajectory_smoothness,
-    )
-
-    outcome = _evaluate_cli_stability(
-        _config(),
-        SimpleNamespace(rider_trajectory={"gamma": [1.0, 2.0]}),
-        {"existing": 1.0},
-        rider_m_particle=1.0,
-        run_num=6,
-        aperture=0.01,
-        energy_gev=5.0,
-        start_z=10.0,
-        transv_offset=0.0025,
-    )
-
-    assert outcome.metrics_updates == {
-        "smoothness_passed": False,
-        "smoothness_violations": 2,
-    }
-    assert outcome.rejection_record == {
-        "success": False,
-        "error": "Smoothness violation: 2 violations",
-        "parameters": {
-            "aperture": 0.01,
-            "energy_gev": 5.0,
-            "start_z": 10.0,
-            "transv_offset": 0.0025,
-        },
-        "metrics": {
-            "existing": 1.0,
-            "smoothness_passed": False,
-            "smoothness_violations": 2,
-        },
-    }
-    assert "[OPTIMIZATION]     Quality: bad quality" in outcome.log_lines
-    assert outcome.log_lines[-1] == (
-        "[OPTIMIZATION]   [REJECT] Run 6 rejected due to numerical instability"
-    )
 
 
 def test_build_cli_sweep_start_log_lines_formats_wall_mode_summary():

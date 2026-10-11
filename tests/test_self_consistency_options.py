@@ -38,8 +38,75 @@ from lw_integrator.testbed_runner import (
 )
 from optimization.config import OptimizationConfig
 from optimization.plugin_persistence_helpers import apply_persisted_config_overrides
+from input_output.config_migration import (
+    InertSelfConsistencyKeyWarning,
+    discard_inert_self_consistency_keys,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.mark.parametrize("loader", ["testbed", "cli", "sweep", "plugin"])
+def test_inert_saved_keys_warn_once_and_do_not_change_live_controls(loader):
+    payload = {
+        "self_consistency_mass_shell_relaxation": "invalid and ignored",
+        "self_consistency_tolerance": {"invalid": "and ignored"},
+        "self_consistency_target_ms_tolerance": 2e-6,
+        "chrono_matching_mode": "AVERAGED",
+        "self_consistency": {
+            "mass_shell_relaxation": None,
+            "chrono_matching_mode": "invalid and ignored",
+        },
+    }
+    original = copy.deepcopy(payload)
+    with pytest.warns(InertSelfConsistencyKeyWarning) as caught:
+        if loader == "testbed":
+            config = SimulationOptions.from_dict(payload)
+            assert config.to_dict()["chrono_matching_mode"] == "AVERAGED"
+            target = config.self_consistency_target_ms_tolerance
+        elif loader == "cli":
+            config = cli._build_self_consistency_config(payload)
+            target = config.target_ms_tolerance
+        elif loader == "sweep":
+            converted = _convert_json_config_to_dataclass(payload)
+            valid = {field.name for field in fields(OptimizationConfig)}
+            config = OptimizationConfig(
+                **{k: v for k, v in converted.items() if k in valid}
+            )
+            target = config.self_consistency_target_ms_tolerance
+        else:
+            config = apply_persisted_config_overrides(OptimizationConfig(), payload)
+            target = config.self_consistency_target_ms_tolerance
+    assert len(caught) == 1
+    assert "\n" not in str(caught[0].message)
+    assert "self_consistency.chrono_matching_mode" in str(caught[0].message)
+    assert payload == original
+    assert target == 2e-6
+    for key in (
+        "self_consistency_mass_shell_relaxation",
+        "self_consistency_tolerance",
+    ):
+        assert not hasattr(config, key)
+    if loader == "cli":
+        assert config.mass_shell_relaxation == 0.7
+
+
+def test_inert_input_migration_is_idempotent_and_preserves_solver_mode_aliases():
+    payload = {
+        "self_consistency_mass_shell_relaxation": 0.7,
+        "chrono_matching_mode": "AVERAGED",
+        "self_consistency_chrono_matching_mode": "AVERAGED",
+    }
+    with pytest.warns(InertSelfConsistencyKeyWarning):
+        migrated = discard_inert_self_consistency_keys(payload)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        assert discard_inert_self_consistency_keys(migrated) == migrated
+    assert not caught
+    assert migrated == {
+        "chrono_matching_mode": "AVERAGED",
+        "self_consistency_chrono_matching_mode": "AVERAGED",
+    }
 
 # A hand-edited saved config: the canonical keys were changed, the legacy
 # aliases written alongside them were not.
@@ -76,8 +143,9 @@ def test_cli_and_testbed_prefer_canonical_chrono_keys():
         SimulationOptions.from_dict(dict(CONFLICTING_CHRONO_PAYLOAD))
     )
 
-    assert _chrono_values(cli_config) == EXPECTED_CANONICAL
-    assert _chrono_values(testbed_config) == EXPECTED_CANONICAL
+    expected = {k: v for k, v in EXPECTED_CANONICAL.items() if k != "chrono_matching_mode"}
+    assert {k: getattr(cli_config, k) for k in expected} == expected
+    assert {k: getattr(testbed_config, k) for k in expected} == expected
 
 
 def test_sweep_loader_prefers_canonical_chrono_keys_over_legacy_aliases():
@@ -166,7 +234,6 @@ EXPECTED_SC_DEFAULTS = {
     "chrono_interpolate": False,
     "chrono_high_precision": False,
     "chrono_adaptive_tolerance": False,
-    "chrono_matching_mode": "FAST",
 }
 
 
@@ -186,7 +253,6 @@ def _option_defaults(options) -> dict:
         "chrono_interpolate": options.chrono_interpolate,
         "chrono_high_precision": options.chrono_high_precision,
         "chrono_adaptive_tolerance": options.chrono_adaptive_tolerance,
-        "chrono_matching_mode": options.chrono_matching_mode,
     }
 
 
@@ -220,8 +286,8 @@ def test_testbed_gui_and_sweep_entry_points_use_unified_defaults():
         assert config.self_consistency_convergence_mode == "fixed_geometry"
         assert config.self_consistency_max_iterations == 2
         assert config.self_consistency_verbosity == 0
-        assert config.self_consistency_gamma_reconciliation_method == "DISABLED"
         assert config.chrono_matching_mode == "FAST"
+        assert config.self_consistency_gamma_reconciliation_method == "DISABLED"
 
 
 # ---------------------------------------------------------------------------
@@ -536,7 +602,6 @@ def test_cli_accepts_chrono_matching_mode_alias(tmp_path, payload):
     request = _cli_request(tmp_path, payload)
 
     assert request.config.chrono_mode is ChronoMatchingMode.AVERAGED
-    assert request.self_consistency.chrono_matching_mode == "AVERAGED"
 
 
 def test_cli_rejects_conflicting_retardation_modes(tmp_path):
@@ -585,22 +650,6 @@ def test_json_booleans_are_accepted():
 
     assert config.enabled is False
     assert config.chrono_interpolate is True
-
-
-# ---------------------------------------------------------------------------
-# SC-15: dead sweep stability dialog removed
-# ---------------------------------------------------------------------------
-
-
-def test_dead_stability_dialog_is_removed():
-    pytest.importorskip("tkinter")
-    import optimization.plugin_control_mixins as plugin_control_mixins
-
-    assert not hasattr(
-        plugin_control_mixins.OptimizationPluginControlMixin,
-        "_confirm_stability_options",
-    )
-    assert not hasattr(plugin_control_mixins, "_stability_dialog_logging_defaults")
 
 
 # ---------------------------------------------------------------------------

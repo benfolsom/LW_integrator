@@ -792,31 +792,6 @@ def test_gating_threshold_small_array_matches_vector_path() -> None:
     assert small_threshold == pytest.approx(large_threshold)
 
 
-def test_get_current_particle_gamma_and_beta_switches_to_iterated_state() -> None:
-    current_state = _make_state(bx=[0.1], by=[0.2], bz=[0.3], gamma=[4.0])
-    result_state = _make_state(bx=[0.4], by=[0.5], bz=[0.6], gamma=[7.0])
-
-    gamma0, beta0 = equations._get_current_particle_gamma_and_beta(
-        current_state,
-        result_state,
-        particle_idx=0,
-        sc_iteration=0,
-        sc_enabled=True,
-    )
-    gamma1, beta1 = equations._get_current_particle_gamma_and_beta(
-        current_state,
-        result_state,
-        particle_idx=0,
-        sc_iteration=1,
-        sc_enabled=True,
-    )
-
-    assert gamma0 == pytest.approx(4.0)
-    assert beta0 == pytest.approx((0.1, 0.2, 0.3))
-    assert gamma1 == pytest.approx(7.0)
-    assert beta1 == pytest.approx((0.4, 0.5, 0.6))
-
-
 def test_beta_helpers_limit_and_recover_gamma() -> None:
     limited = equations._limit_beta_magnitude(1.0, 1.0, 1.0)
     assert max(abs(component) for component in limited) < 1.0
@@ -972,16 +947,9 @@ def test_convergence_helpers_and_logging_report_expected_values() -> None:
         C_MMNS=C_MMNS,
         tolerance=1e-9,
     )
-    gamma_ok, gamma_error = equations._check_gamma_consistency(
-        gamma_velocity=10.0,
-        gamma_energy=10.1,
-        tolerance=0.02,
-    )
 
     assert converged is True
     assert mass_shell_error == pytest.approx(0.0)
-    assert gamma_ok is True
-    assert gamma_error == pytest.approx(0.01)
 
     stream = io.StringIO()
     with redirect_stdout(stream):
@@ -1287,7 +1255,6 @@ def test_sc_iteration_projection_uses_mechanical_momentum(
         self_consistency=SelfConsistencyConfig(
             enabled=True,
             max_iterations=2,
-            mass_shell_relaxation=1.0,
             mass_shell_tolerance=1e-12,
         ),
     )

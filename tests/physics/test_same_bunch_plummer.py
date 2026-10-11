@@ -44,9 +44,7 @@ def make_symmetric(count=2, close=False):
     return state, driver
 
 
-def run_symmetric(
-    count=2, close=False, intervals=640, mode="medina_lad", relaxation=0.7
-):
+def run_symmetric(count=2, close=False, intervals=640, mode="medina_lad"):
     rider, driver = make_symmetric(count, close)
     with contextlib.redirect_stdout(io.StringIO()):
         tr, _, *_ = retarded_integrator(
@@ -66,7 +64,6 @@ def run_symmetric(
                 enabled=True,
                 max_iterations=2,
                 verbosity=0,
-                mass_shell_relaxation=relaxation,
             ),
             space_charge=SpaceChargeConfig(
                 enabled=True,
@@ -156,18 +153,6 @@ def test_symmetric_energy_oracles_and_reaction_work(count, close, expected):
             )
     work = sum(np.mean(s.get("radiation_reaction_work", 0)) for s in runs[1]) * EV
     assert abs(gains[1] - gains[0] - work) < 2e-9
-
-
-@pytest.mark.parametrize(
-    "mode", ["off", "diagnostic_only", "medina_lad", "power_matched_damping"]
-)
-def test_relaxation_weight_does_not_change_mechanical_solution(mode):
-    runs = [
-        run_symmetric(intervals=40, mode=mode, relaxation=w) for w in (0.1, 0.7, 1.0)
-    ]
-    for tr in runs[1:]:
-        for key in ("Px", "Py", "Pz", "gamma", "bx", "by", "bz", "t"):
-            np.testing.assert_array_equal(tr[-1][key], runs[0][-1][key])
 
 
 @pytest.mark.parametrize(

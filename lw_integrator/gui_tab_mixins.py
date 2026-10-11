@@ -1999,39 +1999,6 @@ class IntegratorGUITabMixin:
         )
         self.sc_mass_shell_tolerance_entry.grid(row=5, column=1, sticky="ew", pady=2)
 
-        # Mass-shell relaxation with help icon
-        relaxation_frame = ttk.Frame(sc_frame)
-        relaxation_frame.grid(row=6, column=0, sticky="w", pady=2, padx=(20, 0))
-        self.sc_relaxation_label = ttk.Label(
-            relaxation_frame, text="Relaxation weight:"
-        )
-        self.sc_relaxation_label.pack(side="left")
-        relaxation_help = ttk.Label(
-            relaxation_frame, text="ⓘ", foreground="blue", cursor="hand2"
-        )
-        relaxation_help.pack(side="left", padx=(3, 0))
-        Tooltip(
-            relaxation_help,
-            "Relaxation weight applied after Pt correction (both modes).\n\n"
-            "Prevents oscillations by damping the correction:\n"
-            "  Pt_final = α*Pt_corrected + (1-α)*Pt_old\n"
-            "  where α = relaxation weight\n\n"
-            "Values:\n"
-            "  • 1.0 = Full correction (fastest, may oscillate)\n"
-            "  • 0.7 = Recommended (default, good balance)\n"
-            "  • 0.5 = Conservative (more stable, slower)\n"
-            "  • 0.0 = No correction (broken, testing only)\n\n"
-            "Increase for ultra-relativistic (γ > 1000) particles.\n"
-            "Decrease if seeing convergence oscillations.\n\n"
-            "Default: 0.7",
-        )
-        self.sc_relaxation_entry = ttk.Entry(
-            sc_frame,
-            textvariable=self.self_consistency_mass_shell_relaxation_var,
-            width=16,
-        )
-        self.sc_relaxation_entry.grid(row=6, column=1, sticky="ew", pady=2)
-
         # Verbosity with help icon
         verbosity_frame = ttk.Frame(sc_frame)
         verbosity_frame.grid(row=7, column=0, sticky="w", pady=2, padx=(20, 0))

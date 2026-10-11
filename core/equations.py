@@ -227,14 +227,14 @@ def _ensure_startup_metadata(state: ParticleState) -> None:
 
 def _extract_self_consistency_params(
     self_consistency: Optional[SelfConsistencyConfig],
-) -> tuple[bool, str, float, float, float, int, int]:
+) -> tuple[bool, str, float, float, int, int]:
     """Extract self-consistency configuration parameters.
 
     Returns
     -------
-    tuple[bool, str, float, float, float, int, int]
+    tuple[bool, str, float, float, int, int]
         A tuple containing (enabled, convergence_mode, target_ms_tolerance,
-        mass_shell_tolerance, mass_shell_relaxation, max_iterations, verbosity).
+        mass_shell_tolerance, max_iterations, verbosity).
     """
     is_enabled = self_consistency is not None and self_consistency.enabled
     convergence_mode = (
@@ -249,9 +249,6 @@ def _extract_self_consistency_params(
     mass_shell_tolerance = (
         self_consistency.mass_shell_tolerance if self_consistency is not None else 1e-2
     )
-    mass_shell_relaxation = (
-        self_consistency.mass_shell_relaxation if self_consistency is not None else 0.7
-    )
     max_iterations = (
         self_consistency.max_iterations if self_consistency is not None else 2
     )
@@ -262,7 +259,6 @@ def _extract_self_consistency_params(
         convergence_mode,
         target_ms_tolerance,
         mass_shell_tolerance,
-        mass_shell_relaxation,
         max_iterations,
         verbosity,
     )
@@ -1210,36 +1206,6 @@ def _should_apply_external_forces(
     return travel_distance >= threshold
 
 
-def _get_current_particle_gamma_and_beta(
-    current_state: ParticleState,
-    result_state: ParticleState,
-    particle_idx: int,
-    sc_iteration: int,
-    sc_enabled: bool,
-) -> tuple[float, tuple[float, float, float]]:
-    """Get gamma and beta values for the current self-consistency iteration.
-
-    On the first iteration, use values from the input state.
-    On subsequent iterations, use the updated values from the result state.
-    """
-    if sc_enabled and sc_iteration > 0:
-        gamma = result_state["gamma"][particle_idx]
-        beta_vector = (
-            result_state["bx"][particle_idx],
-            result_state["by"][particle_idx],
-            result_state["bz"][particle_idx],
-        )
-    else:
-        gamma = current_state["gamma"][particle_idx]
-        beta_vector = (
-            current_state["bx"][particle_idx],
-            current_state["by"][particle_idx],
-            current_state["bz"][particle_idx],
-        )
-
-    return gamma, beta_vector
-
-
 def _limit_beta_magnitude(
     beta_x: float,
     beta_y: float,
@@ -1752,28 +1718,6 @@ def _check_mass_shell_convergence(
     return has_converged, float(mass_shell_error_rel)
 
 
-def _check_gamma_consistency(
-    gamma_velocity: float,
-    gamma_energy: float,
-    tolerance: float,
-) -> tuple[bool, float]:
-    """Check gamma consistency (DIAGNOSTIC check after convergence).
-
-    This verifies that gamma from velocity matches gamma from energy.
-    If mass-shell is satisfied, these should match to machine precision.
-
-    Returns
-    -------
-    tuple[bool, float]
-        (is_consistent, relative_gamma_error)
-    """
-    gamma_abs_change = abs(gamma_velocity - gamma_energy)
-    gamma_rel_change = gamma_abs_change / max(abs(gamma_velocity), 1e-12)
-    is_consistent = gamma_rel_change < tolerance
-
-    return is_consistent, gamma_rel_change
-
-
 def _print_convergence_info(
     particle_idx: int,
     iteration: int,
@@ -2282,7 +2226,6 @@ def retarded_equations_of_motion(
         sc_convergence_mode,
         sc_target_ms_tolerance,
         sc_mass_shell_tolerance,
-        sc_mass_shell_relaxation,
         sc_max_iterations,
         sc_verbosity,
     ) = _extract_self_consistency_params(self_consistency)
@@ -2426,7 +2369,6 @@ def retarded_equations_of_motion(
             and magnetic_dipole.source.active
         )
         exact_charge_source_selected = exact_endpoint_recomposition_selected
-        on_shell_kinematic_boundary_selected = True
         exact_charge_field_cache = None
         exact_same_bunch_field_cache = None
         dipole_source_field_cache = None
@@ -4851,60 +4793,37 @@ def retarded_equations_of_motion(
                 h,
                 predictor_u,
                 centered=second_order_exact_source_selected,
-                on_shell=on_shell_kinematic_boundary_selected,
+                on_shell=True,
             )
 
             # ================================================================
-            # STEP 6: Compute velocity (beta) from position changes
+            # STEP 6: Compute velocity (beta) from on-shell momentum
             # ================================================================
-            position_change_x = (
-                result["x"][particle_idx] - current_state["x"][particle_idx]
-            )
-            position_change_y = (
-                result["y"][particle_idx] - current_state["y"][particle_idx]
-            )
-            position_change_z = (
-                result["z"][particle_idx] - current_state["z"][particle_idx]
-            )
 
-            # β = Δx/(c·Δt) using the actual coordinate-time step
-            # Since Δx = (P/m)·h and Δt = γ·h, we get β = P/(γ·m·c)
-            coordinate_dt = (
-                proper_to_coordinate_dt
-                if on_shell_kinematic_boundary_selected
-                else result["t"][particle_idx] - current_state["t"][particle_idx]
-            )
+            coordinate_dt = proper_to_coordinate_dt
             if coordinate_dt == 0.0:
                 coordinate_dt = proper_to_coordinate_dt
-            if on_shell_kinematic_boundary_selected:
-                # Derive beta from the same on-shell mechanical momentum used
-                # for gamma.  Recovering it from two close positions can erase
-                # the motion of a nearly stationary massive particle.
-                beta_denominator = (
-                    result["gamma"][particle_idx] * particle_mass * C_MMNS
-                )
-                beta_x = (
-                    result["Px"][particle_idx] - accumulated_field_x * particle_mass
-                ) / beta_denominator
-                beta_y = (
-                    result["Py"][particle_idx] - accumulated_field_y * particle_mass
-                ) / beta_denominator
-                beta_z = (
-                    result["Pz"][particle_idx] - accumulated_field_z * particle_mass
-                ) / beta_denominator
-            else:
-                beta_x = position_change_x / (C_MMNS * coordinate_dt)
-                beta_y = position_change_y / (C_MMNS * coordinate_dt)
-                beta_z = position_change_z / (C_MMNS * coordinate_dt)
+            # Use the same on-shell mechanical momentum as gamma. Subtracting
+            # nearby positions can erase motion for a nearly stationary particle.
+            beta_denominator = (
+                result["gamma"][particle_idx] * particle_mass * C_MMNS
+            )
+            beta_x = (
+                result["Px"][particle_idx] - accumulated_field_x * particle_mass
+            ) / beta_denominator
+            beta_y = (
+                result["Py"][particle_idx] - accumulated_field_y * particle_mass
+            ) / beta_denominator
+            beta_z = (
+                result["Pz"][particle_idx] - accumulated_field_z * particle_mass
+            ) / beta_denominator
 
             # Enforce speed of light limit IMMEDIATELY after calculation
             beta_x_limited, beta_y_limited, beta_z_limited = _limit_beta_magnitude(
                 beta_x,
                 beta_y,
                 beta_z,
-                mechanical_proper_velocity=(
-                    predictor_u if on_shell_kinematic_boundary_selected else None
-                ),
+                mechanical_proper_velocity=predictor_u,
             )
 
             result["bx"][particle_idx] = beta_x_limited
@@ -4913,13 +4832,7 @@ def retarded_equations_of_motion(
 
             # Compute gamma from the (possibly limited) beta
             # This is compared against gamma_from_energy for self-consistency
-            gamma_from_velocity = (
-                float(np.hypot(1.0, np.linalg.norm(predictor_u)))
-                if on_shell_kinematic_boundary_selected
-                else _calculate_gamma_from_beta(
-                    beta_x_limited, beta_y_limited, beta_z_limited
-                )
-            )
+            gamma_from_velocity = float(np.hypot(1.0, np.linalg.norm(predictor_u)))
 
             # Debug: Print newly computed beta on all iterations when verbosity >= 3
             if sc_verbosity >= 3:
@@ -5813,14 +5726,13 @@ def retarded_equations_of_motion(
                     accumulated_field_z,
                 )
 
-        if on_shell_kinematic_boundary_selected:
-            for axis, contribution in zip(
-                "xyz", (accumulated_field_x, accumulated_field_y, accumulated_field_z)
-            ):
-                result[f"source_u_{axis}"][particle_idx] = (
-                    result[f"P{axis}"][particle_idx] - contribution * particle_mass
-                ) / (particle_mass * C_MMNS)
-            result["source_kinematics_ready"][particle_idx] = 1.0
+        for axis, contribution in zip(
+            "xyz", (accumulated_field_x, accumulated_field_y, accumulated_field_z)
+        ):
+            result[f"source_u_{axis}"][particle_idx] = (
+                result[f"P{axis}"][particle_idx] - contribution * particle_mass
+            ) / (particle_mass * C_MMNS)
+        result["source_kinematics_ready"][particle_idx] = 1.0
 
         # Spin is advanced exactly once per accepted physical step, after all
         # self-consistency iterations. Reusing the start-of-step spin avoids

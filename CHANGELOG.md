@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- Remove four unused helpers (`_get_current_particle_gamma_and_beta`,
+  `initialize_particle_bunches`,
+  `build_field_representative_space_charge_source_charges`, and
+  `_evaluate_cli_stability`), the private `_CliStabilityOutcome` type, the unused
+  `save_partial_optimization_results` writer, and `_check_gamma_consistency`.
+  Keep live pseudo-grid accounting and cancellation output.
+- Remove inert self-consistency plumbing and the GUI relaxation control. Retain
+  the inert core relaxation field for direct study callers. Saved
+  `self_consistency_mass_shell_relaxation`, `self_consistency_tolerance`, and
+  `mass_shell_relaxation` keys are deprecated and ignored with one warning per
+  parsed input. Inside a saved `self_consistency` object, `mass_shell_relaxation`
+  and the duplicate `chrono_matching_mode` are also deprecated and ignored.
+  Outer chrono-mode selectors and their aliases retain their solver behavior.
+- Collapse the constant on-shell branch, share identical accepted-source
+  numerical helpers, and remove historical repository and dialog absence tests.
+  Retain numerical reference tests and useful configuration validation.
+
 - Refuse stochastic emission on the exact INERTIAL_PREHISTORY path
   (`NotImplementedError`) until kicks are recorded as split velocity knots;
   the sampled path and the nonlinear pair runner are unaffected.

@@ -244,7 +244,6 @@ def build_single_integration_setup(
         use_image_weighting=config.use_image_weighting,
         output_dir=run_output_dir,
         self_consistency_enabled=config.self_consistency_enabled,
-        self_consistency_tolerance=config.self_consistency_tolerance,
         self_consistency_convergence_mode=getattr(
             config, "self_consistency_convergence_mode", "fixed_geometry"
         ),
@@ -254,9 +253,6 @@ def build_single_integration_setup(
         self_consistency_max_iterations=config.self_consistency_max_iterations,
         self_consistency_mass_shell_tolerance=getattr(
             config, "self_consistency_mass_shell_tolerance", 1e-2
-        ),
-        self_consistency_mass_shell_relaxation=getattr(
-            config, "self_consistency_mass_shell_relaxation", 0.7
         ),
         self_consistency_verbosity=config.self_consistency_verbosity,
         chrono_interpolate=bool(

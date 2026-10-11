@@ -824,99 +824,6 @@ def generate_trajectory_comparison_plot(plugin: Any, trajectory_data_list: List[
         plugin._log_result(f"[WARNING] Traceback: {traceback.format_exc()}")
 
 
-def save_partial_optimization_results(
-    plugin: Any,
-    all_evaluations: List[dict],
-    param_names: List[str],
-    status: str = "PARTIAL",
-):
-    """Save partial optimization results when cancelled or failed."""
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-
-    if plugin.config.mode == "optimization":
-        method = plugin.config.optimization_method
-        output_dir = Path(plugin.sweep_output_dir) / f"partial_{method}_{timestamp}"
-    else:
-        output_dir = Path(plugin.sweep_output_dir) / f"partial_sweep_{timestamp}"
-
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    csv_path = output_dir / "partial_results.csv"
-
-    successful_evals = [
-        e
-        for e in all_evaluations
-        if not e.get("failed", False) and not e.get("halted_early", False)
-    ]
-    halted_evals = [e for e in all_evaluations if e.get("halted_early", False)]
-
-    if len(all_evaluations) > 0:
-        import csv
-
-        with open(csv_path, "w", newline="") as f:
-            writer = csv.DictWriter(
-                f,
-                fieldnames=["evaluation"]
-                + param_names
-                + ["objective_value", "failed", "halted_early", "halt_reason"],
-            )
-            writer.writeheader()
-            for e in all_evaluations:
-                row = {
-                    "evaluation": e["evaluation"],
-                    "failed": e.get("failed", False),
-                    "halted_early": e.get("halted_early", False),
-                    "halt_reason": e.get("halt_reason", ""),
-                }
-                row.update(e["parameters"])
-                row["objective_value"] = e.get("objective_value", float("nan"))
-                writer.writerow(row)
-        plugin._log_result(f"[OK] Partial results saved to: {csv_path}")
-
-    summary = {
-        "status": status,
-        "timestamp": timestamp,
-        "total_evaluations": len(all_evaluations),
-        "successful_evaluations": len(successful_evals),
-        "halted_evaluations": len(halted_evals),
-        "failed_evaluations": len(all_evaluations)
-        - len(successful_evals)
-        - len(halted_evals),
-        "parameters": param_names,
-        "objective": plugin.config.objective,
-    }
-
-    if len(successful_evals) > 0:
-        maximize = "max" in plugin.config.objective.lower()
-        finite_evals = [
-            e for e in successful_evals if np.isfinite(e.get("objective_value", np.inf))
-        ]
-
-        if len(finite_evals) > 0:
-            if maximize:
-                best = max(
-                    finite_evals, key=lambda x: x.get("objective_value", -float("inf"))
-                )
-            else:
-                best = min(
-                    finite_evals, key=lambda x: x.get("objective_value", float("inf"))
-                )
-            summary["best_parameters"] = best["parameters"]
-            summary["best_value"] = best["objective_value"]
-        else:
-            summary["note"] = "No finite objective values found"
-
-    summary_path = output_dir / "partial_summary.json"
-    with open(summary_path, "w") as f:
-        json.dump(summary, f, indent=2)
-    plugin._log_result(f"[OK] Summary saved to: {summary_path}")
-
-    if plugin._log_file_path is not None and plugin._log_file_path.exists():
-        dest_log = output_dir / plugin._log_file_path.name
-        shutil.copy2(plugin._log_file_path, dest_log)
-        plugin._log_result(f"[OK] Log file saved to: {dest_log}")
-
-
 def relocate_incomplete_sweep(
     sweep_dir: Path,
     min_runs: int = 100,
@@ -993,6 +900,5 @@ def relocate_incomplete_sweep(
 
 __all__ = [
     "save_optimization_results",
-    "save_partial_optimization_results",
     "relocate_incomplete_sweep",
 ]

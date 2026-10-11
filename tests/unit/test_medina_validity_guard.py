@@ -55,7 +55,6 @@ def uniform_run(
             target_ms_tolerance=1e-6,
             max_iterations=2,
             mass_shell_tolerance=0.01,
-            mass_shell_relaxation=0.7,
             chrono_interpolate=False,
         ),
     )
