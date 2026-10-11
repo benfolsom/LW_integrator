@@ -31,7 +31,13 @@ from weakref import ref
 import numpy as np
 
 from .constants import C_MMNS
-from .exact_source_cloud import ExactCloudHistory, transverse_offsets
+from .exact_source_cloud import (
+    ExactCloudHistory,
+    breathing_separation_frame,
+    BreathingResponse,
+    breathing_width_tail,
+    transverse_offsets,
+)
 from .exact_visibility import ExactVisibilityHistory, visible_prepared
 from .history_prefix_view import HistoryPrefixView
 from .light_cone_history import (
@@ -265,6 +271,12 @@ class _HistoryArrays:
     resolved_knots: np.ndarray | None = dataclass_field(default=None, repr=False)
     gate_prime_before: np.ndarray | None = dataclass_field(default=None, repr=False)
     gate_prime_after: np.ndarray | None = dataclass_field(default=None, repr=False)
+    _gate_prime_before_buffer: np.ndarray | None = dataclass_field(
+        default=None, repr=False
+    )
+    _gate_prime_after_buffer: np.ndarray | None = dataclass_field(
+        default=None, repr=False
+    )
     _resolved_buffer: np.ndarray | None = dataclass_field(default=None, repr=False)
     _time_buffer: np.ndarray | None = dataclass_field(default=None, repr=False)
     _position_buffer: np.ndarray | None = dataclass_field(default=None, repr=False)
@@ -300,6 +312,7 @@ class _PreparedSourceHistory:
     _maximum_capacity: int | None = dataclass_field(default=None, repr=False)
     _metal_timelike_count: int = dataclass_field(default=0, repr=False)
     _metal_timelike_proof: bool = dataclass_field(default=True, repr=False)
+    breathing_child: bool = False
 
 
 @dataclass(frozen=True)
@@ -310,6 +323,10 @@ class _PreparedHistory:
     sources: dict[int, _PreparedSourceHistory]
     source_acceleration_semantics: str = "preceding_interval"
     parent_indices: np.ndarray | None = None
+    breathing_response: BreathingResponse | None = None
+    breathing_acceleration_tail: np.ndarray | None = dataclass_field(
+        default=None, repr=False, compare=False
+    )
     # Owned by this storage revision, never by observer-specific exclusions.
     clouds: dict[tuple, _PreparedHistory] = dataclass_field(
         default_factory=dict, repr=False, compare=False
@@ -1007,10 +1024,15 @@ _HISTORY_ROW_FIELDS = (
 )
 
 
-def _slice_history_arrays(arrays: _HistoryArrays, start: int) -> _HistoryArrays:
+def _slice_history_arrays(
+    arrays: _HistoryArrays, start: int, *, include_gates: bool = False
+) -> _HistoryArrays:
+    names = _HISTORY_ROW_FIELDS + (
+        ("gate_prime_before", "gate_prime_after") if include_gates else ()
+    )
     values: dict[str, Any] = {
         name: None if getattr(arrays, name) is None else getattr(arrays, name)[start:]
-        for name in _HISTORY_ROW_FIELDS
+        for name in names
     }
     return _HistoryArrays(charge_native=arrays.charge_native, **values)
 
@@ -1606,7 +1628,10 @@ def _prepare_history(
             history.config.seed,
             history.config.position_sigma_mm,
             history.config.sigma_multiplier,
+            history.widths_mm,
         )
+        if history.config.breathing_enabled:
+            key += ("breathing", history.config.breathing_response_time_ns)
         cloud = macro.clouds.get(key)
         if (
             cloud is None
@@ -1615,16 +1640,27 @@ def _prepare_history(
             provisional = isinstance(history.base, TrialTrajectoryHistory)
             if provisional:
                 cloud = _prepare_history(
-                    ExactCloudHistory(history.base.base, history.config),
+                    ExactCloudHistory(
+                        history.base.base, history.config, history.widths_mm
+                    ),
                     (),
                     source_acceleration_semantics=acceleration_semantics,
                 )
             # Accepted appenders may grow buffers in place. A failed cloud
             # translation must not leave a half-updated variant reusable.
             macro.clouds.pop(key, None)
-            cloud = _expand_cloud_prepared_history(
-                macro, history.config, previous=cloud, provisional=provisional
-            )
+            if history.config.breathing_enabled:
+                cloud = _expand_breathing_cloud_history(
+                    macro, history, previous=cloud, provisional=provisional
+                )
+            else:
+                cloud = _expand_cloud_prepared_history(
+                    macro,
+                    history.config,
+                    widths_mm=history.widths_mm,
+                    previous=cloud,
+                    provisional=provisional,
+                )
             macro.clouds[key] = cloud
             while len(macro.clouds) > 4:
                 del macro.clouds[next(iter(macro.clouds))]
@@ -1711,6 +1747,7 @@ def _expand_cloud_prepared_history(
     macro: _PreparedHistory,
     config: MacroparticleSmearingConfig,
     *,
+    widths_mm: tuple[float, ...] | None = None,
     previous: _PreparedHistory | None = None,
     provisional: bool = False,
 ) -> _PreparedHistory:
@@ -1730,7 +1767,11 @@ def _expand_cloud_prepared_history(
         )
     parents = np.repeat(np.arange(macro.arrays.n_sources), count)
     offsets_and_weights = [
-        transverse_offsets(macro.arrays.beta[0, parent], config)
+        transverse_offsets(
+            macro.arrays.beta[0, parent],
+            config,
+            width_mm=None if widths_mm is None else widths_mm[parent],
+        )
         for parent in range(macro.arrays.n_sources)
     ]
     offsets = np.concatenate([item[0] for item in offsets_and_weights])
@@ -1873,6 +1914,242 @@ def _expand_cloud_prepared_history(
         )
     return _PreparedHistory(
         arrays, sources, macro.source_acceleration_semantics, parents
+    )
+
+
+def _expand_breathing_cloud_history(
+    macro: _PreparedHistory,
+    cloud: ExactCloudHistory,
+    *,
+    previous: _PreparedHistory | None = None,
+    provisional: bool = False,
+) -> _PreparedHistory:
+    """Prepare moving point children, including their expansion current.
+
+    Knot positions, velocities, and accelerations define C2 quintic child
+    worldlines. Inertial prehistory retains the original transverse offsets.
+    The field and all potential/gradient providers solve these child curves.
+    """
+    old_stop = 0 if previous is None else previous.arrays.time_ns.shape[0]
+    rows = _slice_history_arrays(macro.arrays, old_stop, include_gates=True)
+    if rows.resolved_knots is not None and np.any(rows.resolved_knots[..., 13] != 0):
+        raise ValueError("exact charge clouds do not support 'proper_velocity'")
+    widths, rates, accelerations, response = breathing_width_tail(
+        cloud,
+        macro.arrays.time_ns,
+        macro.arrays.position_mm,
+        macro.arrays.beta,
+        macro.arrays.dead,
+        start=old_stop,
+        previous=None if previous is None else previous.breathing_response,
+    )
+    count = cloud.config.subcharge_count
+    parents = np.repeat(np.arange(macro.arrays.n_sources), count)
+    rules = [
+        transverse_offsets(macro.arrays.beta[0, parent], cloud.config, width_mm=1.0)
+        for parent in range(macro.arrays.n_sources)
+    ]
+    nodes = np.concatenate([rule[0] for rule in rules])
+    fractions = np.concatenate([rule[1] for rule in rules])
+    offsets = widths[:, parents, None] * nodes
+    beta = rows.beta[:, parents] + rates[:, parents, None] * nodes / C_MMNS
+    # Reuse the centre's actual reconstructed derivatives, including gate
+    # semantics, rather than the raw stored preceding-interval estimates.
+    centre_prime = np.array(rows.beta_prime_per_mm, copy=True)
+    for parent, source in macro.sources.items():
+        centre_prime[: max(0, len(source.time_ns) - old_stop), parent] = (
+            source.beta_prime_per_mm[old_stop:]
+        )
+    prime = (
+        centre_prime[:, parents] + accelerations[:, parents, None] * nodes / C_MMNS**2
+    )
+    speed_squared = np.sum(beta**2, axis=2)
+    if not np.isfinite(beta).all() or np.any(speed_squared >= 1):
+        raise ValueError(
+            "breathing child velocity must be strictly subluminal; increase "
+            "breathing_response_time_ns or reduce the represented velocity spread"
+        )
+    arrays = _HistoryArrays(
+        time_ns=rows.time_ns[:, parents],
+        position_mm=rows.position_mm[:, parents] + offsets,
+        beta=beta,
+        beta_prime_per_mm=prime,
+        charge_native=rows.charge_native[parents] * fractions,
+        dead=rows.dead[:, parents],
+        resolved_knots=(
+            None
+            if rows.resolved_knots is None
+            else np.array(rows.resolved_knots[:, parents], copy=True)
+        ),
+        gate_prime_before=(
+            None
+            if rows.gate_prime_before is None
+            else rows.gate_prime_before[:, parents]
+            + accelerations[:, parents, None] * nodes / C_MMNS**2
+        ),
+        gate_prime_after=(
+            None
+            if rows.gate_prime_after is None
+            else rows.gate_prime_after[:, parents]
+            + accelerations[:, parents, None] * nodes / C_MMNS**2
+        ),
+    )
+    if arrays.resolved_knots is not None:
+        gamma = 1 / np.sqrt(1 - speed_squared)
+        arrays.resolved_knots[..., :3] = gamma[..., None] * beta
+        arrays.resolved_knots[..., 3] = 1
+        arrays.resolved_knots[..., 12] = 1 / (gamma**2 * (1 + np.sqrt(speed_squared)))
+        for knot, child in np.ndindex(arrays.time_ns.shape):
+            _, low, tail = _translate_resolved_position(
+                rows.position_mm[knot, parents[child]],
+                rows.resolved_knots[knot, parents[child], 4:7],
+                rows.resolved_knots[knot, parents[child], 8:11],
+                offsets[knot, child],
+            )
+            arrays.resolved_knots[knot, child, 4:7] = low
+            arrays.resolved_knots[knot, child, 8:11] = tail
+    capacity = (
+        None if macro.arrays._time_buffer is None else len(macro.arrays._time_buffer)
+    )
+    tail_arrays = arrays
+    if previous is None:
+        arrays = _reserve_history_arrays(
+            arrays, capacity, maximum_capacity=macro.arrays._maximum_capacity
+        )
+    elif provisional:
+        arrays = _overlay_history_arrays(previous.arrays, arrays)
+    else:
+        previous.arrays._maximum_capacity = macro.arrays._maximum_capacity
+        arrays = _append_extracted_history_arrays(previous.arrays, arrays, old_stop)
+    if previous is not None:
+        for name in ("gate_prime_before", "gate_prime_after"):
+            prefix = getattr(previous.arrays, name)
+            tail = getattr(tail_arrays, name)
+            if prefix is None and tail is None:
+                continue
+            if prefix is None:
+                prefix = np.full((old_stop, len(parents), 3), np.nan)
+            if tail is None:
+                tail = np.full((len(widths), len(parents), 3), np.nan)
+            if provisional:
+                value = HistoryPrefixView(prefix, old_stop, tail)
+            else:
+                buffer_name = f"_{name}_buffer"
+                buffer = getattr(previous.arrays, buffer_name)
+                stop = old_stop + len(widths)
+                if buffer is None or len(buffer) < stop:
+                    buffer = np.empty((len(arrays._time_buffer), len(parents), 3))
+                    buffer[:old_stop] = prefix
+                buffer[old_stop:stop] = tail
+                setattr(arrays, buffer_name, buffer)
+                value = buffer[:stop]
+            setattr(arrays, name, value)
+    # The centre's preceding-interval derivative can revise its old endpoint.
+    # Rebuild at most three context rows, with cached expansion accelerations.
+    context_start = max(0, old_stop - 3)
+    local = _slice_history_arrays(arrays, context_start, include_gates=True)
+    for name in (*_HISTORY_ROW_FIELDS, "gate_prime_before", "gate_prime_after"):
+        value = getattr(local, name)
+        if isinstance(value, HistoryPrefixView):
+            setattr(local, name, np.stack(tuple(value)))
+    local.beta_prime_per_mm = np.array(local.beta_prime_per_mm, copy=True)
+    expansion = accelerations
+    if previous is not None:
+        expansion = np.concatenate(
+            (previous.breathing_acceleration_tail, accelerations)
+        )
+    for child, parent in enumerate(parents):
+        centre = macro.sources.get(int(parent))
+        if centre is not None:
+            stop = max(0, len(centre.time_ns) - context_start)
+            if stop == 0:
+                continue
+            local.beta_prime_per_mm[:stop, child] = (
+                np.stack(tuple(centre.beta_prime_per_mm[context_start:]))
+                + expansion[:stop, parent, None] * nodes[child] / C_MMNS**2
+            )
+    # Share the stable prefix, including for trial arrays; only derivatives
+    # within the short reconstruction suffix can change.
+    if provisional:
+        arrays.beta_prime_per_mm = HistoryPrefixView(
+            previous.arrays.beta_prime_per_mm, context_start, local.beta_prime_per_mm
+        )
+    else:
+        arrays.beta_prime_per_mm[context_start:] = local.beta_prime_per_mm
+    sources = {}
+    for child, parent in enumerate(parents):
+        centre = macro.sources.get(int(parent))
+        if centre is None:
+            continue
+        old_source = None if previous is None else previous.sources.get(child)
+        if old_source is not None and old_source.ended_by_loss:
+            source = copy(old_source) if provisional else old_source
+            _append_prepared_source_history(source, arrays, old_stop)
+            sources[child] = source
+            continue
+        boundary = centre.inertial_boundary
+        if old_source is not None:
+            boundary = old_source.inertial_boundary
+        elif boundary is not None:
+            boundary = (boundary[0], boundary[1] + offsets[0, child], boundary[2])
+        suffix = _prepare_source_history(
+            local,
+            child,
+            source_acceleration_semantics="instantaneous",
+            inertial_boundary=boundary,
+        )
+        if old_source is None:
+            source = suffix
+        elif provisional:
+            source = replace(old_source)
+            for name in (
+                "time_ns",
+                "position_mm",
+                "beta",
+                "beta_prime_per_mm",
+                "segment_duration_ns",
+                "position_coefficients_mm",
+                "light_cone_segments",
+            ):
+                setattr(
+                    source,
+                    name,
+                    HistoryPrefixView(
+                        getattr(old_source, name), context_start, getattr(suffix, name)
+                    ),
+                )
+            source.ended_by_loss = suffix.ended_by_loss
+            source._duration_buffer = None
+            source._coefficient_buffer = None
+            source._beta_prime_buffer = None
+        else:
+            old_source._maximum_capacity = macro.arrays._maximum_capacity
+            source = _append_prepared_source_history(old_source, arrays, old_stop)
+            # Replace the old endpoint reconstruction using the same oracle as
+            # a fresh history, leaving earlier segment objects untouched.
+            stop = len(source.time_ns)
+            source._beta_prime_buffer[context_start:stop] = suffix.beta_prime_per_mm
+            source._duration_buffer[context_start : stop - 1] = (
+                suffix.segment_duration_ns
+            )
+            source._coefficient_buffer[context_start : stop - 1] = (
+                suffix.position_coefficients_mm
+            )
+            source.light_cone_segments[context_start:] = suffix.light_cone_segments
+        source.breathing_child = True
+        if any(segment_speed_deficit_bound(s) <= 0 for s in suffix.light_cone_segments):
+            raise ValueError(
+                "breathing child segment cannot be certified subluminal; "
+                "refine the timestep or increase breathing_response_time_ns"
+            )
+        sources[child] = source
+    return _PreparedHistory(
+        arrays,
+        sources,
+        macro.source_acceleration_semantics,
+        parents,
+        breathing_response=response,
+        breathing_acceleration_tail=expansion[-3:].copy(),
     )
 
 
@@ -2462,8 +2739,10 @@ def _solve_null_history_sample(
         separation_mm=float(radius),
         source_proper_velocity=proper,
         precise_separation_mm=separation,
-        precise_separation_frame_mm=separation_in_velocity_frame(
-            segment, separation_frame, proper
+        precise_separation_frame_mm=(
+            breathing_separation_frame(segment, separation_frame, proper)
+            if source.breathing_child
+            else separation_in_velocity_frame(segment, separation_frame, proper)
         ),
         beta_jerk_per_mm2=jerk,
         beta_snap_per_mm3=snap,

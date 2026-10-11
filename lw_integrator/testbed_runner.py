@@ -336,6 +336,8 @@ class SimulationOptions:
     macroparticle_smearing_apply_to_passive_updates: bool = False
     macroparticle_smearing_seed: int = 12345
     macroparticle_smearing_refresh_policy: str = "fixed_per_particle"
+    macroparticle_smearing_breathing_enabled: bool = False
+    macroparticle_smearing_breathing_response_time_ns: float = 0.01
 
     # Self-consistency options
     self_consistency_enabled: bool = True
@@ -455,6 +457,9 @@ class SimulationOptions:
     # Intrinsic magnetic moment / spin options. Preset values are resolved by
     # the core species registry when a run starts.
     magnetic_dipole_enabled: bool = False
+    exact_source_reduction_enabled: bool = False
+    exact_source_reduction_rider_count: int = 0
+    exact_source_reduction_driver_count: int = 0
     magnetic_dipole_spin_precession_enabled: bool = True
     magnetic_dipole_stern_gerlach_force_enabled: bool = False
     magnetic_dipole_spin_model: str = "rfs_minimal_2021"
@@ -752,6 +757,14 @@ class SimulationOptions:
                 "apply_to_passive_updates": self.macroparticle_smearing_apply_to_passive_updates,
                 "seed": self.macroparticle_smearing_seed,
                 "refresh_policy": self.macroparticle_smearing_refresh_policy,
+                **(
+                    {
+                        "breathing_enabled": True,
+                        "breathing_response_time_ns": self.macroparticle_smearing_breathing_response_time_ns,
+                    }
+                    if self.macroparticle_smearing_breathing_enabled
+                    else {}
+                ),
             },
             "self_consistency_enabled": self.self_consistency_enabled,
             "self_consistency_tolerance": self.self_consistency_tolerance,
@@ -823,6 +836,9 @@ class SimulationOptions:
             "external_field_z_max": self.external_field_z_max,
             "external_field_t_min": self.external_field_t_min,
             "external_field_t_max": self.external_field_t_max,
+            "exact_source_reduction_enabled": self.exact_source_reduction_enabled,
+            "exact_source_reduction_rider_count": self.exact_source_reduction_rider_count,
+            "exact_source_reduction_driver_count": self.exact_source_reduction_driver_count,
             "magnetic_dipole": {
                 "enabled": self.magnetic_dipole_enabled,
                 "spin_precession_enabled": (
@@ -973,10 +989,21 @@ class SimulationOptions:
             "save_log_file": self.save_log_file,
             "log_file_path": self.log_file_path,
         }
+        if self.exact_source_reduction_enabled:
+            for suffix in ("enabled", "rider_count", "driver_count"):
+                name = f"exact_source_reduction_{suffix}"
+                payload[f"magnetic_dipole_{name}"] = payload.pop(name)
         return payload
 
     @classmethod
     def from_dict(cls, payload: Dict[str, object]) -> "SimulationOptions":
+        # Prefer the namespaced source-model surface; retain old saved inputs.
+        payload = dict(payload)
+        for suffix in ("enabled", "rider_count", "driver_count"):
+            name = f"exact_source_reduction_{suffix}"
+            canonical = f"magnetic_dipole_{name}"
+            if canonical in payload:
+                payload[name] = payload[canonical]
         sweep_keys = {"sweep_parameters", "energy_min", "energy_max", "energy_points"}
         if (
             "rider_params" not in payload
@@ -1011,6 +1038,12 @@ class SimulationOptions:
                 return int(value)  # type: ignore[arg-type,no-any-return,call-overload]
             except (TypeError, ValueError):
                 return default
+
+        def _source_count(name: str) -> int:
+            value = payload.get(name, 0)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(f"{name} must be a non-negative integer")
+            return value
 
         def _float(name: str, default: float) -> float:
             value = payload.get(name, default)
@@ -1635,6 +1668,12 @@ class SimulationOptions:
             macroparticle_smearing_refresh_policy=str(
                 _smearing_value("refresh_policy", "fixed_per_particle")
             ).replace("-", "_"),
+            macroparticle_smearing_breathing_enabled=_smearing_bool(
+                "breathing_enabled", False
+            ),
+            macroparticle_smearing_breathing_response_time_ns=_smearing_float(
+                "breathing_response_time_ns", 0.01
+            ),
             self_consistency_enabled=_strict_bool("self_consistency_enabled", True),
             self_consistency_tolerance=_float("self_consistency_tolerance", 1e-4),
             self_consistency_convergence_mode=canonicalize_self_consistency_mode(
@@ -1761,6 +1800,15 @@ class SimulationOptions:
             external_field_z_max=_optional_float("external_field_z_max"),
             external_field_t_min=_optional_float("external_field_t_min"),
             external_field_t_max=_optional_float("external_field_t_max"),
+            exact_source_reduction_enabled=_bool(
+                "exact_source_reduction_enabled", False
+            ),
+            exact_source_reduction_rider_count=_source_count(
+                "exact_source_reduction_rider_count"
+            ),
+            exact_source_reduction_driver_count=_source_count(
+                "exact_source_reduction_driver_count"
+            ),
             magnetic_dipole_enabled=bool(_magnetic_value("enabled", False)),
             magnetic_dipole_spin_precession_enabled=bool(
                 _magnetic_value("spin_precession_enabled", True)
@@ -3063,6 +3111,8 @@ def build_macroparticle_smearing_config(options: SimulationOptions) -> object:
         refresh_policy=str(options.macroparticle_smearing_refresh_policy).replace(
             "-", "_"
         ),
+        breathing_enabled=bool(options.macroparticle_smearing_breathing_enabled),
+        breathing_response_time_ns=options.macroparticle_smearing_breathing_response_time_ns,
     )
 
 
@@ -3173,12 +3223,22 @@ def build_magnetic_dipole_config(options: SimulationOptions) -> object:
     """Build the validated core magnetic-dipole configuration."""
     from core.types import (
         DipoleSourceConfig,
+        ExactSourceReductionConfig,
         MagneticDipoleConfig,
         MagneticDipoleParticleConfig,
     )
 
     return MagneticDipoleConfig(
         enabled=options.magnetic_dipole_enabled,
+        exact_source_reduction=(
+            ExactSourceReductionConfig(
+                enabled=True,
+                rider_count=options.exact_source_reduction_rider_count,
+                driver_count=options.exact_source_reduction_driver_count,
+            )
+            if options.exact_source_reduction_enabled
+            else None
+        ),
         spin_precession_enabled=options.magnetic_dipole_spin_precession_enabled,
         stern_gerlach_force_enabled=(
             options.magnetic_dipole_stern_gerlach_force_enabled

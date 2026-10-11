@@ -35,6 +35,15 @@ INERTIAL_CHARGE_BOUNDARY_FIELDS = (
     "inertial_charge_boundary_u_z",
 )
 
+EXACT_SOURCE_REDUCTION_FIELDS = (
+    "exact_source_cell_sigma_mm",
+    "exact_source_original_count",
+    "exact_source_cell_xv_mm2_ns",
+    "exact_source_cell_vv_mm2_ns2",
+    "exact_source_cell_epoch_ns",
+    "exact_source_breathing_ready",
+)
+
 ParticleState = Dict[str, np.ndarray]
 Trajectory = List[ParticleState]
 TrajectoryView = Sequence[ParticleState]
@@ -268,8 +277,15 @@ class MacroparticleSmearingConfig:
     apply_to_passive_updates: bool = False
     seed: int = 12345
     refresh_policy: str = "fixed_per_particle"
+    breathing_enabled: bool = False
+    breathing_response_time_ns: float = 0.01
 
     def __post_init__(self) -> None:
+        if self.breathing_enabled and (
+            not np.isfinite(self.breathing_response_time_ns)
+            or self.breathing_response_time_ns <= 0
+        ):
+            raise ValueError("breathing_response_time_ns must be positive and finite")
         if self.mode != "deterministic_subcharge":
             raise ValueError(
                 "macroparticle smearing mode must be deterministic_subcharge"
@@ -864,6 +880,31 @@ class DipoleSourceConfig:
 
 
 @dataclass
+class ExactSourceReductionConfig:
+    """Fixed initial charge/population deposition for a reduced exact model.
+
+    Counts of zero retain that role unchanged. A request at or above the
+    original count preserves its original arithmetic. This is a coarse source
+    model requiring count, width, and timestep refinement, not an exact
+    evaluation of the unreduced ensemble.
+    """
+
+    enabled: bool = False
+    rider_count: int = 0
+    driver_count: int = 0
+
+    def __post_init__(self) -> None:
+        for name in ("rider_count", "driver_count"):
+            value = getattr(self, name)
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, np.integer))
+                or value < 0
+            ):
+                raise ValueError(f"{name} must be a non-negative integer")
+
+
+@dataclass
 class MagneticDipoleConfig:
     """Configuration for experimental intrinsic magnetic-moment dynamics.
 
@@ -884,6 +925,7 @@ class MagneticDipoleConfig:
     intrinsic_spin_self_reaction_mode: str = "off"
     # Bound by the integration runner for persistent charge-only clouds.
     exact_charge_cloud: MacroparticleSmearingConfig | None = None
+    exact_source_reduction: ExactSourceReductionConfig | None = None
     source: DipoleSourceConfig = field(default_factory=DipoleSourceConfig)
     rider: MagneticDipoleParticleConfig = field(
         default_factory=lambda: MagneticDipoleParticleConfig(species="electron")
@@ -895,6 +937,10 @@ class MagneticDipoleConfig:
     def __post_init__(self) -> None:
         self.enabled = bool(self.enabled)
         self.spin_precession_enabled = bool(self.spin_precession_enabled)
+        if isinstance(self.exact_source_reduction, dict):
+            self.exact_source_reduction = ExactSourceReductionConfig(
+                **self.exact_source_reduction
+            )
         if isinstance(self.exact_charge_cloud, dict):
             self.exact_charge_cloud = MacroparticleSmearingConfig(
                 **self.exact_charge_cloud
@@ -1638,6 +1684,26 @@ class TrajectoryArrays:
         default_factory=lambda: np.zeros((0, 0)), repr=False
     )
 
+    # Optional fixed source-model constants; absent on legacy histories.
+    exact_source_cell_sigma_mm: np.ndarray = field(
+        default_factory=lambda: np.zeros(0), repr=False
+    )
+    exact_source_original_count: np.ndarray = field(
+        default_factory=lambda: np.zeros(0), repr=False
+    )
+    exact_source_cell_xv_mm2_ns: np.ndarray = field(
+        default_factory=lambda: np.zeros(0), repr=False
+    )
+    exact_source_cell_vv_mm2_ns2: np.ndarray = field(
+        default_factory=lambda: np.zeros(0), repr=False
+    )
+    exact_source_cell_epoch_ns: np.ndarray = field(
+        default_factory=lambda: np.zeros(0), repr=False
+    )
+    exact_source_breathing_ready: np.ndarray = field(
+        default_factory=lambda: np.zeros(0), repr=False
+    )
+
     # Builder-owned live metadata. Manually constructed SOA objects deliberately
     # leave this unset and are therefore not eligible for persistent caches.
     _storage_state: _TrajectoryStorageState | None = field(
@@ -1790,6 +1856,15 @@ class TrajectoryArrays:
         if np.any(self.inertial_charge_boundary_ready):
             s.update(
                 {key: getattr(self, key) for key in INERTIAL_CHARGE_BOUNDARY_FIELDS}
+            )
+        if np.any(self.exact_source_original_count):
+            s.update(
+                {
+                    name: getattr(self, name)
+                    for name in EXACT_SOURCE_REDUCTION_FIELDS
+                    if name in EXACT_SOURCE_REDUCTION_FIELDS[:2]
+                    or np.any(self.exact_source_breathing_ready)
+                }
             )
         if self.halted_early[step]:
             metadata = cast(Dict[str, object], s)
@@ -2082,6 +2157,15 @@ class IndexedTrajectoryArrays:
             state.update(
                 {key: self.constant(key) for key in INERTIAL_CHARGE_BOUNDARY_FIELDS}
             )
+        if np.any(self.base.exact_source_original_count):
+            state.update(
+                {
+                    name: self.constant(name)
+                    for name in EXACT_SOURCE_REDUCTION_FIELDS
+                    if name in EXACT_SOURCE_REDUCTION_FIELDS[:2]
+                    or np.any(self.base.exact_source_breathing_ready)
+                }
+            )
         pseudo_grid_schedule = self.base.pseudo_grid_schedule[global_step]
         if pseudo_grid_schedule is not None:
             state["_pseudo_grid_schedule"] = pseudo_grid_schedule
@@ -2263,22 +2347,26 @@ class TrajectoryBuilder:
         "medina_force_derivative_ready",
         "medina_impulse_capped",
     )
-    _PARTICLE_CONST_FIELDS: tuple = INERTIAL_CHARGE_BOUNDARY_FIELDS + (
-        "q",
-        "q_species",
-        "q_observer",
-        "q_source",
-        "macro_population",
-        "m",
-        "m_species",
-        "char_time",
-        "magnetic_moment_j_per_t",
-        "magnetic_moment_native",
-        "spin_quantum_number",
-        "gyromagnetic_ratio_rad_s_t",
-        "magnetic_dipole_active",
-        "spin_precession_active",
-        "stern_gerlach_active",
+    _PARTICLE_CONST_FIELDS: tuple = (
+        INERTIAL_CHARGE_BOUNDARY_FIELDS
+        + EXACT_SOURCE_REDUCTION_FIELDS
+        + (
+            "q",
+            "q_species",
+            "q_observer",
+            "q_source",
+            "macro_population",
+            "m",
+            "m_species",
+            "char_time",
+            "magnetic_moment_j_per_t",
+            "magnetic_moment_native",
+            "spin_quantum_number",
+            "gyromagnetic_ratio_rad_s_t",
+            "magnetic_dipole_active",
+            "spin_precession_active",
+            "stern_gerlach_active",
+        )
     )
 
     def __init__(
@@ -2701,7 +2789,7 @@ class TrajectoryBuilder:
         if particle_constants is not None:
             missing_constants = (
                 set(self._PARTICLE_CONST_FIELDS)
-                - set(INERTIAL_CHARGE_BOUNDARY_FIELDS)
+                - set(INERTIAL_CHARGE_BOUNDARY_FIELDS + EXACT_SOURCE_REDUCTION_FIELDS)
                 - particle_constants.keys()
             )
             if missing_constants:
@@ -2839,6 +2927,7 @@ class TrajectoryBuilder:
             inertial_charge_boundary_u_x=self._arrays["inertial_charge_boundary_u_x"],
             inertial_charge_boundary_u_y=self._arrays["inertial_charge_boundary_u_y"],
             inertial_charge_boundary_u_z=self._arrays["inertial_charge_boundary_u_z"],
+            **{name: self._arrays[name] for name in EXACT_SOURCE_REDUCTION_FIELDS},
             q=self._arrays["q"],
             q_species=self._arrays["q_species"],
             q_observer=self._arrays["q_observer"],
@@ -2961,6 +3050,7 @@ class TrajectoryBuilder:
             inertial_charge_boundary_u_x=self._arrays["inertial_charge_boundary_u_x"],
             inertial_charge_boundary_u_y=self._arrays["inertial_charge_boundary_u_y"],
             inertial_charge_boundary_u_z=self._arrays["inertial_charge_boundary_u_z"],
+            **{name: self._arrays[name] for name in EXACT_SOURCE_REDUCTION_FIELDS},
             q=self._arrays["q"],
             q_species=self._arrays["q_species"],
             q_observer=self._arrays["q_observer"],
@@ -3204,6 +3294,31 @@ class GrowableTrajectoryBuilder(TrajectoryBuilder):
 
         return self.build_current()
 
+
+# Explicit particle-axis schema: matching a bunch metadata vector's length
+# never makes it a particle array. Reuse the trajectory field definitions.
+PARTICLE_STATE_FIELDS = frozenset(
+    TrajectoryBuilder._KINEMATIC_FIELDS
+    + TrajectoryBuilder._MAGNETIC_KINEMATIC_FIELDS
+    + TrajectoryBuilder._MAGNETIC_BOOL_FIELDS
+    + TrajectoryBuilder._MEDINA_FLOAT_FIELDS
+    + TrajectoryBuilder._MEDINA_BOOL_FIELDS
+    + TrajectoryBuilder._PARTICLE_CONST_FIELDS
+    + TrajectoryBuilder._INCLUSION_FIELDS
+    + (
+        "_dead_particles",
+        "charge_source_canonical_ready",
+        "dipole_source_canonical_ready",
+        "canonical_state",
+        "stripped_ions",
+        "_exact_source_endpoint_rebase_required",
+        "_exact_source_start_four_potential",
+        "_source_start_acceleration_complete",
+        "_gate_prime_before",
+        "_gate_prime_after",
+        "_exact_visibility_force_history_restarted",
+    )
+)
 
 __all__ = [
     "ParticleState",

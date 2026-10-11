@@ -2,7 +2,8 @@
 
 ## Unreleased
 
-## v0.11.0 — 2026-10-10 — exact histories, native PIC, and boundary studies
+Includes the v0.11.0 changes released on 2026-10-10 (exact histories, native PIC,
+and boundary studies), plus subsequent integration updates.
 
 ### Exact retarded fields and source histories
 
@@ -14,9 +15,18 @@
   crossings at accepted endpoints. Gates remain an ideal visibility model;
   material screening, screen heat, and boundary radiation are not included.
 - Support fixed-step charge driver trains with translated `INERTIAL_PREHISTORY`.
-  Expand the train before constructing each particle's causal prefix. Adaptive
-  or resumable trains, intrinsic dipole-source trains, and persistent finite
-  train clouds remain unsupported.
+  Reduce the template when requested, then expand the train before constructing
+  each particle's causal prefix. Support persistent transverse charge clouds
+  and resumable fixed-step train checkpoints with inertial prehistory. Adaptive
+  trains and intrinsic dipole-source trains remain unsupported.
+- Restrict opt-in exact-source breathing to reduced cells with retained velocity
+  covariance, including driver-train templates. Cache accepted breathing widths
+  and child histories so appends and private trials rebuild only a short suffix.
+  Preserve unrelated metadata during source reduction and train expansion, and
+  accept namespaced reduction settings while retaining legacy input aliases.
+  Clarify the floored cell-width model and unresolved internal cell forces.
+  Add an opt-in shared lab-time clock to the light/heavy probe harness; production
+  clocks and disabled-feature defaults remain unchanged.
 - Add exact same-bunch charge fields to force, canonical potentials, prehistory
   preflight, and endpoint reconstruction, excluding self-sources. Require
   inertial prehistory, retarded evaluation, and zero point-charge softening.
@@ -153,8 +163,15 @@
 - Refresh Sphinx coverage of exact histories and gates, PIC and correction
   settings, boundary APIs, external fields, and stochastic-emission guards.
   Correct overview, quickstart, self-consistency claims, navigation, and math
-  markup. Add the classical-limit and bremsstrahlung validity discussion and
-  synchronize version metadata to 0.11.0.
+  markup, and synchronize version metadata to 0.11.0.
+- Add the physics discussion "Classical limit, bremsstrahlung, and validity"
+  (`docs/source/classical_limit_bremsstrahlung.rst`, under Physics background).
+  It covers LW as the classical limit of retarded QED and its bounds, benchmarks
+  against QFT-derived classical scattering results, the capture threshold, and
+  emission beyond the bremsstrahlung endpoint. It also covers the classical
+  spinning electron's validity limit (about 0.3 $E_S$), the 165 fm reaction-ledger
+  failure, and impact-parameter-summed cross sections against Li et al. (2021)
+  and Kim and Pratt (1987).
 
 ## v0.10.0 — 2026-09-23 — many-particle full-spin milestone
 
