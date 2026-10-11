@@ -112,16 +112,28 @@ and boundary studies), plus subsequent integration updates.
 - Add opt-in electron/positron emission with quantum/recoil thresholds, quantum
   LCFA and capped classical spectra, seeded photon logs, on-shell recoil, a
   background-impulse ledger, and checkpointed random-generator state. Supported
-  entry points are zero-spin fixed-RK4 native pairs and guarded fixed-step
-  sampled `BUNCH_TO_BUNCH` runs. Finite-spin quantum recoil and closed
-  electron–ion conservation remain open. Saved testbed and GUI configs include
-  a disabled settings block; deterministic defaults remain unchanged.
-- Reject emission on the general exact `INERTIAL_PREHISTORY` path with
-  `NotImplementedError` until recoil kicks are stored as split velocity knots.
-  A kick diagnostic found a classical radiation pulse whose peak and fluence
-  grow under timestep refinement. The sampled and native pair kick controls
+  entry points are zero-spin fixed-RK4 native pairs and fixed-step sampled or
+  exact `BUNCH_TO_BUNCH` runs within the documented restrictions. Finite-spin
+  quantum recoil and closed electron–ion conservation remain open. Saved testbed
+  and GUI configs include a disabled settings block; deterministic defaults
+  remain unchanged.
+- Record accepted stochastic recoils as split velocity knots on the general
+  exact `INERTIAL_PREHISTORY` path, and remove its temporary emission guard.
+  Source reconstruction uses incoming and outgoing smooth branches, preserving
+  visibility knots and the masked Medina/LAD restart. This fixes the extra
+  classical radiation pulse whose peak and fluence grew under timestep
+  refinement before the guard. Coasting-kick controls now have zero residual
+  radiation under timestep refinement; sampled and native pair controls also
   avoid that pulse, without establishing general trajectory accuracy. Earlier
-  exact-emission smoke runs predate this guard and are not supported workflows.
+  exact-emission smoke results predate both the guard and this correction.
+- Keep gate and recoil knots aligned across a bunch after particle loss, and
+  resume incremental charge and dipole preparation outside the three-knot
+  split window. Decode only appended metadata, copy one source's split
+  derivatives at a time, and preserve instantaneous acceleration for unkicked
+  sources. General-runner recoil metadata uses null derivatives and
+  incoming-state keys that require a reader supporting split kicks; older
+  checkpoints remain readable. Document the provisional ballistic outgoing
+  branch and the remaining cost of frequent split events.
 - In enabled quantum mode, scale continuous classical reaction below activation
   by the LCFA quantum/classical power ratio. Subdivide intervals exceeding the
   probability cap and update momentum after each photon. Keep emission payloads
@@ -161,7 +173,7 @@ and boundary studies), plus subsequent integration updates.
   quadrature, stale pseudo-grid test unpacking, and missing sweep fixtures.
   Headless sweeps no longer import Tk; Tk-only tests skip when Tk is unavailable.
 - Refresh Sphinx coverage of exact histories and gates, PIC and correction
-  settings, boundary APIs, external fields, and stochastic-emission guards.
+  settings, boundary APIs, external fields, and stochastic-emission restrictions.
   Correct overview, quickstart, self-consistency claims, navigation, and math
   markup, and synchronize version metadata to 0.11.0.
 - Add the physics discussion "Classical limit, bremsstrahlung, and validity"

@@ -51,7 +51,7 @@ terms are outside this provider.
 from __future__ import annotations
 
 from copy import copy
-from dataclasses import dataclass, field as dataclass_field
+from dataclasses import dataclass, replace, field as dataclass_field
 from functools import lru_cache
 from itertools import product
 from typing import Any, Hashable, Sequence, cast
@@ -81,6 +81,7 @@ from .retarded_fields import (
     RetardedHistoryError,
     TrajectoryHistory,
     _append_history_array_tail,
+    _without_split_metadata,
     _extract_history,
     _history_constant,
     _history_matrix,
@@ -608,7 +609,9 @@ def _append_prepared_dipole_history(
 ) -> _PreparedDipoleHistory:
     """Extend worldline quintics and the C1 source-spin interpolation tail."""
 
-    arrays = _append_history_arrays(previous.arrays, history, old_stop)
+    arrays = _append_history_arrays(
+        _without_split_metadata(previous.arrays), history, old_stop
+    )
     moments = np.asarray(
         _history_constant(history, "magnetic_moment_native"), dtype=float
     )
@@ -715,7 +718,7 @@ def _append_prepared_dipole_history(
                 preserved_magnitude = None
         source.worldline = worldline
         source.preserved_rest_spin_magnitude = preserved_magnitude
-    return previous
+    return previous if arrays is previous.arrays else replace(previous, arrays=arrays)
 
 
 def _prepare_dipole_history(
@@ -739,12 +742,22 @@ def _prepare_dipole_history(
             excluded_source_identities=excluded_source_identities,
             spin_interpolation_model=spin_interpolation_model,
         )
-    from .exact_visibility_history import expanded_visibility_history
+    from .exact_visibility_history import expanded_visibility_history, split_free_tail
 
-    expanded = expanded_visibility_history(history)
+    smooth_trial = False
+    if isinstance(history, TrialTrajectoryHistory):
+        base_expanded = expanded_visibility_history(history.base)
+        smooth_trial = (
+            base_expanded is not None
+            and split_free_tail(base_expanded, len(base_expanded))
+            and split_free_tail(
+                expanded_visibility_history(list(history.tail)) or history.tail, 0
+            )
+        )
+    expanded = None if smooth_trial else expanded_visibility_history(history)
     if expanded is not None:
 
-        def prepare_expanded(current):
+        def prepare_expanded(current: TrajectoryHistory) -> _PreparedDipoleHistory:
             return _prepare_dipole_history_uncached(
                 expanded,
                 source_identities=source_identities,
@@ -763,7 +776,18 @@ def _prepare_dipole_history(
                 tuple(excluded_source_identities),
             ),
             prepare_full=prepare_expanded,
-            append=lambda previous, current, old_stop: prepare_expanded(current),
+            append=lambda previous, current, old_stop: (
+                _append_prepared_dipole_history(
+                    previous,
+                    expanded,
+                    previous.arrays.time_ns.shape[0],
+                    source_identities=source_identities,
+                    observer_source_identity=observer_source_identity,
+                    excluded_source_identities=excluded_source_identities,
+                )
+                if split_free_tail(expanded, previous.arrays.time_ns.shape[0])
+                else prepare_expanded(current)
+            ),
         ).value
     if isinstance(history, TrialTrajectoryHistory):
         if selected_spin_interpolation != _CAUSAL_FROZEN_C1_SPIN_INTERPOLATION:
@@ -779,7 +803,7 @@ def _prepare_dipole_history(
         )
         tail_arrays = _extract_history(list(history.tail))
         arrays, old_stop = _append_history_array_tail(
-            accepted.arrays,
+            _without_split_metadata(accepted.arrays),
             tail_arrays,
         )
         spin_components = tuple(

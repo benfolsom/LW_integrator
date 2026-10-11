@@ -1,9 +1,10 @@
 Stochastic quantum emission (opt-in)
 ======================================
 
-This experimental feature is off by default. The general runner supports only
-its guarded sampled ``BUNCH_TO_BUNCH`` diagnostic route; enabling emission
-with ``INERTIAL_PREHISTORY`` raises ``NotImplementedError``. The separate
+This experimental feature is off by default. The general runner supports
+fixed-step ``BUNCH_TO_BUNCH`` runs on its sampled diagnostic route and its exact
+``INERTIAL_PREHISTORY`` route, within the restrictions below. Accepted recoils
+are stored as split velocity knots on the exact source history. The separate
 nonlinear native pair runner supports fixed RK4 with zero intrinsic spin and
 split velocity histories. Exact source reconstruction in that pair runner is
 not the general exact endpoint route.
@@ -176,13 +177,6 @@ derivative.
 Kick histories
 ~~~~~~~~~~~~~~~~
 
-.. note::
-
-   Until split velocity knots exist in the exact source history, enabling
-   stochastic emission with ``startup_mode=INERTIAL_PREHISTORY`` (the exact
-   retarded path) raises ``NotImplementedError``. Use the sampled path or
-   the nonlinear pair runner.
-
 The emitted photon represents the discrete radiation loss. Its recoil must
 join incoming and outgoing source velocities without adding a classical
 acceleration pulse from the same jump. Smooth acceleration on either branch
@@ -193,13 +187,46 @@ the outgoing accepted velocity. Version 9 history checkpoints preserve
 that split. Cubic position intervals near a kick use the appropriate one-sided
 endpoint velocities; they do not interpolate velocity across the jump.
 
-The passive-observer kick diagnostic confirms that the general exact runner
-does not yet publish this velocity split. Its default acceleration
-reconstruction differentiates accepted velocities through the kick. Halving
-the source timestep doubles the residual pulse's peak field and radiation
-fluence after subtracting the velocity-field change. The integrated impulse
-and signed work remain nearly constant. This is an additional classical
-radiation contribution from the event already represented by the photon.
+Before split velocities were recorded, the passive-observer kick diagnostic
+found an extra classical radiation contribution from the event already
+represented by the photon. Halving the source timestep doubled the residual
+pulse's peak field and radiation fluence after subtracting the velocity-field
+change, while its integrated impulse and signed work remained nearly constant.
+That finding prompted the temporary exact-path emission guard, which is now
+removed with the split-history correction.
+
+The general exact runner also records incoming and outgoing velocity knots
+in the accepted inclusion metadata. Checkpoints preserve these knots, including
+resolved proper velocities. Acceleration reconstruction and position intervals
+use the matching smooth branch on each side. The next continuous interval
+primes the outgoing acceleration; the velocity jump itself contributes no
+classical acceleration pulse. Earlier visibility knots retain their one-sided
+force data. While the kick is the newest knot, endpoint and trial predictions
+use a ballistic outgoing branch with zero acceleration; the next accepted
+sample reconstructs that provisional one-sided derivative.
+
+The sampled runner also stores these split knots. Its trajectory calculation
+is unchanged, but subsequent exact-field diagnostics on that trajectory use
+the recorded velocity split. General-runner kick metadata contains null
+one-sided derivatives and incoming velocity/resolved-state keys. Older
+readers predating this feature cannot load it; old checkpoints without kicks
+remain readable by the current code.
+
+For managed, append-only histories, charge and dipole preparation returns to
+incremental updates once a split leaves the three-knot derivative window.
+Accepted metadata decoding then touches only newly appended rows. A new
+split and the next three appended rows still rebuild the expanded history,
+as do provisional evaluations while that split remains in the window.
+Thus one isolated kick no longer forces a full rebuild for every later step.
+For N accepted rows and K well-separated split events, full-rebuild work is
+bounded by O(KN), in addition to ordinary incremental preparation. Frequent
+kicks or gate switches can still give O(N²) preparation cost. Unmanaged lists,
+history rewrites, and checkpoint reloads also require full preparation.
+Explicit instantaneous-acceleration histories with split metadata retain full
+reconstruction. Dipole trial preparation retains its existing prefix-copy cost.
+Metadata storage remains proportional to the number of sources times the
+number of split knots. Benchmark the intended source count and emission rate
+before long runs.
 
 For the same isolated kick between coasting branches, the default sampled
 path has exactly zero residual radiation, and the native pair path is at
@@ -207,20 +234,19 @@ roundoff. The sampled path reads stored continuous-interval acceleration,
 which excludes the endpoint recoil. This bounded check does not validate
 sampled trajectory accuracy or interpolation across kicks.
 
-Existing exact visibility knots store two one-sided accelerations but one
-continuous velocity. Correcting the general runner requires split velocities
-and matching resolved kinematics throughout source preparation and sampling.
-That broader history change is planned, not implemented. The Medina/LAD
-restart remains in place, but does not repair source radiation seen by other
-particles. Diagnostic commands, values, and the implementation scope are kept in local
-validation notes outside the repository.
+The corrected general exact path also matches the separate ballistic branches
+at and around the kick's light cone, with zero residual radiation under
+timestep refinement. These coasting controls check that the recoil adds no
+classical pulse; they do not establish accuracy for accelerated trajectories
+or close successive kicks. Historical diagnostic commands and values remain
+in local validation notes outside the repository.
 
 The nonlinear momentum-center runner supports ``charge_ll`` and the
 full-dipole reaction selections for zero intrinsic spin. Finite-spin action
 mass and quantum spin transitions require a separate recoil derivation and
 are rejected explicitly. The general runner supports fixed-step
-``BUNCH_TO_BUNCH`` sampled runs with zero intrinsic moment and spin.
-The general exact path is guarded off, including exact same-bunch runs.
+``BUNCH_TO_BUNCH`` sampled and exact retarded paths with zero intrinsic moment
+and spin, including exact same-bunch charge fields.
 Unsupported adaptive or reduced-history combinations fail explicitly.
 Config and CLI settings remain off by default.
 
@@ -273,14 +299,18 @@ scheme is first order in the orbit timestep, even when the orbit uses RK4.
 The general runner uses the
 field sample from its final deterministic force trial, with the non-reaction
 mechanical momentum. Sampled LW fields use the accepted retarded source
-samples. Prescribed fields are included once. RNG draws occur at the pair acceptance barrier, before exact
+samples; exact fields use the exact provider tensor. Prescribed fields are
+included once. RNG draws occur at the pair acceptance barrier, before exact
 canonical endpoint reconstruction and checkpoint publication.
 
 The general runner rejects walls, adaptive steps, pseudo-grids, driver trains,
 cavity tails, dipole sources, beamline occlusion, sampled same-bunch fields,
-and population-weighted particles in this implementation. The exact
-``INERTIAL_PREHISTORY`` guard is unconditional when emission is enabled;
-zero moments or below-threshold settings do not bypass it.
+and population-weighted particles in this implementation. Exact same-bunch
+charge fields can use the existing fixed-step framework. Exact charge-only
+runs select that framework through the RFS configuration: use custom species
+with an explicit zero moment and unspecified spin quantum number (which
+initialises to zero), while retaining the precession framework switch. This
+is a framework requirement, not physical spin precession.
 
 The pair adapter requires fixed RK4, zero intrinsic spin, and endpoint source
 histories with consecutive derivative sampling. It rejects internal adaptive
@@ -333,8 +363,8 @@ better than :math:`1.64\times10^{-7}` relatively, and with the mean power to
 better than :math:`9.38\times10^{-7}`. At :math:`\chi=10^{-4}`, mean quantum
 power was 0.999405 of the classical value.
 
-Historical checks before the exact-path guard was added used
-uniform-magnetic-field runs at initial :math:`\gamma=100` and :math:`\chi=0.1`
+Historical uniform-magnetic-field checks before the temporary exact-path guard
+and split-history correction, at initial :math:`\gamma=100` and :math:`\chi=0.1`,
 produced 25 photons on the sampled path and five on the exact path, with seeded
 and checkpoint-resumed identity in both cases. Single-seed 100 keV and 20 keV
 carbon encounters at :math:`b/b_{\rm crit}=8` produced zero photons; integrated
@@ -344,18 +374,20 @@ An explicitly selected, reseeded midpoint branch produced one 77.49 keV
 photon, with identical pair resumes. That branch tests recoil and history
 publication, not an unbiased physical emission yield. Scripts, event lists,
 checkpoints, and detailed results are kept in local validation notes.
-Two approved stochastic regression tests cover independent rate/power
-quadrature and forced-kick checkpoint identity.
+Stochastic regression tests cover independent rate/power quadrature, forced-kick
+checkpoint identity in both runners, and the coasting-kick field under timestep
+refinement. General exact checkpoint tests exercise Python, compiled, and
+proper-velocity source reconstruction while preserving smooth acceleration
+on both sides of a kick.
 Review-fix scripts and results are kept in local notes. Seeded and resumed
 identity includes the sub-interval RNG draws. Public general-runner trajectories
 retain the emission payload only on the final row, including after periodic
 checkpoint writes; intermediate partial event logs are removed.
-Before that guard, with ``max_probability=0.0005``, sampled and exact
-1,200-step magnetic
-checks emitted 14 and four photons, respectively. Both seeded repeats and
-checkpoint resumes matched all 182 SOA trajectory arrays byte for byte, as
-well as the event, diagnostic, and RNG payloads. The original 100 keV and
-20 keV Coulomb smoke scripts also completed with zero photons and identical
+Before that temporary guard, with ``max_probability=0.0005``, sampled and exact
+1,200-step magnetic checks emitted 14 and four photons, respectively. Both
+seeded repeats and checkpoint resumes matched all 182 SOA trajectory arrays
+byte for byte, as well as the event, diagnostic, and RNG payloads. The original
+100 keV and 20 keV Coulomb smoke scripts also completed with zero photons and identical
 JSON resumes, retaining their original numerical guards and tolerances.
 
 Validation against thread C benchmarks
