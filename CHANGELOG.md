@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Trim copied test algorithms and share identical fixtures and runner setup,
+  preserving numerical assertions and strengthening dead-particle retry coverage.
+  Runtime code, numerical defaults, and physics tolerances are unchanged.
+
 ## v0.11.0 — 2026-10-10 — exact histories, native PIC, and boundary studies
 
 ### Exact retarded fields and source histories
