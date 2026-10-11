@@ -611,6 +611,15 @@ def commit_general_state(
     samples = state.get("_stochastic_emission_samples")
     if samples is None:
         raise RuntimeError("Accepted step did not provide stochastic emission samples")
+    from .exact_visibility_history import save_visibility_knots
+    from .resolved_knot import RESOLVED_KNOT_FIELDS
+
+    count = len(samples)
+    kicked = np.zeros(count, dtype=bool)
+    incoming_beta = np.stack([state[f"b{a}"] for a in "xyz"], axis=-1).copy()
+    incoming_resolved = np.stack(
+        [state.get(name, np.zeros(count)) for name in RESOLVED_KNOT_FIELDS], axis=-1
+    ).copy()
     for i, sample in enumerate(samples):
         if sample is None:
             continue
@@ -640,6 +649,17 @@ def commit_general_state(
         _clear_medina_force_history(state, particle_mask=mask)
         before_pt = np.hypot(mass * C, np.linalg.norm(momentum))
         after_pt = np.hypot(mass * C, np.linalg.norm(after))
+        kicked[i] = True
+        if not incoming_resolved[i, 3]:
+            # Match the fallback used for all other accepted source knots.
+            # Recomputing beta from momentum here would add a roundoff jump
+            # even to a perfectly coasting incoming branch.
+            incoming_resolved[i, :3] = state["gamma"][i] * incoming_beta[i]
+            incoming_resolved[i, 3] = 1.0
+            incoming_resolved[i, 12] = 1 / (
+                state["gamma"][i]
+                * (state["gamma"][i] + np.linalg.norm(incoming_resolved[i, :3]))
+            )
         state["Pt"][i] += after_pt - before_pt
         state["gamma"][i] = after_pt / (mass * C)
         proper = after / (mass * C)
@@ -656,4 +676,15 @@ def commit_general_state(
         if "source_kinematics_ready" in state:
             state["source_kinematics_ready"][i] = 1.0
         state["radiation_energy_applied"][i] = C * (before_pt - after_pt)
+    if np.any(kicked):
+        # Publish one net split for all photons at this accepted endpoint.
+        # NaN scratch primes mean reconstruct on the smooth branch; they are
+        # serialized as null, never as a zero-acceleration physical assumption.
+        knot = dict(state)
+        knot["_kick_mask"] = kicked
+        knot["_kick_beta_before"] = incoming_beta
+        knot["_kick_resolved_before"] = incoming_resolved
+        knot["_gate_prime_before"] = np.full((count, 3), np.nan)
+        knot["_gate_prime_after"] = np.full((count, 3), np.nan)
+        save_visibility_knots(state, [knot], append=True)
     state.pop("_stochastic_emission_samples", None)

@@ -163,8 +163,17 @@ def _forced_pair_payload() -> tuple[dict, float]:
     return payload, width
 
 
-def test_pair_checkpoint_resume_is_bit_identical_after_forced_photon_kick() -> None:
-    """Protect v9 velocity jumps, event/RNG persistence, and pair restart identity."""
+@pytest.mark.parametrize(
+    "runner",
+    ["pair", "general_exact", "general_exact_proper", "general_exact_compiled"],
+)
+def test_pair_checkpoint_resume_is_bit_identical_after_forced_photon_kick(
+    runner, tmp_path
+) -> None:
+    """Protect velocity splits, event/RNG persistence, and restart identity."""
+    if runner != "pair":
+        _check_general_exact_restart(tmp_path, runner)
+        return
     payload, width = _forced_pair_payload()
     uninterrupted, _ = advance_pair(copy.deepcopy(payload), width, 2)
     after_kick, _ = advance_pair(copy.deepcopy(payload), width, 1)
@@ -178,3 +187,120 @@ def test_pair_checkpoint_resume_is_bit_identical_after_forced_photon_kick() -> N
     ]
     assert emission["particles"]["0"]["test_forced_emission_used"] is True
     assert len(uninterrupted["histories"][0]["velocity_jumps"]) == 1
+
+
+def _check_general_exact_restart(tmp_path, runner):
+    from dataclasses import fields
+
+    from core.integration_runner import IntegrationCancelled
+    from core.potential_inclusion import decode_inclusion_state
+    from core.retarded_fields import _prepare_history
+    from core.types import CheckpointConfig, ExternalFieldConfig
+    from tests.unit.test_exact_visibility_gates import crossing_run
+    from tests.unit.test_inertial_prehistory import _state
+
+    rider = _state(
+        position_mm=(0.1, 0, -0.5),
+        beta=(0, 0, np.sqrt(0.75)),
+        mass_amu=ELECTRON_MASS,
+        observer_charge=-ELEMENTARY_CHARGE,
+    )
+    driver = _state(
+        position_mm=(0, 0, 0.5),
+        beta=(0, 0, -0.2),
+        mass_amu=12,
+        observer_charge=ELEMENTARY_CHARGE,
+    )
+    options = dict(
+        backend=(
+            "numba_analytic_charge_response_serial"
+            if runner == "general_exact_compiled"
+            else "python"
+        ),
+        source_history_representation=(
+            "proper_velocity"
+            if runner == "general_exact_proper"
+            else "light_cone_quintic"
+        ),
+        rider_state=rider,
+        driver_state=driver,
+        duration=1e-6,
+        stochastic_emission=StochasticEmissionConfig(
+            enabled=True,
+            seed=73,
+            chi_threshold=1e-30,
+            recoil_threshold=1e-30,
+            test_force_next_emission_fraction=0.01,
+        ),
+        external_field=ExternalFieldConfig(magnetic_field_native=(0, 100, 0)),
+    )
+    baseline = crossing_run(5, None, **options)
+    cancelled = False
+
+    def progress(current, total):
+        nonlocal cancelled
+        cancelled |= current >= 3
+
+    directory = str(tmp_path / "kick-checkpoint")
+    with pytest.raises(IntegrationCancelled):
+        crossing_run(
+            5,
+            None,
+            **options,
+            checkpoint=CheckpointConfig(
+                enabled=True,
+                directory=directory,
+                interval_steps=1,
+                interval_seconds=0,
+            ),
+            progress_callback=progress,
+            cancel_callback=lambda: cancelled,
+        )
+    resumed = crossing_run(
+        5,
+        None,
+        **options,
+        checkpoint=CheckpointConfig(
+            resume_from=directory,
+            interval_steps=1,
+            interval_seconds=0,
+        ),
+    )
+    for plain, restored in zip(baseline[2:4], resumed[2:4]):
+        for descriptor in fields(type(plain)):
+            value = getattr(plain, descriptor.name)
+            if isinstance(value, np.ndarray):
+                assert (
+                    value.tobytes() == getattr(restored, descriptor.name).tobytes()
+                ), descriptor.name
+    assert (
+        baseline[0][-1]["_stochastic_emission"]
+        == resumed[0][-1]["_stochastic_emission"]
+    )
+    rows = baseline[0]
+    knots = [
+        knot
+        for row in rows
+        for knot in decode_inclusion_state(
+            str(row.get("potential_inclusion_state", [""])[0])
+        )
+        .get("exact_gate_history", {})
+        .get("knots", [])
+        if "velocity_before" in knot and knot["t"] == float(row["t"][0])
+    ]
+    assert len(knots) == 1
+    source = _prepare_history(baseline[2], ()).sources[0]
+    index = np.flatnonzero(source.time_ns == knots[0]["t"])[0]
+    np.testing.assert_allclose(
+        source.light_cone_segments[index - 1].sample(1)[1],
+        knots[0]["velocity_before"],
+        rtol=0,
+        atol=1e-15,
+    )
+    assert not np.array_equal(
+        source.light_cone_segments[index - 1].sample(1)[1],
+        source.light_cone_segments[index].sample(0)[1],
+    )
+    # Smooth background acceleration survives the split, on both branches.
+    assert np.linalg.norm(source.light_cone_segments[index - 1].sample(1)[2]) > 0
+    assert np.linalg.norm(source.light_cone_segments[index].sample(0)[2]) > 0

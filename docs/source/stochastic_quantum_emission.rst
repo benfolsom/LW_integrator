@@ -168,13 +168,6 @@ derivative.
 Kick histories
 ~~~~~~~~~~~~~~
 
-.. note::
-
-   Until split velocity knots exist in the exact source history, enabling
-   stochastic emission with ``startup_mode=INERTIAL_PREHISTORY`` (the exact
-   retarded path) raises ``NotImplementedError``. Use the sampled path or
-   the nonlinear pair runner.
-
 The emitted photon represents the discrete radiation loss. Its recoil must
 join incoming and outgoing source velocities without adding a classical
 acceleration pulse from the same jump. Smooth acceleration on either branch
@@ -185,27 +178,19 @@ the outgoing accepted velocity. AO's version 9 history checkpoints preserve
 that split. Cubic position intervals near a kick use the appropriate one-sided
 endpoint velocities; they do not interpolate velocity across the jump.
 
-Task AT's passive-observer diagnostic confirms that the general exact runner
-does not yet publish this velocity split. Its default acceleration
-reconstruction differentiates accepted velocities through the kick. Halving
-the source timestep doubles the residual pulse's peak field and radiation
-fluence after subtracting the velocity-field change. The integrated impulse
-and signed work remain nearly constant. This is an additional classical
-radiation contribution from the event already represented by the photon.
+The general exact runner also records incoming and outgoing velocity knots
+in the accepted inclusion metadata. Checkpoints preserve these knots, including
+resolved proper velocities. Acceleration reconstruction and position intervals
+use the matching smooth branch on each side. The next continuous interval
+primes the outgoing acceleration; the velocity jump itself contributes no
+classical acceleration pulse. Earlier visibility knots retain their one-sided
+force data.
 
 For the same isolated kick between coasting branches, the default sampled
 path has exactly zero residual radiation, and the native pair path is at
 roundoff. The sampled path reads stored continuous-interval acceleration,
 which excludes the endpoint recoil. This bounded check does not validate
 sampled trajectory accuracy or interpolation across kicks.
-
-Existing exact visibility knots store two one-sided accelerations but one
-continuous velocity. Correcting the general runner requires split velocities
-and matching resolved kinematics throughout source preparation and sampling.
-That broader history change is planned, not implemented. AS's Medina/LAD
-restart remains in place, but does not repair source radiation seen by other
-particles. Diagnostic commands, values, and the implementation scope are kept in local
-validation notes outside the repository.
 
 The nonlinear momentum-center runner supports ``charge_ll`` and the
 full-dipole reaction selections for zero intrinsic spin. Finite-spin action

@@ -2,14 +2,11 @@
 
 ## Unreleased
 
-- Refuse stochastic emission on the exact INERTIAL_PREHISTORY path
-  (`NotImplementedError`) until kicks are recorded as split velocity knots;
-  the sampled path and the nonlinear pair runner are unaffected.
-- Diagnose a classical radiation pulse from stochastic velocity kicks on the
-  general exact path: its peak field and radiation fluence grow as the timestep
-  shrinks. The coasting-kick control is pulse-free on the default sampled path,
-  and at roundoff with AO's native pair split histories. Document kick histories
-  and the broader source-history fix plan; no production fix is implemented.
+- Record accepted stochastic recoils as split velocity knots on the general
+  exact retarded path, and remove its emission guard. Source reconstruction
+  uses incoming and outgoing smooth branches without adding a classical pulse
+  from the photon recoil. Preserve visibility knots and the masked Medina
+  restart. The coasting-kick fluence is zero under timestep refinement.
 
 - Unify the public local constant-field diagnostic brackets with the thread C
   strong-field-QED study through ``lcfa_spectral_brackets``.  Document the

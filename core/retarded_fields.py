@@ -265,6 +265,8 @@ class _HistoryArrays:
     resolved_knots: np.ndarray | None = dataclass_field(default=None, repr=False)
     gate_prime_before: np.ndarray | None = dataclass_field(default=None, repr=False)
     gate_prime_after: np.ndarray | None = dataclass_field(default=None, repr=False)
+    kick_beta_before: np.ndarray | None = dataclass_field(default=None, repr=False)
+    kick_resolved_before: np.ndarray | None = dataclass_field(default=None, repr=False)
     _resolved_buffer: np.ndarray | None = dataclass_field(default=None, repr=False)
     _time_buffer: np.ndarray | None = dataclass_field(default=None, repr=False)
     _position_buffer: np.ndarray | None = dataclass_field(default=None, repr=False)
@@ -292,6 +294,7 @@ class _PreparedSourceHistory:
     ended_by_loss: bool
     source_acceleration_semantics: str = "preceding_interval"
     inertial_boundary: tuple[float, np.ndarray, np.ndarray] | None = None
+    kick_boundary: tuple[float, np.ndarray, np.ndarray] | None = None
     light_cone_segments: Sequence[LightConeSegment] = ()
     light_cone_enabled: bool = True
     _duration_buffer: np.ndarray | None = dataclass_field(default=None, repr=False)
@@ -489,16 +492,12 @@ def _build_null_segments(
     result = []
     for knot in range(start, max(start, stop - 1)):
         sl = slice(knot, knot + 2)
-        data = (
-            None
-            if history.resolved_knots is None
-            else history.resolved_knots[sl, source_index]
-        )
+        betas, data = _branch_kinematics(history, source_index, knot, knot + 1)
         primes = _segment_beta_primes(history, source_index, knot, beta_primes)
         segment = build_light_cone_segment(
             history.time_ns[sl, source_index],
             history.position_mm[sl, source_index],
-            history.beta[sl, source_index],
+            betas,
             primes,
             proper_velocity=(
                 data[:, :3] if data is not None and np.all(data[:, 3]) else None
@@ -516,15 +515,35 @@ def _build_null_segments(
                 )
             if modes[0] == 1.0:
                 try:
-                    segment = constrain_proper_velocity_segment(
-                        segment, beta_primes[sl]
-                    )
+                    segment = constrain_proper_velocity_segment(segment, primes)
                 except ValueError as error:
                     raise ValueError(
                         f"proper_velocity constraint failed for source {source_index}, segment {knot}: {error}"
                     ) from error
         result.append(segment)
     return tuple(result)
+
+
+def _branch_kinematics(
+    history: _HistoryArrays, source_index: int, left: int, right: int
+) -> tuple[np.ndarray, np.ndarray | None]:
+    """Return a smooth branch, ending with the incoming velocity at a recoil."""
+    sl = slice(left, right + 1)
+    betas = history.beta[sl, source_index]
+    data = (
+        None
+        if history.resolved_knots is None
+        else history.resolved_knots[sl, source_index]
+    )
+    if history.kick_beta_before is not None:
+        incoming = history.kick_beta_before[right, source_index]
+        if np.all(np.isfinite(incoming)):
+            betas = np.array(betas, copy=True)
+            betas[-1] = incoming
+            if data is not None:
+                data = np.array(data, copy=True)
+                data[-1] = history.kick_resolved_before[right, source_index]
+    return betas, data
 
 
 def _segment_beta_primes(
@@ -588,6 +607,17 @@ def _extract_history(history: TrajectoryHistory) -> _HistoryArrays:
                 [
                     row.get(
                         f"_gate_prime_{side}", np.full((time_ns.shape[1], 3), np.nan)
+                    )
+                    for row in history
+                ]
+            )
+    if isinstance(history, list) and any("_kick_beta_before" in row for row in history):
+        for field, width in (("beta", 3), ("resolved", len(RESOLVED_KNOT_FIELDS))):
+            gate_primes[f"kick_{field}_before"] = np.stack(
+                [
+                    row.get(
+                        f"_kick_{field}_before",
+                        np.full((time_ns.shape[1], width), np.nan),
                     )
                     for row in history
                 ]
@@ -1253,31 +1283,57 @@ def _prepare_source_history(
             ),
         )
     )
-    if (
-        history.gate_prime_before is not None
-        and acceleration_semantics != "instantaneous"
+    if history.gate_prime_before is not None and (
+        acceleration_semantics != "instantaneous"
+        or history.kick_beta_before is not None
     ):
         # Reconstruct on each smooth side separately. Even the neighbours of
         # a gate knot must not difference velocities across its force jump.
-        breaks = np.flatnonzero(
-            np.all(
-                np.isfinite(history.gate_prime_before[:alive_stop, source_index]),
+        split = np.all(
+            np.isfinite(history.gate_prime_before[:alive_stop, source_index]),
+            axis=1,
+        )
+        if history.kick_beta_before is not None:
+            kicks = np.all(
+                np.isfinite(history.kick_beta_before[:alive_stop, source_index]),
                 axis=1,
             )
-        )
+            split |= kicks
+            # One-sided reconstructed primes belong to this prepared view.
+            history = replace(
+                history,
+                gate_prime_before=np.array(history.gate_prime_before, copy=True),
+                gate_prime_after=np.array(history.gate_prime_after, copy=True),
+            )
+        breaks = np.flatnonzero(split)
         boundaries = sorted(set((0, *breaks, alive_stop - 1)))
         for left, right in zip(boundaries[:-1], boundaries[1:]):
             sl = slice(left, right + 1)
-            beta_primes[sl] = _source_beta_prime_samples(
-                times[sl],
-                betas[sl],
-                inertial_boundary,
-                (
-                    None
-                    if history.resolved_knots is None
-                    else history.resolved_knots[sl, source_index]
-                ),
+            branch_betas, branch_data = _branch_kinematics(
+                history, source_index, left, right
             )
+            branch_primes = _source_beta_prime_samples(
+                times[sl],
+                branch_betas,
+                inertial_boundary,
+                branch_data,
+            )
+            beta_primes[sl] = branch_primes
+            if history.kick_beta_before is not None:
+                for index, side, prime in (
+                    (left, "after", branch_primes[0]),
+                    (right, "before", branch_primes[-1]),
+                ):
+                    values = getattr(history, f"gate_prime_{side}")
+                    if kicks[index] and not np.all(
+                        np.isfinite(values[index, source_index])
+                    ):
+                        values[index, source_index] = prime
+        if history.kick_beta_before is not None and alive_stop and kicks[-1]:
+            # No outgoing interval has been accepted yet. Prime its derivative
+            # from future smooth samples when they arrive, as Medina does.
+            history.gate_prime_after[alive_stop - 1, source_index] = 0.0
+            beta_primes[-1] = 0.0
     durations, coefficients = _quintic_position_coefficients_mm(
         times,
         positions,
@@ -1286,10 +1342,11 @@ def _prepare_source_history(
     )
     if history.gate_prime_before is not None:
         for knot in range(len(durations)):
+            segment_betas, _ = _branch_kinematics(history, source_index, knot, knot + 1)
             _, piece = _quintic_position_coefficients_mm(
                 times[knot : knot + 2],
                 positions[knot : knot + 2],
-                betas[knot : knot + 2],
+                segment_betas,
                 _segment_beta_primes(history, source_index, knot, beta_primes),
             )
             coefficients[knot] = piece[0]
@@ -1304,6 +1361,19 @@ def _prepare_source_history(
         ended_by_loss=alive_stop != history.time_ns.shape[0],
         source_acceleration_semantics=acceleration_semantics,
         inertial_boundary=inertial_boundary,
+        kick_boundary=(
+            (
+                times[-1],
+                positions[-1],
+                history.resolved_knots[alive_stop - 1, source_index, :3],
+            )
+            if alive_stop
+            and history.kick_beta_before is not None
+            and np.all(
+                np.isfinite(history.kick_beta_before[alive_stop - 1, source_index])
+            )
+            else None
+        ),
         light_cone_segments=(
             list(
                 _build_null_segments(history, source_index, 0, alive_stop, beta_primes)
@@ -1854,6 +1924,13 @@ def _expand_cloud_prepared_history(
             boundary = old_source.inertial_boundary
         elif boundary is not None:
             boundary = (boundary[0], boundary[1] + offsets[child], boundary[2])
+        kick_boundary = centre.kick_boundary
+        if kick_boundary is not None:
+            kick_boundary = (
+                kick_boundary[0],
+                kick_boundary[1] + offsets[child],
+                kick_boundary[2],
+            )
         # All child kinematics come from the centre; only positions and
         # constant polynomial coefficients are translated.
         alive_stop = len(centre.time_ns)
@@ -1864,6 +1941,7 @@ def _expand_cloud_prepared_history(
             position_mm=translated_position,
             position_coefficients_mm=coefficients,
             inertial_boundary=boundary,
+            kick_boundary=kick_boundary,
             light_cone_segments=segments,
             _coefficient_buffer=(
                 coefficient_buffer
@@ -2491,8 +2569,13 @@ def _solve_retarded_sample(
 ) -> _RetardedSample | None:
     if source.inertial_boundary is not None and source.time_ns.size == 0:
         return None
-    if source.inertial_boundary is not None:
-        anchor_time, anchor_position, proper_velocity = source.inertial_boundary
+    boundaries = [(source.inertial_boundary, True)]
+    if extrapolate_ns > 0.0 and not source.ended_by_loss:
+        boundaries.append((source.kick_boundary, False))
+    for boundary, incoming in boundaries:
+        if boundary is None:
+            continue
+        anchor_time, anchor_position, proper_velocity = boundary
         point = ballistic_retarded_point(
             observer_time_ns=observer_time_ns,
             observer_position_mm=observer_position_mm,
@@ -2504,7 +2587,14 @@ def _solve_retarded_sample(
             observer_time_tail_ns=observer_time_tail_ns,
             observer_position_tail_mm=observer_position_tail_mm,
         )
-        if point.time_ns + point.time_error_bound_ns <= anchor_time:
+        on_branch = (
+            point.time_ns + point.time_error_bound_ns <= anchor_time
+            if incoming
+            else anchor_time <= point.time_ns - point.time_error_bound_ns
+            and point.time_ns + point.time_error_bound_ns
+            <= anchor_time + extrapolate_ns
+        )
+        if on_branch:
             if point.time_ns - point.time_error_bound_ns < source.time_ns[0]:
                 return None
             gamma = np.hypot(1.0, np.linalg.norm(proper_velocity))
