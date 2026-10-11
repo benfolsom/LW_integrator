@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-import json
+
 import os
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog
 from typing import Any
+
+from input_output.config import read_config_document, write_config_document
 
 from optimization.config import OptimizationConfig
 from optimization.plugin_persistence_helpers import (
@@ -417,8 +419,7 @@ class OptimizationPluginConfigMixin:
     def _load_config_from_path(self, filepath: str) -> None:
         """Load configuration from a specific file path."""
         try:
-            with open(filepath, "r") as f:
-                data = json.load(f)
+            data = read_config_document(Path(filepath))
 
             self.last_loaded_config = filepath
 
@@ -762,8 +763,7 @@ class OptimizationPluginConfigMixin:
                 sweep_state=sweep_state,
             )
 
-            with open(filepath, "w") as f:
-                json.dump(data, f, indent=2)
+            write_config_document(data, Path(filepath))
 
             self.last_loaded_config = filepath
             self._log_result(f"[OK] Configuration saved to {filepath}")

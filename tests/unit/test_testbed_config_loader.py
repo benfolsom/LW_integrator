@@ -45,6 +45,10 @@ def test_nested_testbed_loader_preserves_beams_and_timestep(tmp_path):
 
 
 def test_default_testbed_options_and_single_beam_remain_supported():
+    assert (
+        SimulationOptions(17, 42).to_dict()
+        == SimulationOptions(steps=17, seed=42).to_dict()
+    )
     assert SimulationOptions.from_dict({}).rider_params
     options = SimulationOptions.from_dict(
         {

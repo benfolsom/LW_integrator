@@ -8,6 +8,8 @@ from typing import Any, Mapping, cast
 
 import numpy as np
 
+from input_output.config import copy_sweep_options_to_run
+
 from core.constants import C_MMNS
 from core.smoothness_analyzer import SmoothnessConfig, analyze_trajectory_smoothness
 from lw_integrator.testbed_runner import SimulationOptions
@@ -168,6 +170,7 @@ def build_single_integration_setup(
     )
 
     options = simulation_options_cls(
+        **copy_sweep_options_to_run(config),
         steps=steps,
         seed=actual_seed,
         simulation_type=config.simulation_type,
@@ -188,294 +191,18 @@ def build_single_integration_setup(
         gamma_save=False,
         zposition_display=False,
         zposition_save=False,
-        macroparticle_enabled=config.macroparticle_enabled,
         macroparticle_charge_multiplier=macroparticle_charge_multiplier,
         macroparticle_sigma_multiplier=macroparticle_sigma_multiplier,
-        macroparticle_use_momentum_errors=config.macroparticle_use_momentum_errors,
-        macroparticle_smearing_enabled=getattr(
-            config, "macroparticle_smearing_enabled", False
-        ),
-        macroparticle_smearing_subcharge_count=getattr(
-            config, "macroparticle_smearing_subcharge_count", 8
-        ),
-        macroparticle_smearing_sigma_multiplier=getattr(
-            config, "macroparticle_smearing_sigma_multiplier", 1.0
-        ),
-        macroparticle_smearing_position_sigma_mm=getattr(
-            config, "macroparticle_smearing_position_sigma_mm", None
-        ),
-        macroparticle_smearing_longitudinal_sigma_mm=getattr(
-            config, "macroparticle_smearing_longitudinal_sigma_mm", None
-        ),
-        macroparticle_smearing_momentum_sigma_amu_mm_ns=getattr(
-            config, "macroparticle_smearing_momentum_sigma_amu_mm_ns", None
-        ),
-        macroparticle_smearing_use_position_errors=getattr(
-            config, "macroparticle_smearing_use_position_errors", True
-        ),
-        macroparticle_smearing_use_momentum_errors=getattr(
-            config, "macroparticle_smearing_use_momentum_errors", True
-        ),
-        macroparticle_smearing_use_centroid_errors=getattr(
-            config, "macroparticle_smearing_use_centroid_errors", True
-        ),
-        macroparticle_smearing_use_internal_cloud=getattr(
-            config, "macroparticle_smearing_use_internal_cloud", True
-        ),
-        macroparticle_smearing_apply_to_active_observers=getattr(
-            config, "macroparticle_smearing_apply_to_active_observers", True
-        ),
-        macroparticle_smearing_apply_to_active_sources=getattr(
-            config, "macroparticle_smearing_apply_to_active_sources", True
-        ),
-        macroparticle_smearing_apply_to_passive_sources=getattr(
-            config, "macroparticle_smearing_apply_to_passive_sources", True
-        ),
-        macroparticle_smearing_apply_to_passive_updates=getattr(
-            config, "macroparticle_smearing_apply_to_passive_updates", False
-        ),
-        macroparticle_smearing_seed=getattr(
-            config, "macroparticle_smearing_seed", 12345
-        ),
-        macroparticle_smearing_refresh_policy=getattr(
-            config, "macroparticle_smearing_refresh_policy", "fixed_per_particle"
-        ),
-        image_subcharge_count=config.image_subcharge_count,
-        use_image_weighting=config.use_image_weighting,
         output_dir=run_output_dir,
-        self_consistency_enabled=config.self_consistency_enabled,
-        self_consistency_tolerance=config.self_consistency_tolerance,
-        self_consistency_convergence_mode=getattr(
-            config, "self_consistency_convergence_mode", "fixed_geometry"
-        ),
-        self_consistency_target_ms_tolerance=getattr(
-            config, "self_consistency_target_ms_tolerance", 1e-6
-        ),
-        self_consistency_max_iterations=config.self_consistency_max_iterations,
-        self_consistency_mass_shell_tolerance=getattr(
-            config, "self_consistency_mass_shell_tolerance", 1e-2
-        ),
-        self_consistency_mass_shell_relaxation=getattr(
-            config, "self_consistency_mass_shell_relaxation", 0.7
-        ),
-        self_consistency_verbosity=config.self_consistency_verbosity,
-        chrono_interpolate=bool(
-            getattr(config, "chrono_interpolate", False)
-            or getattr(config, "self_consistency_chrono_interpolate", False)
-        ),
-        chrono_tolerance=(
-            getattr(config, "chrono_tolerance", 1e-3)
-            if getattr(config, "chrono_tolerance", 1e-3) != 1e-3
-            else getattr(config, "self_consistency_chrono_tolerance", 1e-3)
-        ),
-        chrono_matching_mode=(
-            getattr(config, "chrono_matching_mode", "FAST")
-            if getattr(config, "chrono_matching_mode", "FAST") != "FAST"
-            else getattr(config, "self_consistency_chrono_matching_mode", "FAST")
-        ),
-        chrono_high_precision=bool(
-            getattr(config, "chrono_high_precision", False)
-            or getattr(config, "self_consistency_chrono_high_precision", False)
-        ),
-        chrono_adaptive_tolerance=bool(
-            getattr(config, "chrono_adaptive_tolerance", False)
-            or getattr(config, "self_consistency_chrono_adaptive_tolerance", False)
-        ),
-        self_consistency_chrono_interpolate=bool(
-            getattr(config, "chrono_interpolate", False)
-            or getattr(config, "self_consistency_chrono_interpolate", False)
-        ),
-        self_consistency_chrono_tolerance=(
-            getattr(config, "chrono_tolerance", 1e-3)
-            if getattr(config, "chrono_tolerance", 1e-3) != 1e-3
-            else getattr(config, "self_consistency_chrono_tolerance", 1e-3)
-        ),
-        self_consistency_chrono_matching_mode=(
-            getattr(config, "chrono_matching_mode", "FAST")
-            if getattr(config, "chrono_matching_mode", "FAST") != "FAST"
-            else getattr(config, "self_consistency_chrono_matching_mode", "FAST")
-        ),
-        self_consistency_chrono_high_precision=bool(
-            getattr(config, "chrono_high_precision", False)
-            or getattr(config, "self_consistency_chrono_high_precision", False)
-        ),
-        self_consistency_chrono_adaptive_tolerance=bool(
-            getattr(config, "chrono_adaptive_tolerance", False)
-            or getattr(config, "self_consistency_chrono_adaptive_tolerance", False)
-        ),
-        self_consistency_gamma_reconciliation_method=getattr(
-            config, "self_consistency_gamma_reconciliation_method", "DISABLED"
-        ),
-        self_consistency_gamma_reconciliation_low_beta_threshold=getattr(
-            config,
-            "self_consistency_gamma_reconciliation_low_beta_threshold",
-            0.9,
-        ),
-        self_consistency_gamma_reconciliation_high_beta_threshold=getattr(
-            config,
-            "self_consistency_gamma_reconciliation_high_beta_threshold",
-            0.99,
-        ),
-        self_consistency_gamma_reconciliation_low_beta_weight=getattr(
-            config,
-            "self_consistency_gamma_reconciliation_low_beta_weight",
-            0.8,
-        ),
-        self_consistency_gamma_reconciliation_high_beta_weight=getattr(
-            config,
-            "self_consistency_gamma_reconciliation_high_beta_weight",
-            0.2,
-        ),
-        self_consistency_gamma_reconciliation_mid_beta_weight=getattr(
-            config,
-            "self_consistency_gamma_reconciliation_mid_beta_weight",
-            0.5,
-        ),
-        self_consistency_gamma_reconciliation_fixed_weight=getattr(
-            config, "self_consistency_gamma_reconciliation_fixed_weight", 0.5
-        ),
         energy_monitor_enabled=False,
         energy_monitor_threshold=2.0,
         energy_monitor_check_interval=10,
-        energy_monitor_halt_on_jump=config.energy_monitor_halt_on_jump,
         energy_monitor_debug=False,
-        adaptive_timestep_enabled=config.adaptive_timestep_enabled,
-        adaptive_timestep_threshold=config.adaptive_timestep_threshold,
-        adaptive_timestep_reduction_factor=config.adaptive_timestep_reduction_factor,
-        adaptive_timestep_min_factor=config.adaptive_timestep_min_factor,
-        adaptive_timestep_cooldown_steps=config.adaptive_timestep_cooldown_steps,
-        adaptive_timestep_probe_threshold=config.adaptive_timestep_probe_threshold,
-        adaptive_timestep_max_probe_steps=config.adaptive_timestep_max_probe_steps,
-        adaptive_timestep_debug=config.adaptive_timestep_debug,
-        space_charge_enabled=getattr(config, "space_charge_enabled", False),
-        space_charge_retarded=getattr(config, "space_charge_retarded", True),
-        space_charge_softening_mm=getattr(config, "space_charge_softening_mm", 0.0),
-        space_charge_bunch_sigma_mm=getattr(
-            config, "space_charge_bunch_sigma_mm", 0.01
-        ),
-        space_charge_instantaneous_clock=getattr(
-            config, "space_charge_instantaneous_clock", "legacy_same_index"
-        ),
-        space_charge_min_retarded_steps=getattr(
-            config, "space_charge_min_retarded_steps", None
-        ),
-        external_field_enabled=getattr(config, "external_field_enabled", False),
         external_electric_field_native=external_electric_native,
         external_electric_field_v_per_m=external_electric_v_per_m,
         external_magnetic_field_native=external_magnetic_native,
-        external_field_x_min=getattr(config, "external_field_x_min", None),
-        external_field_x_max=getattr(config, "external_field_x_max", None),
-        external_field_y_min=getattr(config, "external_field_y_min", None),
-        external_field_y_max=getattr(config, "external_field_y_max", None),
-        external_field_z_min=getattr(config, "external_field_z_min", None),
-        external_field_z_max=getattr(config, "external_field_z_max", None),
-        external_field_t_min=getattr(config, "external_field_t_min", None),
-        external_field_t_max=getattr(config, "external_field_t_max", None),
-        source_history_representation=getattr(
-            config, "source_history_representation", "light_cone_quintic"
-        ),
-        radiation_reaction_mode=getattr(
-            config,
-            "radiation_reaction_mode",
-            "medina_lad",
-        ),
-        particle_loss_enabled=getattr(config, "particle_loss_enabled", True),
-        particle_loss_radius_mm=getattr(config, "particle_loss_radius_mm", 500.0),
-        particle_loss_conducting_wall_aperture_loss_enabled=getattr(
-            config,
-            "particle_loss_conducting_wall_aperture_loss_enabled",
-            True,
-        ),
-        particle_loss_initial_radial_quantile=getattr(
-            config,
-            "particle_loss_initial_radial_quantile",
-            None,
-        ),
-        particle_loss_initial_radial_multiplier=getattr(
-            config,
-            "particle_loss_initial_radial_multiplier",
-            1.0,
-        ),
-        particle_loss_initial_radial_margin_mm=getattr(
-            config,
-            "particle_loss_initial_radial_margin_mm",
-            0.0,
-        ),
-        pseudo_grid_enabled=getattr(config, "pseudo_grid_enabled", False),
-        pseudo_grid_active_rider_count=getattr(
-            config,
-            "pseudo_grid_active_rider_count",
-            4,
-        ),
-        pseudo_grid_active_driver_count=getattr(
-            config,
-            "pseudo_grid_active_driver_count",
-            4,
-        ),
-        pseudo_grid_passive_neighbor_count=getattr(
-            config,
-            "pseudo_grid_passive_neighbor_count",
-            4,
-        ),
-        pseudo_grid_coverage_strategy=getattr(
-            config,
-            "pseudo_grid_coverage_strategy",
-            "farthest_point_staleness",
-        ),
-        pseudo_grid_coverage_space=getattr(
-            config,
-            "pseudo_grid_coverage_space",
-            "position",
-        ),
-        pseudo_grid_pair_reuse_window=getattr(
-            config,
-            "pseudo_grid_pair_reuse_window",
-            16,
-        ),
-        pseudo_grid_source_weighting_mode=getattr(
-            config,
-            "pseudo_grid_source_weighting_mode",
-            "inverse_distance",
-        ),
-        pseudo_grid_loss_tracking_enabled=getattr(
-            config,
-            "pseudo_grid_loss_tracking_enabled",
-            True,
-        ),
-        pseudo_grid_causal_history_pruning_enabled=getattr(
-            config,
-            "pseudo_grid_causal_history_pruning_enabled",
-            False,
-        ),
-        pseudo_grid_causal_history_safety_margin_steps=getattr(
-            config,
-            "pseudo_grid_causal_history_safety_margin_steps",
-            2,
-        ),
-        cavity_exit_enabled=getattr(config, "cavity_exit_enabled", False),
-        cavity_exit_mode=getattr(config, "cavity_exit_mode", "first_exit"),
-        cavity_exit_length_mm=getattr(config, "cavity_exit_length_mm", None),
-        cavity_exit_residual_tail_factor=getattr(
-            config, "cavity_exit_residual_tail_factor", 0.0
-        ),
-        cavity_exit_max_residual_tail_steps=getattr(
-            config, "cavity_exit_max_residual_tail_steps", 0
-        ),
-        driver_train_enabled=getattr(config, "driver_train_enabled", False),
-        driver_train_bunch_count=getattr(config, "driver_train_bunch_count", 1),
-        driver_train_z_spacing_mm=getattr(config, "driver_train_z_spacing_mm", 0.0),
         driver_train_z_offsets_mm=tuple(
             getattr(config, "driver_train_z_offsets_mm", ())
-        ),
-        driver_train_prehistory_steps=getattr(
-            config,
-            "driver_train_prehistory_steps",
-            0,
-        ),
-        driver_train_preserve_prehistory_in_output=getattr(
-            config,
-            "driver_train_preserve_prehistory_in_output",
-            False,
         ),
     )
 

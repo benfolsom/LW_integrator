@@ -70,6 +70,11 @@ def test_convert_json_config_normalizes_legacy_sweep_mode():
     converted = _convert_json_config_to_dataclass({"mode": "sweep"})
 
     assert converted["mode"] == "blind_sweep"
+    assert OptimizationConfig(SimulationType.BUNCH_TO_BUNCH, "blind_sweep") == (
+        OptimizationConfig(
+            simulation_type=SimulationType.BUNCH_TO_BUNCH, mode="blind_sweep"
+        )
+    )
 
 
 def test_convert_json_config_preserves_runtime_rr_and_worker_settings():

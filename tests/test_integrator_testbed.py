@@ -1,9 +1,18 @@
 """Tests for maintained testbed trajectory helper functionality."""
 
-import json
+from dataclasses import asdict, fields
+from pathlib import Path
 
 import numpy as np
 import pytest
+
+from input_output.config import (
+    convert_sweep_options,
+    json_value,
+    read_config_document,
+    write_config_document,
+)
+from optimization.config import OptimizationConfig
 
 from core.types import ParticleState  # noqa: E402
 import lw_integrator.testbed_runner as testbed_runner
@@ -228,24 +237,7 @@ class TestConfigManagement:
 
     def test_config_snapshot_structure(self):
         """Test that config snapshot has all required fields."""
-        config_snapshot = {
-            "steps": 1000,
-            "seed": 12345,
-            "simulation_type": "BUNCH_TO_BUNCH",
-            "energy_save": True,
-            "energy_display": True,
-            "transverse_display": False,
-            "transverse_save": False,
-            "trajectory_save": False,
-            "trajectory_interval": 10,
-            "plot_dpi": 300,
-            "output_dir": "test_outputs/testbed_runs",
-            "config_dir": "configs/testbed_runs",
-            "config_name": "test_config.json",
-            "rider_params": {},
-            "driver_params": {},
-            "core_params": {},
-        }
+        config_snapshot = SimulationOptions().to_dict()
 
         # Verify all essential fields are present
         assert "steps" in config_snapshot
@@ -256,21 +248,34 @@ class TestConfigManagement:
         assert "rider_params" in config_snapshot
         assert "core_params" in config_snapshot
 
-    def test_config_serialization(self):
-        """Test that config can be serialized to JSON."""
-        config = {
-            "steps": 1000,
-            "seed": 12345,
-            "energy_save": True,
-        }
+    @pytest.mark.parametrize(
+        "config_path",
+        sorted((Path(__file__).resolve().parents[1] / "configs").rglob("*.json")),
+        ids=lambda path: str(path.relative_to(Path(__file__).resolve().parents[1])),
+    )
+    def test_config_serialization(self, config_path, tmp_path):
+        """Every shipped document and its supported runtime view round-trip."""
+        raw = read_config_document(config_path)
+        saved_path = tmp_path / "saved.json"
+        write_config_document(raw, saved_path)
+        assert read_config_document(saved_path) == raw
 
-        # Should not raise
-        json_str = json.dumps(config, indent=2)
-        loaded = json.loads(json_str)
-
-        assert loaded["steps"] == 1000
-        assert loaded["seed"] == 12345
-        assert loaded["energy_save"] is True
+        if "rider_params" in raw or "core_params" in raw:
+            options = SimulationOptions.from_dict(raw)
+            normalized = options.to_dict()
+            assert SimulationOptions.from_dict(normalized).to_dict() == normalized
+        elif raw.get("mode") not in {"pic", "pic_correction"}:
+            valid = {item.name for item in fields(OptimizationConfig)}
+            converted = convert_sweep_options(raw)
+            config = OptimizationConfig(
+                **{key: value for key, value in converted.items() if key in valid}
+            )
+            normalized = json_value(asdict(config))
+            converted = convert_sweep_options(normalized)
+            restored = OptimizationConfig(
+                **{key: value for key, value in converted.items() if key in valid}
+            )
+            assert json_value(asdict(restored)) == normalized
 
 
 if __name__ == "__main__":

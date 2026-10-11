@@ -45,6 +45,8 @@ from typing import Any, Callable, Dict, List, Mapping, Optional
 
 import numpy as np
 
+from input_output.config import convert_sweep_options, read_config_document
+
 from core.constants import C_MMNS
 from core.debug_logger import initialize_debug_logging
 from core.smoothness_analyzer import SmoothnessConfig, analyze_trajectory_smoothness
@@ -60,7 +62,6 @@ from optimization.logging_policy import (
     describe_run_logging_policy,
     restore_run_logging_policy,
 )
-from optimization.mode_helpers import normalize_sweep_or_optimization_mode
 from optimization.single_integration_helpers import (
     build_integration_metrics,
     build_integration_trajectory_output,
@@ -1396,274 +1397,8 @@ class SweepRunner:
 
 
 def _convert_json_config_to_dataclass(config_dict: Dict[str, Any]) -> Dict[str, Any]:
-    """Convert JSON config format to OptimizationConfig dataclass format.
-
-    JSON uses separate min/max/points fields (e.g., aperture_min, aperture_max),
-    while OptimizationConfig uses tuple ranges (e.g., aperture_range).
-
-    This also maps *fixed* (non-swept) sweep_parameters to the corresponding
-    OptimizationConfig scalar fields so that the CLI sweep runner uses the
-    correct particle parameters instead of hard-coded defaults.
-    """
-    converted = dict(config_dict)
-    if "mode" in converted:
-        converted["mode"] = normalize_sweep_or_optimization_mode(converted["mode"])
-
-    # Convert simulation_type string to SimulationType enum
-    if "simulation_type" in converted and isinstance(converted["simulation_type"], str):
-        sim_type_str = converted["simulation_type"].upper()
-        if sim_type_str == "CONDUCTING_WALL":
-            converted["simulation_type"] = SimulationType.CONDUCTING_WALL
-        elif sim_type_str == "SWITCHING_WALL":
-            converted["simulation_type"] = SimulationType.SWITCHING_WALL
-        elif sim_type_str == "BUNCH_TO_BUNCH":
-            converted["simulation_type"] = SimulationType.BUNCH_TO_BUNCH
-
-    # Convert aperture fields
-    if "aperture_min" in converted and "aperture_max" in converted:
-        converted["aperture_range"] = (
-            converted.pop("aperture_min"),
-            converted.pop("aperture_max"),
-        )
-
-    # Convert energy fields
-    if "energy_min" in converted and "energy_max" in converted:
-        converted["energy_range"] = (
-            converted.pop("energy_min"),
-            converted.pop("energy_max"),
-        )
-
-    # Convert wall_z sweep fields
-    if "wall_z_range" in converted and converted["wall_z_range"] is not None:
-        wall_z_range = converted["wall_z_range"]
-        if isinstance(wall_z_range, list) and len(wall_z_range) == 2:
-            converted["wall_z_range"] = tuple(wall_z_range)
-
-    # Map rider_stripped_ions top-level key -> stripped_ions (OptimizationConfig name)
-    if "rider_stripped_ions" in converted and "stripped_ions" not in converted:
-        converted["stripped_ions"] = float(converted.pop("rider_stripped_ions"))
-    elif "rider_stripped_ions" in converted:
-        converted.pop("rider_stripped_ions")
-
-    # Map rider_offset / driver_offset top-level keys
-    if "rider_offset_x" in converted:
-        converted["transv_offset_x"] = float(converted.pop("rider_offset_x"))
-    if "rider_offset_y" in converted:
-        converted["transv_offset_y"] = float(converted.pop("rider_offset_y"))
-    if "driver_offset_x" in converted:
-        converted["driver_transv_offset_x"] = float(converted.pop("driver_offset_x"))
-    if "driver_offset_y" in converted:
-        converted["driver_transv_offset_y"] = float(converted.pop("driver_offset_y"))
-    if "rider_transverse_geometry" in converted:
-        converted["transverse_geometry"] = converted.pop("rider_transverse_geometry")
-
-    # Map auto_steps_distance to auto_steps_distance_past_wall
-    if (
-        "auto_steps_distance" in converted
-        and "auto_steps_distance_past_wall" not in converted
-    ):
-        converted["auto_steps_distance_past_wall"] = float(
-            converted.pop("auto_steps_distance")
-        )
-    elif "auto_steps_distance" in converted:
-        converted.pop("auto_steps_distance")
-
-    particle_loss_payload = converted.pop("particle_loss", None)
-    if isinstance(particle_loss_payload, dict):
-        _particle_loss_field_map = {
-            "enabled": "particle_loss_enabled",
-            "loss_radius_mm": "particle_loss_radius_mm",
-            "conducting_wall_aperture_loss_enabled": "particle_loss_conducting_wall_aperture_loss_enabled",
-            "initial_radial_quantile": "particle_loss_initial_radial_quantile",
-            "initial_radial_multiplier": "particle_loss_initial_radial_multiplier",
-            "initial_radial_margin_mm": "particle_loss_initial_radial_margin_mm",
-        }
-        for source_key, target_key in _particle_loss_field_map.items():
-            if source_key in particle_loss_payload:
-                converted[target_key] = particle_loss_payload[source_key]
-
-    pseudo_grid_payload = converted.pop("pseudo_grid", None)
-    if isinstance(pseudo_grid_payload, dict):
-        _pseudo_grid_field_map = {
-            "enabled": "pseudo_grid_enabled",
-            "active_rider_count": "pseudo_grid_active_rider_count",
-            "active_driver_count": "pseudo_grid_active_driver_count",
-            "passive_neighbor_count": "pseudo_grid_passive_neighbor_count",
-            "coverage_strategy": "pseudo_grid_coverage_strategy",
-            "coverage_space": "pseudo_grid_coverage_space",
-            "pair_reuse_window": "pseudo_grid_pair_reuse_window",
-            "source_weighting_mode": "pseudo_grid_source_weighting_mode",
-            "loss_tracking_enabled": "pseudo_grid_loss_tracking_enabled",
-            "causal_history_pruning_enabled": "pseudo_grid_causal_history_pruning_enabled",
-            "causal_history_safety_margin_steps": "pseudo_grid_causal_history_safety_margin_steps",
-        }
-        for source_key, target_key in _pseudo_grid_field_map.items():
-            if source_key in pseudo_grid_payload:
-                converted[target_key] = pseudo_grid_payload[source_key]
-
-    smearing_payload = converted.pop("macroparticle_smearing", None)
-    if isinstance(smearing_payload, dict):
-        _smearing_field_map = {
-            "enabled": "macroparticle_smearing_enabled",
-            "subcharge_count": "macroparticle_smearing_subcharge_count",
-            "sigma_multiplier": "macroparticle_smearing_sigma_multiplier",
-            "position_sigma_mm": "macroparticle_smearing_position_sigma_mm",
-            "longitudinal_sigma_mm": "macroparticle_smearing_longitudinal_sigma_mm",
-            "momentum_sigma_amu_mm_ns": "macroparticle_smearing_momentum_sigma_amu_mm_ns",
-            "use_position_errors": "macroparticle_smearing_use_position_errors",
-            "use_momentum_errors": "macroparticle_smearing_use_momentum_errors",
-            "use_centroid_errors": "macroparticle_smearing_use_centroid_errors",
-            "use_internal_cloud": "macroparticle_smearing_use_internal_cloud",
-            "apply_to_active_observers": "macroparticle_smearing_apply_to_active_observers",
-            "apply_to_active_sources": "macroparticle_smearing_apply_to_active_sources",
-            "apply_to_passive_sources": "macroparticle_smearing_apply_to_passive_sources",
-            "apply_to_passive_updates": "macroparticle_smearing_apply_to_passive_updates",
-            "seed": "macroparticle_smearing_seed",
-            "refresh_policy": "macroparticle_smearing_refresh_policy",
-        }
-        for source_key, target_key in _smearing_field_map.items():
-            if source_key in smearing_payload:
-                value = smearing_payload[source_key]
-                if source_key == "refresh_policy" and isinstance(value, str):
-                    value = value.replace("-", "_")
-                converted[target_key] = value
-
-    driver_train_payload = converted.pop("driver_train", None)
-    if isinstance(driver_train_payload, dict):
-        _driver_train_field_map = {
-            "enabled": "driver_train_enabled",
-            "bunch_count": "driver_train_bunch_count",
-            "z_spacing_mm": "driver_train_z_spacing_mm",
-            "z_offsets_mm": "driver_train_z_offsets_mm",
-            "prehistory_steps": "driver_train_prehistory_steps",
-            "preserve_prehistory_in_output": "driver_train_preserve_prehistory_in_output",
-        }
-        for source_key, target_key in _driver_train_field_map.items():
-            if source_key in driver_train_payload:
-                converted[target_key] = driver_train_payload[source_key]
-
-    _chrono_legacy_map = {
-        "self_consistency_chrono_interpolate": "chrono_interpolate",
-        "self_consistency_chrono_tolerance": "chrono_tolerance",
-        "self_consistency_chrono_matching_mode": "chrono_matching_mode",
-        "self_consistency_chrono_high_precision": "chrono_high_precision",
-        "self_consistency_chrono_adaptive_tolerance": "chrono_adaptive_tolerance",
-    }
-    # The canonical chrono_* key wins when both are present (as in the CLI and
-    # SimulationOptions.from_dict). Mirror it into the legacy alias so that
-    # OptimizationConfig.__post_init__ cannot OR/override it with a stale alias.
-    for legacy_key, chrono_key in _chrono_legacy_map.items():
-        if chrono_key in converted:
-            if legacy_key in converted:
-                converted[legacy_key] = converted[chrono_key]
-        elif legacy_key in converted:
-            converted[chrono_key] = converted[legacy_key]
-
-    # Convert sweep_parameters to appropriate ranges and fixed values
-    sweep_params = converted.get("sweep_parameters", {})
-
-    _fixed_field_map_rider = {
-        "rider_m_particle": "m_particle",
-        "rider_charge_sign": "charge_sign",
-        "rider_pcount": "pcount",
-        "rider_transv_mom": "transv_mom",
-        "rider_transv_dist": "transv_dist",
-        "rider_long_dist": "long_dist",
-        "rider_stripped_ions": "stripped_ions",
-        "macroparticle_charge_multiplier": "macroparticle_charge_multiplier",
-        "macroparticle_sigma_multiplier": "macroparticle_sigma_multiplier",
-    }
-    _fixed_field_map_driver = {
-        "driver_m_particle": "driver_m_particle",
-        "driver_charge_sign": "driver_charge_sign",
-        "driver_pcount": "driver_pcount",
-        "driver_transv_mom": "driver_transv_mom",
-        "driver_transv_dist": "driver_transv_dist",
-        "driver_long_dist": "driver_long_dist",
-        "driver_transverse_geometry": "driver_transverse_geometry",
-        "driver_starting_distance": "driver_starting_distance",
-        "driver_energy_gev": "driver_energy_gev",
-        "driver_stripped_ions": "driver_stripped_ions",
-    }
-
-    _range_field_map_rider = {
-        "rider_m_particle": "particle_mass_range",
-        "rider_charge_sign": "particle_charge_range",
-        "rider_pcount": "particle_count_range",
-        "rider_transv_mom": "transverse_momentum_range",
-        "rider_transv_dist": "transverse_spread_range",
-        "rider_long_dist": "long_dist_range",
-        "rider_stripped_ions": "rider_stripped_ions_range",
-        "macroparticle_charge_multiplier": "macroparticle_charge_range",
-        "macroparticle_sigma_multiplier": "macroparticle_sigma_range",
-    }
-    _range_field_map_driver = {
-        "driver_m_particle": "driver_mass_range",
-        "driver_charge_sign": "driver_charge_sign_range",
-        "driver_pcount": "driver_pcount_range",
-        "driver_transv_mom": "driver_transv_mom_range",
-        "driver_transv_dist": "driver_transv_dist_range",
-        "driver_long_dist": "driver_long_dist_range",
-        "driver_starting_distance": "driver_starting_distance_range",
-        "driver_energy_gev": "driver_energy_range",
-        "driver_stripped_ions": "driver_stripped_ions_range",
-    }
-
-    all_param_names = list(_fixed_field_map_rider.keys()) + list(
-        _fixed_field_map_driver.keys()
-    )
-    all_range_maps = {**_range_field_map_rider, **_range_field_map_driver}
-    all_fixed_maps = {**_fixed_field_map_rider, **_fixed_field_map_driver}
-
-    for param_name in all_param_names:
-        if param_name not in sweep_params:
-            continue
-        param_config = sweep_params[param_name]
-
-        if (
-            param_config.get("enabled")
-            and "min" in param_config
-            and "max" in param_config
-        ):
-            # Swept parameter → range + points
-            if param_name in all_range_maps:
-                field_name = all_range_maps[param_name]
-                min_val = float(param_config["min"])
-                max_val = float(param_config["max"])
-                if param_name == "driver_energy_gev":
-                    min_val = abs(min_val)
-                    max_val = abs(max_val)
-                    if min_val > max_val:
-                        min_val, max_val = max_val, min_val
-                converted[field_name] = (min_val, max_val)
-                points_field = field_name.replace("_range", "_points")
-                if "points" in param_config:
-                    converted[points_field] = int(param_config["points"])
-                if "log" in param_config:
-                    log_field = field_name.replace("_range", "_log_scale")
-                    converted[log_field] = bool(param_config["log"])
-        else:
-            # Fixed (disabled) parameter → scalar field
-            if "fixed_value" in param_config and param_name in all_fixed_maps:
-                scalar_field = all_fixed_maps[param_name]
-                raw_val = param_config["fixed_value"]
-                if param_name in ("rider_pcount", "driver_pcount"):
-                    converted[scalar_field] = int(float(raw_val))
-                else:
-                    converted[scalar_field] = float(raw_val)
-
-    # Remove sweep_parameters from converted dict as it's been processed
-    converted.pop("sweep_parameters", None)
-
-    # Remove fields that exist in JSON but not in OptimizationConfig dataclass
-    fields_to_remove = [
-        "timestep_mode",
-        "auto_steps_distance",
-    ]
-    for field in fields_to_remove:
-        converted.pop(field, None)
-
-    return converted
+    """Compatibility entry point for the shared saved-config parser."""
+    return convert_sweep_options(config_dict)
 
 
 def run_sweep_from_config(
@@ -1695,8 +1430,7 @@ def run_sweep_from_config(
         True if sweep completed successfully
     """
     # Load config
-    with open(config_path, "r") as f:
-        config_dict = json.load(f)
+    config_dict = read_config_document(config_path)
 
     # Convert JSON format to dataclass format
     converted_dict = _convert_json_config_to_dataclass(config_dict)

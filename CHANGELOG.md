@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Share run and sweep option schemas, saved-config parsing, and serialization.
+  Preserve defaults, canonical and legacy key precedence, deprecated keys, and
+  the existing GUI save format.
+
 ## v0.11.0 — 2026-10-10 — exact histories, native PIC, and boundary studies
 
 ### Exact retarded fields and source histories
