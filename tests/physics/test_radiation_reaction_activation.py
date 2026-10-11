@@ -71,7 +71,10 @@ def detect_radiation_reaction_activation(
     trajectory: list[dict[str, np.ndarray]],
     threshold: float = 0.001,
 ) -> tuple[int, list[int]]:
-    """Detect large step-to-step changes in stored acceleration.
+    """Describe fractional changes in stored acceleration, not reaction work.
+
+    Near-zero acceleration can acquire large fractional changes from roundoff.
+    A nonzero count therefore does not establish an applied physical force.
 
     Parameters
     ----------
@@ -139,12 +142,13 @@ def compute_max_acceleration(trajectory: list[dict[str, np.ndarray]]) -> float:
 
 @pytest.mark.physics
 class TestHighAccelerationDiagnostics:
-    """Test scenarios that should produce large stored-acceleration changes."""
+    """Inspect acceleration diagnostics in short causal coasting controls."""
 
     def test_ultra_close_encounter(self):
         """Test acceleration diagnostics with an ultra-close particle encounter.
 
-        Very close encounters should produce rapidly changing acceleration.
+        The wall gate is closed and same-bunch force is disabled. The physical
+        expectation is coasting, regardless of particle separation.
         """
         gamma = 100.0  # High energy
         separation = 0.05  # mm - VERY close
@@ -179,14 +183,21 @@ class TestHighAccelerationDiagnostics:
             else f"  Activation steps: {steps}"
         )
 
-        assert activations > 0, (
-            f"Expected large bdot changes with ultra-close encounter, got {activations}"
-        )
+        # This is a cold-start conducting-wall run, with the wall 1e6 mm
+        # away and same-bunch space charge disabled. No causal field can reach
+        # these particles during 99e-11 ns of proper time. Close separation
+        # alone is not an applied force or a radiation-reaction trigger.
+        assert activations == 0
+        for state in trajectory:
+            np.testing.assert_array_equal(state["Px"], init_state["Px"])
+            np.testing.assert_array_equal(state["Py"], init_state["Py"])
+            np.testing.assert_array_equal(state["Pz"], init_state["Pz"])
 
     def test_glancing_collision(self):
         """Test acceleration diagnostics with a glancing collision.
 
-        Glancing collision should produce sudden transverse acceleration.
+        The apparent glancing geometry supplies no force while the wall gate
+        is closed and same-bunch space charge is disabled.
         """
         gamma = 50.0
         separation = 0.1  # mm
@@ -218,12 +229,17 @@ class TestHighAccelerationDiagnostics:
         print(f"  Large bdot-change steps: {activations}/{len(trajectory) - 1}")
         print(f"  Max acceleration: {max_bdot:.3e} c/ns")
 
-        assert activations > 0, "Expected large bdot changes with glancing collision"
+        # Stored bdot may reflect roundoff; mechanical momentum is the
+        # physical expectation in this causally isolated control.
+        for state in trajectory:
+            for axis in "xyz":
+                np.testing.assert_array_equal(state["P" + axis], init_state["P" + axis])
 
     def test_progressive_separation_scan(self):
-        """Scan multiple separations to find large-acceleration thresholds.
+        """Scan the stored-acceleration diagnostic at different separations.
 
-        This documents where stored acceleration begins changing rapidly.
+        With no applied pair force and a closed wall gate, each physical
+        trajectory must coast. Diagnostic counts can still reflect roundoff.
         """
         gamma = 50.0
         separations = [1.0, 0.5, 0.2, 0.1, 0.05, 0.02, 0.01]  # mm
@@ -251,6 +267,12 @@ class TestHighAccelerationDiagnostics:
             activations, _ = detect_radiation_reaction_activation(trajectory)
             max_bdot = compute_max_acceleration(trajectory)
 
+            for state in trajectory:
+                for axis in "xyz":
+                    np.testing.assert_array_equal(
+                        state["P" + axis], init_state["P" + axis]
+                    )
+
             results.append(
                 {
                     "separation": sep,
@@ -269,24 +291,21 @@ class TestHighAccelerationDiagnostics:
                 f"{r['max_bdot']:11.3e} | {r['activation_rate']:5.1%}"
             )
 
-        total_activations = sum(r["activations"] for r in results)
-        assert total_activations > 0, (
-            "Expected at least some large bdot-change steps"
-        )
+        assert all(np.isfinite(r["max_bdot"]) for r in results)
 
 
 @pytest.mark.physics
 class TestHighAccelerationMassShell:
-    """Test mass-shell behavior in high-acceleration regimes."""
+    """Check the massive shell in short high-gamma coasting controls."""
 
     def test_mass_shell_during_radiation_reaction(self):
-        """Verify mass-shell constraint during large acceleration changes.
+        """Verify the massive shell while the causal wall gate stays closed.
 
-        This remains useful after removing the legacy bdot reaction formalism:
-        it checks whether severe force changes correlate with mass-shell errors.
+        Stored-acceleration changes are a diagnostic, not a precondition for
+        this independent shell check.
         """
         gamma = 100.0
-        separation = 0.03  # mm - should trigger large acceleration changes
+        separation = 0.03  # mm; proximity does not enable a pair force
 
         init_state = create_close_encounter_state(gamma, separation)
 
@@ -347,16 +366,20 @@ class TestHighAccelerationMassShell:
                     step_errors.append(rel_error)
                 print(f"    Step {step}: {max(step_errors):.3e}")
 
-        assert activations > 0, "Expected large acceleration changes"
+        # The causal gate is closed throughout this short control (as above).
+        # The mass-shell expectation is independent of the bdot diagnostic.
+        assert activations == 0
+        for state in trajectory:
+            np.testing.assert_array_equal(state["Px"], init_state["Px"])
 
-        assert max_mass_shell_error < 1e-2, (
-            f"Mass-shell violation during high-acceleration regime: {max_mass_shell_error:.3e}"
-        )
+        assert (
+            max_mass_shell_error < 1e-2
+        ), f"Mass-shell violation during high-acceleration regime: {max_mass_shell_error:.3e}"
 
     def test_extreme_acceleration_regime(self):
-        """Test most extreme scenario: ultra-high gamma, ultra-close approach.
+        """Check shell precision for an ultra-high-gamma coasting state.
 
-        This pushes the limits of force changes and mass-shell clamping.
+        The close geometry remains causally isolated from the distant wall.
         """
         gamma = 500.0  # Ultra-relativistic
         separation = 0.01  # mm - extremely close
@@ -405,14 +428,14 @@ class TestHighAccelerationMassShell:
         print(f"  Max mass-shell error: {max_mass_shell_error:.3e}")
 
         # Even in extreme regime, mass-shell should be maintained
-        assert max_mass_shell_error < 1e-2, (
-            f"Mass-shell violation in extreme regime: {max_mass_shell_error:.3e}"
-        )
+        assert (
+            max_mass_shell_error < 1e-2
+        ), f"Mass-shell violation in extreme regime: {max_mass_shell_error:.3e}"
 
 
 @pytest.mark.physics
 class TestRadiationDiagnostics:
-    """Test passive radiation diagnostics in high-acceleration runs."""
+    """Record energy context for short cold-start diagnostic runs."""
 
     def test_high_acceleration_run_records_energy_context(self):
         """Document energy context for high-acceleration diagnostic runs."""

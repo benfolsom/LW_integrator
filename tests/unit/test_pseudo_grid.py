@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 
 from core.constants import C_MMNS
 from core.pseudo_grid import (
     PairReuseTracker,
+    PseudoGridStateError,
+    PSEUDO_GRID_PASSIVE_DELTA_FIELDS,
     PassiveNeighborMap,
     accumulate_effective_source_charges,
     accumulate_field_representative_charges,
@@ -658,13 +662,15 @@ def test_reconstruct_full_state_from_active_result_applies_weighted_deltas_and_u
 
     np.testing.assert_allclose(reconstructed["x"], np.array([1.0, 11.75, 22.0]))
     np.testing.assert_allclose(reconstructed["t"], np.array([1.0, 1.0, 1.0]))
-    np.testing.assert_allclose(reconstructed["bx"], np.array([0.2, 0.375, 0.5]))
+    np.testing.assert_allclose(reconstructed["bx"], np.array([0.2, 1.75 / C_MMNS, 0.5]))
     np.testing.assert_allclose(
         reconstructed["radiation_power"], np.array([0.4, 0.7, 0.8])
     )
     assert reconstructed["q"][1] == pytest.approx(1.0)
     assert reconstructed["beta_samples"][1] == pytest.approx(3.0)
-    assert reconstructed["beta_avg_x"][1] == pytest.approx((0.2 * 2.0 + 0.375) / 3.0)
+    assert reconstructed["beta_avg_x"][1] == pytest.approx(
+        (0.2 * 2.0 + 1.75 / C_MMNS) / 3.0
+    )
 
 
 def test_reconstruct_full_state_from_active_result_can_leave_passives_frozen():
@@ -719,6 +725,7 @@ def test_reconstruct_full_state_invalidates_passive_medina_force_history():
     )
     active_indices = np.array([0, 2], dtype=int)
     active_result_state = slice_particle_state(previous_full_state, active_indices)
+    active_result_state["t"] += 1.0
     active_result_state["medina_external_force_x"] = np.array([2.0, 3.0])
     active_result_state["medina_external_force_sample_time"] = np.array([2.5, 2.5])
     passive_map = PassiveNeighborMap(
@@ -793,6 +800,7 @@ def test_reconstruct_full_state_from_active_result_ignores_dead_anchors_when_ena
     )
     active_indices = np.array([0, 2], dtype=int)
     active_result_state = slice_particle_state(previous_full_state, active_indices)
+    active_result_state["t"] += 1.0
     active_result_state["x"] = np.array([1.0, 40.0], dtype=float)
     active_result_state["bx"] = np.array([0.2, 0.9], dtype=float)
     active_result_state["q"] = np.array([1.0, 0.0], dtype=float)
@@ -812,7 +820,7 @@ def test_reconstruct_full_state_from_active_result_ignores_dead_anchors_when_ena
     )
 
     assert reconstructed["x"][1] == pytest.approx(11.0)
-    assert reconstructed["bx"][1] == pytest.approx(0.3)
+    assert reconstructed["bx"][1] == pytest.approx(1.0 / C_MMNS)
     assert reconstructed["_dead_particles"][2]
     assert reconstructed["q"][2] == pytest.approx(0.0)
 
@@ -1121,3 +1129,191 @@ def test_charge_localization_stats_detects_localization():
     assert _charge_localization_stats(np.array([])) is None
     assert _charge_localization_stats(np.array([0.0, 0.0])) is None
     assert _charge_localization_stats(None) is None
+
+
+@pytest.mark.parametrize("beta", [1.0, 1.1, np.nan, np.inf])
+def test_reconstruction_rejects_invalid_active_segment(beta):
+    previous = _make_solver_state(x=[0.0, 1.0], bx=[0.0, 0.5])
+    active = slice_particle_state(previous, np.array([0]))
+    active["t"][:] = 1.0
+    active["bx"][:] = 0.5
+    active["x"][:] = C_MMNS * beta
+    neighbors = PassiveNeighborMap(np.array([1]), np.array([[0]]), np.ones((1, 1)))
+    before = {key: value.copy() for key, value in previous.items()}
+    with pytest.raises(PseudoGridStateError, match=r"step 17, particle 0"):
+        reconstruct_full_state_from_active_result(
+            previous,
+            np.array([0]),
+            active,
+            neighbors,
+            step_index=17,
+        )
+    for key in previous:
+        np.testing.assert_array_equal(previous[key], before[key])
+
+
+@pytest.mark.parametrize("mode", ["ballistic", "external_interbunch"])
+@pytest.mark.parametrize("time", [0.0, -1.0, np.nan, np.inf])
+def test_reconstruction_rejects_invalid_time(mode, time):
+    previous = _make_solver_state(x=[0.0, 1.0], bx=[0.1, 0.2])
+    active = slice_particle_state(previous, np.array([0]))
+    active["t"][:] = 1.0
+    neighbors = PassiveNeighborMap(np.array([1]), np.array([[0]]), np.ones((1, 1)))
+    with pytest.raises(PseudoGridStateError, match="particle 1"):
+        reconstruct_full_state_from_active_result(
+            previous,
+            np.array([0]),
+            active,
+            neighbors,
+            step_index=18,
+            passive_update_mode=mode,
+            h_step=time,
+        )
+
+
+def test_weighted_reconstruction_rejects_time_lost_to_roundoff():
+    previous = _make_solver_state(x=[0.0, 1.0], bx=[0.1, 0.2], t=[0.0, 1e20])
+    active = slice_particle_state(previous, np.array([0]))
+    active["t"][:] = 1.0
+    neighbors = PassiveNeighborMap(np.array([1]), np.array([[0]]), np.ones((1, 1)))
+    with pytest.raises(PseudoGridStateError, match="step 19, particle 1"):
+        reconstruct_full_state_from_active_result(
+            previous,
+            np.array([0]),
+            active,
+            neighbors,
+            step_index=19,
+        )
+
+
+@pytest.mark.parametrize("key", PSEUDO_GRID_PASSIVE_DELTA_FIELDS)
+def test_copied_solver_state_rejects_nonfinite_kinematics(key):
+    previous = _make_solver_state(x=[0.0], bx=[0.1])
+    previous.setdefault(key, np.zeros(1))
+    active = slice_particle_state(previous, np.array([0]))
+    active["t"][:] = 1.0
+    active[key][:] = np.nan
+    empty = PassiveNeighborMap(
+        np.array([], dtype=int), np.empty((0, 0), dtype=int), np.empty((0, 0))
+    )
+    with pytest.raises(PseudoGridStateError, match="step 20, particle 0"):
+        reconstruct_full_state_from_active_result(
+            previous, np.array([0]), active, empty, step_index=20
+        )
+
+
+def test_live_passive_without_surviving_anchors_fails_instead_of_freezing():
+    previous = _make_solver_state(x=[0.0, 1.0], bx=[0.1, 0.2])
+    active = slice_particle_state(previous, np.array([0]))
+    active["_dead_particles"] = np.array([True])
+    neighbors = PassiveNeighborMap(np.array([1]), np.array([[0]]), np.ones((1, 1)))
+    with pytest.raises(PseudoGridStateError, match="particle 1"):
+        reconstruct_full_state_from_active_result(
+            previous, np.array([0]), active, neighbors
+        )
+
+
+def test_passive_velocity_matches_captured_timelike_segment():
+    fixture = Path(__file__).parent / "fixtures" / "pseudo_grid_regression.npz"
+    with np.load(fixture) as data:
+        previous = {k[5:]: data[k].copy() for k in data.files if k.startswith("prev_")}
+        result = {k[7:]: data[k].copy() for k in data.files if k.startswith("result_")}
+        active = data["active_indices"].copy()
+        neighbors = PassiveNeighborMap(
+            data["passive_indices"].copy(),
+            data["neighbor_indices"].copy(),
+            data["weights"].copy(),
+        )
+    before = {k: v.copy() for k, v in previous.items()}
+    rebuilt = reconstruct_full_state_from_active_result(
+        previous,
+        active,
+        result,
+        neighbors,
+        step_index=177,
+        h_step=2.2e-7,
+    )
+    p = 2  # Original particle 3, after fixture reduction.
+    dt = rebuilt["t"][p] - previous["t"][p]
+    expected = np.array([rebuilt[axis][p] - previous[axis][p] for axis in "xyz"]) / (
+        C_MMNS * dt
+    )
+    beta = np.array([rebuilt[k][p] for k in ("bx", "by", "bz")])
+    assert dt > 0
+    assert np.linalg.norm(beta) < 1
+    np.testing.assert_allclose(beta, expected, rtol=0, atol=2e-9)
+    assert np.linalg.norm(beta) == pytest.approx(0.9981412648308462, abs=2e-9)
+    expected_gamma = 1 / np.sqrt(1 - np.dot(beta, beta))
+    assert rebuilt["gamma"][p] == pytest.approx(expected_gamma, rel=1e-14)
+    assert rebuilt["gamma"][p] == pytest.approx(16.408850094013708, rel=1e-14)
+    mass = rebuilt.get("m_species", rebuilt["m"])[p]
+    np.testing.assert_allclose(
+        [rebuilt[k][p] for k in ("Px", "Py", "Pz")],
+        mass * C_MMNS * expected_gamma * beta,
+        rtol=1e-14,
+        atol=0,
+    )
+    assert rebuilt["Pt"][p] == pytest.approx(mass * C_MMNS * expected_gamma, rel=1e-14)
+
+    for axis, b in zip("xyz", ("bx", "by", "bz")):
+        assert rebuilt["bdot" + axis][p] == pytest.approx(
+            (rebuilt[b][p] - previous[b][p]) / dt,
+            rel=2e-9,
+        )
+    for k in previous:
+        np.testing.assert_array_equal(previous[k], before[k])
+    for k in ("x", "y", "z", "t", "bx", "by", "bz", "gamma"):
+        np.testing.assert_array_equal(rebuilt[k][active], result[k])
+
+
+def test_segment_velocity_prevents_additive_overshoot():
+    previous = _make_solver_state(x=[0.0, 0.0], bx=[0.98, 0.995])
+    previous["bdotx"] = np.zeros(2)
+    active = slice_particle_state(previous, np.array([0]))
+    active["t"][:] = 2.0
+    active["x"][:] = 0.99 * C_MMNS * 2.0
+    active["bx"][:] = 0.99
+    neighbors = PassiveNeighborMap(np.array([1]), np.array([[0]]), np.ones((1, 1)))
+    rebuilt = reconstruct_full_state_from_active_result(
+        previous,
+        np.array([0]),
+        active,
+        neighbors,
+    )
+    assert rebuilt["bx"][1] == pytest.approx(0.99)
+    assert rebuilt["bdotx"][1] == pytest.approx((0.99 - 0.995) / 2.0)
+
+
+def test_segment_velocity_weights_unequal_times_and_transverse_motion():
+    previous = _make_solver_state(x=[0.0, 0.0, 0.0])
+    active = slice_particle_state(previous, np.array([0, 1]))
+    dt = np.array([1.0, 3.0])
+    beta = np.array([[0.6, 0.2, 0.0], [0.1, -0.5, 0.3]])
+    active["t"][:] = dt
+    for i, (axis, b) in enumerate(zip("xyz", ("bx", "by", "bz"))):
+        active[axis][:] = C_MMNS * dt * beta[:, i]
+        active[b][:] = beta[:, i]
+    weights = np.array([[0.25, 0.75]])
+    neighbors = PassiveNeighborMap(np.array([2]), np.array([[0, 1]]), weights)
+    rebuilt = reconstruct_full_state_from_active_result(
+        previous,
+        np.array([0, 1]),
+        active,
+        neighbors,
+    )
+    expected = np.sum(weights.T * dt[:, None] * beta, axis=0) / (weights @ dt)[0]
+    actual = np.array([rebuilt[k][2] for k in ("bx", "by", "bz")])
+    np.testing.assert_allclose(actual, expected, rtol=1e-14)
+    assert np.linalg.norm(actual) < 1
+
+
+@pytest.mark.parametrize("time", [0.0, -1.0, np.nan, np.inf])
+def test_weighted_reconstruction_rejects_invalid_active_time(time):
+    previous = _make_solver_state(x=[0.0, 1.0])
+    active = slice_particle_state(previous, np.array([0]))
+    active["t"][:] = time
+    neighbors = PassiveNeighborMap(np.array([1]), np.array([[0]]), np.ones((1, 1)))
+    with pytest.raises(PseudoGridStateError, match="particle 0"):
+        reconstruct_full_state_from_active_result(
+            previous, np.array([0]), active, neighbors
+        )

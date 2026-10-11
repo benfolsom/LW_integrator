@@ -14,7 +14,6 @@ from lw_integrator.optimization_plugin import OptimizationConfig, OptimizationPl
 from optimization.plugin_config_mixins import OptimizationPluginConfigMixin
 from optimization.plugin_control_mixins import (
     OptimizationPluginControlMixin,
-    _stability_dialog_logging_defaults,
 )
 from optimization.plugin_form_mixins import OptimizationPluginFormMixin
 from optimization.plugin_parameter_mixins import OptimizationPluginParameterMixin
@@ -337,7 +336,10 @@ class TestOptimizationPluginIntegration:
         assert harness.metrics_scope_var.get() == "all"
         assert harness.log_verbosity_var.get() == "truncated"
 
-    def test_gather_stability_config_kwargs_prefers_gui_with_config_fallback(self):
+    @pytest.mark.parametrize("mode", ["power_matched_damping", "medina_lad_validity"])
+    def test_gather_stability_config_kwargs_prefers_gui_with_config_fallback(
+        self, mode
+    ):
         existing_config = OptimizationConfig(
             image_subcharge_count=24,
             use_image_weighting=False,
@@ -355,7 +357,7 @@ class TestOptimizationPluginIntegration:
             self_consistency_target_ms_tolerance_var=_MockVar("5e-4"),
             adaptive_timestep_enabled_var=_MockVar(True),
         )
-        harness.radiation_reaction_mode_var = _MockVar("power_matched_damping")
+        harness.radiation_reaction_mode_var = _MockVar(mode)
 
         kwargs = harness._gather_stability_config_kwargs(existing_config)
 
@@ -365,19 +367,11 @@ class TestOptimizationPluginIntegration:
         assert kwargs["use_image_weighting"] is False
         assert kwargs["self_consistency_enabled"] is False
         assert kwargs["adaptive_timestep_threshold"] == pytest.approx(0.25)
-        assert kwargs["radiation_reaction_mode"] == "power_matched_damping"
+        assert kwargs["radiation_reaction_mode"] == mode
         assert (
             kwargs["self_consistency_gamma_reconciliation_method"] == "FIXED_WEIGHTED"
         )
         assert kwargs["self_consistency_gamma_reconciliation_fixed_weight"] == 0.7
-
-    def test_stability_dialog_logging_defaults_preserve_silent_config(self):
-        config = OptimizationConfig(
-            self_consistency_verbosity=0,
-            adaptive_timestep_debug=False,
-        )
-
-        assert _stability_dialog_logging_defaults(config) == ("0", False)
 
     def test_gather_output_and_failure_kwargs_includes_worker_count(self):
         harness = OptimizationPluginControlMixin()

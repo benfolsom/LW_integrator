@@ -946,6 +946,19 @@ def build_hybrid_space_charge_sources(
 
         field_local_idx = field_lookup.get(int(observer_particle_idx))
         if field_local_idx is None:
+            # A passive observer's physical charge is deposited across reps.
+            # Remove that deposit as well as the direct self source.
+            own_weights = _field_deposition_weights_for_particles(
+                state,
+                alive,
+                np.array([observer_particle_idx]),
+                field,
+                neighbor_count=field_deposition_neighbor_count,
+                weighting_mode=weighting_mode,
+            )[0]
+            charge_matrix[observer_local_idx, : field.size] -= (
+                charges[int(observer_particle_idx)] * own_weights
+            )
             continue
         self_location_charge = float(charge_matrix[observer_local_idx, field_local_idx])
         own_charge = float(charges[int(observer_particle_idx)])
@@ -1185,6 +1198,45 @@ def slice_trajectory_particle_history(
     ]
 
 
+class PseudoGridStateError(ValueError):
+    """A reconstructed particle cannot be published as a physical state."""
+
+
+def _validate_reconstructed_particles(
+    previous: ParticleState,
+    state: ParticleState,
+    indices: np.ndarray,
+    step_index: int | None,
+) -> None:
+    """Check advanced, live particles without changing their reconstructed values."""
+    indices = np.asarray(indices, dtype=int)
+    dead = np.asarray(
+        state.get("_dead_particles", np.zeros(len(state["t"]), dtype=bool)),
+        dtype=bool,
+    )
+    indices = indices[~dead[indices]]
+    beta = np.stack([np.asarray(state[key])[indices] for key in ("bx", "by", "bz")])
+    with np.errstate(over="ignore", invalid="ignore"):
+        speed = np.linalg.norm(beta, axis=0)
+    times = np.asarray(state["t"])[indices]
+    previous_times = np.asarray(previous["t"])[indices]
+    finite = np.isfinite(times) & np.isfinite(previous_times)
+    for key in PSEUDO_GRID_PASSIVE_DELTA_FIELDS:
+        if key in state:
+            finite &= np.isfinite(np.asarray(state[key])[indices])
+    invalid = (
+        (~np.isfinite(speed)) | (speed >= 1) | (~finite) | (times <= previous_times)
+    )
+    if np.any(invalid):
+        local = int(np.flatnonzero(invalid)[0])
+        raise PseudoGridStateError(
+            f"Pseudo-grid reconstruction at step {step_index}, "
+            f"particle {indices[local]}: |beta|={speed[local]:.17g}, "
+            f"time={times[local]:.17g}, previous_time={previous_times[local]:.17g}; "
+            "require finite state, |beta| < 1, and strictly increasing time"
+        )
+
+
 def reconstruct_full_state_from_active_result(
     previous_full_state: ParticleState,
     active_indices: np.ndarray,
@@ -1194,11 +1246,22 @@ def reconstruct_full_state_from_active_result(
     loss_tracking_enabled: bool = True,
     passive_update_mode: str = "weighted_delta",
     h_step: float | None = None,
+    step_index: int | None = None,
+    lab_time_target_ns: float | None = None,
 ) -> ParticleState:
     """Rebuild a full bunch state from an active-only solve result."""
     full_state = _copy_particle_state(previous_full_state)
+    # Publishing small accepted increments into integer input arrays would
+    # truncate the path while retaining its untruncated segment velocity.
+    for name in PSEUDO_GRID_PASSIVE_DELTA_FIELDS:
+        if name in full_state:
+            full_state[name] = np.asarray(full_state[name], dtype=float).copy()
     active = np.asarray(active_indices, dtype=int)
     if active.size == 0:
+        if passive_update_mode != "frozen":
+            _validate_reconstructed_particles(
+                previous_full_state, full_state, passive_map.passive_indices, step_index
+            )
         return full_state
 
     result_particle_count = len(np.asarray(active_result_state.get("x", [])))
@@ -1213,6 +1276,30 @@ def reconstruct_full_state_from_active_result(
     )
 
     full_particle_count = len(np.asarray(previous_full_state.get("x", [])))
+    if "potential_inclusion_state" in active_result_state:
+        from .potential_inclusion import LEDGER_FIELDS
+
+        for name in LEDGER_FIELDS:
+            full_state[name] = np.array(
+                previous_full_state.get(name, np.zeros(full_particle_count)), copy=True
+            )
+        full_state["sampled_source_canonical_ready"] = np.array(
+            previous_full_state.get(
+                "sampled_source_canonical_ready", np.zeros(full_particle_count)
+            ),
+            dtype=bool,
+            copy=True,
+        )
+        # Widen before assignment; NumPy's fixed-width strings otherwise
+        # silently truncate accepted metadata after a source-set change.
+        old = list(
+            previous_full_state.get(
+                "potential_inclusion_state", [""] * full_particle_count
+            )
+        )
+        new = list(active_result_state["potential_inclusion_state"])
+        width = max([1] + [len(v) for v in old + new])
+        full_state["potential_inclusion_state"] = np.asarray(old, dtype=f"U{width}")
     if any(field_name in active_result_state for field_name in MEDINA_STEP_FIELDS):
         for field_name in MEDINA_STEP_FIELDS:
             if field_name in full_state:
@@ -1265,10 +1352,28 @@ def reconstruct_full_state_from_active_result(
         else:
             full_state.pop("_particle_failure_info", None)
 
+    _validate_reconstructed_particles(
+        previous_full_state, full_state, active, step_index
+    )
+
     active_field_deltas = {
         field_name: np.asarray(active_result_state[field_name], dtype=float)
         - np.asarray(previous_full_state[field_name], dtype=float)[active]
         for field_name in PSEUDO_GRID_PASSIVE_DELTA_FIELDS
+        if field_name
+        not in {
+            "bx",
+            "by",
+            "bz",
+            "bdotx",
+            "bdoty",
+            "bdotz",
+            "gamma",
+            "Px",
+            "Py",
+            "Pz",
+            "Pt",
+        }
         if field_name in active_result_state and field_name in previous_full_state
     }
 
@@ -1290,12 +1395,36 @@ def reconstruct_full_state_from_active_result(
             raise ValueError(
                 f"h_step is required for {passive_update_mode} passive updates"
             )
-        _coast_passive_indices(full_state, passive_indices, float(h_step))
+        _coast_passive_indices(
+            full_state, passive_indices, float(h_step), lab_time_target_ns
+        )
+        _validate_reconstructed_particles(
+            previous_full_state, full_state, passive_indices, step_index
+        )
         return full_state
     if passive_update_mode != "weighted_delta":
         raise ValueError(
             "passive_update_mode must be weighted_delta, ballistic, "
             "external_interbunch, or frozen"
+        )
+
+    # Accepted endpoint velocities alone do not establish that the source path
+    # segments are timelike. Reject invalid live segments before mixing them.
+    with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
+        active_segment_beta = np.stack(
+            [active_field_deltas[axis] for axis in ("x", "y", "z")]
+        ) / (C_MMNS * active_field_deltas["t"])
+        active_segment_speed = np.linalg.norm(active_segment_beta, axis=0)
+    invalid_segments = (~active_dead_mask) & (
+        ~np.isfinite(active_segment_speed) | (active_segment_speed >= 1)
+    )
+    if np.any(invalid_segments):
+        local = int(np.flatnonzero(invalid_segments)[0])
+        raise PseudoGridStateError(
+            f"Pseudo-grid reconstruction at step {step_index}, "
+            f"particle {active[local]}: active segment "
+            f"|beta|={active_segment_speed[local]:.17g}; "
+            "require finite state, |beta| < 1, and strictly increasing time"
         )
 
     full_dead_mask = np.asarray(
@@ -1332,12 +1461,16 @@ def reconstruct_full_state_from_active_result(
         weights[valid_passive_mask] /= weight_sums[valid_passive_mask, np.newaxis]
 
     if not np.any(valid_passive_mask):
+        _validate_reconstructed_particles(
+            previous_full_state, full_state, passive_indices, step_index
+        )
         return full_state
 
     valid_passive_indices = passive_indices[valid_passive_mask]
     valid_neighbor_indices = local_neighbor_indices[valid_passive_mask]
     valid_weights = weights[valid_passive_mask]
 
+    segment_increments = {}
     for field_name, delta_values in active_field_deltas.items():
         weighted_deltas = np.sum(
             valid_weights * delta_values[valid_neighbor_indices],
@@ -1349,6 +1482,29 @@ def reconstruct_full_state_from_active_result(
             ]
             + weighted_deltas
         )
+        if field_name in {"x", "y", "z", "t"}:
+            segment_increments[field_name] = weighted_deltas
+
+    # Use the increments in hand: subtracting large published coordinates again
+    # can lose the small displacement or lab-time interval to roundoff.
+    dt = segment_increments["t"]
+    with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
+        for axis, beta_field, derivative_field in (
+            ("x", "bx", "bdotx"),
+            ("y", "by", "bdoty"),
+            ("z", "bz", "bdotz"),
+        ):
+            beta = segment_increments[axis] / (C_MMNS * dt)
+            full_state[beta_field][valid_passive_indices] = beta
+            if derivative_field in full_state:
+                full_state[derivative_field][valid_passive_indices] = (
+                    beta - previous_full_state[beta_field][valid_passive_indices]
+                ) / dt
+
+    set_passive_on_shell_state(full_state, valid_passive_indices)
+    _validate_reconstructed_particles(
+        previous_full_state, full_state, passive_indices, step_index
+    )
 
     if (
         "beta_avg_x" in previous_full_state
@@ -1380,7 +1536,45 @@ def reconstruct_full_state_from_active_result(
                 previous_avg * previous_sample_counts + new_beta
             ) / updated_sample_counts
 
+    if lab_time_target_ns is not None:
+        full_state["t"][valid_passive_indices] = lab_time_target_ns
     return full_state
+
+
+def set_passive_on_shell_state(
+    state: ParticleState,
+    passive_indices: np.ndarray,
+    four_potential: np.ndarray | None = None,
+) -> None:
+    """Recompose accepted passive momentum; potentials use (Phi, Ax, Ay, Az)."""
+    indices = np.asarray(passive_indices, dtype=int)
+    beta = np.column_stack([state["b" + axis][indices] for axis in "xyz"])
+    speed_squared = np.sum(beta * beta, axis=1)
+    if not np.all(np.isfinite(speed_squared)) or np.any(speed_squared >= 1):
+        raise PseudoGridStateError("passive on-shell state requires |beta| < 1")
+    gamma = 1.0 / np.sqrt(1.0 - speed_squared)
+    mass = np.asarray(state.get("m_species", state["m"]), dtype=float)[indices]
+    charge = np.asarray(state.get("q_observer", state["q"]), dtype=float)[indices]
+    potential = (
+        np.zeros((indices.size, 4))
+        if four_potential is None
+        else np.asarray(four_potential, dtype=float)
+    )
+    if potential.shape != (indices.size, 4) or not np.all(np.isfinite(potential)):
+        raise ValueError(
+            "passive four-potential must be finite with shape [passives, 4]"
+        )
+    if not np.all(np.isfinite(mass)) or np.any(mass <= 0):
+        raise ValueError("passive species mass must be finite and positive")
+    if not np.all(np.isfinite(charge)):
+        raise ValueError("passive observer charge must be finite")
+    state["gamma"][indices] = gamma
+    mc_gamma = mass * C_MMNS * gamma
+    state["Pt"][indices] = mc_gamma + charge * potential[:, 0] / C_MMNS
+    for axis, name in enumerate(("Px", "Py", "Pz"), 1):
+        state[name][indices] = (
+            mc_gamma * beta[:, axis - 1] + charge * potential[:, axis] / C_MMNS
+        )
 
 
 def _slow_rotating_active_indices(
@@ -1762,6 +1956,7 @@ def _coast_passive_indices(
     state: ParticleState,
     passive_indices: np.ndarray,
     h_step: float,
+    lab_time_target_ns: float | None = None,
 ) -> None:
     passive = np.asarray(passive_indices, dtype=int)
     if passive.size == 0:
@@ -1769,7 +1964,11 @@ def _coast_passive_indices(
     if "gamma" not in state or "t" not in state:
         raise KeyError("ballistic passive updates require 'gamma' and 't' fields")
     gamma = np.asarray(state["gamma"], dtype=float)[passive]
-    dt_lab = gamma * float(h_step)
+    dt_lab = (
+        gamma * float(h_step)
+        if lab_time_target_ns is None
+        else lab_time_target_ns - np.asarray(state["t"])[passive]
+    )
     state["t"][passive] = np.asarray(state["t"], dtype=float)[passive] + dt_lab
     for axis, beta_key in (("x", "bx"), ("y", "by"), ("z", "bz")):
         if axis in state and beta_key in state:
@@ -2063,6 +2262,7 @@ def _fallback_self_excluded_neighbor_weights(
 
 
 __all__ = [
+    "PseudoGridStateError",
     "PassiveNeighborMap",
     "PairReuseTracker",
     "PseudoGridPlannerState",

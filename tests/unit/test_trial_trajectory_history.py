@@ -168,7 +168,8 @@ def test_trial_preparation_shares_rows_but_isolates_rewritable_source_buffers() 
         spin_interpolation_model="causal_frozen_c1",
     )
 
-    assert trial_charge.arrays._time_buffer is accepted_charge.arrays._time_buffer
+    assert trial_charge.arrays.time_ns.prefix is accepted_charge.arrays.time_ns
+    assert trial_charge.arrays.time_ns.tail.shape[0] == 2
     # Appending provisional knots can revise earlier endpoint acceleration.
     # b794c52 deliberately detached these writable buffers; requiring shared
     # coefficients here would restore the accepted-history corruption bug.

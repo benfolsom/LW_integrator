@@ -115,6 +115,40 @@ NUMBA_FORCE_SERIAL_MAX_SOURCES = 128
 NUMBA_FORCE_PARALLEL_MIN_SOURCES = 256
 
 
+def _acceleration_term(
+    k_factor: np.ndarray,
+    v_betas_scalar: np.ndarray,
+    bdot_scalar_ext: np.ndarray,
+    bdotx_ext: np.ndarray,
+    bdoty_ext: np.ndarray,
+    bdotz_ext: np.ndarray,
+    nx: np.ndarray,
+    ny: np.ndarray,
+    nz: np.ndarray,
+    R_sep: np.ndarray,
+    gamma_ext: np.ndarray,
+) -> np.ndarray:
+    """Return the source-acceleration term of ``V_o_beta d^alpha A^beta``.
+
+    Differentiating ``A^beta = q V^beta / (V . R)`` gives
+    ``-q V^beta R^alpha (dV/dtau . R - c^2) / (V . R)^3``. The bracket contains
+    the scalar contraction ``dV/dtau . R = c gamma^2 R [gamma^2 k (beta .
+    beta_dot) - n . beta_dot]``, which multiplies ``R^alpha``.  In the force
+    factor ``h q_i q_s / (k^3 c^3 R^2 gamma^3)`` the ``dV/dtau . R`` part is this
+    value for ``alpha = 0`` and this value times ``n^alpha`` for spatial
+    components.  (An earlier form evaluated the contraction component-wise,
+    as ``dV^alpha R^alpha R_alpha``, which is not a tensor expression.)
+    """
+
+    n_dot_bdot = nx * bdotx_ext + ny * bdoty_ext + nz * bdotz_ext
+    return (
+        -(gamma_ext**2)
+        * R_sep
+        * v_betas_scalar
+        * (gamma_ext**2 * k_factor * bdot_scalar_ext - n_dot_bdot)
+    )
+
+
 def _compute_small_k_forces_series(
     k_factor: np.ndarray,
     charge_factor_base: np.ndarray,
@@ -133,15 +167,11 @@ def _compute_small_k_forces_series(
     gamma_ext: np.ndarray,
     c: float,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Compute forces using series expansion for small k-factor.
+    """Compute forces for the small-k branch (1e-20 < |k| < 1e-3).
 
-    When k = 1 - β·n̂ is small, the Liénard-Wiechert fields have singularities
-    that are regularized by expanding in powers of k. This function computes
-    the leading-order terms in the series expansion.
-
-    For small k, the force expressions simplify because terms proportional to
-    higher powers of k become negligible compared to the 1/k³ divergence.
-    The expansion captures the physical behavior without numerical instability.
+    Despite the historical name, no series expansion is applied: this is the
+    same closed form as the normal branch, evaluated with the ``1/k^3`` factor
+    split out.  It is kept as a separate branch only for diagnostics.
 
     Parameters
     ----------
@@ -167,67 +197,54 @@ def _compute_small_k_forces_series(
     Returns
     -------
     term_px, term_py, term_pz, term_pt : np.ndarray
-        Momentum change terms with series approximation
+        Momentum change terms
     """
-    # For small k, expand the force terms in powers of k
-    # Keep leading non-divergent terms (the 1/k³ terms with k cancellations)
-
-    # The full expression has terms like: (1/k³) * [A + B*k + C*k² + ...]
-    # For small k, we need to keep enough terms so that the product converges
-
-    # Series approximation: use first-order expansion
-    # This is a simplified version - full implementation would expand all terms
     k_inv = 1.0 / k_factor
     k_inv3 = k_inv**3
 
-    # Use regularized forms: keep terms that don't diverge
-    # In the limit k→0, the divergence cancels with numerator zeros
     bdot_scalar_ext = bx_ext * bdotx_ext + by_ext * bdoty_ext + bz_ext * bdotz_ext
+    acceleration_term = _acceleration_term(
+        k_factor,
+        v_betas_scalar,
+        bdot_scalar_ext,
+        bdotx_ext,
+        bdoty_ext,
+        bdotz_ext,
+        nx,
+        ny,
+        nz,
+        R_sep,
+        gamma_ext,
+    )
 
-    # For very small k, use limiting form of the force expression
-    # The leading behavior is dominated by the radiation reaction terms
     term_px = (
         -v_betas_scalar * bx_ext * k_factor * c * gamma_ext**2
         + v_beta_dot_mixed_scalar * k_factor * gamma_ext * nx * R_sep
-        + gamma_ext**2
-        * nx**2
-        * R_sep
-        * v_betas_scalar
-        * (bdotx_ext + bdotx_ext * bdot_scalar_ext * gamma_ext**2)
+        + acceleration_term * nx
         + v_betas_scalar * c * nx
     )
 
     term_py = (
         -v_betas_scalar * by_ext * k_factor * c * gamma_ext**2
         + v_beta_dot_mixed_scalar * k_factor * gamma_ext * ny * R_sep
-        + gamma_ext**2
-        * ny**2
-        * R_sep
-        * v_betas_scalar
-        * (bdoty_ext + bdoty_ext * bdot_scalar_ext * gamma_ext**2)
+        + acceleration_term * ny
         + v_betas_scalar * c * ny
     )
 
     term_pz = (
         -v_betas_scalar * bz_ext * k_factor * c * gamma_ext**2
         + v_beta_dot_mixed_scalar * k_factor * gamma_ext * nz * R_sep
-        + gamma_ext**2
-        * nz**2
-        * R_sep
-        * v_betas_scalar
-        * (bdotz_ext + bdotz_ext * bdot_scalar_ext * gamma_ext**2)
+        + acceleration_term * nz
         + v_betas_scalar * c * nz
     )
 
     term_pt = (
         v_beta_dot_mixed_scalar * k_factor * gamma_ext * R_sep
         - v_betas_scalar * k_factor * c * gamma_ext**2
-        - bdot_scalar_ext * v_betas_scalar * gamma_ext**4 * R_sep
+        + acceleration_term
         + v_betas_scalar * c
     )
 
-    # Apply charge factor with series-regularized k³
-    # Use a damping factor to smoothly transition
     charge_factor_series = charge_factor_base * k_inv3
 
     return (
@@ -797,9 +814,13 @@ def compute_vectorized_contributions(
     bx_ext = samples.bx[mask]
     by_ext = samples.by[mask]
     bz_ext = samples.bz[mask]
-    bdotx_ext = samples.bdotx[mask]
-    bdoty_ext = samples.bdoty[mask]
-    bdotz_ext = samples.bdotz[mask]
+    # Histories store bdot = d(beta)/d(ct) [1/mm] (see core/equations.py and
+    # the exact path's beta_prime_per_mm).  The closed-form kernels below use
+    # d(beta)/dt [1/ns], as in dV/dtau = [c g^4 b.bdot, c g^2 bdot + ...], so
+    # convert here, once, for every backend.
+    bdotx_ext = samples.bdotx[mask] * c
+    bdoty_ext = samples.bdoty[mask] * c
+    bdotz_ext = samples.bdotz[mask] * c
     charge_ext = samples.charge[mask]
     gamma_ext = samples.gamma[mask]
 
@@ -1017,6 +1038,20 @@ def compute_vectorized_contributions(
             print(f"    nz (normal) = {nz[normal_k_mask]}")
             print(f"    R_sep (normal) = {R_sep[normal_k_mask]}")
 
+        acceleration_term_normal = _acceleration_term(
+            k_normal,
+            v_betas_scalar[normal_k_mask],
+            bdot_scalar_ext[normal_k_mask],
+            bdotx_ext[normal_k_mask],
+            bdoty_ext[normal_k_mask],
+            bdotz_ext[normal_k_mask],
+            nx[normal_k_mask],
+            ny[normal_k_mask],
+            nz[normal_k_mask],
+            R_sep[normal_k_mask],
+            gamma_ext[normal_k_mask],
+        )
+
         term_px_normal = (
             -v_betas_scalar[normal_k_mask]
             * bx_ext[normal_k_mask]
@@ -1028,16 +1063,7 @@ def compute_vectorized_contributions(
             * gamma_ext[normal_k_mask]
             * nx[normal_k_mask]
             * R_sep[normal_k_mask]
-            + gamma_ext[normal_k_mask] ** 2
-            * nx[normal_k_mask] ** 2
-            * R_sep[normal_k_mask]
-            * v_betas_scalar[normal_k_mask]
-            * (
-                bdotx_ext[normal_k_mask]
-                + bdotx_ext[normal_k_mask]
-                * bdot_scalar_ext[normal_k_mask]
-                * gamma_ext[normal_k_mask] ** 2
-            )
+            + acceleration_term_normal * nx[normal_k_mask]
             + v_betas_scalar[normal_k_mask] * np.float64(c) * nx[normal_k_mask]
         )
 
@@ -1052,16 +1078,7 @@ def compute_vectorized_contributions(
             * gamma_ext[normal_k_mask]
             * ny[normal_k_mask]
             * R_sep[normal_k_mask]
-            + gamma_ext[normal_k_mask] ** 2
-            * ny[normal_k_mask] ** 2
-            * R_sep[normal_k_mask]
-            * v_betas_scalar[normal_k_mask]
-            * (
-                bdoty_ext[normal_k_mask]
-                + bdoty_ext[normal_k_mask]
-                * bdot_scalar_ext[normal_k_mask]
-                * gamma_ext[normal_k_mask] ** 2
-            )
+            + acceleration_term_normal * ny[normal_k_mask]
             + v_betas_scalar[normal_k_mask] * np.float64(c) * ny[normal_k_mask]
         )
 
@@ -1076,16 +1093,7 @@ def compute_vectorized_contributions(
             * gamma_ext[normal_k_mask]
             * nz[normal_k_mask]
             * R_sep[normal_k_mask]
-            + gamma_ext[normal_k_mask] ** 2
-            * nz[normal_k_mask] ** 2
-            * R_sep[normal_k_mask]
-            * v_betas_scalar[normal_k_mask]
-            * (
-                bdotz_ext[normal_k_mask]
-                + bdotz_ext[normal_k_mask]
-                * bdot_scalar_ext[normal_k_mask]
-                * gamma_ext[normal_k_mask] ** 2
-            )
+            + acceleration_term_normal * nz[normal_k_mask]
             + v_betas_scalar[normal_k_mask] * np.float64(c) * nz[normal_k_mask]
         )
 
@@ -1098,10 +1106,7 @@ def compute_vectorized_contributions(
             * k_normal
             * np.float64(c)
             * gamma_ext[normal_k_mask] ** 2
-            - bdot_scalar_ext[normal_k_mask]
-            * v_betas_scalar[normal_k_mask]
-            * gamma_ext[normal_k_mask] ** 4
-            * R_sep[normal_k_mask]
+            + acceleration_term_normal
             + v_betas_scalar[normal_k_mask] * np.float64(c)
         )
 
@@ -1301,6 +1306,13 @@ def _compute_forces_numba_kernel(
             * (bdotz_ext[j] * c * g_ext**2 + bz_ext[j] * bdot_scalar * c * g_ext**4)
         )
 
+        # -(dV/dtau . R)(V_s . V_o) / c in the force-factor normalization; the
+        # contraction dV/dtau . R = c gamma^2 R [gamma^2 k (beta . beta_dot) - n . beta_dot].
+        n_dot_bdot = nx[j] * bdotx_ext[j] + ny[j] * bdoty_ext[j] + nz[j] * bdotz_ext[j]
+        acceleration_term = (
+            -(g_ext**2) * R * v_betas * (g_ext**2 * k_factor * bdot_scalar - n_dot_bdot)
+        )
+
         # Common force factor
         k3 = k_factor**3
         force_factor = (h * q_prod) / (k3 * c_cu * R * R * g_ext**3)
@@ -1309,33 +1321,21 @@ def _compute_forces_numba_kernel(
         delta_px += force_factor * (
             -bx_ext[j] * v_betas * k_factor * c * g_ext**2
             + v_beta_dot_mixed * k_factor * g_ext * nx[j] * R
-            + g_ext**2
-            * nx[j] ** 2
-            * R
-            * v_betas
-            * (bdotx_ext[j] + bdotx_ext[j] * bdot_scalar * g_ext**2)
+            + acceleration_term * nx[j]
             + v_betas * c * nx[j]
         )
 
         delta_py += force_factor * (
             -by_ext[j] * v_betas * k_factor * c * g_ext**2
             + v_beta_dot_mixed * k_factor * g_ext * ny[j] * R
-            + g_ext**2
-            * ny[j] ** 2
-            * R
-            * v_betas
-            * (bdoty_ext[j] + bdoty_ext[j] * bdot_scalar * g_ext**2)
+            + acceleration_term * ny[j]
             + v_betas * c * ny[j]
         )
 
         delta_pz += force_factor * (
             -bz_ext[j] * v_betas * k_factor * c * g_ext**2
             + v_beta_dot_mixed * k_factor * g_ext * nz[j] * R
-            + g_ext**2
-            * nz[j] ** 2
-            * R
-            * v_betas
-            * (bdotz_ext[j] + bdotz_ext[j] * bdot_scalar * g_ext**2)
+            + acceleration_term * nz[j]
             + v_betas * c * nz[j]
         )
 
@@ -1343,7 +1343,7 @@ def _compute_forces_numba_kernel(
         delta_pt += pt_factor * (
             v_beta_dot_mixed * k_factor * g_ext * R
             - v_betas * k_factor * c * g_ext**2
-            - bdot_scalar * v_betas * g_ext**4 * R
+            + acceleration_term
             + v_betas * c
         )
 

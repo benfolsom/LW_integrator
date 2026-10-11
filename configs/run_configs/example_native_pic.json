@@ -1,0 +1,29 @@
+{
+  "mode": "pic",
+  "backend": "cpu",
+  "radiation_reaction_mode": "off",
+  "grid": {
+    "shape": [24, 24, 24],
+    "half_extent_mm": [12, 12, 12],
+    "shape_order": 2
+  },
+  "species": [{
+    "name": "proton216",
+    "charge_c": 1.602176634e-19,
+    "mass_kg": 1.67262192369e-27,
+    "population": 1000000,
+    "energy_groups": 1,
+    "gaussian": {
+      "count": 256,
+      "seed": 20261005,
+      "rms_size_mm": [2, 2, 1.397],
+      "starting_position_mm": [0, 0, 0],
+      "momentum_axis": [0, 0, 1],
+      "kinetic_energy_mev": 216,
+      "fractional_momentum_chirp": 0
+    }
+  }],
+  "propagation_distance_mm": 1,
+  "steps": 16,
+  "sample_every": 5
+}

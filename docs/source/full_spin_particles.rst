@@ -113,6 +113,13 @@ seeds for independently sampled bunches. Zero spread can create coincident
 particles, which are rejected for this point-particle solver.
 
 These are individual physical particles, not charge-weighted macroparticles.
+
+The optional top-level ``source_history_position_tolerance_mm`` sets the
+source-history position consistency budget in millimetres. It must be finite
+and nonnegative; the default remains ``1e-8``. The CLI and GUI launcher read
+the same initial-condition JSON, and native checkpoints preserve this budget
+on resume. It is not increased automatically after a history failure.
+
 Unknown fields, weighting options, and old simulation-config dictionaries are
 rejected instead of silently changing their meaning. Evolved trajectories
 must be resumed from their native checkpoint, not reconstructed as fresh input.

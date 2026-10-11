@@ -10,10 +10,9 @@ light-cone equation
 
     c (t_observer - t_source) = |x_observer - x_source(t_source)|
 
-against an interpolated source worldline. A finite-difference gradient calls
-that complete evaluator again at all eight displaced events, so the derivative
-includes the retarded-time chain rule. Freezing a previously selected source
-sample would not be a derivative of a Lienard--Wiechert field.
+against an interpolated source worldline. Analytic charge jets include the
+retarded-time chain rule. A named centered-stencil evaluator is retained for
+validation; production charge gradients do not subtract displaced field sums.
 
 Only charge-generated fields are constructed. Intrinsic dipole source fields,
 their singular self fields, and dipole radiation reaction are deliberately out
@@ -23,13 +22,46 @@ of scope for this layer.
 from __future__ import annotations
 
 from copy import copy
+from collections import OrderedDict
 from dataclasses import dataclass, field as dataclass_field, replace
-from math import comb
-from typing import Sequence, cast
+from math import comb, fsum
+from typing import Any, Sequence, cast
+from weakref import ref
 
 import numpy as np
 
 from .constants import C_MMNS
+from .exact_source_cloud import ExactCloudHistory, transverse_offsets
+from .exact_visibility import ExactVisibilityHistory, visible_prepared
+from .history_prefix_view import HistoryPrefixView
+from .light_cone_history import (
+    LightConeSegment,
+    build_light_cone_segment,
+    endpoint_geometry,
+    separation_in_velocity_frame,
+    segment_speed_deficit_bound,
+)
+from .proper_velocity_history import (
+    ProperVelocitySegment,
+    constrain_proper_velocity_segment,
+    proper_residual,
+    solve_constrained_u,
+    solve_constrained_u_numba,
+)
+from .light_cone_roots import (
+    null_residual,
+    sample_null_quintic,
+    solve_null_quintic,
+    solve_null_quintic_numba,
+)
+from .resolved_knot import RESOLVED_KNOT_FIELDS
+from .ballistic_charge import ballistic_retarded_point
+from .precise_charge import (
+    precise_charge_jets,
+    precise_charge_jets_strict_serial,
+    resolved_separation_frame,
+    validated_precise_velocity,
+)
 from .exact_retarded_backend import require_exact_retarded_backend
 from .prepared_history_cache import (
     AppendAwarePreparedHistoryCache,
@@ -37,9 +69,13 @@ from .prepared_history_cache import (
     history_storage_capacity,
 )
 from .rfs import electromagnetic_field_tensor_native
-from .source_kinematics import reconstruct_instantaneous_beta_prime_per_mm
+from .source_kinematics import (
+    reconstruct_instantaneous_beta_prime_per_mm,
+    reconstruct_resolved_beta_prime_per_mm,
+)
 from .types import (
     IndexedTrajectoryArrays,
+    MacroparticleSmearingConfig,
     Trajectory,
     TrajectoryArrays,
     TrialTrajectoryHistory,
@@ -54,6 +90,18 @@ _DEFAULT_MAX_ROOT_ITERATIONS = 96
 _DEFAULT_GRADIENT_RELATIVE_STEP = 1.0e-4
 _DEFAULT_GRADIENT_MINIMUM_STEP_MM = 1.0e-15
 _SOURCE_ACCELERATION_SEMANTICS = {"instantaneous", "preceding_interval"}
+
+
+def _sum_source_terms(terms: np.ndarray) -> np.ndarray:
+    """Faithfully sum source-indexed components, independently of traversal order.
+
+    Source kernels (including Numba kernels) return individual contributions;
+    reduction stays here, with no fast-math reassociation or lost low-order sum.
+    Empty and excluded source rows contribute zero.
+    """
+    shape = terms.shape[1:]
+    flattened = terms.reshape(terms.shape[0], int(np.prod(shape)))
+    return np.asarray([fsum(column) for column in flattened.T]).reshape(shape)
 
 
 def _validated_source_acceleration_semantics(value: str) -> str:
@@ -74,14 +122,43 @@ class ObserverEvent:
 
     time_ns: float
     position_mm: tuple[float, float, float]
+    time_low_ns: float = 0.0
+    position_low_mm: tuple[float, ...] = (0.0, 0.0, 0.0)
+    time_tail_ns: float = 0.0
+    position_tail_mm: tuple[float, ...] = (0.0, 0.0, 0.0)
 
     def __post_init__(self) -> None:
         time = float(self.time_ns)
         position = np.asarray(self.position_mm, dtype=float)
+        if (
+            not np.isfinite(self.time_low_ns)
+            or not np.isfinite(self.time_tail_ns)
+            or np.asarray(self.position_tail_mm).shape != (3,)
+            or not np.all(np.isfinite(self.position_tail_mm))
+            or np.asarray(self.position_low_mm).shape != (3,)
+            or not np.all(np.isfinite(self.position_low_mm))
+        ):
+            raise ValueError("observer coordinate remainders must be finite")
         if not np.isfinite(time):
             raise ValueError("observer time must be finite")
         if position.shape != (3,) or not np.all(np.isfinite(position)):
             raise ValueError("observer position must contain three finite values")
+
+
+def _shift_resolved_coordinate(
+    high: float, low: float, tail: float, shift: float
+) -> tuple[float, float, float]:
+    """Apply a stencil displacement without discarding its rounding remainder."""
+    from decimal import Decimal, localcontext
+
+    with localcontext() as context:
+        context.prec = 80
+        d = Decimal.from_float
+        value = d(high) + d(low) + d(tail) + d(shift)
+        new_high = float(high + shift)
+        new_low = float(value - d(new_high))
+        new_tail = float(value - d(new_high) - d(new_low))
+        return new_high, new_low, new_tail
 
 
 @dataclass(frozen=True)
@@ -104,6 +181,8 @@ class RetardedChargeFieldResult:
     four_potential: np.ndarray = dataclass_field(
         default_factory=lambda: np.zeros(4, dtype=float)
     )
+
+    retarded_time_error_bound_ns: np.ndarray | None = None
 
 
 @dataclass(frozen=True)
@@ -172,6 +251,8 @@ class RetardedChargeResponseGradientResult:
     directional_unavailable_reason: str | None = None
     directional_jet_residual: np.ndarray | None = None
 
+    retarded_time_error_bound_ns: np.ndarray | None = None
+
 
 @dataclass
 class _HistoryArrays:
@@ -181,6 +262,10 @@ class _HistoryArrays:
     beta_prime_per_mm: np.ndarray
     charge_native: np.ndarray
     dead: np.ndarray
+    resolved_knots: np.ndarray | None = dataclass_field(default=None, repr=False)
+    gate_prime_before: np.ndarray | None = dataclass_field(default=None, repr=False)
+    gate_prime_after: np.ndarray | None = dataclass_field(default=None, repr=False)
+    _resolved_buffer: np.ndarray | None = dataclass_field(default=None, repr=False)
     _time_buffer: np.ndarray | None = dataclass_field(default=None, repr=False)
     _position_buffer: np.ndarray | None = dataclass_field(default=None, repr=False)
     _beta_buffer: np.ndarray | None = dataclass_field(default=None, repr=False)
@@ -206,6 +291,9 @@ class _PreparedSourceHistory:
     position_coefficients_mm: np.ndarray
     ended_by_loss: bool
     source_acceleration_semantics: str = "preceding_interval"
+    inertial_boundary: tuple[float, np.ndarray, np.ndarray] | None = None
+    light_cone_segments: Sequence[LightConeSegment] = ()
+    light_cone_enabled: bool = True
     _duration_buffer: np.ndarray | None = dataclass_field(default=None, repr=False)
     _coefficient_buffer: np.ndarray | None = dataclass_field(default=None, repr=False)
     _beta_prime_buffer: np.ndarray | None = dataclass_field(default=None, repr=False)
@@ -221,11 +309,19 @@ class _PreparedHistory:
     arrays: _HistoryArrays
     sources: dict[int, _PreparedSourceHistory]
     source_acceleration_semantics: str = "preceding_interval"
+    parent_indices: np.ndarray | None = None
+    # Owned by this storage revision, never by observer-specific exclusions.
+    clouds: dict[tuple, _PreparedHistory] = dataclass_field(
+        default_factory=dict, repr=False, compare=False
+    )
+    trials: OrderedDict = dataclass_field(
+        default_factory=OrderedDict, repr=False, compare=False
+    )
 
 
 _CHARGE_PREPARED_HISTORY_CACHE: AppendAwarePreparedHistoryCache[
     TrajectoryHistory, _PreparedHistory
-] = AppendAwarePreparedHistoryCache(max_entries=2)
+] = AppendAwarePreparedHistoryCache(max_entries=16, preserve_capacity_growth=True)
 
 
 @dataclass(frozen=True)
@@ -236,6 +332,15 @@ class _RetardedSample:
     beta_prime_per_mm: np.ndarray
     residual_mm: float
     separation_mm: float
+    source_proper_velocity: np.ndarray | None = None
+    precise_separation_mm: np.ndarray | None = None
+    time_error_bound_ns: float | None = None
+    precise_separation_frame_mm: np.ndarray | None = None
+    beta_jerk_per_mm2: np.ndarray | None = None
+    beta_snap_per_mm3: np.ndarray | None = None
+    source_segment_index: int | None = None
+    source_segment_fraction: float | None = None
+    ballistic_frame_components: np.ndarray | None = None
 
 
 @dataclass(frozen=True)
@@ -275,10 +380,15 @@ def _history_matrix(history: TrajectoryHistory, field_name: str) -> np.ndarray:
         raise TypeError("trial history must use the prepared overlay path")
     if isinstance(history, IndexedTrajectoryArrays):
         start = int(history.start_step)
-        values = np.asarray(getattr(history.base, field_name), dtype=float)[start:]
-        return np.asarray(values[:, history.particle_indices], dtype=float)
+        values = np.asarray(getattr(history.base, field_name), dtype=float)
+        if field_name in RESOLVED_KNOT_FIELDS and values.size == 0:
+            values = np.zeros_like(history.base.t)
+        return np.asarray(values[start:, history.particle_indices], dtype=float)
     if isinstance(history, TrajectoryArrays):
-        return np.asarray(getattr(history, field_name), dtype=float)
+        values = np.asarray(getattr(history, field_name), dtype=float)
+        if field_name in RESOLVED_KNOT_FIELDS and values.size == 0:
+            return np.zeros_like(history.t)
+        return values
     return _legacy_matrix(history, field_name)
 
 
@@ -322,6 +432,116 @@ def _source_charge_native(history: TrajectoryHistory) -> np.ndarray:
     raise ValueError("source history must provide q_source or q")
 
 
+def _resolved_history_knots(
+    history: TrajectoryHistory, time_shape: tuple[int, ...], start: int = 0
+) -> np.ndarray:
+    data = np.zeros((*time_shape, len(RESOLVED_KNOT_FIELDS)))
+    for index, name in enumerate(RESOLVED_KNOT_FIELDS):
+        try:
+            values = (
+                np.stack(
+                    [
+                        np.asarray(
+                            state.get(name, np.zeros(time_shape[1])), dtype=float
+                        )
+                        for state in history[start:]
+                    ]
+                )
+                if isinstance(history, list) and time_shape[0]
+                else _history_matrix_slice(history, name, start)
+            )
+        except (KeyError, AttributeError):
+            continue
+        if values.shape == time_shape:
+            data[..., index] = values
+    # Older knots may carry gamma and beta, but never assume P is mechanical.
+    # Validate their mechanical gamma-beta pair before accepting this input.
+    try:
+        gamma = _history_matrix_slice(history, "gamma", start)
+    except (KeyError, AttributeError):
+        return data
+    if gamma.shape == time_shape:
+        beta = np.stack(
+            [_history_matrix_slice(history, f"b{a}", start) for a in "xyz"], axis=-1
+        )
+        proper = gamma[..., None] * beta
+        mechanical_gamma = np.hypot(1.0, np.linalg.norm(proper, axis=-1))
+        valid = (
+            (gamma >= 1.0)
+            & np.isfinite(gamma)
+            & (np.abs(mechanical_gamma - gamma) <= 8 * np.finfo(float).eps * gamma)
+            & (data[..., 3] == 0)
+        )
+        data[valid, :3] = proper[valid]
+        data[valid, 3] = 1.0
+    if not np.all(np.isfinite(data)):
+        raise ValueError("resolved source knots must contain only finite values")
+    return data
+
+
+def _build_null_segments(
+    history: _HistoryArrays,
+    source_index: int,
+    start: int,
+    stop: int,
+    beta_primes: np.ndarray,
+) -> tuple[LightConeSegment, ...]:
+    result = []
+    for knot in range(start, max(start, stop - 1)):
+        sl = slice(knot, knot + 2)
+        data = (
+            None
+            if history.resolved_knots is None
+            else history.resolved_knots[sl, source_index]
+        )
+        primes = _segment_beta_primes(history, source_index, knot, beta_primes)
+        segment = build_light_cone_segment(
+            history.time_ns[sl, source_index],
+            history.position_mm[sl, source_index],
+            history.beta[sl, source_index],
+            primes,
+            proper_velocity=(
+                data[:, :3] if data is not None and np.all(data[:, 3]) else None
+            ),
+            position_low=(data[:, 4:7] if data is not None else None),
+            time_low=(data[:, 7] if data is not None else None),
+            position_tail=(data[:, 8:11] if data is not None else None),
+            time_tail=(data[:, 11] if data is not None else None),
+        )
+        if data is not None:
+            modes = data[:, 13]
+            if np.any((modes != 0.0) & (modes != 1.0)) or modes[0] != modes[1]:
+                raise ValueError(
+                    "source history representation must be constant and recognized at the knots"
+                )
+            if modes[0] == 1.0:
+                try:
+                    segment = constrain_proper_velocity_segment(
+                        segment, beta_primes[sl]
+                    )
+                except ValueError as error:
+                    raise ValueError(
+                        f"proper_velocity constraint failed for source {source_index}, segment {knot}: {error}"
+                    ) from error
+        result.append(segment)
+    return tuple(result)
+
+
+def _segment_beta_primes(
+    history: _HistoryArrays, source_index: int, knot: int, beta_primes: np.ndarray
+) -> np.ndarray:
+    primes = np.array(beta_primes[knot : knot + 2], copy=True)
+    for endpoint, values in (
+        (0, history.gate_prime_after),
+        (1, history.gate_prime_before),
+    ):
+        if values is not None:
+            value = values[knot + endpoint, source_index]
+            if np.all(np.isfinite(value)):
+                primes[endpoint] = value
+    return primes
+
+
 def _extract_history(history: TrajectoryHistory) -> _HistoryArrays:
     if isinstance(history, list) and not history:
         return _HistoryArrays(
@@ -359,6 +579,19 @@ def _extract_history(history: TrajectoryHistory) -> _HistoryArrays:
     # Stored bdot is d beta / d(ct), where ct is measured in millimetres.
     beta_prime_per_mm = np.stack((bdotx, bdoty, bdotz), axis=-1)
     dead = _history_dead(history, time_ns.shape)
+    gate_primes = {}
+    if isinstance(history, list) and any(
+        "_gate_prime_before" in row for row in history
+    ):
+        for side in ("before", "after"):
+            gate_primes[f"gate_prime_{side}"] = np.stack(
+                [
+                    row.get(
+                        f"_gate_prime_{side}", np.full((time_ns.shape[1], 3), np.nan)
+                    )
+                    for row in history
+                ]
+            )
     return _HistoryArrays(
         time_ns=time_ns,
         position_mm=position_mm,
@@ -366,6 +599,8 @@ def _extract_history(history: TrajectoryHistory) -> _HistoryArrays:
         beta_prime_per_mm=beta_prime_per_mm,
         charge_native=charge_native,
         dead=dead,
+        resolved_knots=_resolved_history_knots(history, time_ns.shape),
+        **gate_primes,
     )
 
 
@@ -402,6 +637,11 @@ def _reserve_history_arrays(
     arrays.beta_prime_per_mm = beta_prime_buffer[:visible_stop]
     arrays.dead = dead_buffer[:visible_stop]
     arrays.charge_native = np.array(arrays.charge_native, dtype=float, copy=True)
+    resolved_buffer = np.zeros((reserved, n_sources, len(RESOLVED_KNOT_FIELDS)))
+    if arrays.resolved_knots is not None:
+        resolved_buffer[:visible_stop] = arrays.resolved_knots
+    arrays.resolved_knots = resolved_buffer[:visible_stop]
+    arrays._resolved_buffer = resolved_buffer
     arrays._time_buffer = time_buffer
     arrays._position_buffer = position_buffer
     arrays._beta_buffer = beta_buffer
@@ -423,12 +663,18 @@ def _history_matrix_slice(
         raise TypeError("trial history must use the prepared overlay path")
     if isinstance(history, IndexedTrajectoryArrays):
         global_start = int(history.start_step) + start
-        values = np.asarray(getattr(history.base, field_name), dtype=float)[
-            global_start : history.base.n_steps
-        ]
-        return np.asarray(values[:, history.particle_indices], dtype=float)
+        values = np.asarray(getattr(history.base, field_name), dtype=float)
+        if field_name in RESOLVED_KNOT_FIELDS and values.size == 0:
+            values = np.zeros_like(history.base.t)
+        return np.asarray(
+            values[global_start : history.base.n_steps, history.particle_indices],
+            dtype=float,
+        )
     if isinstance(history, TrajectoryArrays):
-        return np.asarray(getattr(history, field_name), dtype=float)[start:]
+        values = np.asarray(getattr(history, field_name), dtype=float)
+        if field_name in RESOLVED_KNOT_FIELDS and values.size == 0:
+            return np.zeros_like(history.t[start:])
+        return values[start:]
     return _legacy_matrix(history[start:], field_name)
 
 
@@ -492,6 +738,7 @@ def _extract_history_tail(
         beta_prime_per_mm=np.stack((bdotx, bdoty, bdotz), axis=-1),
         charge_native=charge_native,
         dead=_history_dead_slice(history, start_step, time_ns.shape),
+        resolved_knots=_resolved_history_knots(history, time_ns.shape, start_step),
     )
 
 
@@ -507,6 +754,14 @@ def _append_history_arrays(
         raise ValueError("source particle count changed while appending history")
     if not np.array_equal(tail.charge_native, previous.charge_native):
         return _extract_history(history)
+
+    return _append_extracted_history_arrays(previous, tail, old_stop)
+
+
+def _append_extracted_history_arrays(
+    previous: _HistoryArrays, tail: _HistoryArrays, old_stop: int
+) -> _HistoryArrays:
+    """Append already extracted rows, including translated cloud rows."""
 
     tail_count = int(tail.time_ns.shape[0])
     new_stop = int(old_stop) + tail_count
@@ -537,6 +792,10 @@ def _append_history_arrays(
         if new_stop > previous._time_buffer.shape[0]:
             raise ValueError("prepared history append exceeded builder capacity")
 
+    assert previous._resolved_buffer is not None
+    if tail.resolved_knots is not None:
+        previous._resolved_buffer[old_stop:new_stop] = tail.resolved_knots
+    previous.resolved_knots = previous._resolved_buffer[:new_stop]
     previous._time_buffer[old_stop:new_stop] = tail.time_ns
     previous._position_buffer[old_stop:new_stop] = tail.position_mm
     previous._beta_buffer[old_stop:new_stop] = tail.beta
@@ -585,6 +844,10 @@ def _append_history_array_tail(
     assert extended._beta_buffer is not None
     assert extended._beta_prime_buffer is not None
     assert extended._dead_buffer is not None
+    assert extended._resolved_buffer is not None
+    if tail.resolved_knots is not None:
+        extended._resolved_buffer[old_stop:new_stop] = tail.resolved_knots
+    extended.resolved_knots = extended._resolved_buffer[:new_stop]
     extended._time_buffer[old_stop:new_stop] = tail.time_ns
     extended._position_buffer[old_stop:new_stop] = tail.position_mm
     extended._beta_buffer[old_stop:new_stop] = tail.beta
@@ -649,35 +912,164 @@ def _prepare_trial_history(
     """Extend cached accepted charge history without publishing trial knots."""
 
     accepted = _prepare_history(
-        history.base,
-        excluded_source_indices,
-        source_acceleration_semantics=source_acceleration_semantics,
+        history.base, (), source_acceleration_semantics=source_acceleration_semantics
     )
+    cached = accepted.trials.get(id(history))
+    if cached is not None and cached[0]() is history:
+        return _exclude_prepared_sources(cached[1], excluded_source_indices)
     tail_arrays = _extract_history(list(history.tail))
-    arrays, old_stop = _append_history_array_tail(accepted.arrays, tail_arrays)
+    old_stop = accepted.arrays.time_ns.shape[0]
+    arrays = _overlay_history_arrays(accepted.arrays, tail_arrays)
+    # The reconstruction needs just the former endpoint and its neighbour.
+    # Keep three context knots so the existing append arithmetic is unchanged.
+    context_start = max(0, old_stop - 3)
+    context = _slice_history_arrays(accepted.arrays, context_start)
+    local = _concatenate_history_arrays(context, tail_arrays)
     sources: dict[int, _PreparedSourceHistory] = {}
     for source_index, source in accepted.sources.items():
-        trial_source = _clone_prepared_source_history_for_trial(source)
-        trial_source._maximum_capacity = arrays._maximum_capacity
-        _append_prepared_source_history(trial_source, arrays, old_stop)
+        if source.ended_by_loss:
+            trial_source = copy(source)
+            _append_prepared_source_history(trial_source, arrays, old_stop)
+            sources[source_index] = trial_source
+            continue
+        local_source = replace(
+            source,
+            time_ns=source.time_ns[context_start:],
+            position_mm=source.position_mm[context_start:],
+            beta=source.beta[context_start:],
+            beta_prime_per_mm=source.beta_prime_per_mm[context_start:],
+            segment_duration_ns=source.segment_duration_ns[context_start:],
+            position_coefficients_mm=source.position_coefficients_mm[context_start:],
+            light_cone_segments=source.light_cone_segments[context_start:],
+            _duration_buffer=None,
+            _coefficient_buffer=None,
+            _beta_prime_buffer=None,
+            _maximum_capacity=local.time_ns.shape[0],
+        )
+        _append_prepared_source_history(local_source, local, old_stop - context_start)
+        instantaneous = source_acceleration_semantics == "instantaneous"
+        knot_start = (
+            old_stop if instantaneous else (0 if old_stop < 3 else old_stop - 1)
+        )
+        segment_start = max(0, old_stop - (1 if instantaneous else 2))
+        trial_source = replace(source, ended_by_loss=local_source.ended_by_loss)
+        for name in ("time_ns", "position_mm", "beta"):
+            setattr(
+                trial_source,
+                name,
+                HistoryPrefixView(
+                    getattr(source, name),
+                    old_stop,
+                    getattr(local_source, name)[old_stop - context_start :],
+                ),
+            )
+        for name, start in (
+            ("beta_prime_per_mm", knot_start),
+            ("segment_duration_ns", segment_start),
+            ("position_coefficients_mm", segment_start),
+            ("light_cone_segments", segment_start),
+        ):
+            setattr(
+                trial_source,
+                name,
+                (
+                    HistoryPrefixView(
+                        getattr(source, name),
+                        start,
+                        getattr(local_source, name)[start - context_start :],
+                    )
+                    if name != "light_cone_segments" or source.light_cone_enabled
+                    else ()
+                ),
+            )
+        trial_source._duration_buffer = None
+        trial_source._coefficient_buffer = None
+        trial_source._beta_prime_buffer = None
         sources[source_index] = trial_source
-    return _PreparedHistory(
+    prepared = _PreparedHistory(
         arrays=arrays,
         sources=sources,
         source_acceleration_semantics=source_acceleration_semantics,
     )
+    accepted.trials[id(history)] = (ref(history), prepared)
+    while len(accepted.trials) > 8:
+        accepted.trials.popitem(last=False)
+    return _exclude_prepared_sources(prepared, excluded_source_indices)
+
+
+_HISTORY_ROW_FIELDS = (
+    "time_ns",
+    "position_mm",
+    "beta",
+    "beta_prime_per_mm",
+    "dead",
+    "resolved_knots",
+)
+
+
+def _slice_history_arrays(arrays: _HistoryArrays, start: int) -> _HistoryArrays:
+    values: dict[str, Any] = {
+        name: None if getattr(arrays, name) is None else getattr(arrays, name)[start:]
+        for name in _HISTORY_ROW_FIELDS
+    }
+    return _HistoryArrays(charge_native=arrays.charge_native, **values)
+
+
+def _concatenate_history_arrays(
+    prefix: _HistoryArrays, tail: _HistoryArrays
+) -> _HistoryArrays:
+    values: dict[str, Any] = {
+        name: (
+            None
+            if getattr(prefix, name) is None
+            else np.concatenate((getattr(prefix, name), getattr(tail, name)), axis=0)
+        )
+        for name in _HISTORY_ROW_FIELDS
+    }
+    return _HistoryArrays(charge_native=prefix.charge_native, **values)
+
+
+def _overlay_history_arrays(
+    prefix: _HistoryArrays, tail: _HistoryArrays
+) -> _HistoryArrays:
+    values: dict[str, Any] = {
+        name: (
+            None
+            if getattr(prefix, name) is None
+            else HistoryPrefixView(
+                getattr(prefix, name), prefix.time_ns.shape[0], getattr(tail, name)
+            )
+        )
+        for name in _HISTORY_ROW_FIELDS
+    }
+    return _HistoryArrays(charge_native=prefix.charge_native, **values)
 
 
 def _quintic_worldline_sample(
     source: _PreparedSourceHistory,
     segment_index: int,
     time_ns: float,
+    allow_extrapolation: bool = False,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Interpolate position, velocity, and acceleration continuously."""
+    """Interpolate position, velocity, and acceleration continuously.
+
+    With ``allow_extrapolation`` the last segment's quintic is continued past
+    its end knot (a predictor for sources whose next row is not yet accepted).
+    """
+
+    if source.light_cone_segments:
+        segment = source.light_cone_segments[segment_index]
+        upper = np.inf if allow_extrapolation else 1.0
+        fraction = float(
+            np.clip((time_ns - segment.time_ns) / segment.duration_ns, 0.0, upper)
+        )
+        position, beta, prime, _invariant = segment.sample(fraction)
+        return position, beta, prime
 
     t0 = float(source.time_ns[segment_index])
     duration = float(source.segment_duration_ns[segment_index])
-    tau = float(np.clip((time_ns - t0) / duration, 0.0, 1.0))
+    upper = np.inf if allow_extrapolation else 1.0
+    tau = float(np.clip((time_ns - t0) / duration, 0.0, upper))
     c0, c1, c2, c3, c4, c5 = source.position_coefficients_mm[segment_index]
 
     position = c0 + c1 * tau + c2 * tau**2 + c3 * tau**3 + c4 * tau**4 + c5 * tau**5
@@ -757,8 +1149,68 @@ def _quintic_position_coefficients_mm(
             + 0.5 * acceleration_remainder
         )
         coefficients = np.stack((c0, c1, c2, c3, c4, c5), axis=1)
+        # Ignore endpoint roundoff when the supplied segment is ballistic.
+        endpoint_roundoff = (
+            4.0
+            * np.finfo(float).eps
+            * (np.abs(positions[:-1]) + np.abs(c1) + np.abs(positions[1:]))
+        )
+        ballistic = (
+            np.all(betas[1:] == betas[:-1], axis=1)
+            & np.all(beta_primes[:-1] == 0.0, axis=1)
+            & np.all(beta_primes[1:] == 0.0, axis=1)
+            & np.all(
+                np.abs(position_remainder) <= endpoint_roundoff,
+                axis=1,
+            )
+        )
+        coefficients[ballistic, 2:, :] = 0.0
 
     return durations, coefficients
+
+
+def _source_beta_prime_samples(
+    times: np.ndarray,
+    betas: np.ndarray,
+    inertial_boundary: tuple[float, np.ndarray, np.ndarray] | None,
+    resolved_knots: np.ndarray | None = None,
+) -> np.ndarray:
+    if resolved_knots is not None and np.all(resolved_knots[:, 3]):
+        if inertial_boundary is not None and np.any(
+            np.sum(betas * betas, axis=1) >= 1.0
+        ):
+            result = np.zeros_like(betas)
+            start = int(np.searchsorted(times, inertial_boundary[0], side="left"))
+            if start < times.size - 1:
+                suffix = reconstruct_resolved_beta_prime_per_mm(
+                    times[start:], betas[start:], resolved_knots[start:, :3]
+                )
+                first_dynamic = start + int(times[start] == inertial_boundary[0])
+                result[first_dynamic:] = suffix[first_dynamic - start :]
+            return result
+        return reconstruct_resolved_beta_prime_per_mm(
+            times, betas, resolved_knots[:, :3]
+        )
+    if inertial_boundary is None or np.all(np.sum(betas * betas, axis=1) < 1.0):
+        return reconstruct_instantaneous_beta_prime_per_mm(times, betas)
+    # Only rounded-luminal analytic prefixes need this preparation exception.
+    # Resolved beta histories retain the original derivative reconstruction.
+    # The analytic prefix has exactly zero acceleration. Do not differentiate
+    # distant artificial seed knots alongside short accepted intervals: their
+    # relative spacing can make even the derivative weights singular.
+    result = np.zeros_like(betas)
+    start = int(np.searchsorted(times, inertial_boundary[0], side="left"))
+    if start < times.size - 1:
+        includes_anchor = times[start] == inertial_boundary[0]
+        suffix = reconstruct_instantaneous_beta_prime_per_mm(
+            times[start:],
+            betas[start:],
+            inertial_prefix_stop=int(includes_anchor),
+            inertial_proper_velocity=inertial_boundary[2] if includes_anchor else None,
+        )
+        first_dynamic = start + int(includes_anchor)
+        result[first_dynamic:] = suffix[int(includes_anchor) :]
+    return result
 
 
 def _prepare_source_history(
@@ -767,9 +1219,19 @@ def _prepare_source_history(
     *,
     reserve_capacity: int | None = None,
     source_acceleration_semantics: str = "preceding_interval",
+    inertial_boundary: tuple[float, np.ndarray, np.ndarray] | None = None,
+    light_cone_enabled: bool = True,
 ) -> _PreparedSourceHistory:
     """Validate and prepare one source's alive interpolation segments."""
 
+    if (
+        not light_cone_enabled
+        and history.resolved_knots is not None
+        and np.any(history.resolved_knots[:, source_index, 13] != 0)
+    ):
+        raise ValueError(
+            "proper_velocity does not support magnetic-dipole/spin C5 histories"
+        )
     alive_stop = _alive_prefix_length(history, source_index)
     times = history.time_ns[:alive_stop, source_index]
     positions = history.position_mm[:alive_stop, source_index]
@@ -780,14 +1242,57 @@ def _prepare_source_history(
     beta_primes = (
         history.beta_prime_per_mm[:alive_stop, source_index]
         if acceleration_semantics == "instantaneous"
-        else reconstruct_instantaneous_beta_prime_per_mm(times, betas)
+        else _source_beta_prime_samples(
+            times,
+            betas,
+            inertial_boundary,
+            (
+                None
+                if history.resolved_knots is None or not light_cone_enabled
+                else history.resolved_knots[:alive_stop, source_index]
+            ),
+        )
     )
+    if (
+        history.gate_prime_before is not None
+        and acceleration_semantics != "instantaneous"
+    ):
+        # Reconstruct on each smooth side separately. Even the neighbours of
+        # a gate knot must not difference velocities across its force jump.
+        breaks = np.flatnonzero(
+            np.all(
+                np.isfinite(history.gate_prime_before[:alive_stop, source_index]),
+                axis=1,
+            )
+        )
+        boundaries = sorted(set((0, *breaks, alive_stop - 1)))
+        for left, right in zip(boundaries[:-1], boundaries[1:]):
+            sl = slice(left, right + 1)
+            beta_primes[sl] = _source_beta_prime_samples(
+                times[sl],
+                betas[sl],
+                inertial_boundary,
+                (
+                    None
+                    if history.resolved_knots is None
+                    else history.resolved_knots[sl, source_index]
+                ),
+            )
     durations, coefficients = _quintic_position_coefficients_mm(
         times,
         positions,
         betas,
         beta_primes,
     )
+    if history.gate_prime_before is not None:
+        for knot in range(len(durations)):
+            _, piece = _quintic_position_coefficients_mm(
+                times[knot : knot + 2],
+                positions[knot : knot + 2],
+                betas[knot : knot + 2],
+                _segment_beta_primes(history, source_index, knot, beta_primes),
+            )
+            coefficients[knot] = piece[0]
     prepared = _PreparedSourceHistory(
         source_index=source_index,
         time_ns=times,
@@ -798,6 +1303,15 @@ def _prepare_source_history(
         position_coefficients_mm=coefficients,
         ended_by_loss=alive_stop != history.time_ns.shape[0],
         source_acceleration_semantics=acceleration_semantics,
+        inertial_boundary=inertial_boundary,
+        light_cone_segments=(
+            list(
+                _build_null_segments(history, source_index, 0, alive_stop, beta_primes)
+            )
+            if light_cone_enabled
+            else ()
+        ),
+        light_cone_enabled=light_cone_enabled,
         _maximum_capacity=history._maximum_capacity,
     )
     if reserve_capacity is None:
@@ -862,9 +1376,17 @@ def _append_prepared_source_history(
         # the segment on either side of that knot; earlier segments are stable.
         derivative_update_start = 0 if old_alive_stop < 3 else old_alive_stop - 1
         derivative_context_start = max(0, derivative_update_start - 1)
-        local_beta_primes = reconstruct_instantaneous_beta_prime_per_mm(
+        local_beta_primes = _source_beta_prime_samples(
             history.time_ns[derivative_context_start:new_alive_stop, source_index],
             history.beta[derivative_context_start:new_alive_stop, source_index],
+            previous.inertial_boundary,
+            (
+                None
+                if history.resolved_knots is None or not previous.light_cone_enabled
+                else history.resolved_knots[
+                    derivative_context_start:new_alive_stop, source_index
+                ]
+            ),
         )
         updated_beta_primes = local_beta_primes[
             derivative_update_start - derivative_context_start :
@@ -938,6 +1460,16 @@ def _append_prepared_source_history(
     previous.beta_prime_per_mm = previous._beta_prime_buffer[:new_alive_stop]
     previous.segment_duration_ns = previous._duration_buffer[:segment_stop]
     previous.position_coefficients_mm = previous._coefficient_buffer[:segment_stop]
+    if previous.light_cone_enabled:
+        if not isinstance(previous.light_cone_segments, list):
+            previous.light_cone_segments = list(previous.light_cone_segments)
+        previous.light_cone_segments[coefficient_start:] = _build_null_segments(
+            history,
+            source_index,
+            coefficient_start,
+            new_alive_stop,
+            previous.beta_prime_per_mm,
+        )
     previous.ended_by_loss = ended_by_loss
     return previous
 
@@ -960,12 +1492,50 @@ def _prepare_history_uncached(
     excluded = {int(index) for index in excluded_source_indices}
     if any(index < 0 or index >= arrays.n_sources for index in excluded):
         raise IndexError("excluded source index is out of bounds")
+    if isinstance(history, TrialTrajectoryHistory):
+        raise TypeError("trial history must use the prepared overlay path")
+    boundaries: dict[int, tuple[float, np.ndarray, np.ndarray]] = {}
+    first_state = (
+        {}
+        if arrays.time_ns.shape[0] == 0
+        else (
+            history.state_at(0)
+            if isinstance(history, (TrajectoryArrays, IndexedTrajectoryArrays))
+            else history[0]
+        )
+    )
+    ready = first_state.get("inertial_charge_boundary_ready")
+    if ready is not None:
+        for source_index in range(arrays.n_sources):
+            if ready[source_index]:
+                boundaries[source_index] = (
+                    float(
+                        first_state["inertial_charge_boundary_time_ns"][source_index]
+                    ),
+                    np.asarray(
+                        [
+                            first_state[f"inertial_charge_boundary_position_{axis}"][
+                                source_index
+                            ]
+                            for axis in "xyz"
+                        ]
+                    ),
+                    np.asarray(
+                        [
+                            first_state[f"inertial_charge_boundary_u_{axis}"][
+                                source_index
+                            ]
+                            for axis in "xyz"
+                        ]
+                    ),
+                )
     sources = {
         source_index: _prepare_source_history(
             arrays,
             source_index,
             reserve_capacity=reserve_capacity,
             source_acceleration_semantics=source_acceleration_semantics,
+            inertial_boundary=boundaries.get(source_index),
         )
         for source_index in range(arrays.n_sources)
         if source_index not in excluded
@@ -986,6 +1556,10 @@ def _append_prepared_history(
 ) -> _PreparedHistory:
     """Extend charged-source preparation from one builder history tail."""
 
+    capacity = history_storage_capacity(history)
+    previous.arrays._maximum_capacity = capacity
+    for source in previous.sources.values():
+        source._maximum_capacity = capacity
     arrays = _append_history_arrays(previous.arrays, history, old_stop)
     # A changed constant forces _append_history_arrays to re-extract the full
     # history. Rebuild source selection as well instead of treating it as an
@@ -1000,11 +1574,12 @@ def _append_prepared_history(
         )
     for source in previous.sources.values():
         _append_prepared_source_history(source, arrays, old_stop)
+    previous.trials.clear()
     return previous
 
 
 def _prepare_history(
-    history: TrajectoryHistory,
+    history: TrajectoryHistory | ExactCloudHistory,
     excluded_source_indices: Sequence[int],
     *,
     source_acceleration_semantics: str = "preceding_interval",
@@ -1014,19 +1589,86 @@ def _prepare_history(
     acceleration_semantics = _validated_source_acceleration_semantics(
         source_acceleration_semantics
     )
+    if isinstance(history, ExactVisibilityHistory):
+        return _prepare_history(
+            history.base,
+            excluded_source_indices,
+            source_acceleration_semantics=acceleration_semantics,
+        )
+    if isinstance(history, ExactCloudHistory):
+        macro = _prepare_history(
+            history.base, (), source_acceleration_semantics=acceleration_semantics
+        )
+        # These are precisely the inputs to transverse_offsets. A changed
+        # width, seed, or quadrature cannot reuse translated coordinates.
+        key = (
+            history.config.subcharge_count,
+            history.config.seed,
+            history.config.position_sigma_mm,
+            history.config.sigma_multiplier,
+        )
+        cloud = macro.clouds.get(key)
+        if (
+            cloud is None
+            or cloud.arrays.time_ns.shape[0] != macro.arrays.time_ns.shape[0]
+        ):
+            provisional = isinstance(history.base, TrialTrajectoryHistory)
+            if provisional:
+                cloud = _prepare_history(
+                    ExactCloudHistory(history.base.base, history.config),
+                    (),
+                    source_acceleration_semantics=acceleration_semantics,
+                )
+            # Accepted appenders may grow buffers in place. A failed cloud
+            # translation must not leave a half-updated variant reusable.
+            macro.clouds.pop(key, None)
+            cloud = _expand_cloud_prepared_history(
+                macro, history.config, previous=cloud, provisional=provisional
+            )
+            macro.clouds[key] = cloud
+            while len(macro.clouds) > 4:
+                del macro.clouds[next(iter(macro.clouds))]
+        return _exclude_prepared_sources(cloud, excluded_source_indices)
+    from .exact_visibility_history import expanded_visibility_history
+
+    expanded = expanded_visibility_history(history)
+    if expanded is not None:
+        prepared = _CHARGE_PREPARED_HISTORY_CACHE.prepare(
+            history,
+            variant=("gate_knots", acceleration_semantics),
+            prepare_full=lambda current: _prepare_history_uncached(
+                expanded, (), source_acceleration_semantics=acceleration_semantics
+            ),
+            append=lambda previous, current, old_stop: _prepare_history_uncached(
+                expanded, (), source_acceleration_semantics=acceleration_semantics
+            ),
+        ).value
+        return _exclude_prepared_sources(prepared, excluded_source_indices)
     if isinstance(history, TrialTrajectoryHistory):
         return _prepare_trial_history(
-            history,
-            excluded_source_indices,
-            acceleration_semantics,
+            history, excluded_source_indices, acceleration_semantics
         )
-    excluded = tuple(sorted({int(index) for index in excluded_source_indices}))
-    return _CHARGE_PREPARED_HISTORY_CACHE.prepare(
+    try:
+        # Indexed matrices use advanced indexing, which would copy the whole
+        # prefix just to identify the representation of its first row.
+        modes = (
+            history.row("source_history_mode", 0)[None, :]
+            if (
+                isinstance(history, IndexedTrajectoryArrays)
+                and history.n_steps
+                and history.base.source_history_mode.size
+            )
+            else _history_matrix(history, "source_history_mode")
+        )
+    except (KeyError, AttributeError):
+        modes = np.zeros((0, 0))
+    mode_key = tuple(modes[0]) if modes.size else ()
+    prepared = _CHARGE_PREPARED_HISTORY_CACHE.prepare(
         history,
-        variant=("charge", excluded, acceleration_semantics),
+        variant=("charge", acceleration_semantics, mode_key),
         prepare_full=lambda current: _prepare_history_uncached(
             current,
-            excluded,
+            (),
             reserve_capacity=history_prepared_buffer_capacity(current),
             maximum_capacity=history_storage_capacity(current),
             source_acceleration_semantics=acceleration_semantics,
@@ -1035,9 +1677,263 @@ def _prepare_history(
             previous,
             current,
             old_stop,
-            excluded,
         ),
     ).value
+    return _exclude_prepared_sources(prepared, excluded_source_indices)
+
+
+def _exclude_prepared_sources(
+    prepared: _PreparedHistory, excluded_source_indices: Sequence[int]
+) -> _PreparedHistory:
+    """Share arrays and worldlines while excluding every child of a parent."""
+    excluded = {int(index) for index in excluded_source_indices}
+    parents = prepared.parent_indices
+    count = (
+        prepared.arrays.n_sources
+        if parents is None
+        else (0 if not len(parents) else int(parents[-1]) + 1)
+    )
+    if any(index < 0 or index >= count for index in excluded):
+        raise IndexError("excluded source index is out of bounds")
+    if not excluded:
+        return prepared
+    return replace(
+        prepared,
+        sources={
+            index: source
+            for index, source in prepared.sources.items()
+            if (index if parents is None else int(parents[index])) not in excluded
+        },
+    )
+
+
+def _expand_cloud_prepared_history(
+    macro: _PreparedHistory,
+    config: MacroparticleSmearingConfig,
+    *,
+    previous: _PreparedHistory | None = None,
+    provisional: bool = False,
+) -> _PreparedHistory:
+    """Translate already reconstructed centre curves, including inertial past.
+
+    A constant translation changes only each segment's constant coefficient.
+    Velocity, acceleration, knot times, and trial acceptance stay unchanged.
+    Every translated curve is then solved independently by ordinary providers.
+    """
+    count = config.subcharge_count
+    old_stop = 0 if previous is None else previous.arrays.time_ns.shape[0]
+    rows = _slice_history_arrays(macro.arrays, old_stop)
+    if rows.resolved_knots is not None and np.any(rows.resolved_knots[..., 13] != 0):
+        raise ValueError(
+            "exact charge clouds do not support source_history_representation="
+            "'proper_velocity'; use 'light_cone_quintic' or point sources"
+        )
+    parents = np.repeat(np.arange(macro.arrays.n_sources), count)
+    offsets_and_weights = [
+        transverse_offsets(macro.arrays.beta[0, parent], config)
+        for parent in range(macro.arrays.n_sources)
+    ]
+    offsets = np.concatenate([item[0] for item in offsets_and_weights])
+    fractions = np.concatenate([item[1] for item in offsets_and_weights])
+    resolved = rows.resolved_knots
+    arrays = _HistoryArrays(
+        time_ns=rows.time_ns[:, parents],
+        position_mm=rows.position_mm[:, parents] + offsets,
+        beta=rows.beta[:, parents],
+        beta_prime_per_mm=rows.beta_prime_per_mm[:, parents],
+        charge_native=macro.arrays.charge_native[parents] * fractions,
+        dead=rows.dead[:, parents],
+        resolved_knots=(
+            None if resolved is None else np.array(resolved[:, parents], copy=True)
+        ),
+    )
+    if arrays.resolved_knots is not None:
+        for knot, child in np.ndindex(arrays.position_mm.shape[:2]):
+            _, low, tail = _translate_resolved_position(
+                rows.position_mm[knot, parents[child]],
+                arrays.resolved_knots[knot, child, 4:7],
+                arrays.resolved_knots[knot, child, 8:11],
+                offsets[child],
+            )
+            arrays.resolved_knots[knot, child, 4:7] = low
+            arrays.resolved_knots[knot, child, 8:11] = tail
+    if previous is None:
+        arrays = _reserve_history_arrays(
+            arrays,
+            (
+                macro.arrays._time_buffer.shape[0]
+                if macro.arrays._time_buffer is not None
+                else None
+            ),
+            maximum_capacity=macro.arrays._maximum_capacity,
+        )
+    elif provisional:
+        arrays = _overlay_history_arrays(previous.arrays, arrays)
+    else:
+        previous.arrays._maximum_capacity = macro.arrays._maximum_capacity
+        arrays = _append_extracted_history_arrays(previous.arrays, arrays, old_stop)
+    sources = {}
+    for child, parent in enumerate(parents):
+        if parent not in macro.sources:
+            continue
+        centre = macro.sources[int(parent)]
+        old_source = None if previous is None else previous.sources.get(child)
+        segment_start = (
+            0
+            if old_source is None
+            else min(
+                len(old_source.segment_duration_ns),
+                max(
+                    0,
+                    old_stop
+                    - (
+                        1
+                        if macro.source_acceleration_semantics == "instantaneous"
+                        else 2
+                    ),
+                ),
+            )
+        )
+        # A provisional coefficient store becomes a prefix/tail row view.
+        coefficients: Any = np.array(
+            centre.position_coefficients_mm[segment_start:], copy=True
+        )
+        coefficients[:, 0] += offsets[child]
+        segments: Sequence[LightConeSegment] = [
+            _translate_light_cone_segment(segment, offsets[child])
+            for segment in centre.light_cone_segments[segment_start:]
+        ]
+        if old_source is not None:
+            if provisional:
+                coefficients = HistoryPrefixView(
+                    old_source.position_coefficients_mm, segment_start, coefficients
+                )
+                segments = (
+                    HistoryPrefixView(
+                        old_source.light_cone_segments, segment_start, segments
+                    )
+                    if centre.light_cone_enabled
+                    else ()
+                )
+            else:
+                required = len(centre.position_coefficients_mm)
+                buffer = old_source._coefficient_buffer
+                if buffer is None or len(buffer) < required:
+                    capacity = max(
+                        required, 2 * len(old_source.position_coefficients_mm), 7
+                    )
+                    buffer = np.empty((capacity, 6, 3))
+                    buffer[:segment_start] = old_source.position_coefficients_mm[
+                        :segment_start
+                    ]
+                buffer[segment_start:required] = coefficients
+                coefficients = buffer[:required]
+                old_source._coefficient_buffer = buffer
+                if not isinstance(old_source.light_cone_segments, list):
+                    old_source.light_cone_segments = list(
+                        old_source.light_cone_segments
+                    )
+                old_source.light_cone_segments[segment_start:] = segments
+                segments = old_source.light_cone_segments
+        coefficient_buffer = None
+        if old_source is None and not provisional:
+            capacity = max(
+                len(coefficients),
+                7,
+                (
+                    0
+                    if macro.arrays._time_buffer is None
+                    else len(macro.arrays._time_buffer) - 1
+                ),
+            )
+            coefficient_buffer = np.empty((capacity, 6, 3))
+            coefficient_buffer[: len(coefficients)] = coefficients
+            coefficients = coefficient_buffer[: len(coefficients)]
+        boundary = centre.inertial_boundary
+        if old_source is not None:
+            boundary = old_source.inertial_boundary
+        elif boundary is not None:
+            boundary = (boundary[0], boundary[1] + offsets[child], boundary[2])
+        # All child kinematics come from the centre; only positions and
+        # constant polynomial coefficients are translated.
+        alive_stop = len(centre.time_ns)
+        translated_position = arrays.position_mm[:alive_stop, child]
+        sources[child] = replace(
+            centre,
+            source_index=child,
+            position_mm=translated_position,
+            position_coefficients_mm=coefficients,
+            inertial_boundary=boundary,
+            light_cone_segments=segments,
+            _coefficient_buffer=(
+                coefficient_buffer
+                if old_source is None
+                else (None if provisional else old_source._coefficient_buffer)
+            ),
+        )
+    return _PreparedHistory(
+        arrays, sources, macro.source_acceleration_semantics, parents
+    )
+
+
+def _translate_resolved_position(
+    position: np.ndarray,
+    low: np.ndarray,
+    tail: np.ndarray,
+    offset: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Translate an accepted coordinate without losing either remainder."""
+    from decimal import Decimal, localcontext
+
+    high = position + offset
+    translated_low, translated_tail = np.empty(3), np.empty(3)
+    with localcontext() as context:
+        context.prec = 90
+
+        def d(value: float) -> Decimal:
+            return Decimal.from_float(float(value))
+
+        for axis in range(3):
+            residual = (
+                d(position[axis])
+                + d(low[axis])
+                + d(tail[axis])
+                + d(offset[axis])
+                - d(high[axis])
+            )
+            translated_low[axis] = float(residual)
+            translated_tail[axis] = float(residual - d(translated_low[axis]))
+    return high, translated_low, translated_tail
+
+
+def _translate_light_cone_segment(
+    segment: LightConeSegment, offset: np.ndarray
+) -> LightConeSegment:
+    high, low, tail = _translate_resolved_position(
+        segment.origin_position_mm,
+        segment.origin_position_low_mm,
+        (
+            np.zeros(3)
+            if segment.origin_position_tail_mm is None
+            else segment.origin_position_tail_mm
+        ),
+        offset,
+    )
+    # Local displacements, w, speed deficits, and derivatives are invariant
+    # under a persistent laboratory translation.
+    endpoint = segment.endpoint_coordinates
+    if endpoint is not None:
+        endpoint = endpoint.copy()
+        endpoint[:3] = np.array(
+            _translate_resolved_position(endpoint[0], endpoint[1], endpoint[2], offset)
+        )
+    return replace(
+        segment,
+        origin_position_mm=high,
+        origin_position_low_mm=low,
+        origin_position_tail_mm=tail,
+        endpoint_coordinates=endpoint,
+    )
 
 
 def _next_safeguarded_root_trial(
@@ -1095,6 +1991,11 @@ def _knot_light_cone_residual_mm(
     *,
     observer_time_ns: float,
     observer_position_mm: np.ndarray,
+    observer_time_low_ns: float = 0.0,
+    observer_position_low_mm: np.ndarray | None = None,
+    observer_time_tail_ns: float = 0.0,
+    observer_position_tail_mm: np.ndarray | None = None,
+    compiled: bool = False,
 ) -> float:
     """Return the light-cone residual at one stored source knot.
 
@@ -1104,6 +2005,43 @@ def _knot_light_cone_residual_mm(
     separation vector for every retarded-field stencil event.
     """
 
+    if source.light_cone_segments:
+        index = min(knot_index, len(source.light_cone_segments) - 1)
+        segment = source.light_cone_segments[index]
+        tau = 0.0 if knot_index == index else 1.0
+        geometry = endpoint_geometry(
+            segment,
+            observer_time_ns,
+            observer_position_mm,
+            observer_time_low_ns,
+            observer_position_low_mm,
+            observer_time_tail_ns,
+            observer_position_tail_mm,
+            include_endpoint=tau == 1.0,
+        )
+        if isinstance(segment, ProperVelocitySegment):
+            residual, kappa, _, _ = proper_residual(
+                segment.u_coefficients,
+                C_MMNS * segment.duration_ns,
+                tau,
+                geometry,
+                segment.quadrature_nodes,
+                segment.quadrature_weights,
+            )
+        else:
+            residual_fn = null_residual
+            if compiled:
+                from .strict_null_helpers import null_residual_strict
+
+                residual_fn = null_residual_strict
+            residual, kappa, _, _ = residual_fn(
+                segment.coefficients_mm, C_MMNS * segment.duration_ns, tau, geometry
+            )
+        if kappa > 0.0 and abs(residual) / (C_MMNS * kappa) <= 0.5 * abs(
+            np.spacing(source.time_ns[knot_index])
+        ):
+            return 0.0
+        return float(residual)
     separation_mm = float(
         np.linalg.norm(observer_position_mm - source.position_mm[knot_index])
     )
@@ -1117,6 +2055,12 @@ def _find_retarded_knot_bracket(
     *,
     observer_time_ns: float,
     observer_position_mm: np.ndarray,
+    observer_time_low_ns: float = 0.0,
+    observer_position_low_mm: np.ndarray | None = None,
+    observer_time_tail_ns: float = 0.0,
+    observer_position_tail_mm: np.ndarray | None = None,
+    segment_hint: int = -2,
+    compiled: bool = False,
 ) -> int | None:
     """Return the latest knot segment bracketing the retarded event.
 
@@ -1135,6 +2079,31 @@ def _find_retarded_knot_bracket(
     if knot_count < 2:
         return None
 
+    # Hints never replace the resolved endpoint oracle. In particular, a
+    # rounded lab-coordinate scan can choose the wrong side of an exact knot.
+    from .metal_certified_roots import _strict_timelike_chord_proof
+
+    if 0 <= segment_hint < knot_count - 1 and _strict_timelike_chord_proof(source):
+        residuals = [
+            _knot_light_cone_residual_mm(
+                source,
+                knot,
+                observer_time_ns=observer_time_ns,
+                observer_position_mm=observer_position_mm,
+                observer_time_low_ns=observer_time_low_ns,
+                observer_position_low_mm=observer_position_low_mm,
+                observer_time_tail_ns=observer_time_tail_ns,
+                observer_position_tail_mm=observer_position_tail_mm,
+                compiled=compiled,
+            )
+            for knot in (segment_hint, segment_hint + 1)
+        ]
+        if residuals[0] >= 0.0 and (
+            residuals[1] < 0.0
+            or (residuals[1] == 0.0 and segment_hint == knot_count - 2)
+        ):
+            return segment_hint
+
     lower = 0
     upper = knot_count - 1
     lower_residual = _knot_light_cone_residual_mm(
@@ -1142,6 +2111,11 @@ def _find_retarded_knot_bracket(
         lower,
         observer_time_ns=observer_time_ns,
         observer_position_mm=observer_position_mm,
+        observer_time_low_ns=observer_time_low_ns,
+        observer_position_low_mm=observer_position_low_mm,
+        observer_time_tail_ns=observer_time_tail_ns,
+        observer_position_tail_mm=observer_position_tail_mm,
+        compiled=compiled,
     )
     if lower_residual < 0.0:
         return None
@@ -1151,6 +2125,11 @@ def _find_retarded_knot_bracket(
         upper,
         observer_time_ns=observer_time_ns,
         observer_position_mm=observer_position_mm,
+        observer_time_low_ns=observer_time_low_ns,
+        observer_position_low_mm=observer_position_low_mm,
+        observer_time_tail_ns=observer_time_tail_ns,
+        observer_position_tail_mm=observer_position_tail_mm,
+        compiled=compiled,
     )
     if upper_residual > 0.0:
         return None
@@ -1162,12 +2141,335 @@ def _find_retarded_knot_bracket(
             middle,
             observer_time_ns=observer_time_ns,
             observer_position_mm=observer_position_mm,
+            observer_time_low_ns=observer_time_low_ns,
+            observer_position_low_mm=observer_position_low_mm,
+            observer_time_tail_ns=observer_time_tail_ns,
+            observer_position_tail_mm=observer_position_tail_mm,
+            compiled=compiled,
         )
         if middle_residual >= 0.0:
             lower = middle
         else:
             upper = middle
     return lower
+
+
+def _extrapolated_bracket(
+    source: _PreparedSourceHistory,
+    *,
+    observer_time_ns: float,
+    observer_position_mm: np.ndarray,
+    extrapolate_ns: float,
+) -> tuple[int, float, float] | None:
+    """Bracket a root that lies after the last knot, within ``extrapolate_ns``."""
+
+    times = source.time_ns
+    if extrapolate_ns <= 0.0 or source.ended_by_loss or times.size < 2:
+        return None
+    segment = times.size - 2
+    t_last = float(times[-1])
+    g_last, _ = _light_cone_residual_mm(
+        observer_time_ns=observer_time_ns,
+        observer_position_mm=observer_position_mm,
+        source_time_ns=t_last,
+        source_position_mm=source.position_mm[-1],
+    )
+    if g_last <= 0.0:
+        return None
+    t_upper = t_last + float(extrapolate_ns)
+    position, _, _ = _quintic_worldline_sample(
+        source, segment, t_upper, allow_extrapolation=True
+    )
+    g_upper, _ = _light_cone_residual_mm(
+        observer_time_ns=observer_time_ns,
+        observer_position_mm=observer_position_mm,
+        source_time_ns=t_upper,
+        source_position_mm=position,
+    )
+    if g_upper > 0.0:
+        return None
+    return segment, t_last, t_upper
+
+
+def _solve_null_history_sample(
+    source: _PreparedSourceHistory,
+    *,
+    observer_time_ns: float,
+    observer_position_mm: np.ndarray,
+    root_tolerance_mm: float,
+    max_root_iterations: int,
+    extrapolate_ns: float = 0.0,
+    compiled: bool = False,
+    observer_time_low_ns: float = 0.0,
+    observer_position_low_mm: np.ndarray | None = None,
+    observer_time_tail_ns: float = 0.0,
+    observer_position_tail_mm: np.ndarray | None = None,
+    segment_hint: int = -2,
+    _null_solver: Any = None,
+) -> _RetardedSample | None:
+    observer_remainders: dict[str, Any] = (
+        {}
+        if observer_time_low_ns == 0.0
+        and observer_time_tail_ns == 0.0
+        and (
+            observer_position_low_mm is None or np.all(observer_position_low_mm == 0.0)
+        )
+        and (
+            observer_position_tail_mm is None
+            or np.all(observer_position_tail_mm == 0.0)
+        )
+        else {
+            "observer_time_low_ns": observer_time_low_ns,
+            "observer_position_low_mm": observer_position_low_mm,
+            "observer_time_tail_ns": observer_time_tail_ns,
+            "observer_position_tail_mm": observer_position_tail_mm,
+        }
+    )
+    residual_fn = null_residual
+    sample_fn = sample_null_quintic
+    if compiled:
+        from .strict_null_helpers import (
+            null_residual_strict,
+            sample_null_quintic_strict,
+        )
+
+        residual_fn = null_residual_strict
+        sample_fn = sample_null_quintic_strict
+    bracket_options = dict(observer_remainders)
+    if compiled:
+        bracket_options["compiled"] = True
+    if segment_hint >= 0:
+        bracket_options["segment_hint"] = segment_hint
+    index = _find_retarded_knot_bracket(
+        source,
+        observer_time_ns=observer_time_ns,
+        observer_position_mm=observer_position_mm,
+        **bracket_options,
+    )
+    upper = 1.0
+    lower = 0.0
+    if index is None:
+        if extrapolate_ns <= 0.0 or source.ended_by_loss:
+            return None
+        index = len(source.light_cone_segments) - 1
+        upper += extrapolate_ns / source.light_cone_segments[index].duration_ns
+        lower = 1.0
+    segment = source.light_cone_segments[index]
+    length = C_MMNS * segment.duration_ns
+    geometry = endpoint_geometry(
+        segment,
+        observer_time_ns,
+        observer_position_mm,
+        observer_time_low_ns,
+        observer_position_low_mm,
+        observer_time_tail_ns,
+        observer_position_tail_mm,
+    )
+
+    def residual_at(fraction: float) -> tuple[float, float, float, np.ndarray]:
+        if isinstance(segment, ProperVelocitySegment):
+            return proper_residual(
+                segment.u_coefficients,
+                length,
+                fraction,
+                geometry,
+                segment.quadrature_nodes,
+                segment.quadrature_weights,
+            )
+        return residual_fn(segment.coefficients_mm, length, fraction, geometry)
+
+    if isinstance(segment, ProperVelocitySegment) and extrapolate_ns > 0:
+        raise ValueError("proper_velocity does not support history extrapolation")
+    low_g = residual_at(lower)[0]
+    high_g = residual_at(upper)[0]
+    if (
+        high_g > 0.0
+        and upper == 1.0
+        and segment.endpoint_coordinates is not None
+        and _knot_light_cone_residual_mm(
+            source,
+            index + 1,
+            observer_time_ns=observer_time_ns,
+            observer_position_mm=observer_position_mm,
+            compiled=compiled,
+            **observer_remainders,
+        )
+        <= 0.0
+    ):
+        # The accepted knot scan proves a bracket, but evaluating the same
+        # knot from the earlier anchor can reverse a tiny residual's sign.
+        # Reanchor near the upper endpoint, without changing the interval,
+        # root tolerance, or polynomial derivatives.
+        geometry = endpoint_geometry(
+            segment,
+            observer_time_ns,
+            observer_position_mm,
+            observer_time_low_ns,
+            observer_position_low_mm,
+            observer_time_tail_ns,
+            observer_position_tail_mm,
+            include_endpoint=True,
+        )
+        # Use the identical endpoint residuals as the bracket scan, even
+        # when adjacent segments use different velocity-aligned frames.
+        geometry = np.append(
+            geometry,
+            [
+                _knot_light_cone_residual_mm(
+                    source,
+                    knot,
+                    observer_time_ns=observer_time_ns,
+                    observer_position_mm=observer_position_mm,
+                    compiled=compiled,
+                    **observer_remainders,
+                )
+                for knot in (index, index + 1)
+            ],
+        )
+        low_g = residual_at(lower)[0]
+        high_g = residual_at(upper)[0]
+    snapped_endpoint = None
+    if low_g < 0.0:
+        if (
+            _knot_light_cone_residual_mm(
+                source,
+                index,
+                observer_time_ns=observer_time_ns,
+                observer_position_mm=observer_position_mm,
+                compiled=compiled,
+                **observer_remainders,
+            )
+            != 0.0
+        ):
+            return None
+        snapped_endpoint = lower
+    if high_g > 0.0:
+        if (
+            upper != 1.0
+            or _knot_light_cone_residual_mm(
+                source,
+                index + 1,
+                observer_time_ns=observer_time_ns,
+                observer_position_mm=observer_position_mm,
+                compiled=compiled,
+                **observer_remainders,
+            )
+            != 0.0
+        ):
+            return None
+        snapped_endpoint = upper
+    solver = (
+        _null_solver
+        if _null_solver is not None
+        else solve_null_quintic_numba if compiled else solve_null_quintic
+    )
+    proper_solver = solve_constrained_u_numba if compiled else solve_constrained_u
+    try:
+        if snapped_endpoint is None:
+            if isinstance(segment, ProperVelocitySegment):
+                tau, result = proper_solver(
+                    segment.u_coefficients,
+                    length,
+                    geometry,
+                    lower,
+                    upper,
+                    root_tolerance_mm,
+                    max_root_iterations,
+                    segment.quadrature_nodes,
+                    segment.quadrature_weights,
+                )
+            else:
+                tau, result = solver(
+                    segment.coefficients_mm,
+                    length,
+                    geometry,
+                    lower,
+                    upper,
+                    root_tolerance_mm,
+                    max_root_iterations,
+                )
+        else:
+            tau = snapped_endpoint
+            result = residual_at(tau)
+    except Exception as error:
+        from .exact_retarded_numba import NUMBA_COMPILATION_ERRORS
+        from .exact_retarded_backend import ExactRetardedBackendUnavailableError
+
+        if (
+            compiled
+            and isinstance(error, NUMBA_COMPILATION_ERRORS)
+            and not getattr(solver, "signatures", ())
+        ):
+            raise ExactRetardedBackendUnavailableError(
+                "exact retarded light-cone backend failed during initial JIT compilation"
+            ) from error
+        raise
+    if snapped_endpoint is not None:
+        tau = snapped_endpoint
+        result = residual_at(tau)
+    residual, kappa, radius, separation_frame = result
+    proper_local = None
+    if isinstance(segment, ProperVelocitySegment):
+        values, first, second, third, fourth, proper_local, invariant = (
+            segment.null_sample(tau)
+        )
+    else:
+        values, first, second, third = sample_fn(segment.coefficients_mm, length, tau)
+        invariant = first[0] * (2.0 - first[0]) - float(np.dot(first[1:], first[1:]))
+        fourth = (
+            24 * segment.coefficients_mm[4] + 120 * tau * segment.coefficients_mm[5]
+        ) / length**4
+    if invariant <= 0.0 or not np.isfinite(invariant):
+        raise ValueError(
+            "light-cone quintic source is not timelike at the retarded root"
+        )
+    beta = np.array([1.0 - first[0], first[1], first[2]]) @ segment.frame
+    prime = np.array([-second[0], second[1], second[2]]) @ segment.frame
+    jerk = np.array([-third[0], third[1], third[2]]) @ segment.frame
+    snap = np.array([-fourth[0], fourth[1], fourth[2]]) @ segment.frame
+    proper = (
+        beta / np.sqrt(invariant)
+        if proper_local is None
+        else proper_local @ segment.frame
+    )
+    if (
+        segment.proper_velocity_knots is not None
+        and (
+            not isinstance(segment, ProperVelocitySegment)
+            or np.all(segment.u_coefficients[1:] == 0.0)
+        )
+        and np.all(segment.coefficients_mm[2:] == 0.0)
+        and np.array_equal(
+            segment.proper_velocity_knots[0], segment.proper_velocity_knots[1]
+        )
+    ):
+        proper = segment.proper_velocity_knots[0]
+        beta = proper / np.hypot(1.0, np.linalg.norm(proper))
+    separation = separation_frame @ segment.frame
+    time_ns = float(
+        segment.time_ns + segment.origin_time_low_ns + tau * segment.duration_ns
+    )
+    position = (
+        source.position_mm[index]
+        + np.array([length * tau - values[0], values[1], values[2]]) @ segment.frame
+    )
+    return _RetardedSample(
+        time_ns=time_ns,
+        position_mm=position,
+        beta=beta,
+        beta_prime_per_mm=prime,
+        residual_mm=float(residual),
+        separation_mm=float(radius),
+        source_proper_velocity=proper,
+        precise_separation_mm=separation,
+        precise_separation_frame_mm=separation_in_velocity_frame(
+            segment, separation_frame, proper
+        ),
+        beta_jerk_per_mm2=jerk,
+        beta_snap_per_mm3=snap,
+        source_segment_index=index,
+        source_segment_fraction=float(tau),
+    )
 
 
 def _solve_retarded_sample(
@@ -1177,23 +2479,106 @@ def _solve_retarded_sample(
     observer_position_mm: np.ndarray,
     root_tolerance_mm: float,
     max_root_iterations: int,
+    extrapolate_ns: float = 0.0,
+    observer_time_low_ns: float = 0.0,
+    observer_position_low_mm: np.ndarray | None = None,
+    compiled: bool = False,
+    observer_time_tail_ns: float = 0.0,
+    observer_position_tail_mm: np.ndarray | None = None,
+    _defer_ballistic_frame: bool = False,
+    segment_hint: int = -2,
+    _null_solver: Any = None,
 ) -> _RetardedSample | None:
+    if source.inertial_boundary is not None and source.time_ns.size == 0:
+        return None
+    if source.inertial_boundary is not None:
+        anchor_time, anchor_position, proper_velocity = source.inertial_boundary
+        point = ballistic_retarded_point(
+            observer_time_ns=observer_time_ns,
+            observer_position_mm=observer_position_mm,
+            anchor_time_ns=anchor_time,
+            anchor_position_mm=anchor_position,
+            source_proper_velocity=proper_velocity,
+            observer_time_low_ns=observer_time_low_ns,
+            observer_position_low_mm=observer_position_low_mm,
+            observer_time_tail_ns=observer_time_tail_ns,
+            observer_position_tail_mm=observer_position_tail_mm,
+        )
+        if point.time_ns + point.time_error_bound_ns <= anchor_time:
+            if point.time_ns - point.time_error_bound_ns < source.time_ns[0]:
+                return None
+            gamma = np.hypot(1.0, np.linalg.norm(proper_velocity))
+            return _RetardedSample(
+                time_ns=point.time_ns,
+                position_mm=observer_position_mm - point.separation_vector_mm,
+                beta=proper_velocity / gamma,
+                beta_prime_per_mm=np.zeros(3),
+                residual_mm=point.residual_mm,
+                separation_mm=float(np.linalg.norm(point.separation_vector_mm)),
+                source_proper_velocity=proper_velocity,
+                precise_separation_mm=point.separation_vector_mm,
+                time_error_bound_ns=point.time_error_bound_ns,
+                precise_separation_frame_mm=(
+                    None
+                    if _defer_ballistic_frame
+                    else resolved_separation_frame(
+                        point.longitudinal_separation_mm,
+                        point.transverse_separation_vector_mm,
+                        proper_velocity,
+                    )
+                ),
+                ballistic_frame_components=(
+                    np.r_[
+                        point.longitudinal_separation_mm,
+                        point.transverse_separation_vector_mm,
+                    ]
+                    if _defer_ballistic_frame
+                    else None
+                ),
+            )
+    if source.light_cone_segments:
+        return _solve_null_history_sample(
+            source,
+            observer_time_ns=observer_time_ns,
+            observer_position_mm=observer_position_mm,
+            root_tolerance_mm=root_tolerance_mm,
+            max_root_iterations=max_root_iterations,
+            extrapolate_ns=extrapolate_ns,
+            compiled=compiled,
+            observer_time_low_ns=observer_time_low_ns,
+            observer_position_low_mm=observer_position_low_mm,
+            observer_time_tail_ns=observer_time_tail_ns,
+            observer_position_tail_mm=observer_position_tail_mm,
+            segment_hint=segment_hint,
+            _null_solver=_null_solver,
+        )
     times = source.time_ns
+    extrapolated = False
     segment = _find_retarded_knot_bracket(
         source,
         observer_time_ns=observer_time_ns,
         observer_position_mm=observer_position_mm,
     )
     if segment is None:
-        return None
-    lower_time = float(times[segment])
-    upper_time = float(times[segment + 1])
+        bracket = _extrapolated_bracket(
+            source,
+            observer_time_ns=observer_time_ns,
+            observer_position_mm=observer_position_mm,
+            extrapolate_ns=extrapolate_ns,
+        )
+        if bracket is None:
+            return None
+        segment, lower_time, upper_time = bracket
+        extrapolated = True
+    else:
+        lower_time = float(times[segment])
+        upper_time = float(times[segment + 1])
     source_position = source.position_mm[segment]
     trial_time = 0.5 * (lower_time + upper_time)
 
     for _ in range(max_root_iterations):
         source_position, source_beta, source_beta_prime = _quintic_worldline_sample(
-            source, segment, trial_time
+            source, segment, trial_time, allow_extrapolation=extrapolated
         )
         residual, separation = _light_cone_residual_mm(
             observer_time_ns=observer_time_ns,
@@ -1226,7 +2611,7 @@ def _solve_retarded_sample(
 
     retarded_time = 0.5 * (lower_time + upper_time)
     source_position, source_beta, source_beta_prime = _quintic_worldline_sample(
-        source, segment, retarded_time
+        source, segment, retarded_time, allow_extrapolation=extrapolated
     )
     residual, separation = _light_cone_residual_mm(
         observer_time_ns=observer_time_ns,
@@ -1257,30 +2642,38 @@ def _source_terminated_before_light_cone(
     if source.time_ns.size == 0:
         return True
     last_alive = source.time_ns.size - 1
-    residual, _ = _light_cone_residual_mm(
+    residual = _knot_light_cone_residual_mm(
+        source,
+        last_alive,
         observer_time_ns=observer_time_ns,
         observer_position_mm=observer_position_mm,
-        source_time_ns=float(source.time_ns[last_alive]),
-        source_position_mm=source.position_mm[last_alive],
     )
-    # g(t_source) decreases monotonically for a timelike worldline. Positive
-    # g at the final alive state means the required retarded emission would
-    # occur only after the source was removed from the simulation.
     return residual > 0.0
 
 
 def lienard_wiechert_charge_field_native(
     *,
     charge_native: float,
-    separation_vector_mm: Sequence[float],
-    source_beta: Sequence[float],
-    source_beta_prime_per_mm: Sequence[float],
+    separation_vector_mm: Sequence[float] | np.ndarray,
+    source_beta: Sequence[float] | np.ndarray,
+    source_proper_velocity: Sequence[float] | np.ndarray | None = None,
+    source_beta_prime_per_mm: Sequence[float] | np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Return native scaled-Gaussian ``(E, B)`` for one retarded charge.
 
     ``source_beta_prime_per_mm`` is ``d beta / d(c t)``. The radiation term
     therefore has no additional factor of ``c``.
     """
+
+    if source_proper_velocity is not None:
+        _potential, electric, magnetic, _root, _residual, _kappa = precise_charge_jets(
+            float(charge_native),
+            np.asarray(separation_vector_mm, dtype=float),
+            validated_precise_velocity(source_proper_velocity),
+            np.asarray(source_beta_prime_per_mm, dtype=float),
+            np.zeros(3),
+        )
+        return electric[:, 0], magnetic[:, 0]
 
     charge = float(charge_native)
     separation_vector = np.asarray(separation_vector_mm, dtype=float)
@@ -1321,8 +2714,9 @@ def lienard_wiechert_charge_field_native(
 def lienard_wiechert_charge_potential_native(
     *,
     charge_native: float,
-    separation_vector_mm: Sequence[float],
-    source_beta: Sequence[float],
+    separation_vector_mm: Sequence[float] | np.ndarray,
+    source_beta: Sequence[float] | np.ndarray,
+    source_proper_velocity: Sequence[float] | np.ndarray | None = None,
 ) -> np.ndarray:
     """Return the native Gaussian retarded four-potential of one charge.
 
@@ -1335,6 +2729,16 @@ def lienard_wiechert_charge_potential_native(
     ordinary charge contribution to canonical momentum is therefore
     ``(q_observer/c) A^mu``.
     """
+
+    if source_proper_velocity is not None:
+        potential, _electric, _magnetic, _root, _residual, _kappa = precise_charge_jets(
+            float(charge_native),
+            np.asarray(separation_vector_mm, dtype=float),
+            validated_precise_velocity(source_proper_velocity),
+            np.zeros(3),
+            np.zeros(3),
+        )
+        return potential[:, 0]
 
     charge = float(charge_native)
     separation_vector = np.asarray(separation_vector_mm, dtype=float)
@@ -1377,6 +2781,113 @@ def _validated_root_options(
     return tolerance, iterations
 
 
+class _ResolvedBatchIncomplete(Exception):
+    """Request ordered per-event handling of missing or terminated samples."""
+
+
+def _resolved_source_jet_batch(
+    prepared_events: Sequence[tuple[_PreparedHistory, ObserverEvent]],
+    tolerance: float,
+    iterations: int,
+    extrapolate_ns: float,
+) -> tuple[tuple[dict[int, Any], dict[int, Any]], ...]:
+    """Stage owned pair inputs, then evaluate without reading accepted history.
+
+    Preparation and all resolved roots finish on the caller before the kernel
+    starts. The synchronous kernel reads only newly allocated arrays. History
+    publication therefore remains outside its read interval. Reduction is left
+    to the original per-event consumers in source-index order.
+    """
+    from .resolved_charge_batch import resolved_charge_jets_strict
+
+    samples_by_event = []
+    rows = []
+    for event_index, (prepared, event) in enumerate(prepared_events):
+        position = np.asarray(event.position_mm)
+        low = np.asarray(event.position_low_mm)
+        tail = np.asarray(event.position_tail_mm)
+        samples = {
+            index: _solve_retarded_sample(
+                source,
+                observer_time_ns=float(event.time_ns),
+                observer_position_mm=position,
+                observer_time_low_ns=event.time_low_ns,
+                observer_position_low_mm=low,
+                observer_time_tail_ns=event.time_tail_ns,
+                observer_position_tail_mm=tail,
+                root_tolerance_mm=tolerance,
+                max_root_iterations=iterations,
+                extrapolate_ns=extrapolate_ns,
+                compiled=True,
+                _defer_ballistic_frame=True,
+            )
+            for index, source in prepared.sources.items()
+        }
+        if len(prepared_events) > 1 and any(
+            sample is None for sample in samples.values()
+        ):
+            # Preserve the original ordering of missing-history validation and
+            # singular-field errors instead of processing a later event first.
+            raise _ResolvedBatchIncomplete
+        samples_by_event.append(samples)
+        rows.extend(
+            (event_index, index, sample)
+            for index, sample in samples.items()
+            if sample is not None and sample.source_proper_velocity is not None
+        )
+    count = len(rows)
+    jets_by_event: list[dict[int, Any]] = [{} for _ in prepared_events]
+    if count == 0:
+        return tuple(zip(samples_by_event, jets_by_event))
+    charges = np.empty(count)
+    vectors = np.zeros((6, count, 3))
+    has_frame = np.zeros(count, dtype=bool)
+    has_snap = np.zeros(count, dtype=bool)
+    ballistic_frames = np.zeros((count, 4))
+    ballistic_mask = np.zeros(count, dtype=bool)
+    for row, (event_index, index, sample) in enumerate(rows):
+        prepared = prepared_events[event_index][0]
+        charges[row] = prepared.arrays.charge_native[index]
+        vectors[0, row] = sample.precise_separation_mm
+        vectors[1, row] = sample.source_proper_velocity
+        vectors[2, row] = sample.beta_prime_per_mm
+        if sample.beta_jerk_per_mm2 is not None:
+            vectors[3, row] = sample.beta_jerk_per_mm2
+        if sample.precise_separation_frame_mm is not None:
+            vectors[4, row] = sample.precise_separation_frame_mm
+            has_frame[row] = True
+        if sample.beta_snap_per_mm3 is not None:
+            vectors[5, row] = sample.beta_snap_per_mm3
+            has_snap[row] = True
+        if sample.ballistic_frame_components is not None:
+            ballistic_frames[row] = sample.ballistic_frame_components
+            ballistic_mask[row] = True
+    potential, electric, magnetic, kappa = resolved_charge_jets_strict(
+        charges, *vectors, has_frame, has_snap, ballistic_frames, ballistic_mask
+    )
+    for row, (event_index, index, _sample) in enumerate(rows):
+        jets_by_event[event_index][index] = (
+            potential[row],
+            electric[row],
+            magnetic[row],
+            float(kappa[row]),
+        )
+    return tuple(zip(samples_by_event, jets_by_event))
+
+
+def _resolved_source_jets(
+    prepared: _PreparedHistory,
+    event: ObserverEvent,
+    tolerance: float,
+    iterations: int,
+    extrapolate_ns: float,
+) -> tuple[dict[int, Any], dict[int, Any]]:
+    """Stage a single observer's sources through the immutable pair seam."""
+    return _resolved_source_jet_batch(
+        ((prepared, event),), tolerance, iterations, extrapolate_ns
+    )[0]
+
+
 def _evaluate_prepared_charge_field_native(
     prepared: _PreparedHistory,
     observer_event: ObserverEvent,
@@ -1384,28 +2895,58 @@ def _evaluate_prepared_charge_field_native(
     require_complete_history: bool,
     root_tolerance_mm: float,
     max_root_iterations: int,
+    extrapolate_ns: float = 0.0,
+    compiled: bool = False,
+    _resolved_batch: tuple[dict[int, Any], dict[int, Any]] | None = None,
 ) -> RetardedChargeFieldResult:
     """Evaluate one event without extracting or preparing its history again."""
 
     arrays = prepared.arrays
     observer_time_ns = float(observer_event.time_ns)
     observer_position_mm = np.asarray(observer_event.position_mm, dtype=float)
-    electric_total = np.zeros(3, dtype=float)
-    magnetic_total = np.zeros(3, dtype=float)
-    four_potential_total = np.zeros(4, dtype=float)
+    electric_total_terms = np.zeros((prepared.arrays.n_sources, 3), dtype=float)
+    magnetic_total_terms = np.zeros((prepared.arrays.n_sources, 3), dtype=float)
+    four_potential_total_terms = np.zeros((prepared.arrays.n_sources, 4), dtype=float)
     retarded_time_ns = np.full(arrays.n_sources, np.nan, dtype=float)
     residual_mm = np.full(arrays.n_sources, np.nan, dtype=float)
     separation_mm = np.full(arrays.n_sources, np.nan, dtype=float)
     valid_sources = np.zeros(arrays.n_sources, dtype=bool)
     missing_sources: list[int] = []
+    time_error_bounds = np.full(arrays.n_sources, np.nan)
+
+    batch_samples, batch_jets = (
+        _resolved_batch
+        if _resolved_batch is not None
+        else (
+            _resolved_source_jets(
+                prepared,
+                observer_event,
+                root_tolerance_mm,
+                max_root_iterations,
+                extrapolate_ns,
+            )
+            if compiled
+            else ({}, {})
+        )
+    )
 
     for source_index, source in prepared.sources.items():
-        sample = _solve_retarded_sample(
-            source,
-            observer_time_ns=observer_time_ns,
-            observer_position_mm=observer_position_mm,
-            root_tolerance_mm=root_tolerance_mm,
-            max_root_iterations=max_root_iterations,
+        sample = (
+            batch_samples[source_index]
+            if compiled
+            else _solve_retarded_sample(
+                source,
+                observer_time_ns=observer_time_ns,
+                observer_position_mm=observer_position_mm,
+                root_tolerance_mm=root_tolerance_mm,
+                max_root_iterations=max_root_iterations,
+                extrapolate_ns=extrapolate_ns,
+                compiled=compiled,
+                observer_time_low_ns=observer_event.time_low_ns,
+                observer_position_low_mm=np.asarray(observer_event.position_low_mm),
+                observer_time_tail_ns=observer_event.time_tail_ns,
+                observer_position_tail_mm=np.asarray(observer_event.position_tail_mm),
+            )
         )
         if sample is None:
             if _source_terminated_before_light_cone(
@@ -1416,23 +2957,56 @@ def _evaluate_prepared_charge_field_native(
                 continue
             missing_sources.append(source_index)
             continue
-        electric, magnetic = lienard_wiechert_charge_field_native(
-            charge_native=float(arrays.charge_native[source_index]),
-            separation_vector_mm=observer_position_mm - sample.position_mm,
-            source_beta=tuple(float(value) for value in sample.beta),
-            source_beta_prime_per_mm=tuple(
-                float(value) for value in sample.beta_prime_per_mm
-            ),
-        )
-        four_potential = lienard_wiechert_charge_potential_native(
-            charge_native=float(arrays.charge_native[source_index]),
-            separation_vector_mm=observer_position_mm - sample.position_mm,
-            source_beta=tuple(float(value) for value in sample.beta),
-        )
-        electric_total += electric
-        magnetic_total += magnetic
-        four_potential_total += four_potential
+        if sample.source_proper_velocity is not None:
+            assert sample.precise_separation_mm is not None
+            if compiled:
+                potential_jets, electric_jets, magnetic_jets, _kappa = batch_jets[
+                    source_index
+                ]
+            else:
+                (
+                    potential_jets,
+                    electric_jets,
+                    magnetic_jets,
+                    _root,
+                    _residual,
+                    _kappa,
+                ) = precise_charge_jets(
+                    float(arrays.charge_native[source_index]),
+                    sample.precise_separation_mm,
+                    sample.source_proper_velocity,
+                    sample.beta_prime_per_mm,
+                    (
+                        np.zeros(3)
+                        if sample.beta_jerk_per_mm2 is None
+                        else sample.beta_jerk_per_mm2
+                    ),
+                    sample.precise_separation_frame_mm,
+                    sample.beta_snap_per_mm3,
+                )
+            electric = electric_jets[:, 0]
+            magnetic = magnetic_jets[:, 0]
+            four_potential = potential_jets[:, 0]
+        else:
+            electric, magnetic = lienard_wiechert_charge_field_native(
+                charge_native=float(arrays.charge_native[source_index]),
+                separation_vector_mm=observer_position_mm - sample.position_mm,
+                source_beta=tuple(float(value) for value in sample.beta),
+                source_beta_prime_per_mm=tuple(
+                    float(value) for value in sample.beta_prime_per_mm
+                ),
+            )
+            four_potential = lienard_wiechert_charge_potential_native(
+                charge_native=float(arrays.charge_native[source_index]),
+                separation_vector_mm=observer_position_mm - sample.position_mm,
+                source_beta=tuple(float(value) for value in sample.beta),
+            )
+        electric_total_terms[source_index] = electric
+        magnetic_total_terms[source_index] = magnetic
+        four_potential_total_terms[source_index] = four_potential
         retarded_time_ns[source_index] = sample.time_ns
+        if sample.time_error_bound_ns is not None:
+            time_error_bounds[source_index] = sample.time_error_bound_ns
         residual_mm[source_index] = sample.residual_mm
         separation_mm[source_index] = sample.separation_mm
         valid_sources[source_index] = True
@@ -1442,6 +3016,9 @@ def _evaluate_prepared_charge_field_native(
             "source history does not bracket the observer light cone for source "
             f"indices {missing_sources}"
         )
+    electric_total = _sum_source_terms(electric_total_terms)
+    magnetic_total = _sum_source_terms(magnetic_total_terms)
+    four_potential_total = _sum_source_terms(four_potential_total_terms)
     field_tensor = electromagnetic_field_tensor_native(
         tuple(float(value) for value in electric_total),
         tuple(float(value) for value in magnetic_total),
@@ -1455,6 +3032,9 @@ def _evaluate_prepared_charge_field_native(
         separation_mm=separation_mm,
         valid_sources=valid_sources,
         four_potential=four_potential_total,
+        retarded_time_error_bound_ns=(
+            time_error_bounds if np.any(np.isfinite(time_error_bounds)) else None
+        ),
     )
 
 
@@ -1477,6 +3057,29 @@ def _charge_batch_event_arrays(
     return event_time_ns, event_position_mm
 
 
+def _legacy_kernel_array(values: Any, *, contiguous: bool = False) -> np.ndarray:
+    """Materialize legacy inputs with the reference Numba array layout.
+
+    The resolved provider indexes views directly. The older flat provider
+    needs ndarrays, and specializes its arithmetic on their C/strided layout.
+    Centre time columns stay strided; translated cloud positions stay C-order.
+    """
+    result = np.asarray(values)
+    if contiguous:
+        return np.ascontiguousarray(result)
+    if isinstance(values, HistoryPrefixView):
+        prefix = values.prefix
+        while isinstance(prefix, HistoryPrefixView):
+            prefix = prefix.prefix
+        row_bytes = result.dtype.itemsize * int(np.prod(result.shape[1:]))
+        if isinstance(prefix, np.ndarray) and prefix.strides[0] > row_bytes:
+            buffer = np.empty((len(result), 2, *result.shape[1:]), dtype=result.dtype)
+            strided = buffer[:, 0]
+            strided[:] = result
+            return strided
+    return result
+
+
 def _evaluate_prepared_charge_batch_numba_roots_exact_serial(
     prepared: _PreparedHistory,
     observer_events: Sequence[ObserverEvent],
@@ -1486,6 +3089,19 @@ def _evaluate_prepared_charge_batch_numba_roots_exact_serial(
     max_root_iterations: int,
 ) -> tuple[RetardedChargeFieldResult, ...]:
     """Compile roots while retaining exact Python field and reduction order."""
+
+    if all(source.light_cone_segments for source in prepared.sources.values()):
+        return tuple(
+            _evaluate_prepared_charge_field_native(
+                prepared,
+                event,
+                require_complete_history=require_complete_history,
+                root_tolerance_mm=root_tolerance_mm,
+                max_root_iterations=max_root_iterations,
+                compiled=True,
+            )
+            for event in observer_events
+        )
 
     from .exact_retarded_numba import (
         NUMBA_COMPILATION_ERRORS,
@@ -1505,10 +3121,13 @@ def _evaluate_prepared_charge_batch_numba_roots_exact_serial(
             source_batches[source_index] = cast(
                 tuple[np.ndarray, ...],
                 evaluate_source_roots_exact_serial(
-                    source.time_ns,
-                    source.position_mm,
-                    source.segment_duration_ns,
-                    source.position_coefficients_mm,
+                    _legacy_kernel_array(source.time_ns),
+                    _legacy_kernel_array(
+                        source.position_mm,
+                        contiguous=prepared.parent_indices is not None,
+                    ),
+                    _legacy_kernel_array(source.segment_duration_ns),
+                    _legacy_kernel_array(source.position_coefficients_mm),
                     bool(source.ended_by_loss),
                     event_time_ns,
                     event_position_mm,
@@ -1532,9 +3151,9 @@ def _evaluate_prepared_charge_batch_numba_roots_exact_serial(
     results: list[RetardedChargeFieldResult] = []
     arrays = prepared.arrays
     for event_index in range(len(observer_events)):
-        electric_total = np.zeros(3, dtype=float)
-        magnetic_total = np.zeros(3, dtype=float)
-        potential_total = np.zeros(4, dtype=float)
+        electric_total_terms = np.zeros((prepared.arrays.n_sources, 3), dtype=float)
+        magnetic_total_terms = np.zeros((prepared.arrays.n_sources, 3), dtype=float)
+        potential_total_terms = np.zeros((prepared.arrays.n_sources, 4), dtype=float)
         retarded_time_ns = np.full(arrays.n_sources, np.nan, dtype=float)
         residual_mm = np.full(arrays.n_sources, np.nan, dtype=float)
         separation_mm = np.full(arrays.n_sources, np.nan, dtype=float)
@@ -1581,9 +3200,9 @@ def _evaluate_prepared_charge_batch_numba_roots_exact_serial(
                 ),
                 source_beta=cast(Sequence[float], source_beta),
             )
-            electric_total += electric
-            magnetic_total += magnetic
-            potential_total += potential
+            electric_total_terms[source_index] = electric
+            magnetic_total_terms[source_index] = magnetic
+            potential_total_terms[source_index] = potential
             retarded_time_ns[source_index] = source_time_ns
             residual_mm[source_index] = source_residual_mm
             separation_mm[source_index] = source_separation_mm
@@ -1594,6 +3213,9 @@ def _evaluate_prepared_charge_batch_numba_roots_exact_serial(
                 "source history does not bracket the observer light cone for source "
                 f"indices {missing_sources}"
             )
+        electric_total = _sum_source_terms(electric_total_terms)
+        magnetic_total = _sum_source_terms(magnetic_total_terms)
+        potential_total = _sum_source_terms(potential_total_terms)
         results.append(
             RetardedChargeFieldResult(
                 electric_field_native=electric_total,
@@ -1622,6 +3244,51 @@ def _evaluate_prepared_charge_batch_numba_full_strict_serial(
 ) -> tuple[RetardedChargeFieldResult, ...]:
     """Compile complete source events while retaining reference reductions."""
 
+    if all(source.light_cone_segments for source in prepared.sources.values()):
+        # Bound temporary jet storage while grouping independent observers.
+        # A single observer with more sources still fits in one synchronous
+        # call, as it did before this seam. Accepted history is never passed
+        # into the worker kernel; publication can resume after it returns.
+        events_per_batch = max(1, 4096 // max(1, len(prepared.sources)))
+        resolved_results: list[RetardedChargeFieldResult] = []
+        for start in range(0, len(observer_events), events_per_batch):
+            events = observer_events[start : start + events_per_batch]
+            try:
+                resolved = _resolved_source_jet_batch(
+                    tuple((prepared, event) for event in events),
+                    root_tolerance_mm,
+                    max_root_iterations,
+                    0.0,
+                )
+            except (_ResolvedBatchIncomplete, ValueError, ArithmeticError):
+                # Exceptional batches use the original event order, including
+                # which event's missing-history or geometry error is reported.
+                resolved_results.extend(
+                    _evaluate_prepared_charge_field_native(
+                        prepared,
+                        event,
+                        require_complete_history=require_complete_history,
+                        root_tolerance_mm=root_tolerance_mm,
+                        max_root_iterations=max_root_iterations,
+                        compiled=True,
+                    )
+                    for event in events
+                )
+                continue
+            resolved_results.extend(
+                _evaluate_prepared_charge_field_native(
+                    prepared,
+                    event,
+                    require_complete_history=require_complete_history,
+                    root_tolerance_mm=root_tolerance_mm,
+                    max_root_iterations=max_root_iterations,
+                    compiled=True,
+                    _resolved_batch=batch,
+                )
+                for event, batch in zip(events, resolved)
+            )
+        return tuple(resolved_results)
+
     from .exact_retarded_numba import (
         NUMBA_COMPILATION_ERRORS,
         _STATUS_CHARGE_SINGULAR_KAPPA,
@@ -1647,10 +3314,13 @@ def _evaluate_prepared_charge_batch_numba_full_strict_serial(
             source_batches[source_index] = cast(
                 tuple[np.ndarray, ...],
                 evaluate_charge_source_events_full_strict_serial(
-                    source.time_ns,
-                    source.position_mm,
-                    source.segment_duration_ns,
-                    source.position_coefficients_mm,
+                    _legacy_kernel_array(source.time_ns),
+                    _legacy_kernel_array(
+                        source.position_mm,
+                        contiguous=prepared.parent_indices is not None,
+                    ),
+                    _legacy_kernel_array(source.segment_duration_ns),
+                    _legacy_kernel_array(source.position_coefficients_mm),
                     float(prepared.arrays.charge_native[source_index]),
                     bool(source.ended_by_loss),
                     event_time_ns,
@@ -1675,9 +3345,9 @@ def _evaluate_prepared_charge_batch_numba_full_strict_serial(
     results: list[RetardedChargeFieldResult] = []
     arrays = prepared.arrays
     for event_index in range(len(observer_events)):
-        electric_total = np.zeros(3, dtype=float)
-        magnetic_total = np.zeros(3, dtype=float)
-        potential_total = np.zeros(4, dtype=float)
+        electric_total_terms = np.zeros((prepared.arrays.n_sources, 3), dtype=float)
+        magnetic_total_terms = np.zeros((prepared.arrays.n_sources, 3), dtype=float)
+        potential_total_terms = np.zeros((prepared.arrays.n_sources, 4), dtype=float)
         retarded_time_ns = np.full(arrays.n_sources, np.nan, dtype=float)
         residual_mm = np.full(arrays.n_sources, np.nan, dtype=float)
         separation_mm = np.full(arrays.n_sources, np.nan, dtype=float)
@@ -1705,9 +3375,9 @@ def _evaluate_prepared_charge_batch_numba_full_strict_serial(
             if status != _STATUS_VALID:
                 raise RuntimeError(f"unknown strict charge event status {status}")
 
-            electric_total += batch[1][event_index]
-            magnetic_total += batch[2][event_index]
-            potential_total += batch[3][event_index]
+            electric_total_terms[source_index] = batch[1][event_index]
+            magnetic_total_terms[source_index] = batch[2][event_index]
+            potential_total_terms[source_index] = batch[3][event_index]
             retarded_time_ns[source_index] = float(batch[4][event_index])
             residual_mm[source_index] = float(batch[5][event_index])
             separation_mm[source_index] = float(batch[6][event_index])
@@ -1718,6 +3388,9 @@ def _evaluate_prepared_charge_batch_numba_full_strict_serial(
                 "source history does not bracket the observer light cone for source "
                 f"indices {missing_sources}"
             )
+        electric_total = _sum_source_terms(electric_total_terms)
+        magnetic_total = _sum_source_terms(magnetic_total_terms)
+        potential_total = _sum_source_terms(potential_total_terms)
         results.append(
             RetardedChargeFieldResult(
                 electric_field_native=electric_total,
@@ -1744,7 +3417,25 @@ def _evaluate_prepared_charge_batch(
     require_complete_history: bool,
     root_tolerance_mm: float,
     max_root_iterations: int,
+    extrapolate_ns: float = 0.0,
 ) -> tuple[RetardedChargeFieldResult, ...]:
+    if extrapolate_ns > 0.0 and backend == "numba_full_strict_serial":
+        # Continuation uses the same resolved bracket and segment as Python.
+        # The flat legacy batch kernel has no continuation contract.
+        return tuple(
+            _evaluate_prepared_charge_field_native(
+                prepared,
+                event,
+                require_complete_history=require_complete_history,
+                root_tolerance_mm=root_tolerance_mm,
+                max_root_iterations=max_root_iterations,
+                extrapolate_ns=extrapolate_ns,
+                compiled=True,
+            )
+            for event in observer_events
+        )
+    if extrapolate_ns > 0.0 and backend != "python":
+        raise ValueError("source-history extrapolation requires the python backend")
     if backend == "numba_roots_exact_serial":
         return _evaluate_prepared_charge_batch_numba_roots_exact_serial(
             prepared,
@@ -1773,6 +3464,7 @@ def _evaluate_prepared_charge_batch(
             require_complete_history=require_complete_history,
             root_tolerance_mm=root_tolerance_mm,
             max_root_iterations=max_root_iterations,
+            extrapolate_ns=extrapolate_ns,
         )
         for event in observer_events
     )
@@ -1822,14 +3514,20 @@ def _analytical_segment_margin_ratio(
     cannot cross either boundary under any one-coordinate stencil displacement.
     """
 
-    beta_bound = _segment_beta_bernstein_bound(source, segment_index)
-    if not np.isfinite(beta_bound) or beta_bound >= 1.0:
+    if source.light_cone_segments:
+        deficit_bound = segment_speed_deficit_bound(
+            source.light_cone_segments[segment_index]
+        )
+    else:
+        beta_bound = _segment_beta_bernstein_bound(source, segment_index)
+        deficit_bound = 1.0 - beta_bound
+    if not np.isfinite(deficit_bound) or deficit_bound <= 0.0:
         return 0.0, "segment_velocity_bound_is_not_timelike"
     segment_start = float(source.time_ns[segment_index])
     segment_end = float(source.time_ns[segment_index + 1])
     root = float(retarded_time_ns)
     coordinate_margin = C_MMNS * min(root - segment_start, segment_end - root)
-    maximum_root_shift = float(observer_stencil_step_mm) / (1.0 - beta_bound)
+    maximum_root_shift = float(observer_stencil_step_mm) / deficit_bound
     if not np.isfinite(coordinate_margin) or coordinate_margin <= 0.0:
         return 0.0, "retarded_root_is_on_segment_boundary"
     ratio = coordinate_margin / maximum_root_shift
@@ -1909,64 +3607,8 @@ def _stationary_span_margin_ratio(
     )
 
 
-def _response_gradient_from_maintained_stencil(
-    history: TrajectoryHistory,
-    observer_event: ObserverEvent,
-    *,
-    excluded_source_indices: Sequence[int],
-    require_complete_history: bool,
-    relative_step: float,
-    minimum_step_mm: float,
-    root_tolerance_mm: float,
-    max_root_iterations: int,
-    backend: str,
-    fallback_reason: str,
-    kappa: np.ndarray,
-    segment_index: np.ndarray,
-    minimum_segment_margin_ratio: float,
-    source_acceleration_semantics: str,
-) -> RetardedChargeResponseGradientResult:
-    from .antisymmetric_response_rfs import (
-        pack_antisymmetric_response_native,
-        pack_partial_antisymmetric_response_native,
-    )
-
-    fallback = evaluate_retarded_charge_field_gradient_native(
-        history,
-        observer_event,
-        excluded_source_indices=excluded_source_indices,
-        require_complete_history=require_complete_history,
-        relative_step=relative_step,
-        minimum_step_mm=minimum_step_mm,
-        root_tolerance_mm=root_tolerance_mm,
-        max_root_iterations=max_root_iterations,
-        backend=backend,
-        source_acceleration_semantics=source_acceleration_semantics,
-    )
-    return RetardedChargeResponseGradientResult(
-        four_potential=fallback.field.four_potential,
-        partial_a=fallback.partial_a,
-        antisymmetric_response=pack_antisymmetric_response_native(
-            fallback.field.field_tensor
-        ),
-        partial_antisymmetric_response=(
-            pack_partial_antisymmetric_response_native(fallback.partial_f)
-        ),
-        retarded_time_ns=fallback.field.retarded_time_ns,
-        light_cone_residual_mm=fallback.field.light_cone_residual_mm,
-        separation_mm=fallback.field.separation_mm,
-        valid_sources=fallback.field.valid_sources,
-        kappa=kappa,
-        segment_index=segment_index,
-        minimum_segment_margin_ratio=minimum_segment_margin_ratio,
-        fallback_used=True,
-        fallback_reason=fallback_reason,
-        fallback_stencil_step_mm=float(fallback.stencil_step_mm),
-    )
-
-
 def evaluate_retarded_charge_response_gradient_native(
-    history: TrajectoryHistory,
+    history: TrajectoryHistory | ExactCloudHistory,
     observer_event: ObserverEvent,
     *,
     excluded_source_indices: Sequence[int] = (),
@@ -1978,19 +3620,20 @@ def evaluate_retarded_charge_response_gradient_native(
     fallback_backend: str = "numba_full_strict_serial",
     source_acceleration_semantics: str = "preceding_interval",
     observer_four_velocity_mm_ns: Sequence[float] | None = None,
+    extrapolate_ns: float = 0.0,
 ) -> RetardedChargeResponseGradientResult:
     """Evaluate one-root analytical charge response coefficients.
 
-    The result follows the maintained source-addition and error ordering.  It
-    falls back to the centered-stencil provider only when a rigorous segment
-    speed/margin bound cannot prove that the analytical derivative stays on
-    the same smooth quintic segment.
-    An optional observer four-velocity requests the directional rate of the
-    gradient from these same roots and prepared coefficients. If the ordinary
-    response falls back, that rate is explicitly unavailable, never zero-filled.
+    Each jet differentiates the history representation selected by its root,
+    including the inertial boundary and permitted final-segment continuation.
+    Segment seams use that same local segment. Source contributions are summed
+    with compensated arithmetic. ``fallback_backend`` is retained for API
+    compatibility and selects Python or strict Numba jet evaluation; charge
+    jets no longer fall back to stencils at interpolation knots.
+    An optional observer four-velocity requests the directional gradient rate
+    from the same roots and prepared coefficients.
     """
 
-    require_exact_retarded_backend("numba_analytic_charge_response_serial")
     observer_velocity = None
     if observer_four_velocity_mm_ns is not None:
         observer_velocity = np.asarray(observer_four_velocity_mm_ns, dtype=float)
@@ -1998,19 +3641,6 @@ def evaluate_retarded_charge_response_gradient_native(
             np.isfinite(observer_velocity)
         ):
             raise ValueError("observer_four_velocity_mm_ns needs four finite values")
-    from .charge_response_jet_numba import (
-        _STATUS_CHARGE_SINGULAR_KAPPA,
-        _STATUS_CHARGE_SUPERLUMINAL_SOURCE,
-        _STATUS_CHARGE_ZERO_SEPARATION,
-        evaluate_charge_response_coefficients_one_event_strict_serial,
-    )
-    from .exact_retarded_numba import (
-        NUMBA_COMPILATION_ERRORS,
-        _STATUS_MISSING_HISTORY,
-        _STATUS_TERMINATED_SOURCE,
-        _STATUS_VALID,
-    )
-
     selected_fallback = require_exact_retarded_backend(fallback_backend)
     if selected_fallback in {
         "numba_analytic_charge_response_serial",
@@ -2034,11 +3664,10 @@ def evaluate_retarded_charge_response_gradient_native(
         excluded_source_indices,
         source_acceleration_semantics=acceleration_semantics,
     )
+    prepared = visible_prepared(
+        prepared, history, observer_event, tolerance, iterations, extrapolate_ns
+    )
     arrays = prepared.arrays
-    potential_total = np.zeros(4, dtype=float)
-    partial_a_total = np.zeros((4, 4), dtype=float)
-    response_total = np.zeros(6, dtype=float)
-    partial_response_total = np.zeros((4, 6), dtype=float)
     retarded_time_ns = np.full(arrays.n_sources, np.nan, dtype=float)
     residual_mm = np.full(arrays.n_sources, np.nan, dtype=float)
     separation_mm = np.full(arrays.n_sources, np.nan, dtype=float)
@@ -2046,67 +3675,131 @@ def evaluate_retarded_charge_response_gradient_native(
     kappa = np.full(arrays.n_sources, np.nan, dtype=float)
     segment_index = np.full(arrays.n_sources, -1, dtype=int)
     missing_sources: list[int] = []
+    time_error_bounds = np.full(arrays.n_sources, np.nan)
 
-    compiling_initial_signature = not bool(
-        getattr(
-            evaluate_charge_response_coefficients_one_event_strict_serial,
-            "signatures",
-            (),
+    compiled = selected_fallback != "python"
+    precise_packed_jets: dict[int, np.ndarray] = {}
+    potential_terms = np.zeros((arrays.n_sources, 4))
+    partial_a_terms = np.zeros((arrays.n_sources, 4, 4))
+    response_terms = np.zeros((arrays.n_sources, 6))
+    partial_response_terms = np.zeros((arrays.n_sources, 4, 6))
+    batch_samples, batch_jets = (
+        _resolved_source_jets(
+            prepared, observer_event, tolerance, iterations, extrapolate_ns
         )
+        if compiled
+        else ({}, {})
     )
     for source_index, source in prepared.sources.items():
-        try:
-            result = evaluate_charge_response_coefficients_one_event_strict_serial(
-                source.time_ns,
-                source.position_mm,
-                source.segment_duration_ns,
-                source.position_coefficients_mm,
-                float(arrays.charge_native[source_index]),
-                bool(source.ended_by_loss),
-                float(observer_event.time_ns),
-                np.asarray(observer_event.position_mm, dtype=float),
-                tolerance,
-                iterations,
+        sample = (
+            batch_samples[source_index]
+            if compiled
+            else _solve_retarded_sample(
+                source,
+                observer_time_ns=float(observer_event.time_ns),
+                observer_position_mm=np.asarray(observer_event.position_mm),
+                observer_time_low_ns=observer_event.time_low_ns,
+                observer_position_low_mm=np.asarray(observer_event.position_low_mm),
+                observer_time_tail_ns=observer_event.time_tail_ns,
+                observer_position_tail_mm=np.asarray(observer_event.position_tail_mm),
+                compiled=compiled,
+                root_tolerance_mm=tolerance,
+                max_root_iterations=iterations,
+                extrapolate_ns=extrapolate_ns,
             )
-        except NUMBA_COMPILATION_ERRORS as exc:
-            if compiling_initial_signature:
-                from .exact_retarded_backend import (
-                    ExactRetardedBackendUnavailableError,
+        )
+        if sample is None:
+            if not _source_terminated_before_light_cone(
+                source,
+                observer_time_ns=float(observer_event.time_ns),
+                observer_position_mm=np.asarray(observer_event.position_mm),
+            ):
+                missing_sources.append(source_index)
+            continue
+        segment = int(
+            np.clip(
+                np.searchsorted(source.time_ns, sample.time_ns, side="right") - 1,
+                0,
+                source.segment_duration_ns.size - 1,
+            )
+        )
+        if sample.source_proper_velocity is not None:
+            assert sample.precise_separation_mm is not None
+            if compiled:
+                potential, electric, magnetic, stable_kappa = batch_jets[source_index]
+            else:
+                potential, electric, magnetic, _root, _residual, stable_kappa = (
+                    precise_charge_jets(
+                        float(arrays.charge_native[source_index]),
+                        sample.precise_separation_mm,
+                        sample.source_proper_velocity,
+                        sample.beta_prime_per_mm,
+                        (
+                            np.zeros(3)
+                            if sample.beta_jerk_per_mm2 is None
+                            else sample.beta_jerk_per_mm2
+                        ),
+                        sample.precise_separation_frame_mm,
+                        sample.beta_snap_per_mm3,
+                    )
+                )
+            packed = np.stack(
+                (
+                    -electric[0],
+                    -electric[1],
+                    -electric[2],
+                    -magnetic[2],
+                    magnetic[1],
+                    -magnetic[0],
+                )
+            )
+            precise_packed_jets[source_index] = packed
+            potential_terms[source_index] = potential[:, 0]
+            partial_a_terms[source_index] = potential[:, 1:5].T
+            response_terms[source_index] = packed[:, 0]
+            partial_response_terms[source_index] = packed[:, 1:5].T
+        else:
+            jet_options = dict(
+                observer_time_ns=float(observer_event.time_ns),
+                observer_position_mm=np.asarray(observer_event.position_mm),
+                charge_native=float(arrays.charge_native[source_index]),
+                segment_start_time_ns=float(source.time_ns[segment]),
+                segment_duration_ns=float(source.segment_duration_ns[segment]),
+                position_coefficients_mm=source.position_coefficients_mm[segment],
+                retarded_time_ns=sample.time_ns,
+            )
+            if compiled:
+                from .charge_response_jet_numba import (
+                    quintic_charge_response_coefficients_strict_serial,
                 )
 
-                raise ExactRetardedBackendUnavailableError(
-                    "exact retarded backend "
-                    "'numba_analytic_charge_response_serial' failed during "
-                    "initial JIT compilation; select backend "
-                    "'numba_full_strict_serial' or inspect the chained Numba error"
-                ) from exc
-            raise
-        status = int(result[0])
-        if status == _STATUS_TERMINATED_SOURCE:
-            continue
-        if status == _STATUS_MISSING_HISTORY:
-            missing_sources.append(source_index)
-            continue
-        if status == _STATUS_CHARGE_ZERO_SEPARATION:
-            raise ValueError("the observer cannot coincide with a point-charge source")
-        if status == _STATUS_CHARGE_SUPERLUMINAL_SOURCE:
-            raise ValueError("source beta magnitude must be less than one")
-        if status == _STATUS_CHARGE_SINGULAR_KAPPA:
-            raise ValueError(
-                "retarded field is singular because 1 - n.beta is too small"
-            )
-        if status != _STATUS_VALID:
-            raise RuntimeError(f"unknown analytical charge response status {status}")
-        potential_total += result[1]
-        partial_a_total += result[2]
-        response_total += result[3]
-        partial_response_total += result[4]
-        kappa[source_index] = float(result[5])
-        retarded_time_ns[source_index] = float(result[6])
-        residual_mm[source_index] = float(result[7])
-        separation_mm[source_index] = float(result[8])
-        segment_index[source_index] = int(result[9])
+                potential, partial_a, packed, partial_packed, stable_kappa, _ = (
+                    quintic_charge_response_coefficients_strict_serial(**jet_options)
+                )
+            else:
+                from .charge_response_jet import quintic_charge_response_jet_native
+
+                jet = quintic_charge_response_jet_native(**jet_options)
+                potential, partial_a = jet.four_potential, jet.partial_a
+                packed = jet.antisymmetric_response
+                partial_packed = jet.partial_antisymmetric_response
+                stable_kappa = jet.kappa
+            potential_terms[source_index] = potential
+            partial_a_terms[source_index] = partial_a
+            response_terms[source_index] = packed
+            partial_response_terms[source_index] = partial_packed
+        retarded_time_ns[source_index] = sample.time_ns
+        if sample.time_error_bound_ns is not None:
+            time_error_bounds[source_index] = sample.time_error_bound_ns
+        residual_mm[source_index] = sample.residual_mm
+        separation_mm[source_index] = sample.separation_mm
+        kappa[source_index] = stable_kappa
+        segment_index[source_index] = segment
         valid_sources[source_index] = True
+    potential_total = _sum_source_terms(potential_terms)
+    partial_a_total = _sum_source_terms(partial_a_terms)
+    response_total = _sum_source_terms(response_terms)
+    partial_response_total = _sum_source_terms(partial_response_terms)
 
     if require_complete_history and missing_sources:
         raise RetardedHistoryError(
@@ -2124,15 +3817,24 @@ def evaluate_retarded_charge_response_gradient_native(
     for source_index, source in prepared.sources.items():
         if not valid_sources[source_index]:
             continue
-        margin_ratio, reason = _analytical_segment_margin_ratio(
+        if (
+            source_index in precise_packed_jets
+            and source.inertial_boundary is not None
+            and retarded_time_ns[source_index] <= source.inertial_boundary[0]
+        ):
+            # The analytic boundary has no internal interpolation seams. Its
+            # root was already checked against the finite boundary interval.
+            continue
+        margin_ratio, _reason = _analytical_segment_margin_ratio(
             source=source,
             segment_index=int(segment_index[source_index]),
             retarded_time_ns=float(retarded_time_ns[source_index]),
             observer_stencil_step_mm=stencil_step,
         )
         minimum_margin_ratio = min(minimum_margin_ratio, margin_ratio)
-        if reason is not None and fallback_reason is None:
-            fallback_reason = f"source_{source_index}:{reason}"
+        # A local derivative needs the selected segment, not a neighbourhood
+        # large enough for a displaced stencil. At a seam use the same segment
+        # selected by the field root; extrapolation uses the final segment.
     if not all(
         np.all(np.isfinite(value))
         for value in (
@@ -2142,7 +3844,7 @@ def evaluate_retarded_charge_response_gradient_native(
             partial_response_total,
         )
     ):
-        fallback_reason = fallback_reason or "nonfinite_analytical_response"
+        raise ValueError("summed analytical charge response must be finite")
     from .analytic_charge_response_diagnostics import (
         record_analytic_charge_response,
     )
@@ -2152,30 +3854,6 @@ def evaluate_retarded_charge_response_gradient_native(
         minimum_segment_margin_ratio=minimum_margin_ratio,
         fallback_reason=fallback_reason,
     )
-    if fallback_reason is not None:
-        fallback = _response_gradient_from_maintained_stencil(
-            history,
-            observer_event,
-            excluded_source_indices=excluded_source_indices,
-            require_complete_history=require_complete_history,
-            relative_step=relative,
-            minimum_step_mm=minimum,
-            root_tolerance_mm=tolerance,
-            max_root_iterations=iterations,
-            backend=selected_fallback,
-            fallback_reason=fallback_reason,
-            kappa=kappa,
-            segment_index=segment_index,
-            minimum_segment_margin_ratio=minimum_margin_ratio,
-            source_acceleration_semantics=acceleration_semantics,
-        )
-        if observer_velocity is not None:
-            fallback = replace(
-                fallback,
-                directional_unavailable_reason="ordinary charge response used fallback: "
-                + fallback_reason,
-            )
-        return fallback
     directional_rate = None
     directional_residual = None
     if observer_velocity is not None:
@@ -2183,10 +3861,19 @@ def evaluate_retarded_charge_response_gradient_native(
             quintic_charge_response_directional_gradient_native,
         )
 
-        directional_rate = np.zeros((4, 6), dtype=float)
+        directional_terms = np.zeros((arrays.n_sources, 4, 6), dtype=float)
         directional_residual = np.full(arrays.n_sources, np.nan, dtype=float)
         for source_index, source in prepared.sources.items():
             if not valid_sources[source_index]:
+                continue
+            if source_index in precise_packed_jets:
+                packed_hessian = precise_packed_jets[source_index][:, 5:].reshape(
+                    6, 4, 4
+                )
+                directional_terms[source_index] = np.einsum(
+                    "kij,j->ik", packed_hessian, observer_velocity
+                )
+                directional_residual[source_index] = 0.0
                 continue
             segment = int(segment_index[source_index])
             result = quintic_charge_response_directional_gradient_native(
@@ -2199,8 +3886,11 @@ def evaluate_retarded_charge_response_gradient_native(
                 retarded_time_ns=float(retarded_time_ns[source_index]),
                 four_velocity_mm_ns=observer_velocity,
             )
-            directional_rate += result.partial_antisymmetric_response_along_velocity
+            directional_terms[source_index] = (
+                result.partial_antisymmetric_response_along_velocity
+            )
             directional_residual[source_index] = result.light_cone_jet_residual
+        directional_rate = _sum_source_terms(directional_terms)
         if not np.all(np.isfinite(directional_rate)):
             raise ValueError("summed directional charge response must be finite")
         directional_rate.setflags(write=False)
@@ -2222,11 +3912,35 @@ def evaluate_retarded_charge_response_gradient_native(
         fallback_stencil_step_mm=None,
         partial_antisymmetric_response_along_velocity=directional_rate,
         directional_jet_residual=directional_residual,
+        retarded_time_error_bound_ns=(
+            time_error_bounds if np.any(np.isfinite(time_error_bounds)) else None
+        ),
     )
 
 
+def _reject_proper_metal(history: TrajectoryHistory, backend: str) -> None:
+    if isinstance(history, ExactVisibilityHistory):
+        return _reject_proper_metal(history.base, backend)
+    if not str(backend).lower().startswith("metal"):
+        return
+    if isinstance(history, TrialTrajectoryHistory):
+        _reject_proper_metal(history.base, backend)
+        if any(
+            np.any(row.get("source_history_mode", np.zeros(0)) == 1.0)
+            for row in history.tail
+        ):
+            raise ValueError("proper_velocity does not support Metal kernels")
+        return
+    try:
+        modes = _history_matrix(history, "source_history_mode")
+    except (KeyError, AttributeError):
+        return
+    if np.any(modes == 1.0):
+        raise ValueError("proper_velocity does not support Metal kernels")
+
+
 def evaluate_retarded_charge_field_native(
-    history: TrajectoryHistory,
+    history: TrajectoryHistory | ExactCloudHistory,
     observer_event: ObserverEvent,
     *,
     excluded_source_indices: Sequence[int] = (),
@@ -2235,6 +3949,7 @@ def evaluate_retarded_charge_field_native(
     max_root_iterations: int = _DEFAULT_MAX_ROOT_ITERATIONS,
     backend: str = "python",
     source_acceleration_semantics: str = "preceding_interval",
+    extrapolate_ns: float = 0.0,
 ) -> RetardedChargeFieldResult:
     """Evaluate the summed native Gaussian charge field at one event.
 
@@ -2243,6 +3958,7 @@ def evaluate_retarded_charge_field_native(
     ``instantaneous`` when their supplied ``bdot`` is an exact knot derivative.
     """
 
+    _reject_proper_metal(history, backend)
     selected_backend = require_exact_retarded_backend(backend)
     tolerance, iterations = _validated_root_options(
         root_tolerance_mm, max_root_iterations
@@ -2252,6 +3968,9 @@ def evaluate_retarded_charge_field_native(
         excluded_source_indices,
         source_acceleration_semantics=source_acceleration_semantics,
     )
+    prepared = visible_prepared(
+        prepared, history, observer_event, tolerance, iterations, extrapolate_ns
+    )
     return _evaluate_prepared_charge_batch(
         prepared,
         (observer_event,),
@@ -2259,11 +3978,50 @@ def evaluate_retarded_charge_field_native(
         require_complete_history=require_complete_history,
         root_tolerance_mm=tolerance,
         max_root_iterations=iterations,
+        extrapolate_ns=extrapolate_ns,
     )[0]
 
 
+def evaluate_retarded_charge_fields_native(
+    history: TrajectoryHistory | ExactCloudHistory,
+    observer_events: Sequence[ObserverEvent],
+    *,
+    backend: str = "python",
+    source_acceleration_semantics: str = "preceding_interval",
+) -> tuple[RetardedChargeFieldResult, ...]:
+    """Evaluate arbitrary field nodes, retaining every source at every node.
+
+    Unlike the mutual provider, node indices never imply self exclusion.
+    Missing history and singular source events fail closed.
+    """
+    _reject_proper_metal(history, backend)
+    selected = require_exact_retarded_backend(backend)
+    prepared = _prepare_history(
+        history, (), source_acceleration_semantics=source_acceleration_semantics
+    )
+    if isinstance(history, ExactVisibilityHistory):
+        return tuple(
+            evaluate_retarded_charge_field_native(
+                history,
+                event,
+                backend=backend,
+                source_acceleration_semantics=source_acceleration_semantics,
+            )
+            for event in observer_events
+        )
+    return _evaluate_prepared_charge_batch(
+        prepared,
+        tuple(observer_events),
+        backend=selected,
+        require_complete_history=True,
+        root_tolerance_mm=_DEFAULT_ROOT_TOLERANCE_MM,
+        max_root_iterations=_DEFAULT_MAX_ROOT_ITERATIONS,
+        extrapolate_ns=0.0,
+    )
+
+
 def evaluate_retarded_mutual_charge_field_matrix_native(
-    history: TrajectoryHistory,
+    history: TrajectoryHistory | ExactCloudHistory,
     observer_events: Sequence[ObserverEvent],
     *,
     require_complete_history: bool = True,
@@ -2286,6 +4044,7 @@ def evaluate_retarded_mutual_charge_field_matrix_native(
     while retaining the same source/event layout and Python-side validation.
     """
 
+    _reject_proper_metal(history, backend)
     selected_backend = require_exact_retarded_backend(backend)
     if selected_backend not in {"python", "numba_full_strict_serial"}:
         raise ValueError(
@@ -2306,7 +4065,13 @@ def evaluate_retarded_mutual_charge_field_matrix_native(
     events = tuple(observer_events)
     arrays = prepared.arrays
     exclude_diagonal = bool(exclude_matching_indices)
-    if exclude_diagonal and len(events) != arrays.n_sources:
+    parent_indices = (
+        np.arange(arrays.n_sources)
+        if prepared.parent_indices is None
+        else prepared.parent_indices
+    )
+    parent_count = int(parent_indices.max()) + 1 if parent_indices.size else 0
+    if exclude_diagonal and len(events) != parent_count:
         raise ValueError(
             "matching-index exclusion requires one observer event per source"
         )
@@ -2321,124 +4086,47 @@ def evaluate_retarded_mutual_charge_field_matrix_native(
     valid = np.zeros_like(retarded_time, dtype=bool)
     missing: list[list[int]] = [[] for _ in events]
 
-    if selected_backend == "numba_full_strict_serial":
-        from .exact_retarded_numba import (
-            NUMBA_COMPILATION_ERRORS,
-            _STATUS_CHARGE_SINGULAR_KAPPA,
-            _STATUS_CHARGE_SUPERLUMINAL_SOURCE,
-            _STATUS_CHARGE_ZERO_SEPARATION,
-            _STATUS_MISSING_HISTORY,
-            _STATUS_TERMINATED_SOURCE,
-            _STATUS_VALID,
-            evaluate_charge_source_events_full_strict_serial,
+    for source_index, source in prepared.sources.items():
+        one_source = _PreparedHistory(
+            arrays=arrays,
+            sources={source_index: source},
+            source_acceleration_semantics=prepared.source_acceleration_semantics,
         )
-
-        event_time_ns, event_position_mm = _charge_batch_event_arrays(events)
-        for source_index, source in prepared.sources.items():
-            compiling_initial_signature = not bool(
-                getattr(
-                    evaluate_charge_source_events_full_strict_serial,
-                    "signatures",
-                    (),
-                )
+        for event_index, event in enumerate(events):
+            if exclude_diagonal and event_index == parent_indices[source_index]:
+                continue
+            selected = visible_prepared(
+                one_source, history, event, tolerance, iterations
             )
-            try:
-                batch = evaluate_charge_source_events_full_strict_serial(
-                    source.time_ns,
-                    source.position_mm,
-                    source.segment_duration_ns,
-                    source.position_coefficients_mm,
-                    float(arrays.charge_native[source_index]),
-                    bool(source.ended_by_loss),
-                    event_time_ns,
-                    event_position_mm,
-                    float(tolerance),
-                    int(iterations),
-                )
-            except NUMBA_COMPILATION_ERRORS as exc:
-                if compiling_initial_signature:
-                    from .exact_retarded_backend import (
-                        ExactRetardedBackendUnavailableError,
-                    )
-
-                    raise ExactRetardedBackendUnavailableError(
-                        "mutual charge backend 'numba_full_strict_serial' failed "
-                        "during initial JIT compilation; select backend 'python' "
-                        "or inspect the chained Numba error"
-                    ) from exc
-                raise
-
-            for event_index in range(len(events)):
-                if exclude_diagonal and event_index == source_index:
-                    continue
-                status = int(batch[0][event_index])
-                if status == _STATUS_TERMINATED_SOURCE:
-                    continue
-                if status == _STATUS_MISSING_HISTORY:
-                    missing[event_index].append(source_index)
-                    continue
-                if status == _STATUS_CHARGE_ZERO_SEPARATION:
-                    raise ValueError(
-                        "a non-diagonal observer coincides with a point-charge source"
-                    )
-                if status == _STATUS_CHARGE_SUPERLUMINAL_SOURCE:
-                    raise ValueError("source beta magnitude must be less than one")
-                if status == _STATUS_CHARGE_SINGULAR_KAPPA:
-                    raise ValueError(
-                        "retarded field is singular because 1 - n.beta is too small"
-                    )
-                if status != _STATUS_VALID:
-                    raise RuntimeError(f"unknown strict charge event status {status}")
-                electric[event_index, source_index] = batch[1][event_index]
-                magnetic[event_index, source_index] = batch[2][event_index]
-                potential[event_index, source_index] = batch[3][event_index]
-                retarded_time[event_index, source_index] = batch[4][event_index]
-                residual[event_index, source_index] = batch[5][event_index]
-                separation[event_index, source_index] = batch[6][event_index]
-                valid[event_index, source_index] = batch[7][event_index]
-    else:
-        for source_index, source in prepared.sources.items():
-            charge = float(arrays.charge_native[source_index])
-            for event_index, event in enumerate(events):
-                if exclude_diagonal and event_index == source_index:
-                    continue
-                observer_time = float(event.time_ns)
-                observer_position = np.asarray(event.position_mm, dtype=float)
-                sample = _solve_retarded_sample(
+            if source_index not in selected.sources:
+                continue
+            field = _evaluate_prepared_charge_field_native(
+                selected,
+                event,
+                require_complete_history=False,
+                root_tolerance_mm=tolerance,
+                max_root_iterations=iterations,
+                compiled=selected_backend != "python",
+            )
+            if not field.valid_sources[source_index]:
+                if not _source_terminated_before_light_cone(
                     source,
-                    observer_time_ns=observer_time,
-                    observer_position_mm=observer_position,
-                    root_tolerance_mm=tolerance,
-                    max_root_iterations=iterations,
-                )
-                if sample is None:
-                    if _source_terminated_before_light_cone(
-                        source,
-                        observer_time_ns=observer_time,
-                        observer_position_mm=observer_position,
-                    ):
-                        continue
+                    observer_time_ns=event.time_ns,
+                    observer_position_mm=np.asarray(event.position_mm),
+                ):
                     missing[event_index].append(source_index)
-                    continue
-                source_to_observer = observer_position - sample.position_mm
-                source_electric, source_magnetic = lienard_wiechert_charge_field_native(
-                    charge_native=charge,
-                    separation_vector_mm=source_to_observer,
-                    source_beta=sample.beta,
-                    source_beta_prime_per_mm=sample.beta_prime_per_mm,
-                )
-                source_potential = lienard_wiechert_charge_potential_native(
-                    charge_native=charge,
-                    separation_vector_mm=source_to_observer,
-                    source_beta=sample.beta,
-                )
-                electric[event_index, source_index] = source_electric
-                magnetic[event_index, source_index] = source_magnetic
-                potential[event_index, source_index] = source_potential
-                retarded_time[event_index, source_index] = sample.time_ns
-                residual[event_index, source_index] = sample.residual_mm
-                separation[event_index, source_index] = sample.separation_mm
-                valid[event_index, source_index] = True
+                continue
+            electric[event_index, source_index] = field.electric_field_native
+            magnetic[event_index, source_index] = field.magnetic_field_native
+            potential[event_index, source_index] = field.four_potential
+            retarded_time[event_index, source_index] = field.retarded_time_ns[
+                source_index
+            ]
+            residual[event_index, source_index] = field.light_cone_residual_mm[
+                source_index
+            ]
+            separation[event_index, source_index] = field.separation_mm[source_index]
+            valid[event_index, source_index] = True
 
     if require_complete_history:
         failed = {index: values for index, values in enumerate(missing) if values}
@@ -2460,7 +4148,7 @@ def evaluate_retarded_mutual_charge_field_matrix_native(
 
 
 def evaluate_retarded_mutual_charge_fields_native(
-    history: TrajectoryHistory,
+    history: TrajectoryHistory | ExactCloudHistory,
     observer_events: Sequence[ObserverEvent],
     *,
     require_complete_history: bool = True,
@@ -2478,14 +4166,10 @@ def evaluate_retarded_mutual_charge_fields_native(
         max_root_iterations=max_root_iterations,
         source_acceleration_semantics=source_acceleration_semantics,
     )
-    source_count = matrix.valid_sources.shape[1]
-    electric = np.zeros((source_count, 3))
-    magnetic = np.zeros_like(electric)
-    potential = np.zeros((source_count, 4))
-    for source_index in range(source_count):
-        electric += matrix.electric_field_native[:, source_index]
-        magnetic += matrix.magnetic_field_native[:, source_index]
-        potential += matrix.four_potential[:, source_index]
+    event_count = matrix.valid_sources.shape[0]
+    electric = _sum_source_terms(np.moveaxis(matrix.electric_field_native, 1, 0))
+    magnetic = _sum_source_terms(np.moveaxis(matrix.magnetic_field_native, 1, 0))
+    potential = _sum_source_terms(np.moveaxis(matrix.four_potential, 1, 0))
     return tuple(
         RetardedChargeFieldResult(
             electric_field_native=electric[index],
@@ -2499,12 +4183,12 @@ def evaluate_retarded_mutual_charge_fields_native(
             valid_sources=matrix.valid_sources[index],
             four_potential=potential[index],
         )
-        for index in range(source_count)
+        for index in range(event_count)
     )
 
 
 def evaluate_retarded_charge_field_gradient_native(
-    history: TrajectoryHistory,
+    history: TrajectoryHistory | ExactCloudHistory,
     observer_event: ObserverEvent,
     *,
     excluded_source_indices: Sequence[int] = (),
@@ -2515,14 +4199,107 @@ def evaluate_retarded_charge_field_gradient_native(
     max_root_iterations: int = _DEFAULT_MAX_ROOT_ITERATIONS,
     backend: str = "python",
     source_acceleration_semantics: str = "preceding_interval",
+    extrapolate_ns: float = 0.0,
+) -> RetardedChargeFieldGradientResult:
+    """Evaluate F, partial F, and partial A from analytic source jets.
+
+    Every child in a cloud contributes its own jet. High-gamma sources use
+    the resolved proper-velocity jets. Continuation differentiates the same
+    final history segment as the field evaluator. No displaced charge fields
+    enter a production gradient; use the named stencil evaluator for diagnostics.
+    """
+    _reject_proper_metal(history, backend)
+    selected_backend = require_exact_retarded_backend(backend)
+    relative = float(relative_step)
+    minimum = float(minimum_step_mm)
+    tolerance, iterations = _validated_root_options(
+        root_tolerance_mm, max_root_iterations
+    )
+    if extrapolate_ns > 0.0 and selected_backend not in {
+        "python",
+        "numba_full_strict_serial",
+    }:
+        raise ValueError("source-history extrapolation requires the python backend")
+    from .antisymmetric_response_rfs import (
+        materialize_antisymmetric_response_native,
+        materialize_partial_antisymmetric_response_native,
+    )
+
+    response = evaluate_retarded_charge_response_gradient_native(
+        history,
+        observer_event,
+        excluded_source_indices=excluded_source_indices,
+        require_complete_history=require_complete_history,
+        relative_step=relative,
+        minimum_step_mm=minimum,
+        root_tolerance_mm=tolerance,
+        max_root_iterations=iterations,
+        source_acceleration_semantics=source_acceleration_semantics,
+        fallback_backend=(
+            "python" if selected_backend == "python" else "numba_full_strict_serial"
+        ),
+        extrapolate_ns=extrapolate_ns,
+    )
+    packed = response.antisymmetric_response
+    field_tensor = materialize_antisymmetric_response_native(packed)
+    return RetardedChargeFieldGradientResult(
+        field=RetardedChargeFieldResult(
+            electric_field_native=-packed[:3],
+            magnetic_field_native=np.asarray(
+                (-packed[5], packed[4], -packed[3]), dtype=float
+            ),
+            field_tensor=field_tensor,
+            retarded_time_ns=response.retarded_time_ns,
+            light_cone_residual_mm=response.light_cone_residual_mm,
+            separation_mm=response.separation_mm,
+            valid_sources=response.valid_sources,
+            four_potential=response.four_potential,
+            retarded_time_error_bound_ns=response.retarded_time_error_bound_ns,
+        ),
+        partial_f=materialize_partial_antisymmetric_response_native(
+            response.partial_antisymmetric_response
+        ),
+        stencil_step_mm=(
+            float(response.fallback_stencil_step_mm)
+            if response.fallback_stencil_step_mm is not None
+            else 0.0
+        ),
+        # Compatibility metadata: with zero stencil width all eight entries
+        # denote the center roots. This also preserves safe cache eligibility
+        # checks, which must reject continued roots beyond accepted history.
+        stencil_retarded_time_ns=np.broadcast_to(
+            response.retarded_time_ns, (4, 2, response.retarded_time_ns.size)
+        ).copy(),
+        partial_a=response.partial_a,
+    )
+
+
+def evaluate_retarded_charge_field_gradient_stencil_native(
+    history: TrajectoryHistory | ExactCloudHistory,
+    observer_event: ObserverEvent,
+    *,
+    excluded_source_indices: Sequence[int] = (),
+    require_complete_history: bool = True,
+    relative_step: float = _DEFAULT_GRADIENT_RELATIVE_STEP,
+    minimum_step_mm: float = _DEFAULT_GRADIENT_MINIMUM_STEP_MM,
+    root_tolerance_mm: float = _DEFAULT_ROOT_TOLERANCE_MM,
+    max_root_iterations: int = _DEFAULT_MAX_ROOT_ITERATIONS,
+    backend: str = "python",
+    source_acceleration_semantics: str = "preceding_interval",
+    extrapolate_ns: float = 0.0,
 ) -> RetardedChargeFieldGradientResult:
     """Evaluate F and its complete centered spacetime derivative.
+
+    ``extrapolate_ns`` (python backend only) lets a source whose retarded point
+    lies just after its last accepted knot be continued along its last quintic
+    segment; used for same-bunch sources inside the current step.
 
     partial_f[lambda, mu, nu] is partial_lambda F^(mu nu) for
     x=(ct,x,y,z) in millimetres. Every displaced event independently re-solves
     every source light cone.
     """
 
+    _reject_proper_metal(history, backend)
     selected_backend = require_exact_retarded_backend(backend)
     relative = float(relative_step)
     minimum = float(minimum_step_mm)
@@ -2533,58 +4310,16 @@ def evaluate_retarded_charge_field_gradient_native(
     tolerance, iterations = _validated_root_options(
         root_tolerance_mm, max_root_iterations
     )
-    if selected_backend in {
-        "numba_analytic_charge_response_serial",
-        "numba_analytic_charge_dipole_response_serial",
-    }:
-        from .antisymmetric_response_rfs import (
-            materialize_antisymmetric_response_native,
-            materialize_partial_antisymmetric_response_native,
-        )
-
-        response = evaluate_retarded_charge_response_gradient_native(
-            history,
-            observer_event,
-            excluded_source_indices=excluded_source_indices,
-            require_complete_history=require_complete_history,
-            relative_step=relative,
-            minimum_step_mm=minimum,
-            root_tolerance_mm=tolerance,
-            max_root_iterations=iterations,
-            source_acceleration_semantics=source_acceleration_semantics,
-        )
-        packed = response.antisymmetric_response
-        field_tensor = materialize_antisymmetric_response_native(packed)
-        return RetardedChargeFieldGradientResult(
-            field=RetardedChargeFieldResult(
-                electric_field_native=-packed[:3],
-                magnetic_field_native=np.asarray(
-                    (-packed[5], packed[4], -packed[3]), dtype=float
-                ),
-                field_tensor=field_tensor,
-                retarded_time_ns=response.retarded_time_ns,
-                light_cone_residual_mm=response.light_cone_residual_mm,
-                separation_mm=response.separation_mm,
-                valid_sources=response.valid_sources,
-                four_potential=response.four_potential,
-            ),
-            partial_f=materialize_partial_antisymmetric_response_native(
-                response.partial_antisymmetric_response
-            ),
-            stencil_step_mm=(
-                float(response.fallback_stencil_step_mm)
-                if response.fallback_stencil_step_mm is not None
-                else 0.0
-            ),
-            stencil_retarded_time_ns=np.full(
-                (4, 2, response.retarded_time_ns.size), np.nan, dtype=float
-            ),
-            partial_a=response.partial_a,
-        )
+    if extrapolate_ns > 0.0 and selected_backend != "python":
+        raise ValueError("source-history extrapolation requires the python backend")
     prepared = _prepare_history(
         history,
         excluded_source_indices,
         source_acceleration_semantics=source_acceleration_semantics,
+    )
+    ungated_prepared = prepared
+    prepared = visible_prepared(
+        prepared, history, observer_event, tolerance, iterations, extrapolate_ns
     )
     center = _evaluate_prepared_charge_field_native(
         prepared,
@@ -2592,6 +4327,7 @@ def evaluate_retarded_charge_field_gradient_native(
         require_complete_history=require_complete_history,
         root_tolerance_mm=tolerance,
         max_root_iterations=iterations,
+        extrapolate_ns=extrapolate_ns,
     )
     finite_separations = center.separation_mm[center.valid_sources]
     if finite_separations.size == 0:
@@ -2607,25 +4343,71 @@ def evaluate_retarded_charge_field_gradient_native(
     for derivative_index in range(4):
         for sign in (-1.0, 1.0):
             if derivative_index == 0:
+                time, time_low, time_tail = _shift_resolved_coordinate(
+                    float(observer_event.time_ns),
+                    float(observer_event.time_low_ns),
+                    float(observer_event.time_tail_ns),
+                    sign * stencil_step / C_MMNS,
+                )
                 displaced = ObserverEvent(
-                    time_ns=(
-                        float(observer_event.time_ns) + sign * stencil_step / C_MMNS
-                    ),
-                    position_mm=observer_event.position_mm,
+                    time,
+                    observer_event.position_mm,
+                    time_low,
+                    observer_event.position_low_mm,
+                    time_tail,
+                    observer_event.position_tail_mm,
                 )
             else:
                 displaced_position = center_position.copy()
-                displaced_position[derivative_index - 1] += sign * stencil_step
-                displaced_position_tuple = cast(
-                    tuple[float, float, float],
-                    tuple(float(value) for value in displaced_position),
+                low = list(observer_event.position_low_mm)
+                tail = list(observer_event.position_tail_mm)
+                axis = derivative_index - 1
+                displaced_position[axis], low[axis], tail[axis] = (
+                    _shift_resolved_coordinate(
+                        float(displaced_position[axis]),
+                        float(low[axis]),
+                        float(tail[axis]),
+                        sign * stencil_step,
+                    )
                 )
                 displaced = ObserverEvent(
-                    time_ns=float(observer_event.time_ns),
-                    position_mm=displaced_position_tuple,
+                    float(observer_event.time_ns),
+                    cast(
+                        tuple[float, float, float],
+                        tuple(float(value) for value in displaced_position),
+                    ),
+                    observer_event.time_low_ns,
+                    tuple(low),
+                    observer_event.time_tail_ns,
+                    tuple(tail),
                 )
             displaced_events.append(displaced)
 
+    if isinstance(history, ExactVisibilityHistory) and any(
+        set(
+            visible_prepared(
+                ungated_prepared, history, event, tolerance, iterations, extrapolate_ns
+            ).sources
+        )
+        != set(prepared.sources)
+        for event in displaced_events
+    ):
+        # A charge jet gives the exact local smooth-branch derivative without
+        # differencing the ideal discontinuity. The diagnostic retains its
+        # original centered arithmetic wherever its source set stays fixed.
+        return evaluate_retarded_charge_field_gradient_native(
+            history,
+            observer_event,
+            excluded_source_indices=excluded_source_indices,
+            require_complete_history=require_complete_history,
+            relative_step=relative,
+            minimum_step_mm=minimum,
+            root_tolerance_mm=tolerance,
+            max_root_iterations=iterations,
+            backend=selected_backend,
+            source_acceleration_semantics=source_acceleration_semantics,
+            extrapolate_ns=extrapolate_ns,
+        )
     displaced_fields = _evaluate_prepared_charge_batch(
         prepared,
         displaced_events,
@@ -2633,6 +4415,7 @@ def evaluate_retarded_charge_field_gradient_native(
         require_complete_history=require_complete_history,
         root_tolerance_mm=tolerance,
         max_root_iterations=iterations,
+        extrapolate_ns=extrapolate_ns,
     )
     for derivative_index in range(4):
         lower = displaced_fields[2 * derivative_index]
@@ -2663,6 +4446,7 @@ __all__ = [
     "RetardedHistoryError",
     "RetardedMutualChargeFieldMatrix",
     "evaluate_retarded_charge_field_gradient_native",
+    "evaluate_retarded_charge_field_gradient_stencil_native",
     "evaluate_retarded_charge_field_native",
     "evaluate_retarded_mutual_charge_field_matrix_native",
     "evaluate_retarded_mutual_charge_fields_native",

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from decimal import Decimal, localcontext
+
 import numpy as np
 import pytest
 
@@ -285,14 +287,19 @@ def test_distinct_observer_grid_retains_every_pair() -> None:
             event,
             source_acceleration_semantics="instantaneous",
         )
-        np.testing.assert_array_equal(
-            np.sum(matrix.electric_field_native[event_index], axis=0),
-            reference.electric_field_native,
-        )
-        np.testing.assert_array_equal(
-            np.sum(matrix.magnetic_field_native[event_index], axis=0),
-            reference.magnetic_field_native,
-        )
+        # The maintained observer reduction now compensates cancellation.
+        # Use an independent decimal sum rather than NumPy's ordinary sum.
+        with localcontext() as context:
+            context.prec = 80
+            for name in ("electric_field_native", "magnetic_field_native"):
+                terms = getattr(matrix, name)[event_index]
+                expected = np.asarray(
+                    [
+                        float(sum(Decimal.from_float(float(x)) for x in terms[:, axis]))
+                        for axis in range(3)
+                    ]
+                )
+                np.testing.assert_array_equal(expected, getattr(reference, name))
 
 
 def test_compiled_force_split_matches_python_reference() -> None:

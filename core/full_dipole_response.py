@@ -59,18 +59,35 @@ def response(
         x = np.polynomial.polynomial.polyval((time - start) / duration, position)
         return float(event[0] - time - np.linalg.norm(event[1:] - x))
 
+    # The light-cone solve uses length-time units. A fixed absolute tolerance
+    # can round an interior root onto a join when source intervals are tiny.
+    # Bound endpoint roundoff by the coordinates involved in the subtraction;
+    # resolve the root to segment-scale absolute and machine-relative accuracy.
+    epsilon = np.finfo(float).eps
+    endpoint_roundoff = (
+        8
+        * epsilon
+        * max(
+            abs(event[0]),
+            abs(start),
+            duration,
+            np.linalg.norm(event[1:]),
+            np.linalg.norm(position[0]),
+        )
+    )
+    root_atol = max(np.nextafter(0.0, 1.0), 4 * epsilon * duration)
     endpoint = next(
         (
             t
             for t in (start, start + duration)
-            if allow_boundary and abs(cone(t)) <= 2e-14 * max(1.0, duration)
+            if allow_boundary and abs(cone(t)) <= endpoint_roundoff
         ),
         None,
     )
     root = (
         endpoint
         if endpoint is not None
-        else brentq(cone, start, start + duration, xtol=2e-14, rtol=1e-14)
+        else brentq(cone, start, start + duration, xtol=root_atol, rtol=4 * epsilon)
     )
     fraction = (root - start) / duration
     if not allow_boundary and not 1e-8 < fraction < 1 - 1e-8:
@@ -167,6 +184,30 @@ def _extract_response(hertz, charge_a):
                     j
                 ] * charge_a[i].derivative(k, j)
     return a, da, field, df
+
+
+def local_source_polynomial(coefficients, point, order):
+    """Truncate a segment polynomial to its order-`order` Taylor part at `point`.
+
+    Coefficients are in the segment's normalized power basis, leading axis the
+    power. The result is in the same basis and agrees with the input in value
+    and first `order` derivatives at `point`. Higher derivatives become zero.
+    """
+    from math import comb, factorial
+
+    coefficients = np.asarray(coefficients, dtype=float)
+    polynomial = np.polynomial.polynomial
+    order = min(order, len(coefficients) - 1)
+    taylor = [
+        polynomial.polyval(point, polynomial.polyder(coefficients, k, axis=0))
+        / factorial(k)
+        for k in range(order + 1)
+    ]
+    result = np.zeros((order + 1,) + coefficients.shape[1:])
+    for k, value in enumerate(taylor):
+        for j in range(k + 1):
+            result[j] += value * comb(k, j) * (-point) ** (k - j)
+    return result
 
 
 def response_taylor(

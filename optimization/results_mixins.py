@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import json
-import tkinter as tk
 from pathlib import Path
-from tkinter import ttk
 from typing import Any, Dict, List
 
 import numpy as np
@@ -19,12 +17,6 @@ from optimization.result_io import (  # type: ignore[import]
     save_top_trajectories_summary_table,
 )
 from optimization.run_parameter_helpers import resolve_optimization_run_parameters
-from optimization.ui_helpers import (  # type: ignore[import]
-    show_error_dialog as _show_error_dialog,
-)
-from optimization.ui_helpers import (
-    show_info_dialog as _show_info_dialog,
-)
 
 AMU_TO_MEV = 931.494  # Conversion factor amu to MeV
 
@@ -606,6 +598,13 @@ class OptimizationResultsMixin:
         """View NPZ trajectory files from an optimization run."""
         import glob
         import os
+        import tkinter as tk
+        from tkinter import ttk
+
+        # Tk is imported here so that the headless sweep runner, which shares
+        # this mixin, imports without Tk.
+        from optimization.ui_helpers import show_error_dialog as _show_error_dialog
+        from optimization.ui_helpers import show_info_dialog as _show_info_dialog
 
         try:
             results_path = Path(results_dir)
@@ -702,7 +701,12 @@ class OptimizationResultsMixin:
 
     def _plot_npz_trajectories(self, npz_files, results_dir):
         """Plot NPZ trajectory files."""
+        from optimization.ui_helpers import show_error_dialog as _show_error_dialog
+
         try:
+            import tkinter as tk
+            from tkinter import ttk
+
             import matplotlib.pyplot as plt
             from matplotlib.backends.backend_tkagg import (
                 FigureCanvasTkAgg,

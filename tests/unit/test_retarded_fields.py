@@ -787,7 +787,7 @@ def test_complete_gradient_matches_static_coulomb_jacobian() -> None:
 
 
 def test_gradient_stencil_resolves_a_new_retarded_event_at_every_point() -> None:
-    result = evaluate_retarded_charge_field_gradient_native(
+    result = retarded_fields.evaluate_retarded_charge_field_gradient_stencil_native(
         _stationary_history(),
         ObserverEvent(time_ns=0.0, position_mm=(1.0, 0.0, 0.0)),
     )
@@ -873,17 +873,13 @@ def test_uniform_motion_complete_gradient_matches_heaviside_field() -> None:
     np.testing.assert_allclose(
         result.partial_f, expected_partial, rtol=2.0e-7, atol=1.0e-18
     )
-    medium = evaluate_retarded_charge_field_gradient_native(
-        history,
-        ObserverEvent(time_ns=0.0, position_mm=tuple(separation)),
-        relative_step=2.0e-5,
-    )
-    coarse = evaluate_retarded_charge_field_gradient_native(
-        history,
-        ObserverEvent(time_ns=0.0, position_mm=tuple(separation)),
-        relative_step=4.0e-5,
-    )
-    fine_error = float(np.linalg.norm(result.partial_f - expected_partial))
+    # The production jet has no stencil-spacing error. Keep the original
+    # convergence check on the explicit stencil validation provider.
+    stencil = retarded_fields.evaluate_retarded_charge_field_gradient_stencil_native
+    fine = stencil(history, ObserverEvent(0.0, tuple(separation)), relative_step=1e-5)
+    medium = stencil(history, ObserverEvent(0.0, tuple(separation)), relative_step=2e-5)
+    coarse = stencil(history, ObserverEvent(0.0, tuple(separation)), relative_step=4e-5)
+    fine_error = float(np.linalg.norm(fine.partial_f - expected_partial))
     medium_error = float(np.linalg.norm(medium.partial_f - expected_partial))
     coarse_error = float(np.linalg.norm(coarse.partial_f - expected_partial))
     assert coarse_error / medium_error > 3.5

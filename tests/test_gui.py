@@ -1360,3 +1360,29 @@ def test_apply_options_to_ui_auto_enables_manual_mode_for_3d_payloads():
         assert driver_payload["momentum_axis"] == [0.0, 0.0, -1.0]
     finally:
         root.destroy()
+
+
+def test_source_history_representation_round_trips_through_gui_options():
+    try:
+        root = tk.Tk()
+    except tk.TclError as exc:
+        pytest.skip(f"Tk display unavailable: {exc}")
+    root.withdraw()
+    try:
+        app = gui.IntegratorGUI(root)
+        app._apply_options_to_ui(
+            SimulationOptions(source_history_representation="proper_velocity"),
+            preserve_directories=True,
+        )
+        assert app.source_history_representation_var.get() == "proper_velocity"
+        assert (
+            app._build_options_from_ui().source_history_representation
+            == "proper_velocity"
+        )
+        app.source_history_representation_var.set("light_cone_quintic")
+        assert (
+            app._build_options_from_ui().source_history_representation
+            == "light_cone_quintic"
+        )
+    finally:
+        root.destroy()

@@ -57,6 +57,7 @@ from typing import Sequence, Tuple, Union, cast
 import numpy as np
 
 from .constants import C_MMNS
+from .small_tensor_validation import antisymmetric_tensor_status
 
 MINKOWSKI_METRIC = np.diag((1.0, -1.0, -1.0, -1.0))
 """Minkowski metric with signature ``(+---)``."""
@@ -123,9 +124,10 @@ def _field_tensor(value: TensorLike, *, name: str = "field_tensor") -> np.ndarra
     tensor = np.asarray(value, dtype=float)
     if tensor.shape != (4, 4):
         raise ValueError(f"{name} must have shape (4, 4)")
-    if not np.all(np.isfinite(tensor)):
+    status = antisymmetric_tensor_status(np.ascontiguousarray(tensor))
+    if status == 1:
         raise ValueError(f"{name} must contain only finite values")
-    if not np.allclose(tensor + tensor.T, 0.0, rtol=1.0e-12, atol=1.0e-15):
+    if status == 2:
         raise ValueError(f"{name} must be antisymmetric")
     return tensor
 
@@ -134,10 +136,10 @@ def _field_gradient(value: GradientLike) -> np.ndarray:
     gradient = np.asarray(value, dtype=float)
     if gradient.shape != (4, 4, 4):
         raise ValueError("partial_f must have shape (4, 4, 4)")
-    if not np.all(np.isfinite(gradient)):
+    status = antisymmetric_tensor_status(np.ascontiguousarray(gradient))
+    if status == 1:
         raise ValueError("partial_f must contain only finite values")
-    antisymmetry_error = gradient + np.swapaxes(gradient, 1, 2)
-    if not np.allclose(antisymmetry_error, 0.0, rtol=1.0e-12, atol=1.0e-15):
+    if status == 2:
         raise ValueError("partial_f must be antisymmetric in its field indices")
     return gradient
 

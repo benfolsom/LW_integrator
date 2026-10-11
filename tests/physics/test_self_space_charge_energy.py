@@ -100,12 +100,12 @@ def _run_short_self_space_charge(
     gamma_reconciliation_fixed_weight: float = 0.9,
     radiation_reaction_mode: str = "diagnostic_only",
     max_iterations: int = 2,
+    steps: int = 40,
     macroparticle_smearing: MacroparticleSmearingConfig | None = None,
 ):
     rider, driver = _make_bunch(pcount=16, charge_scale=charge_scale)
     gamma_initial = float(np.mean(rider["gamma"]))
     beta_z = abs(float(np.mean(rider["bz"])))
-    steps = 40
     h_step = 10.0 / (gamma_initial * beta_z * C_MMNS * (steps - 1))
     trajectory, _, *_ = retarded_integrator(
         steps=steps,
@@ -216,8 +216,7 @@ def test_gamma_reconciled_medina_self_space_charge_energy_proxy_target() -> None
 
 @pytest.mark.physics
 def test_smearing_does_not_corrupt_energy_ledger() -> None:
-    """Position smearing breaks exact action-reaction but must not cause
-    orders-of-magnitude worse energy conservation than the unsmeared case."""
+    """Rigid reciprocal clouds conserve their subcharge pair energy on refinement."""
     softening_mm = 0.1
 
     traj_unsmeared = _run_short_self_space_charge(
@@ -226,16 +225,17 @@ def test_smearing_does_not_corrupt_energy_ledger() -> None:
         macroparticle_smearing=None,
     )
 
+    config = MacroparticleSmearingConfig(
+        enabled=True,
+        subcharge_count=4,
+        seed=42,
+        position_sigma_mm=0.5,
+        use_momentum_errors=False,
+    )
     traj_smeared = _run_short_self_space_charge(
         charge_scale=1.0,
         space_charge_enabled=True,
-        macroparticle_smearing=MacroparticleSmearingConfig(
-            enabled=True,
-            subcharge_count=4,
-            seed=42,
-            position_sigma_mm=0.5,
-            use_momentum_errors=False,
-        ),
+        macroparticle_smearing=config,
     )
 
     # No NaN / Inf with smearing enabled.
@@ -245,29 +245,102 @@ def test_smearing_does_not_corrupt_energy_ledger() -> None:
             assert np.all(np.isfinite(arr)), f"Non-finite values in {key} with smearing"
 
     # Both runs must show kinetic energy increasing (bunch expansion).
-    dk_unsmeared = _physical_kinetic_mev(traj_unsmeared[-1]) - _physical_kinetic_mev(traj_unsmeared[0])
-    dk_smeared = _physical_kinetic_mev(traj_smeared[-1]) - _physical_kinetic_mev(traj_smeared[0])
+    dk_unsmeared = _physical_kinetic_mev(traj_unsmeared[-1]) - _physical_kinetic_mev(
+        traj_unsmeared[0]
+    )
+    dk_smeared = _physical_kinetic_mev(traj_smeared[-1]) - _physical_kinetic_mev(
+        traj_smeared[0]
+    )
     assert dk_unsmeared > 0.0
     assert dk_smeared > 0.0
 
-    # Total energy proxy (kinetic + pair potential) change should be much
-    # smaller than the kinetic change in both cases.  Smearing changes the
-    # effective pair potential via position perturbations; allow a looser
-    # tolerance (5× the unsmeared ratio) rather than requiring parity.
-    def _total_delta(traj: list) -> tuple[float, float]:
+    # Compare the energy of the actual force model, retaining the original
+    # ratio bound. The cloud energy includes both sets of subcharges.
+    from core.macroparticle_smearing import fixed_cloud_offsets
+
+    offsets = fixed_cloud_offsets(traj_smeared, config)
+
+    def _total_delta(traj: list, cloud=None) -> tuple[float, float]:
         dk = _physical_kinetic_mev(traj[-1]) - _physical_kinetic_mev(traj[0])
-        dp = _pair_potential_mev(traj[-1], softening_mm) - _pair_potential_mev(traj[0], softening_mm)
+        potential = (
+            _pair_potential_mev
+            if cloud is None
+            else lambda state, eps: _cloud_pair_potential_mev(state, cloud, eps)
+        )
+        dp = potential(traj[-1], softening_mm) - potential(traj[0], softening_mm)
         return dk, dp
 
     dk_u, dp_u = _total_delta(traj_unsmeared)
-    dk_s, dp_s = _total_delta(traj_smeared)
+    dk_s, dp_s = _total_delta(traj_smeared, offsets)
 
     ratio_unsmeared = abs(dk_u + dp_u) / (abs(dk_u) + 1e-30)
     ratio_smeared = abs(dk_s + dp_s) / (abs(dk_s) + 1e-30)
 
-    # Smearing introduces position asymmetry but must not blow up the total-
-    # energy residual to more than 5× the unsmeared case.
+    # Preserve the original residual bound; refinement checks integration error.
     assert ratio_smeared < max(5.0 * ratio_unsmeared, 0.1), (
         f"Smearing inflated energy-ledger residual: unsmeared ratio={ratio_unsmeared:.3g}, "
         f"smeared ratio={ratio_smeared:.3g}"
     )
+
+    refined = _run_short_self_space_charge(
+        charge_scale=1.0,
+        space_charge_enabled=True,
+        macroparticle_smearing=config,
+        steps=157,
+    )
+    dk_f, dp_f = _total_delta(refined, offsets)
+    assert abs(dk_f + dp_f) < 0.4 * abs(dk_s + dp_s)
+
+
+def _cloud_pair_potential_mev(state, offsets, softening_mm):
+    """Independent double sum, excluding every intra-macro self pair."""
+    positions = np.column_stack([state[a] for a in "xyz"])[:, None, :] + offsets
+    q = state["q_source"] if "q_source" in state else state["q"]
+    total = 0.0
+    count = offsets.shape[1]
+    for i in range(len(q)):
+        for j in range(i + 1, len(q)):
+            difference = positions[i, :, None, :] - positions[j, None, :, :]
+            rho = np.sqrt(np.sum(difference**2, axis=-1) + softening_mm**2)
+            total += q[i] * q[j] * np.sum(1 / rho) / count**2
+    return total * AMU_NATIVE_TO_MEV
+
+
+@pytest.mark.physics
+def test_legacy_refreshed_cloud_is_explicitly_nonconservative():
+    from core.macroparticle_smearing import smear_source_samples
+    from core.vectorized_interactions import gather_external_samples
+
+    config = MacroparticleSmearingConfig(
+        enabled=True,
+        subcharge_count=4,
+        seed=42,
+        position_sigma_mm=0.5,
+        use_momentum_errors=False,
+        refresh_policy="legacy_per_step",
+    )
+    trajectory = _run_short_self_space_charge(
+        charge_scale=1.0, space_charge_enabled=True, macroparticle_smearing=config
+    )
+    state = trajectory[0]
+
+    def offsets_at(step):
+        samples = gather_external_samples(
+            [state], np.zeros(len(state["x"]), dtype=int), include_positions=True
+        )
+        expanded, _ = smear_source_samples(
+            samples=samples,
+            observer_position=(0.0, 0.0, 0.0),
+            config=config,
+            step_index=step,
+        )
+        return (
+            np.column_stack([getattr(expanded, a) for a in "xyz"])
+            - np.repeat(np.column_stack([state[a] for a in "xyz"]), 4, axis=0)
+        ).reshape(-1, 4, 3)
+
+    # Refreshing at fixed centroids changes pair energy with zero mechanical work.
+    first = _cloud_pair_potential_mev(state, offsets_at(0), 0.1)
+    refreshed = _cloud_pair_potential_mev(state, offsets_at(1), 0.1)
+    assert abs(refreshed - first) > 1e-3
+    assert all(np.isfinite(s["gamma"]).all() for s in trajectory)

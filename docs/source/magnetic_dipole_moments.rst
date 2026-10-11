@@ -118,8 +118,9 @@ Charge-field and gradient evaluation
 
 The charge-generated RFS field is evaluated independently of observer charge,
 so a neutron is not lost through the ordinary Lorentz-force ``q=0`` shortcut.
-The integration seam currently applies this evaluator to the opposing bunch
-only; it does not yet supply same-bunch RFS response.
+The evaluator supplies opposing-bunch charge fields and, on the supported
+exact inertial route, same-bunch charge fields with self-sources excluded.
+Same-bunch dipole sources remain unsupported; see :doc:`exact_path`.
 
 For each observer event the dedicated evaluator:
 
@@ -128,10 +129,11 @@ For each observer event the dedicated evaluator:
 2. solves the light-cone equation against that interpolated worldline;
 3. evaluates both the velocity and acceleration terms of the native Gaussian
    Lienard--Wiechert field; and
-4. forms a centred spacetime finite difference of :math:`F^{\mu\nu}`.
+4. forms the spacetime gradient from analytic charge jets on the maintained
+   exact endpoint path, or the explicit finite-difference provider where selected.
 
-Every one of the eight displaced stencil events re-solves every source light
-cone.  The time stencil displaces :math:`ct`, not merely the stored source
+For the finite-difference provider, every one of the eight displaced stencil
+events re-solves every source light cone.  The time stencil displaces :math:`ct`, not merely the stored source
 sample.  Consequently the numerical derivative includes the variation of
 retarded time.  Differencing a field while freezing a previously selected
 retarded source state would omit that chain rule and is not used by RFS.
@@ -140,7 +142,9 @@ Prescribed native :math:`\mathbf E` and :math:`\mathbf B` pass through without
 renormalization and are added to the charge field.  The current schema can also
 express a static spatial magnetic-field gradient in T/m; that boundary is
 converted to native field per mm before the gradient is applied to the native
-position.  Unconfigured electric and time derivatives are zero.
+position.  Unconfigured electric and time derivatives are zero for that static schema.
+The opt-in :doc:`external_fields` provider supplies smooth spatial and time
+variation with analytic derivatives.
 
 The charge-canonical state definition derived in ``main.tex`` remains
 authoritative.  Under ``INERTIAL_PREHISTORY``, one exact charge provider returns
@@ -239,7 +243,7 @@ is active only when magnetic-dipole dynamics are enabled.  The advanced
 ``--dipole-source-cutoff-mm`` option sets the strict minimum separation abort
 boundary.  It does not soften the point field.
 
-The exact retarded charge and dipole providers share five explicit backend
+The exact retarded charge and dipole providers share six explicit backend
 choices.  ``python`` is the default and remains the reference on every
 platform.  The canonical JSON setting is
 ``magnetic_dipole.exact_retarded_backend`` and the direct CLI option is
@@ -250,10 +254,11 @@ conflicting values are rejected, and saved configurations emit only the
 canonical key.
 
 ``numba_roots_exact_serial`` is a cross-platform CPU opt-in.  It compiles only
-the independent light-cone root searches.  The final quintic worldline sample,
-light-cone residual, charge or Hertz event construction, source accumulation,
-and finite-difference assembly retain the Python reference arithmetic and
-order, giving complete-provider parity in the maintained tests.
+light-cone root searches, null-coordinate knot residuals, and polynomial
+sampling while preserving reference derivative normalization. Charge or Hertz
+event construction, source accumulation, and finite-difference assembly keep
+their reference arithmetic and order. Maintained tests check complete-provider
+parity. See :doc:`validation` for the October 2026 compiled-helper measurements.
 
 ``numba_full_strict_serial`` is the faster, tolerance-validated opt-in.  It
 also compiles the final worldline sample, spin interpolation, moment boost,
@@ -407,24 +412,31 @@ for source-field validation.
 Hard scope guards
 -----------------
 
-The first coupled implementation deliberately rejects combinations whose
-meaning has not yet been validated:
+The current implementation retains these limits. Exact visibility gates and
+fixed-step charge driver trains are described in :doc:`exact_path`.
 
-* RFS runs are limited to ``BUNCH_TO_BUNCH`` with point-charge cross-bunch
-  sources.  Conducting and switching image-source modes are not enabled.
+* RFS runs are limited to ``BUNCH_TO_BUNCH``. Conducting and switching
+  image-source modes are not enabled.
 * Charge-source RFS requires ``COLD_START`` or ``INERTIAL_PREHISTORY`` and
   explicit history.  Approximate back-history is not treated as a complete
   retarded derivative.  Inertial startup is limited to exact-field
-  ``BUNCH_TO_BUNCH`` RFS/retarded-dipole runs and rejects driver trains.
+  ``BUNCH_TO_BUNCH`` RFS/retarded-dipole runs. Fixed-step charge driver trains
+  are supported with ``INERTIAL_PREHISTORY``; intrinsic dipole-source trains
+  remain unsupported.
 * Dynamic recoil is limited to ``medina_lad``.  It is an explicitly named
   charge-only hybrid, not a complete RFS radiation-reaction theory.  ``off``
   and read-only ``diagnostic_only`` also remain available; other recoil modes
   are rejected.
-* Same-bunch RFS response is absent, so ``space_charge`` must be disabled.
-* Nonzero macroparticle smearing is unsupported.  Each displaced subcharge would
-  require its own light-cone solve before a smeared source could be supported.
-* Beamline visibility boundaries are not applied to a finite-difference
-  stencil, so beamline geometry must be disabled for charge-source RFS.
+* Exact same-bunch charge fields require ``INERTIAL_PREHISTORY``, retarded
+  evaluation, and zero softening for actual point-charge pairs. Same-bunch
+  dipole sources remain unsupported.
+* Nonzero fixed-step or dipole-source smearing is unsupported. Persistent
+  transverse charge clouds use the guarded adaptive shared-lab-time route;
+  see :doc:`exact_macroparticle_sources`.
+* Beamline visibility gates require ``INERTIAL_PREHISTORY`` and
+  ``light_cone_quintic`` histories. Adaptive gates support one observer per
+  bunch, including its persistent cloud. Independent causal dipole histories
+  and observer pipe changes within a step remain unsupported.
 * Adaptive timestep substeps are not yet supported by the exact source-history
   evaluator.  Exact inertial endpoint reconstruction also requires
   ``fixed_geometry`` self-consistency.

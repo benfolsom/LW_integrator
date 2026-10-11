@@ -122,7 +122,7 @@ def test_retarded_equations_of_motion_preserves_finite_values() -> None:
     )
 
     for key, value in updated.items():
-        if isinstance(value, np.ndarray):
+        if isinstance(value, np.ndarray) and value.dtype.kind not in "US":
             assert np.all(np.isfinite(value))
 
     assert updated["t"][0] == pytest.approx(trajectory[0]["t"][0] + 1e-3)

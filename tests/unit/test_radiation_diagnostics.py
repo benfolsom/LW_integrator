@@ -454,10 +454,10 @@ def test_production_medina_projects_near_rest_driver_before_kernel(
     assert result["radiation_reaction_work"][0] == 0.0
 
 
-def test_nonexact_medina_rescales_spatial_momentum_before_kernel(
+def test_nonexact_medina_preserves_spatial_momentum_before_kernel(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The regular non-exact Medina path retains its temporal-energy shell."""
+    """Every Medina path uses the force-updated spatial shell."""
 
     proton = get_species("proton")
     spatial_gamma = 1.5
@@ -502,17 +502,18 @@ def test_nonexact_medina_rescales_spatial_momentum_before_kernel(
         radiation_reaction_mode="medina_lad",
     )
 
-    expected_px = mass_momentum * np.sqrt((energy_gamma - 1.0) * (energy_gamma + 1.0))
-    expected_beta_x = expected_px / (energy_gamma * mass_momentum)
-    assert float(recorded["gamma"]) == energy_gamma
+    expected_beta_x = initial_px / (spatial_gamma * mass_momentum)
+    assert float(recorded["gamma"]) == spatial_gamma
     assert tuple(recorded["beta"]) == pytest.approx(
         (expected_beta_x, 0.0, 0.0), rel=0.0, abs=2.0e-16
     )
-    assert float(recorded["coordinate_dt"]) == h_step * energy_gamma
-    assert result["Px"][0] == pytest.approx(expected_px, rel=2.0e-16)
-    assert result["Pt"][0] == energy_gamma * mass_momentum
-    assert result["gamma"][0] == energy_gamma
-    assert result["mass_shell_projection_energy"][0] == 0.0
+    assert float(recorded["coordinate_dt"]) == h_step * spatial_gamma
+    assert result["Px"][0] == initial_px
+    assert result["Pt"][0] == np.hypot(mass_momentum, initial_px)
+    assert result["gamma"][0] == spatial_gamma
+    assert result["mass_shell_projection_energy"][0] == C_MMNS * (
+        np.hypot(mass_momentum, initial_px) - energy_gamma * mass_momentum
+    )
     assert result["radiation_reaction_work"][0] == 0.0
 
 
@@ -753,14 +754,16 @@ def test_production_medina_primes_before_applying_complete_derivative() -> None:
     assert np.all(np.isfinite(medina_soa.medina_external_force_sample_time[1:, 0]))
     # Row 1 is the unprimed first physical step: far radiation is diagnosed,
     # but no incomplete dF/dt=0 impulse is applied.  The ordinary non-exact
-    # Medina boundary may rescale spatial momentum onto the temporal-energy
-    # shell before sampling; that constraint operation is not RR work.
+    # Shell recomposition preserves ordinary spatial momentum and is not RR work.
     assert medina_soa.radiation_energy[1, 0] > 0.0
     assert medina_soa.radiation_reaction_work[1, 0] == pytest.approx(0.0)
     assert medina_soa.radiation_energy_applied[1, 0] == 0.0
-    assert medina_soa.mass_shell_projection_energy[1, 0] == 0.0
     medina_unprimed = medina_trajectory[1]
     off_unprimed = off_trajectory[1]
+    assert (
+        medina_soa.mass_shell_projection_energy[1, 0]
+        == off_unprimed["mass_shell_projection_energy"][0]
+    )
     np.testing.assert_array_equal(medina_unprimed["gamma"], off_unprimed["gamma"])
     np.testing.assert_array_equal(medina_unprimed["Pt"], off_unprimed["Pt"])
     mass = float(medina_unprimed["m"][0])

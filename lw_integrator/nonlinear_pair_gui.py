@@ -4,8 +4,6 @@ import os
 from pathlib import Path
 import subprocess
 import sys
-import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
 
 from .nonlinear_pair import REACTION_MODES
 from .pair_history_options import HISTORY_METHODS
@@ -167,6 +165,9 @@ def launch(command, output):
 
 
 def open_pair_window(parent):
+    import tkinter as tk
+    from tkinter import filedialog, messagebox, ttk
+
     window = tk.Toplevel(parent)
     window.title("Full-spin particles — pair and many-particle runner")
     window.geometry("1000x760")
@@ -381,6 +382,8 @@ def open_pair_window(parent):
 
 
 if __name__ == "__main__":
+    import tkinter as tk
+
     root = tk.Tk()
     root.withdraw()
     dialog = open_pair_window(root)

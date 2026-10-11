@@ -1,13 +1,17 @@
 # LW Integrator
 
-Version **0.10.0** adds physical-particle and seeded bunch JSON input, a shared
-GUI launcher, and optional mixed RK4/RK3 stepping with preserved histories,
-full dipole reaction, internal error control, and resumable checkpoints.
-Every particle remains an individual retarded source; this is not weighted
-bunch pseudogrid aggregation. The full RK4 default and older solver defaults
-remain unchanged. See the [many-particle guide](docs/source/full_spin_particles.rst)
-and [implementation plan](docs/multiparticle_integration_plan.md) for usage,
-bounded validation results, and remaining physical limitations.
+Version **0.11.0** adds exact visibility gates and charge driver trains,
+NumPy/MLX/CuPy native PIC, and opt-in K-cloud corrections. Experimental boundary
+APIs cover Drude response, conformal perfect conductors, and axial feedback.
+Smooth external-field providers should use the exact second-order route for
+energy-loss studies, with timestep checks. Stochastic emission remains off by
+default and is guarded off on the general exact inertial-prehistory path.
+
+See the [documentation overview](docs/source/overview.rst) and
+[release notes](CHANGELOG.md) for supported routes, defaults, and limitations.
+The [many-particle guide](docs/source/full_spin_particles.rst) covers the
+physical-particle input, full-spin histories, and checkpoint workflow introduced
+in v0.10.0. Numerical and physical convergence remain study-specific checks.
 
 ## Finite-spin pair solver — September 2026
 
@@ -102,12 +106,14 @@ residual-wake acceleration with a covariant retarded-potential integrator_
   ways: from conjugate momentum (γ_energy) and from velocity (γ_velocity).
   Numerical differences between these can cause energy jumps. Five reconciliation
   methods are available via `GammaReconciliationMethod`:
-  - **ADAPTIVE_WEIGHTED (default)**: Velocity-dependent blending with configurable
+  - **ADAPTIVE_WEIGHTED**: Velocity-dependent blending with configurable
     thresholds and weights. Trusts energy at low β, velocity at high β.
   - **FIXED_WEIGHTED**: Fixed 50/50 blend (or custom weight).
   - **USE_VELOCITY** / **USE_ENERGY**: Use one calculation exclusively.
-  - **DISABLED**: No reconciliation. This is the maintained default for the
-    current solver path.
+  - **DISABLED** (default): No reconciliation. The other methods are
+    diagnostic-only; they only reseed the next self-consistency iteration and
+    have no effect with `medina_lad` radiation reaction or on the exact
+    RFS/dipole path (a warning is emitted at run start).
     Configurable via API (`self_consistency_gamma_reconciliation_method` and related
     parameters) and GUI (Stability → Self-Consistency → Gamma Reconciliation).
 - **Adaptive timestep and beta clamping.** The integrator includes numerical
@@ -512,23 +518,34 @@ Simple example configs live under `configs/`. Load them via the GUI
 
 ### Sweep examples (`configs/sweep_configs/`)
 
-**`example_b2b_linked_energy_vs_driver_distance.json`** — 80×80 log-spaced sweep of initial energy (0.5–3000 GeV) vs driver starting distance (10–100,000 mm) for counter-propagating proton-mass, opposite-charge bunches with linked rider/driver energy. Rider and driver each have 1 µm transverse spot size.
+The ideal-screening maps below use a proton rider and a counter-propagating H-
+driver with linked kinetic energies. The driver is removed behind an ideal
+screen at distance $R$ from the rider, leaving the energy gained during its
+approach. Each driver macroparticle supplies the source charge $N e$, while the
+rider has observer charge $e$ and the proton mass.
 
-![B2B proton/H- 1 µm spot size](docs/assets/proton_proton_1micron.png)
+For the README population $N = 5\times10^7$, a 1 mm cut gives about 130 eV at
+low energy: roughly $10^{-5}$% of a 1 GeV rider. Spot averaging reduces the
+high-energy off-axis result to about $10^{-10}$% at 3 TeV. A 10 T bend cut at
+$R = 2.8$ m gives gains of roughly $10^{-11}$% to $10^{-7}$% across the map.
+The relative gain is therefore largest at low GeV energies and small cut
+distances. Hatching marks regions where the first-order model is invalid or the
+driver is not point-like at the cut.
 
----
+![Ideal-screening proton/H- energy-gain maps](docs/assets/b2b_ideal_screening_gain_maps.png)
 
-**`example_b2b_linked_energy_vs_driver_distance_35um_rider.json`** — Same sweep geometry but with an asymmetric spot size: rider 35 µm, driver 0.1 µm. The larger rider spot reduces near-collision blowups for the proton/H- style counter-propagating pair.
+The closed-form result was checked against LW_integrator's exact retarded field:
+on axis it agrees to $3\times10^{-7}$ at 1, 100, and 3000 GeV; off axis it
+agrees to $4\times10^{-6}$ at 1 GeV and $4\times10^{-4}$ at 100 GeV. The
+high-energy off-axis corner uses the closed form.
 
-![B2B proton/H- 35 µm rider spot size](docs/assets/proton_proton_35micron.png)
-
-The bunch-to-bunch examples illustrate a screening regime: after the interaction
-point, the driver bunch is treated as proceeding through a virtual exit aperture
-that blocks direct line of sight to the rider a short distance downstream. The
-maps therefore visualize residual post-screening fields rather than an
-unbounded, permanently visible counter-propagating bunch interaction.
-
-![B2B screening example heatmap](docs/assets/b2b_screening_example_heatmap.png)
+The existing sweep configs are retained as historical examples:
+**`example_b2b_linked_energy_vs_driver_distance.json`** uses 1 µm rider and
+driver spots, while
+**`example_b2b_linked_energy_vs_driver_distance_35um_rider.json`** uses a
+35 µm rider and 0.1 µm driver. Their old maps were artifacts of a cold start
+and of assigning the observer charge $5\times10^7 e$ as well as the source
+charge; they are not physical ideal-screening predictions.
 
 ---
 

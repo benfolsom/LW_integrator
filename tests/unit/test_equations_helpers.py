@@ -373,6 +373,10 @@ def test_self_consistency_nonconvergence_raises(
         _make_state(x=[0.0], z=[1.1], t=[0.1], gamma=[2.0], charge=[-1.0], mass=[1.0]),
     ]
 
+    # max_iterations < 2 is now rejected by SelfConsistencyConfig; force a
+    # nonconverging mass-shell check instead.
+    _patch_mass_shell_convergence_sequence(monkeypatch, [(False, 1.0)])
+
     with pytest.raises(equations.SelfConsistencyNonConvergenceError):
         equations.retarded_equations_of_motion(
             0.1,
@@ -385,15 +389,13 @@ def test_self_consistency_nonconvergence_raises(
             startup_mode=StartupMode.COLD_START,
             self_consistency=SelfConsistencyConfig(
                 enabled=True,
-                max_iterations=1,
+                max_iterations=2,
                 verbosity=0,
             ),
         )
 
 
-def test_retarded_space_charge_uses_pseudo_grid_source_charge_overrides(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_instantaneous_space_charge_uses_pseudo_grid_source_charge_overrides() -> None:
     trajectory = [
         _make_state(x=[0.0, 10.0], charge=[1.0, 1.0]),
         _make_state(x=[1.0, 11.0], t=[1.0, 1.0], charge=[1.0, 1.0]),
@@ -402,17 +404,7 @@ def test_retarded_space_charge_uses_pseudo_grid_source_charge_overrides(
         _make_state(x=[100.0], charge=[0.0]),
         _make_state(x=[101.0], t=[1.0], charge=[0.0]),
     ]
-    seen_nonzero_charges: list[float] = []
-
-    def fake_contrib(**kwargs: object) -> tuple[float, ...]:
-        charges = np.asarray(kwargs["samples"].charge, dtype=float)
-        nonzero = charges[np.abs(charges) > 1.0e-30]
-        seen_nonzero_charges.extend(nonzero.tolist())
-        return (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
-
-    monkeypatch.setattr(equations, "compute_vectorized_contributions", fake_contrib)
-
-    equations.retarded_equations_of_motion(
+    result = equations.retarded_equations_of_motion(
         0.1,
         trajectory,
         driver,
@@ -432,7 +424,12 @@ def test_retarded_space_charge_uses_pseudo_grid_source_charge_overrides(
         ),
     )
 
-    assert seen_nonzero_charges == pytest.approx([2.0, 2.0])
+    # Each observer sees the independently supplied source charge 2, rather
+    # than the trajectory's source charge 1. Test the physical impulse instead
+    # of requiring instantaneous sources to pass through the retarded kernel.
+    epsilon = SpaceChargeConfig().softening_mm
+    impulse = 0.1 * 2.0 * 10.0 / (10.0**2 + epsilon**2) ** 1.5
+    assert result["Px"] == pytest.approx([-impulse, impulse])
 
 
 def test_retarded_space_charge_batches_same_bunch_sources(
@@ -487,7 +484,8 @@ def test_retarded_space_charge_batches_same_bunch_sources(
         ),
     )
 
-    assert same_bunch_source_counts == [3, 3, 3]
+    # One accepted-event evaluation and one force evaluation per observer.
+    assert same_bunch_source_counts == [3, 3, 3, 3, 3, 3]
 
 
 def _build_soa(trajectory: list[dict[str, np.ndarray]]):
@@ -627,7 +625,8 @@ def test_retarded_space_charge_uses_soa_helpers_when_available(
         traj_soa=traj_soa,
     )
 
-    assert soa_calls == {"chrono": 2, "distance": 2, "gather": 2}
+    # Bookkeeping samples the accepted event in addition to the force trials.
+    assert soa_calls == {"chrono": 4, "distance": 4, "gather": 2}
 
 
 def test_gating_threshold_and_force_application_follow_travel_distance() -> None:
@@ -1119,7 +1118,10 @@ def test_retarded_equations_of_motion_skips_already_dead_particles() -> None:
 
 
 def test_retarded_equations_of_motion_raises_gamma_blowup_for_sc_runs() -> None:
+    # A divergent spatial shell must trigger recovery; an inconsistent Pt
+    # alone is now retained only as a temporal diagnostic.
     state = _make_state(gamma=[1e9])
+    state["Px"] = np.array([1e9 * C_MMNS])
 
     with pytest.raises(equations.GammaBlowupError):
         equations.retarded_equations_of_motion(
@@ -1129,7 +1131,7 @@ def test_retarded_equations_of_motion_raises_gamma_blowup_for_sc_runs() -> None:
             index_traj=0,
             aperture_radius=1.0,
             sim_type=SimulationType.CONDUCTING_WALL,
-            self_consistency=SelfConsistencyConfig(enabled=True, max_iterations=1),
+            self_consistency=SelfConsistencyConfig(enabled=True, max_iterations=2),
             step_idx=3,
         )
 

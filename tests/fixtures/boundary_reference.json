@@ -1,0 +1,347 @@
+{
+  "source_root": "/Users/benjaminfolsom/work/extracurr/LW_feasibility_studies/studies/lw_boundary_fields",
+  "records": {
+    "step2f/wake_pill_02/indirect.json": {
+      "sha256": "59c641a5398250004d6a666c14ba11a920edfe1e1858139e7c01919d5b43170b",
+      "values": {
+        "artifact": "results/step2f/wake_pill_02",
+        "case": "pillbox",
+        "h": 0.02,
+        "sigma": 0.03,
+        "end": 7.999000000000157,
+        "extent": 12.0,
+        "core": 0.06,
+        "direct_loss": 0.4270084711471756,
+        "tail_loss": -0.024617394102646944,
+        "complete_loss": 0.4023910770445287,
+        "reference_loss": 0.4729941603978944,
+        "complete_loss_relative_error": -0.14926840385084805,
+        "loss_error_over_step_out_scale": -0.034030965144943456,
+        "weighted_bunch_wake_relative_error": 0.16785307276602976,
+        "short_wake_relative_error": 0.20640622326213354,
+        "maximum_abs_complete_wake": 0.5484086187464998,
+        "maximum_abs_direct_wake": 0.6270538696376627,
+        "reference": "https://arxiv.org/abs/physics/0606049",
+        "method": "direct accumulated integral plus the outgoing-pipe radial Maxwell completion; stationary field subtracted analytically in the SAME grid sampling"
+      }
+    },
+    "step2f/wake_out_02/indirect.json": {
+      "sha256": "9fcd1e9cf735b8de2429d257151965e5f59c4879a0c3fba6cfc93ffc3c4b2e0a",
+      "values": {
+        "artifact": "results/step2f/wake_out_02",
+        "case": "step_out",
+        "h": 0.02,
+        "sigma": 0.03,
+        "end": 7.999000000000157,
+        "extent": 12.0,
+        "core": 0.06,
+        "direct_loss": 2.137178754444679,
+        "tail_loss": -0.18424778296351751,
+        "complete_loss": 1.9529309714811618,
+        "reference_loss": 2.0746717894322297,
+        "complete_loss_relative_error": -0.058679555277697415,
+        "loss_error_over_step_out_scale": -0.05867955527769742,
+        "weighted_bunch_wake_relative_error": 0.06655901478969223,
+        "short_wake_relative_error": 0.07259525255071288,
+        "maximum_abs_complete_wake": 2.729891336078633,
+        "maximum_abs_direct_wake": 3.434133922253978,
+        "reference": "https://arxiv.org/abs/physics/0606049",
+        "method": "direct accumulated integral plus the outgoing-pipe radial Maxwell completion; stationary field subtracted analytically in the SAME grid sampling"
+      }
+    },
+    "step2f/wake_in_02/indirect.json": {
+      "sha256": "b5571a569880f797a4c2fd84043ffa736ed52005b552a5d31096c964562c2bf9",
+      "values": {
+        "artifact": "results/step2f/wake_in_02",
+        "case": "step_in",
+        "h": 0.02,
+        "sigma": 0.03,
+        "end": 7.999000000000157,
+        "extent": 12.0,
+        "core": 0.06,
+        "direct_loss": -0.07068536397223367,
+        "tail_loss": 0.0041492851240410855,
+        "complete_loss": -0.06653607884819257,
+        "reference_loss": 0.0,
+        "complete_loss_relative_error": null,
+        "loss_error_over_step_out_scale": -0.032070652903802836,
+        "weighted_bunch_wake_relative_error": null,
+        "short_wake_relative_error": null,
+        "maximum_abs_complete_wake": 0.15004687120739316,
+        "maximum_abs_direct_wake": 0.19582022279027275,
+        "reference": "https://arxiv.org/abs/physics/0606049",
+        "method": "direct accumulated integral plus the outgoing-pipe radial Maxwell completion; stationary field subtracted analytically in the SAME grid sampling"
+      }
+    },
+    "step2k/g100_resolved/summary.json": {
+      "sha256": "b2581fb094bbc4dde0dfd9de59de8431ce9bb6565665f8ba4170bea4326243da",
+      "values": {
+        "gamma": 100.0,
+        "dr": 0.025,
+        "dz": 0.0125,
+        "dt": 0.001,
+        "end": 8.0,
+        "tag": "g100_resolved",
+        "gather_order": 4,
+        "q": 0.001,
+        "order": 8,
+        "average": false,
+        "elapsed_s": 919.2737838750472,
+        "scale": 3.7415349752577763e-06,
+        "final": {
+          "scattered_energy": 8.842640596579118e-08,
+          "cross_energy": 1.0740560174789794e-11,
+          "material_storage": 2.4364400344016024e-10,
+          "heat": 8.467420097418525e-07,
+          "actuator_work": 1.7499436062854596e-17,
+          "drive_work": 3.738568656530443e-06,
+          "wall_work": 0.0,
+          "grid_flux": -9.282521832371556e-07,
+          "window_scattered_flux": 2.8031565968369734e-06,
+          "window_cross_flux": -3.731408780074129e-06,
+          "absorber_difference_work": 0.0,
+          "grid_residual": 1.1519648082658485e-19,
+          "boundary_residual": 7.170617016603532e-09,
+          "incident_defect": -7.170617016803623e-09,
+          "material_projection_work": 0.0,
+          "identity_residual": -2.0009085427351463e-19,
+          "t": 8.000000000001005
+        },
+        "checkpoints": {
+          "2.0": {
+            "scattered_energy": 2.897644788965456e-06,
+            "cross_energy": -3.7018873661630786e-06,
+            "material_storage": 2.7236504103803764e-08,
+            "heat": 7.787312480624765e-07,
+            "actuator_work": 1.7499436062854596e-17,
+            "drive_work": 3.7385990795471446e-06,
+            "wall_work": 0.0,
+            "grid_flux": -1.6577031541749273e-09,
+            "window_scattered_flux": 3.498653843301465e-08,
+            "window_cross_flux": -3.664424158718958e-08,
+            "absorber_difference_work": 0.0,
+            "grid_residual": 1.0714966782766899e-19,
+            "boundary_residual": 6.747179698337619e-11,
+            "incident_defect": -6.747179693419394e-11,
+            "material_projection_work": 0.0,
+            "identity_residual": 4.9182246367236497e-20,
+            "t": 1.9999999999998905
+          },
+          "4.0": {
+            "scattered_energy": 2.834158407840799e-06,
+            "cross_energy": -3.66754880324129e-06,
+            "material_storage": 2.8987378214280525e-09,
+            "heat": 8.320957318168223e-07,
+            "actuator_work": 1.7499436062854596e-17,
+            "drive_work": 3.7385700165089526e-06,
+            "wall_work": 0.0,
+            "grid_flux": -5.969888691194486e-10,
+            "window_scattered_flux": 6.941713904751289e-08,
+            "window_cross_flux": -7.001412791663234e-08,
+            "absorber_difference_work": 0.0,
+            "grid_residual": 1.1011428314305904e-19,
+            "boundary_residual": 1.0070853511403746e-09,
+            "incident_defect": -1.0070853511862298e-09,
+            "material_projection_work": 0.0,
+            "identity_residual": -4.5855170847183366e-20,
+            "t": 3.9999999999996705
+          },
+          "8.0": {
+            "scattered_energy": 8.842640596579118e-08,
+            "cross_energy": 1.0740560174789794e-11,
+            "material_storage": 2.4364400344016024e-10,
+            "heat": 8.467420097418525e-07,
+            "actuator_work": 1.7499436062854596e-17,
+            "drive_work": 3.738568656530443e-06,
+            "wall_work": 0.0,
+            "grid_flux": -9.282521832371556e-07,
+            "window_scattered_flux": 2.8031565968369734e-06,
+            "window_cross_flux": -3.731408780074129e-06,
+            "absorber_difference_work": 0.0,
+            "grid_residual": 1.1519648082658485e-19,
+            "boundary_residual": 7.170617016603532e-09,
+            "incident_defect": -7.170617016803623e-09,
+            "material_projection_work": 0.0,
+            "identity_residual": -2.0009085427351463e-19,
+            "t": 8.000000000001005
+          }
+        },
+        "peak_grid_relative_residual": 3.090175504566712e-14,
+        "peak_no_particle_residual": 0.004265015589290776,
+        "scope": "prescribed ballistic source; grid record and all-time causal replay, no responding feedback",
+        "command": [
+          "scripts/run_step2k.py",
+          "--gamma",
+          "100",
+          "--dr",
+          ".025",
+          "--dz",
+          ".0125",
+          "--dt",
+          ".001",
+          "--end",
+          "8",
+          "--tag",
+          "g100_resolved"
+        ],
+        "source_sha256": "f262659fc36120ff2901ce3cbe172b440cf5c17c7ef815c9e1aae35bdaf50e42",
+        "ledger_stride": 1
+      }
+    },
+    "step2k/g100_resolved/completion.json": {
+      "sha256": "85926c41b9179de6ca97faee457596b0bfdc9855e327a3bd53c5d0ca388c70eb",
+      "values": [
+        {
+          "source_end": 2.0,
+          "order": 4,
+          "completed_work": -3.738876249737067e-06,
+          "terminal_continuation_work": -7.54750881153209e-11,
+          "last_curve_work": -3.738876249737067e-06,
+          "relative_tail_at_final_query": 0.0,
+          "elapsed_s": 16.14677529106848,
+          "saturation_time_0.01": 1584.893192461114,
+          "saturation_time_0.001": 3162.2776601683795,
+          "saturation_time_0.0001": 7356.422544596407
+        },
+        {
+          "source_end": 4.0,
+          "order": 4,
+          "completed_work": -3.7388471867016698e-06,
+          "terminal_continuation_work": -2.638227787724143e-12,
+          "last_curve_work": -3.7388471867016698e-06,
+          "relative_tail_at_final_query": 0.0,
+          "elapsed_s": 29.022758499952033,
+          "saturation_time_0.01": 1584.893192461114,
+          "saturation_time_0.001": 3162.2776601683795,
+          "saturation_time_0.0001": 6812.920690579608
+        },
+        {
+          "source_end": 8.0,
+          "order": 4,
+          "completed_work": -3.7388458267232595e-06,
+          "terminal_continuation_work": 1.7482989855797442e-13,
+          "last_curve_work": -3.7388458267232595e-06,
+          "relative_tail_at_final_query": 0.0,
+          "elapsed_s": 70.19110512500629,
+          "saturation_time_0.01": 1584.893192461114,
+          "saturation_time_0.001": 3162.2776601683795,
+          "saturation_time_0.0001": 6812.920690579608
+        },
+        {
+          "source_end": 8.0,
+          "order": 8,
+          "completed_work": -3.7388458267232676e-06,
+          "terminal_continuation_work": 1.7482989855797442e-13,
+          "last_curve_work": -3.7388458267232676e-06,
+          "relative_tail_at_final_query": 0.0,
+          "elapsed_s": 132.55357091594487,
+          "saturation_time_0.01": 1584.893192461114,
+          "saturation_time_0.001": 3162.2776601683795,
+          "saturation_time_0.0001": 6812.920690579608
+        }
+      ]
+    },
+    "step2k/g100_resolved/particle_taper1_tol2e-07.json": {
+      "sha256": "487f0342e7482a01660b96155876550a122b46934510b252e36845197dc2b2a8",
+      "values": {
+        "tag": "g100_resolved",
+        "rtol": 2e-07,
+        "taper": 1.0,
+        "end": 100000000.0,
+        "mass": 0.02,
+        "gamma": 100.0,
+        "q": 0.001,
+        "radiation_reaction_mode": "medina_lad: native uncapped kernel",
+        "final": {
+          "work": -3.738840244139576e-06,
+          "impulse": -3.739027200523135e-06,
+          "kinetic": -3.738840237545768e-06,
+          "delta_momentum": -3.7390271939289914e-06,
+          "medina_energy": 8.15753374985234e-18,
+          "medina_momentum": 8.15712586237182e-18,
+          "lienard_energy": 8.157533754116461e-18,
+          "bound_energy": 5.404528942130841e-37,
+          "bound_momentum": 5.404799189857108e-37,
+          "energy_residual": 6.601965373313149e-15,
+          "momentum_residual": 6.602300374843788e-15
+        },
+        "peak_energy_residual_relative_to_completed_work": 6.874985941344157e-08,
+        "peak_momentum_residual_relative_to_completed_impulse": 6.874985940704321e-08,
+        "max_relative_gamma_change": 1.930483305458525e-06,
+        "max_delta_beta": 1.930585427492688e-10,
+        "max_delta_z": 0.018695172408151453,
+        "medina_over_lienard": 0.9999999994772781,
+        "worldtube": [
+          {
+            "order": 32,
+            "energy_outward_coefficient": -0.9999499987499375,
+            "momentum_outward_coefficient": -1.0,
+            "charge_flux": 1.0,
+            "energy_relative_error": 0.0,
+            "momentum_relative_error": 0.0,
+            "scope": "Local point-worldtube constant-field limit; checks the cross tensor and moving-surface signs, not global scattered propagation or finite-radius convergence"
+          },
+          {
+            "order": 64,
+            "energy_outward_coefficient": -0.9999499987499374,
+            "momentum_outward_coefficient": -1.0,
+            "charge_flux": 1.0,
+            "energy_relative_error": -1.1102230246251565e-16,
+            "momentum_relative_error": 0.0,
+            "scope": "Local point-worldtube constant-field limit; checks the cross tensor and moving-surface signs, not global scattered propagation or finite-radius convergence"
+          },
+          {
+            "order": 128,
+            "energy_outward_coefficient": -0.9999499987499372,
+            "momentum_outward_coefficient": -0.9999999999999999,
+            "charge_flux": 0.9999999999999998,
+            "energy_relative_error": -3.3306690738754696e-16,
+            "momentum_relative_error": -1.1102230246251565e-16,
+            "scope": "Local point-worldtube constant-field limit; checks the cross tensor and moving-surface signs, not global scattered propagation or finite-radius convergence"
+          }
+        ],
+        "material_feedback_iterated": false,
+        "physical_coupled_closure_certified": false,
+        "continuation": "C2 quintic current stop over source duration 1.0; P kept constant afterwards",
+        "force_interpolation": "C2 quintic P with endpoint P and J; curvature from centered endpoint-current differences",
+        "scope": "Responding one-way probe, local point-worldtube cross flux, and native self-reaction. Material feedback and global cross energy/momentum are separate gates.",
+        "elapsed_s": 105.29407575004734,
+        "field_calls": 11240,
+        "command": [
+          "scripts/particle_step2k.py",
+          "g100_resolved"
+        ],
+        "source_sha256": "e438d3b047ba5424701be397ee6c32b9c0480ce7cbe38cbb30ce01295063a623"
+      }
+    },
+    "step2k/g100_finest/completion.json": {
+      "sha256": "603f2827da0a2c4064ac797aa1406ef9dc64feccd03c58d56210d2efcaa666cb",
+      "values": [
+        {
+          "source_end": 2.0,
+          "order": 4,
+          "completed_work": -3.755726192304624e-06,
+          "terminal_continuation_work": -7.566795625388416e-11,
+          "last_curve_work": -3.755726192304624e-06,
+          "relative_tail_at_final_query": 0.0,
+          "elapsed_s": 32.67813870799728,
+          "saturation_time_0.01": 1584.893192461114,
+          "saturation_time_0.001": 3162.2776601683795,
+          "saturation_time_0.0001": 7356.422544596407
+        },
+        {
+          "source_end": 2.0,
+          "order": 8,
+          "completed_work": -3.7557261923046253e-06,
+          "terminal_continuation_work": -7.566795625388416e-11,
+          "last_curve_work": -3.7557261923046253e-06,
+          "relative_tail_at_final_query": 0.0,
+          "elapsed_s": 61.78912408405449,
+          "saturation_time_0.01": 1584.893192461114,
+          "saturation_time_0.001": 3162.2776601683795,
+          "saturation_time_0.0001": 7356.422544596407
+        }
+      ]
+    }
+  }
+}

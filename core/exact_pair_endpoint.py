@@ -19,7 +19,7 @@ from typing import Any
 import numpy as np
 
 from .canonical_momentum import replace_canonical_potential_native
-from .retarded_fields import ObserverEvent
+from .retarded_fields import ObserverEvent, RetardedHistoryError
 from .types import MagneticDipoleConfig, ParticleState
 
 
@@ -29,12 +29,44 @@ def evaluate_exact_endpoint_four_potential(
     *,
     magnetic_dipole: MagneticDipoleConfig,
     include_dipole_source: bool,
+    own_history: Any = None,
+    require_complete_history: bool = True,
     dipole_source_collection: Any = None,
     spin_interpolation_model: str = "centered_c1",
+    cross_extrapolate_ns: float = 0.0,
+    beamline_geometry: Any = None,
+    visibility_overrides: dict[int, frozenset[int]] | None = None,
+    dipole_visibility_overrides: dict[int, frozenset[int]] | None = None,
+    own_bunch_ranges: tuple[slice, ...] = (),
 ) -> np.ndarray:
-    """Evaluate ``A_charge + A_dipole`` at provisional observer endpoints."""
+    """Evaluate cross-bunch and non-self own-bunch potentials at endpoints.
+
+    ``cross_extrapolate_ns`` is a fallback for the cross-bunch sources: the two
+    bunches advance in proper time, so their final lab times differ; when an
+    observer is closer to a source than c times that spread, the source's
+    retarded point lies after its last accepted knot and its last segment is
+    continued with the selected strict charge provider instead of failing.
+    """
 
     from .retarded_fields import evaluate_retarded_charge_field_native
+    from .exact_source_cloud import exact_cloud_history, same_bunch_exclusions
+    from .exact_visibility import boundary_visibility_overrides
+
+    if visibility_overrides is None:
+        visibility_overrides = boundary_visibility_overrides(observer_state)
+    if dipole_visibility_overrides is None:
+        dipole_visibility_overrides = boundary_visibility_overrides(
+            observer_state, dipole=True
+        )
+
+    dipole_history = source_history
+    source_history = exact_cloud_history(
+        source_history, magnetic_dipole.exact_charge_cloud
+    )
+    if own_history is not None:
+        own_history = exact_cloud_history(
+            own_history, magnetic_dipole.exact_charge_cloud
+        )
 
     if include_dipole_source and dipole_source_collection is None:
         from .retarded_dipole_fields import (
@@ -56,6 +88,11 @@ def evaluate_exact_endpoint_four_potential(
         raise ValueError("exact endpoint rebase mask must match particle count")
 
     source_options = magnetic_dipole.source
+    continuation_backend = (
+        "python"
+        if magnetic_dipole.exact_retarded_backend == "python"
+        else "numba_full_strict_serial"
+    )
     charge_root_tolerance_mm = (
         float(source_options.root_tolerance_mm) if include_dipole_source else 1.0e-21
     )
@@ -63,6 +100,30 @@ def evaluate_exact_endpoint_four_potential(
         int(source_options.max_root_iterations) if include_dipole_source else 96
     )
     for particle_idx in np.flatnonzero(required):
+        from .exact_visibility import visibility_history
+
+        visible_history = visibility_history(
+            source_history,
+            beamline_geometry,
+            tuple(
+                observer_state.get(f"b{axis}", np.zeros(particle_count))[particle_idx]
+                for axis in "xyz"
+            ),
+            (
+                None
+                if visibility_overrides is None
+                else visibility_overrides.get(int(particle_idx))
+            ),
+        )
+        visible_dipole_history = visibility_history(
+            dipole_history,
+            beamline_geometry,
+            tuple(
+                observer_state.get(f"b{axis}", np.zeros(particle_count))[particle_idx]
+                for axis in "xyz"
+            ),
+            dipole_visibility_overrides.get(int(particle_idx)),
+        )
         event = ObserverEvent(
             time_ns=float(observer_state["t"][particle_idx]),
             position_mm=(
@@ -70,16 +131,72 @@ def evaluate_exact_endpoint_four_potential(
                 float(observer_state["y"][particle_idx]),
                 float(observer_state["z"][particle_idx]),
             ),
+            time_low_ns=float(
+                observer_state.get("source_time_low_ns", np.zeros(particle_count))[
+                    particle_idx
+                ]
+            ),
+            position_low_mm=tuple(
+                float(
+                    observer_state.get(
+                        f"source_position_low_{axis}", np.zeros(particle_count)
+                    )[particle_idx]
+                )
+                for axis in "xyz"
+            ),
+            time_tail_ns=float(
+                observer_state.get("source_time_tail_ns", np.zeros(particle_count))[
+                    particle_idx
+                ]
+            ),
+            position_tail_mm=tuple(
+                float(
+                    observer_state.get(
+                        f"source_position_tail_{axis}", np.zeros(particle_count)
+                    )[particle_idx]
+                )
+                for axis in "xyz"
+            ),
         )
-        charge_field = evaluate_retarded_charge_field_native(
-            source_history,
-            event,
-            require_complete_history=True,
-            root_tolerance_mm=charge_root_tolerance_mm,
-            max_root_iterations=charge_max_root_iterations,
-            backend=magnetic_dipole.exact_retarded_backend,
-        )
+        try:
+            charge_field = evaluate_retarded_charge_field_native(
+                visible_history,
+                event,
+                require_complete_history=require_complete_history,
+                root_tolerance_mm=charge_root_tolerance_mm,
+                max_root_iterations=charge_max_root_iterations,
+                backend=magnetic_dipole.exact_retarded_backend,
+            )
+        except RetardedHistoryError:
+            if cross_extrapolate_ns <= 0.0:
+                raise
+            charge_field = evaluate_retarded_charge_field_native(
+                visible_history,
+                event,
+                require_complete_history=require_complete_history,
+                root_tolerance_mm=charge_root_tolerance_mm,
+                max_root_iterations=charge_max_root_iterations,
+                backend=continuation_backend,
+                extrapolate_ns=cross_extrapolate_ns,
+            )
         potentials[particle_idx] += charge_field.four_potential
+        if own_history is not None and particle_count > 1:
+            # Bunch-mates advance in proper time, so their latest lab times can
+            # differ slightly; continue their last segment across that spread.
+            own_times = np.asarray(observer_state["t"], dtype=float)
+            own_field = evaluate_retarded_charge_field_native(
+                own_history,
+                event,
+                excluded_source_indices=same_bunch_exclusions(
+                    particle_idx, particle_count, own_bunch_ranges
+                ),
+                require_complete_history=require_complete_history,
+                root_tolerance_mm=charge_root_tolerance_mm,
+                max_root_iterations=charge_max_root_iterations,
+                backend=continuation_backend,
+                extrapolate_ns=2.0 * float(np.ptp(own_times)),
+            )
+            potentials[particle_idx] += own_field.four_potential
         if include_dipole_source:
             if dipole_source_collection is not None:
                 if source_options.history_model == "causal_c5":
@@ -131,7 +248,7 @@ def evaluate_exact_endpoint_four_potential(
 
                 dipole_response = (
                     evaluate_retarded_dipole_field_gradient_hertz_jet_native(
-                        source_history,
+                        visible_dipole_history,
                         event,
                         require_complete_history=True,
                         fallback_relative_step=float(
@@ -153,7 +270,7 @@ def evaluate_exact_endpoint_four_potential(
                 potentials[particle_idx] += dipole_response.response.four_potential
             else:
                 dipole_potential = evaluate_retarded_dipole_potential_native(
-                    source_history,
+                    visible_dipole_history,
                     event,
                     require_complete_history=True,
                     relative_step=float(source_options.relative_stencil_step),
@@ -233,9 +350,13 @@ def finalize_exact_source_canonical_pair_states(
     driver_endpoint_history: Any,
     magnetic_dipole: MagneticDipoleConfig,
     include_dipole_source: bool,
+    same_bunch_fields: bool = False,
+    require_complete_history: bool = True,
     rider_dipole_source_collection: Any = None,
     driver_dipole_source_collection: Any = None,
     spin_interpolation_model: str = "centered_c1",
+    beamline_geometry: Any = None,
+    driver_bunch_ranges: tuple[slice, ...] = (),
 ) -> tuple[ParticleState, ParticleState]:
     """Return detached endpoint-canonical states without publishing either row.
 
@@ -246,24 +367,42 @@ def finalize_exact_source_canonical_pair_states(
 
     rider = copy.deepcopy(rider_state)
     driver = copy.deepcopy(driver_state)
+    endpoint_times = np.concatenate(
+        (
+            np.asarray(rider.get("t", []), dtype=float),
+            np.asarray(driver.get("t", []), dtype=float),
+        )
+    )
+    cross_spread = float(np.ptp(endpoint_times)) if endpoint_times.size else 0.0
     rider_endpoint = evaluate_exact_endpoint_four_potential(
         rider,
         driver_endpoint_history,
         magnetic_dipole=magnetic_dipole,
         include_dipole_source=include_dipole_source,
+        own_history=rider_endpoint_history if same_bunch_fields else None,
+        require_complete_history=require_complete_history,
         dipole_source_collection=driver_dipole_source_collection,
         spin_interpolation_model=spin_interpolation_model,
+        cross_extrapolate_ns=2.0 * cross_spread,
+        beamline_geometry=beamline_geometry,
     )
     driver_endpoint = evaluate_exact_endpoint_four_potential(
         driver,
         rider_endpoint_history,
         magnetic_dipole=magnetic_dipole,
         include_dipole_source=include_dipole_source,
+        own_history=driver_endpoint_history if same_bunch_fields else None,
+        require_complete_history=require_complete_history,
         dipole_source_collection=rider_dipole_source_collection,
         spin_interpolation_model=spin_interpolation_model,
+        cross_extrapolate_ns=2.0 * cross_spread,
+        beamline_geometry=beamline_geometry,
+        own_bunch_ranges=driver_bunch_ranges,
     )
     replace_exact_source_endpoint_potential(rider, rider_endpoint)
     replace_exact_source_endpoint_potential(driver, driver_endpoint)
+    rider.pop("_exact_visibility_endpoint_overrides", None)
+    driver.pop("_exact_visibility_endpoint_overrides", None)
     return rider, driver
 
 

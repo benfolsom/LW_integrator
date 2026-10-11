@@ -23,7 +23,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
@@ -72,6 +72,7 @@ RADIATION_REACTION_MODE_CHOICES: Tuple[str, ...] = (
     "diagnostic_only",
     "power_matched_damping",
     "medina_lad",
+    "medina_lad_validity",
 )
 
 DIPOLE_SOURCE_MODEL_OPTIONS: Tuple[Tuple[str, str], ...] = (
@@ -287,6 +288,7 @@ class SimulationOptions:
     adaptive_pair_return_enabled: bool = False
     adaptive_pair_target_lab_time_ns: Optional[float] = None
     adaptive_pair_tolerance_scale: float = 1.0
+    adaptive_pair_diagnostics_absolute_tolerance_native: float | None = None
     adaptive_pair_minimum_step_factor: float = 1.0 / 64.0
     adaptive_pair_maximum_step_factor: float = 64.0
     adaptive_pair_public_sample_interval_ns: Optional[float] = None
@@ -343,7 +345,7 @@ class SimulationOptions:
     self_consistency_convergence_mode: str = "fixed_geometry"  # or "variable_geometry"
     self_consistency_target_ms_tolerance: float = 1e-6  # Mass-shell loop criterion
     self_consistency_max_iterations: int = (
-        10  # Maximum SC iterations per particle per step
+        2  # Maximum SC iterations per particle per step (minimum 2 when enabled)
     )
     self_consistency_mass_shell_tolerance: float = (
         1e-2  # Safety net threshold enforced after loop
@@ -352,7 +354,7 @@ class SimulationOptions:
         0.7  # Relaxation weight for Pt correction (0.0-1.0, default 0.7)
     )
     self_consistency_verbosity: int = (
-        2  # 0=silent, 1=basic, 2=detailed (prints to console and saved logs)
+        0  # 0=silent, 1=summary, 2=failures, 3=full (console and saved logs)
     )
 
     # Chrono-matching options for retarded-time sampling. These are conceptually
@@ -428,6 +430,7 @@ class SimulationOptions:
     space_charge_retarded: bool = True
     space_charge_softening_mm: float = 0.0
     space_charge_bunch_sigma_mm: float = 0.01
+    space_charge_instantaneous_clock: str = "legacy_same_index"
     space_charge_min_retarded_steps: Optional[int] = None
 
     # Prescribed external uniform field options
@@ -492,6 +495,7 @@ class SimulationOptions:
     driver_rest_spin: Tuple[float, float, float] = (0.0, 0.0, 1.0)
     driver_polarization: float = 1.0
 
+    source_history_representation: str = "light_cone_quintic"
     radiation_reaction_mode: str = "medina_lad"
 
     # Fixed-size physical particle-loss options
@@ -555,7 +559,26 @@ class SimulationOptions:
     save_log_file: bool = False
     log_file_path: Optional[str] = None  # If None, auto-generate in output_dir
 
+    stochastic_emission: dict | None = None
+
     def __post_init__(self) -> None:
+        from core.stochastic_emission import StochasticEmissionConfig
+
+        self.stochastic_emission = asdict(
+            StochasticEmissionConfig.from_dict(self.stochastic_emission)
+        )
+        from core.proper_velocity_history import validate_source_history_representation
+
+        if self.space_charge_instantaneous_clock not in {
+            "lab_time",
+            "legacy_same_index",
+        }:
+            raise ValueError(
+                "space-charge instantaneous_clock must be lab_time or legacy_same_index"
+            )
+        self.source_history_representation = validate_source_history_representation(
+            self.source_history_representation
+        )
         self.checkpoint_enabled = bool(
             self.checkpoint_enabled or self.checkpoint_resume_from is not None
         )
@@ -580,6 +603,7 @@ class SimulationOptions:
             enabled=self.adaptive_pair_return_enabled,
             target_lab_time_ns=self.adaptive_pair_target_lab_time_ns,
             tolerance_scale=self.adaptive_pair_tolerance_scale,
+            diagnostics_absolute_tolerance_native=self.adaptive_pair_diagnostics_absolute_tolerance_native,
             minimum_step_factor=self.adaptive_pair_minimum_step_factor,
             maximum_step_factor=self.adaptive_pair_maximum_step_factor,
             public_sample_interval_ns=self.adaptive_pair_public_sample_interval_ns,
@@ -595,6 +619,9 @@ class SimulationOptions:
         self.adaptive_pair_return_enabled = adaptive_pair.enabled
         self.adaptive_pair_target_lab_time_ns = adaptive_pair.target_lab_time_ns
         self.adaptive_pair_tolerance_scale = adaptive_pair.tolerance_scale
+        self.adaptive_pair_diagnostics_absolute_tolerance_native = (
+            adaptive_pair.diagnostics_absolute_tolerance_native
+        )
         self.adaptive_pair_minimum_step_factor = adaptive_pair.minimum_step_factor
         self.adaptive_pair_maximum_step_factor = adaptive_pair.maximum_step_factor
         self.adaptive_pair_public_sample_interval_ns = (
@@ -682,6 +709,7 @@ class SimulationOptions:
                 "enabled": self.adaptive_pair_return_enabled,
                 "target_lab_time_ns": self.adaptive_pair_target_lab_time_ns,
                 "tolerance_scale": self.adaptive_pair_tolerance_scale,
+                "diagnostics_absolute_tolerance_native": self.adaptive_pair_diagnostics_absolute_tolerance_native,
                 "minimum_step_factor": self.adaptive_pair_minimum_step_factor,
                 "maximum_step_factor": self.adaptive_pair_maximum_step_factor,
                 "public_sample_interval_ns": (
@@ -774,6 +802,7 @@ class SimulationOptions:
             "space_charge_retarded": self.space_charge_retarded,
             "space_charge_softening_mm": self.space_charge_softening_mm,
             "space_charge_bunch_sigma_mm": self.space_charge_bunch_sigma_mm,
+            "space_charge_instantaneous_clock": self.space_charge_instantaneous_clock,
             "space_charge_min_retarded_steps": self.space_charge_min_retarded_steps,
             "external_field_enabled": self.external_field_enabled,
             "external_electric_field_native": list(self.external_electric_field_native),
@@ -884,6 +913,8 @@ class SimulationOptions:
                 },
             },
             "radiation_reaction_mode": self.radiation_reaction_mode,
+            "stochastic_emission": dict(self.stochastic_emission or {}),
+            "source_history_representation": self.source_history_representation,
             "particle_loss": {
                 "enabled": self.particle_loss_enabled,
                 "loss_radius_mm": self.particle_loss_radius_mm,
@@ -946,8 +977,33 @@ class SimulationOptions:
 
     @classmethod
     def from_dict(cls, payload: Dict[str, object]) -> "SimulationOptions":
+        sweep_keys = {"sweep_parameters", "energy_min", "energy_max", "energy_points"}
+        if (
+            "rider_params" not in payload
+            and "driver_params" not in payload
+            and sweep_keys.intersection(payload)
+        ):
+            raise ValueError(
+                "Flat sweep configuration cannot be loaded as a testbed config; "
+                "use --sweep-config instead of --testbed-config. Testbed configs "
+                "use nested rider_params, driver_params, and core_params."
+            )
+
         def _bool(name: str, default: bool) -> bool:
             return bool(payload.get(name, default))
+
+        def _strict_bool(name: str, default: bool) -> bool:
+            # Self-consistency/chrono switches must be JSON booleans: bool("false")
+            # is True, so strings are rejected rather than silently enabled.
+            value = payload.get(name)
+            if value is None:
+                return default
+            if isinstance(value, bool):
+                return value
+            raise ValueError(
+                f"{name} must be a JSON boolean (true/false), got {value!r} "
+                f"({type(value).__name__})"
+            )
 
         def _int(name: str, default: int) -> int:
             value = payload.get(name, default)
@@ -1486,6 +1542,9 @@ class SimulationOptions:
                 if adaptive_pair_payload.get("target_lab_time_ns") not in {None, ""}
                 else None
             ),
+            adaptive_pair_diagnostics_absolute_tolerance_native=adaptive_pair_payload.get(
+                "diagnostics_absolute_tolerance_native"
+            ),
             adaptive_pair_tolerance_scale=float(
                 adaptive_pair_payload.get("tolerance_scale", 1.0)
             ),
@@ -1576,7 +1635,7 @@ class SimulationOptions:
             macroparticle_smearing_refresh_policy=str(
                 _smearing_value("refresh_policy", "fixed_per_particle")
             ).replace("-", "_"),
-            self_consistency_enabled=_bool("self_consistency_enabled", True),
+            self_consistency_enabled=_strict_bool("self_consistency_enabled", True),
             self_consistency_tolerance=_float("self_consistency_tolerance", 1e-4),
             self_consistency_convergence_mode=canonicalize_self_consistency_mode(
                 payload.get("self_consistency_convergence_mode", "fixed_geometry")
@@ -1584,7 +1643,7 @@ class SimulationOptions:
             self_consistency_target_ms_tolerance=_float(
                 "self_consistency_target_ms_tolerance", 1e-6
             ),
-            self_consistency_max_iterations=_int("self_consistency_max_iterations", 10),
+            self_consistency_max_iterations=_int("self_consistency_max_iterations", 2),
             self_consistency_mass_shell_tolerance=_float(
                 "self_consistency_mass_shell_tolerance", 1e-2
             ),
@@ -1592,9 +1651,9 @@ class SimulationOptions:
                 "self_consistency_mass_shell_relaxation", 0.7
             ),
             self_consistency_verbosity=_int("self_consistency_verbosity", 0),
-            chrono_interpolate=_bool(
+            chrono_interpolate=_strict_bool(
                 "chrono_interpolate",
-                _bool("self_consistency_chrono_interpolate", False),
+                _strict_bool("self_consistency_chrono_interpolate", False),
             ),
             chrono_tolerance=_float(
                 "chrono_tolerance",
@@ -1604,17 +1663,17 @@ class SimulationOptions:
                 "chrono_matching_mode",
                 _str("self_consistency_chrono_matching_mode", "FAST"),
             ),
-            chrono_high_precision=_bool(
+            chrono_high_precision=_strict_bool(
                 "chrono_high_precision",
-                _bool("self_consistency_chrono_high_precision", False),
+                _strict_bool("self_consistency_chrono_high_precision", False),
             ),
-            chrono_adaptive_tolerance=_bool(
+            chrono_adaptive_tolerance=_strict_bool(
                 "chrono_adaptive_tolerance",
-                _bool("self_consistency_chrono_adaptive_tolerance", False),
+                _strict_bool("self_consistency_chrono_adaptive_tolerance", False),
             ),
-            self_consistency_chrono_interpolate=_bool(
+            self_consistency_chrono_interpolate=_strict_bool(
                 "chrono_interpolate",
-                _bool("self_consistency_chrono_interpolate", False),
+                _strict_bool("self_consistency_chrono_interpolate", False),
             ),
             self_consistency_chrono_tolerance=_float(
                 "chrono_tolerance",
@@ -1624,13 +1683,13 @@ class SimulationOptions:
                 "chrono_matching_mode",
                 _str("self_consistency_chrono_matching_mode", "FAST"),
             ),
-            self_consistency_chrono_high_precision=_bool(
+            self_consistency_chrono_high_precision=_strict_bool(
                 "chrono_high_precision",
-                _bool("self_consistency_chrono_high_precision", False),
+                _strict_bool("self_consistency_chrono_high_precision", False),
             ),
-            self_consistency_chrono_adaptive_tolerance=_bool(
+            self_consistency_chrono_adaptive_tolerance=_strict_bool(
                 "chrono_adaptive_tolerance",
-                _bool("self_consistency_chrono_adaptive_tolerance", False),
+                _strict_bool("self_consistency_chrono_adaptive_tolerance", False),
             ),
             energy_monitor_enabled=_bool("energy_monitor_enabled", True),
             energy_monitor_threshold=_float("energy_monitor_threshold", 2.0),
@@ -1676,6 +1735,9 @@ class SimulationOptions:
             space_charge_retarded=_bool("space_charge_retarded", True),
             space_charge_softening_mm=_float("space_charge_softening_mm", 0.0),
             space_charge_bunch_sigma_mm=_float("space_charge_bunch_sigma_mm", 0.01),
+            space_charge_instantaneous_clock=str(
+                payload.get("space_charge_instantaneous_clock", "legacy_same_index")
+            ),
             space_charge_min_retarded_steps=(
                 _int("space_charge_min_retarded_steps", 0)
                 if payload.get("space_charge_min_retarded_steps") is not None
@@ -1806,9 +1868,13 @@ class SimulationOptions:
             driver_polarization=float(
                 _magnetic_particle_value("driver", "polarization", 1.0)
             ),
+            source_history_representation=_str(
+                "source_history_representation", "light_cone_quintic"
+            ),
             radiation_reaction_mode=_str(
                 "radiation_reaction_mode", default_radiation_reaction_mode
             ),
+            stochastic_emission=payload.get("stochastic_emission"),
             particle_loss_enabled=_particle_loss_enabled(True),
             particle_loss_radius_mm=_particle_loss_optional_float(
                 "loss_radius_mm",
@@ -2416,6 +2482,7 @@ class RunResult:
     driver_gamma_final: Optional[float] = None
     driver_trajectory: Optional[Dict[str, Any]] = None
     energy_ledger_metrics: Optional[Dict[str, Any]] = None
+    stochastic_emission: dict | None = None
     # Beam optics parameters (initial)
     rider_emittance_x_mm_mrad: Optional[float] = None
     rider_emittance_y_mm_mrad: Optional[float] = None
@@ -2818,13 +2885,18 @@ def build_self_consistency_config(options: SimulationOptions) -> Optional[object
     from core.self_consistency import SelfConsistencyConfig
     from core.types import GammaReconciliationMethod
 
-    # Parse gamma reconciliation method string to enum
-    method_str = options.self_consistency_gamma_reconciliation_method.upper()
+    # Parse gamma reconciliation method string to enum. Reject unknown names
+    # (as the CLI does) instead of silently enabling a non-default blend.
+    method_str = str(options.self_consistency_gamma_reconciliation_method).upper()
     try:
         gamma_method = GammaReconciliationMethod[method_str]
     except KeyError:
-        # Fallback to ADAPTIVE_WEIGHTED if invalid method specified
-        gamma_method = GammaReconciliationMethod.ADAPTIVE_WEIGHTED
+        valid = ", ".join(method.name for method in GammaReconciliationMethod)
+        raise ValueError(
+            "Unknown self_consistency_gamma_reconciliation_method "
+            f"{options.self_consistency_gamma_reconciliation_method!r}; "
+            f"expected one of: {valid}"
+        ) from None
 
     return SelfConsistencyConfig(
         enabled=bool(options.self_consistency_enabled),
@@ -3054,6 +3126,7 @@ def build_space_charge_config(options: SimulationOptions) -> Optional[object]:
         softening_mm=options.space_charge_softening_mm,
         bunch_sigma_mm=options.space_charge_bunch_sigma_mm,
         min_retarded_steps=options.space_charge_min_retarded_steps,
+        instantaneous_clock=options.space_charge_instantaneous_clock,
     )
 
 
@@ -3328,6 +3401,7 @@ def run_testbed(
         enabled=options.adaptive_pair_return_enabled,
         target_lab_time_ns=options.adaptive_pair_target_lab_time_ns,
         tolerance_scale=options.adaptive_pair_tolerance_scale,
+        diagnostics_absolute_tolerance_native=options.adaptive_pair_diagnostics_absolute_tolerance_native,
         minimum_step_factor=options.adaptive_pair_minimum_step_factor,
         maximum_step_factor=options.adaptive_pair_maximum_step_factor,
         public_sample_interval_ns=options.adaptive_pair_public_sample_interval_ns,
@@ -3611,6 +3685,8 @@ def run_testbed(
             logger=log,
             use_numba=getattr(options, "use_numba", True),
             radiation_reaction_mode=options.radiation_reaction_mode,
+            stochastic_emission=options.stochastic_emission,
+            source_history_representation=options.source_history_representation,
             pseudo_grid=pseudo_grid_config,
             driver_train=driver_train_config,
             cavity_exit=cavity_exit_config,
@@ -3644,6 +3720,8 @@ def run_testbed(
             },
         }
 
+        if core_traj_rider and "_stochastic_emission" in core_traj_rider[-1]:
+            payload["stochastic_emission"] = core_traj_rider[-1]["_stochastic_emission"]
         result = ({}, payload)  # Empty metrics dict, payload with trajectories
 
     # Store captured stdout/stderr separately for verbose logs button
@@ -5365,6 +5443,8 @@ def run_testbed(
                 "magnetic_dipole": options.to_dict()["magnetic_dipole"],
             }
 
+            if "stochastic_emission" in payload:
+                traj_data["stochastic_emission"] = payload["stochastic_emission"]
             label_prefix = config_label if config_label else "trajectory"
 
             # Save as JSON for the maintained single-run plotting toolchain.
@@ -5424,6 +5504,10 @@ def run_testbed(
                     local_magnetic_field_x_t=local_field_arr[:, 0],
                     local_magnetic_field_y_t=local_field_arr[:, 1],
                     local_magnetic_field_z_t=local_field_arr[:, 2],
+                )
+            if "stochastic_emission" in payload:
+                npz_payload["stochastic_emission_json"] = np.array(
+                    json.dumps(payload["stochastic_emission"])
                 )
             np.savez(traj_path_npz, **npz_payload)
             saved_paths["trajectory_npz"] = traj_path_npz
@@ -5497,6 +5581,7 @@ def run_testbed(
         driver_gamma_final=driver_gamma_final,
         driver_trajectory=driver_trajectory_data,
         energy_ledger_metrics=energy_ledger_metrics,
+        stochastic_emission=payload.get("stochastic_emission"),
         pseudo_grid_charge_localization=_pseudo_grid_charge_localization,
         rider_emittance_x_mm_mrad=rider_emittance_x,
         rider_emittance_y_mm_mrad=rider_emittance_y,

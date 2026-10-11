@@ -18,6 +18,7 @@ from typing import Sequence, cast
 import numpy as np
 
 from .constants import C_MMNS
+from .precise_charge import precise_segment_jets, validated_precise_velocity
 
 
 @dataclass(frozen=True)
@@ -144,8 +145,16 @@ def quintic_charge_potential_jet_native(
     position_coefficients_mm: np.ndarray,
     retarded_time_ns: float,
     jet_newton_iterations: int = 4,
+    source_proper_velocity: Sequence[float] | None = None,
 ) -> ChargePotentialJetResult:
-    """Differentiate one retarded quintic charge source at an observer event."""
+    """Differentiate one retarded charge source at an observer event.
+
+    With source_proper_velocity=None, preserve the original quintic algebra.
+    Otherwise the caller supplies dimensionless u=gamma*beta at the root;
+    the segment supplies position, acceleration, and jerk at that same event.
+    This opt-in local germ is for exact analytic kinematics, not a remedy for
+    precision already lost in an integrator's stored quintic history.
+    """
 
     observer_time = float(observer_time_ns)
     observer_position = np.asarray(observer_position_mm, dtype=float)
@@ -171,6 +180,28 @@ def quintic_charge_potential_jet_native(
         raise ValueError("retarded_time_ns must lie inside the selected segment")
     if iterations < 2:
         raise ValueError("jet_newton_iterations must be at least two")
+
+    if source_proper_velocity is not None:
+        precise_potential, _electric, _magnetic, root, residual, _kappa = (
+            precise_segment_jets(
+                observer_position,
+                charge,
+                start_time,
+                duration,
+                coefficients,
+                root_time,
+                validated_precise_velocity(source_proper_velocity),
+            )
+        )
+        return ChargePotentialJetResult(
+            four_potential=precise_potential[:, 0],
+            partial_a=precise_potential[:, 1:5].T,
+            partial2_a=precise_potential[:, 5:].reshape(4, 4, 4).transpose(1, 2, 0),
+            retarded_time_ns=root_time,
+            retarded_coordinate_gradient=root[1:5],
+            retarded_coordinate_hessian=root[5:].reshape(4, 4),
+            light_cone_jet_residual=float(np.max(np.abs(residual))),
+        )
 
     observer_coordinates = (
         _Jet2.variable(C_MMNS * observer_time, 0),

@@ -141,8 +141,34 @@ class FullDipoleHistory:
     geometry_reconstruction: str = "endpoint"
     fit_sample_spacing: float | None = None
     startup_dipole_fit: str = "interpolate"
+    velocity_jumps: tuple[tuple[int, tuple[float, ...]], ...] = ()
 
     def __post_init__(self) -> None:
+        if self.velocity_jumps:
+            indices = [row[0] for row in self.velocity_jumps]
+            if indices != sorted(set(indices)) or any(
+                type(i) is not int or not 0 < i < len(self.time) for i in indices
+            ):
+                raise ValueError("Velocity jumps require ordered accepted knot indices")
+            for _, before in self.velocity_jumps:
+                if (
+                    np.shape(before) != (3,)
+                    or not np.isfinite(before).all()
+                    or np.linalg.norm(before) >= self.speed_limit
+                ):
+                    raise ValueError(
+                        "Velocity jumps require finite subluminal incoming velocity"
+                    )
+            if (
+                self.geometry_reconstruction != "endpoint"
+                or self.dipole_reconstruction != "endpoint"
+                or self.derivative_sampling != "consecutive"
+                or np.any(self.dipole)
+            ):
+                raise ValueError(
+                    "Impulsive history requires endpoint geometry, "
+                    "consecutive sampling, and zero dipoles"
+                )
         if self.startup_dipole_fit not in ("interpolate", "constrained"):
             raise ValueError("Unknown startup dipole fitting policy")
         if self.startup_dipole_fit == "constrained" and (
@@ -489,7 +515,63 @@ class FullDipoleHistory:
         from math import comb
 
         segments = list(self.segments)
+        jumps = dict(self.velocity_jumps)
         for left in range(5 + len(segments), len(self.time) - 6):
+            # A photon kick is an accepted velocity discontinuity. Never fit a
+            # smooth high-order velocity window through it. On nearby intervals
+            # use the positions and the incoming/outgoing endpoint velocities;
+            # this also handles several kicks within one derivative window.
+            if any(left - 5 <= knot <= left + 6 for knot in jumps):
+                width = self.time[left + 1] - self.time[left]
+                incoming = jumps.get(left + 1, self.velocity[left + 1])
+                x = np.zeros((10, 3))
+                x[:4] = _endpoint_polynomial(
+                    np.array([self.position[left], self.velocity[left]]),
+                    np.array([self.position[left + 1], incoming]),
+                    width,
+                )
+                velocity_coefficients = np.array(
+                    [k * x[k] / width for k in range(1, 4)]
+                )
+                controls = [
+                    sum(
+                        comb(i, k) / comb(2, k) * velocity_coefficients[k]
+                        for k in range(i + 1)
+                    )
+                    for i in range(3)
+                ]
+                if max(np.linalg.norm(v) for v in controls) >= self.speed_limit:
+                    raise ValueError(
+                        "Impulsive source interval lacks a subluminal speed bound"
+                    )
+                error = float(
+                    np.linalg.norm(
+                        np.polynomial.polynomial.polyval(1.0, x)
+                        - self.position[left + 1]
+                    )
+                )
+                roundoff = (
+                    64
+                    * np.finfo(float).eps
+                    * max(
+                        np.linalg.norm(self.position[left]),
+                        np.linalg.norm(self.position[left + 1]),
+                    )
+                )
+                if error > self.position_tolerance + roundoff:
+                    raise SourcePositionError(
+                        "Impulsive source endpoint exceeds position tolerance"
+                    )
+                segments.append(
+                    FullDipoleSegment(
+                        float(self.time[left]),
+                        float(width),
+                        x,
+                        np.zeros((8, 4, 4)),
+                        error,
+                    )
+                )
+                continue
             indices_l, indices_r = self._derivative_indices(
                 left
             ), self._derivative_indices(left + 1)
@@ -619,6 +701,7 @@ class FullDipoleHistory:
             self.geometry_reconstruction,
             self.fit_sample_spacing,
             self.startup_dipole_fit,
+            self.velocity_jumps,
         )
 
     def append(
@@ -629,6 +712,7 @@ class FullDipoleHistory:
         dipole: np.ndarray,
         *,
         dipole_parts: tuple[np.ndarray, np.ndarray] | None = None,
+        velocity_before_jump: np.ndarray | None = None,
     ) -> FullDipoleHistory:
         """Rejected candidates leave the published prefix untouched."""
         if (dipole_parts is None) != (self.dipole_reference is None):
@@ -663,6 +747,12 @@ class FullDipoleHistory:
             self.geometry_reconstruction,
             self.fit_sample_spacing,
             self.startup_dipole_fit,
+            self.velocity_jumps
+            + (
+                ((len(self.time), tuple(float(v) for v in velocity_before_jump)),)
+                if velocity_before_jump is not None
+                else ()
+            ),
         ).completed()
 
     @property
@@ -733,11 +823,41 @@ class FullDipoleHistory:
             payload.update(
                 format="full-dipole-history-v8", startup_dipole_fit="constrained"
             )
+        if self.velocity_jumps:
+            payload.update(
+                base_format=payload["format"],
+                format="full-dipole-history-v9",
+                velocity_jumps=[
+                    [knot, list(before)] for knot, before in self.velocity_jumps
+                ],
+            )
         return payload
 
     @classmethod
     def from_checkpoint_payload(cls, payload: dict[str, object]) -> FullDipoleHistory:
         version = payload.get("format")
+        velocity_jumps: tuple[tuple[int, tuple[float, ...]], ...] = ()
+        if version == "full-dipole-history-v9":
+            jump_rows = payload.get("velocity_jumps")
+            if not isinstance(jump_rows, list) or any(
+                not isinstance(row, list)
+                or len(row) != 2
+                or type(row[0]) is not int
+                or not isinstance(row[1], list)
+                for row in jump_rows
+            ):
+                raise ValueError(
+                    "History v9 requires accepted knot and incoming velocity records"
+                )
+            velocity_jumps = tuple((row[0], tuple(row[1])) for row in jump_rows)
+            if not velocity_jumps or payload.get("base_format") == version:
+                raise ValueError(
+                    "History v9 requires velocity jumps and a smooth base format"
+                )
+            payload = dict(payload, format=payload["base_format"])
+            version = payload["format"]
+        elif "velocity_jumps" in payload or "base_format" in payload:
+            raise ValueError("Velocity jump records require history v9")
         constrained = version == "full-dipole-history-v8"
         if constrained:
             if payload.get("startup_dipole_fit") != "constrained":
@@ -823,6 +943,7 @@ class FullDipoleHistory:
             np.asarray(payload["velocity"]),
             np.asarray(payload["dipole"]),
             float(cast(float, payload["speed_limit"])),
+            velocity_jumps=velocity_jumps,
             dipole_reconstruction="connected_direct" if connected else "endpoint",
             dipole_tolerance=(
                 cast(float, payload["dipole_tolerance"]) if connected else None
@@ -887,4 +1008,5 @@ class FullDipoleHistory:
             raw.geometry_reconstruction,
             raw.fit_sample_spacing,
             raw.startup_dipole_fit,
+            raw.velocity_jumps,
         )

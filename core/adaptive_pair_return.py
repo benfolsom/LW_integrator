@@ -254,6 +254,17 @@ class AdaptivePairAttemptDiagnostics:
     mechanical_momentum_error_index: tuple[int, ...]
     rest_spin_error_index: tuple[int, ...]
     diagnostics_error_index: tuple[int, ...]
+    projection_floor_applied: bool = False
+    projection_floor_changed_acceptance: bool = False
+    diagnostics_error_without_floor: float | None = None
+    maximum_projection_floor_native: float = 0.0
+    diagnostic_floor_changed_acceptance: bool = False
+    floored_diagnostic_entries: tuple[tuple[int, ...], ...] = ()
+    floored_groups: tuple[str, ...] = ()
+    controller_error: float | None = None
+    step_size_group: str = ""
+    rejected_floor_excess_error: float = 0.0
+    rejected_floor_excess_entries: tuple[tuple[int, ...], ...] = ()
 
 
 def _accepted_pair_time_ns(
@@ -266,12 +277,19 @@ def _accepted_pair_time_ns(
         raise SharedLabTimeError("accepted rider and driver histories are misaligned")
     rider_time = np.asarray(rider_builder.build_current().t[-1], dtype=np.float64)
     driver_time = np.asarray(driver_builder.build_current().t[-1], dtype=np.float64)
-    if rider_time.shape != (1,) or driver_time.shape != (1,):
+    if (
+        rider_time.ndim != 1
+        or driver_time.ndim != 1
+        or not rider_time.size
+        or not driver_time.size
+    ):
         raise SharedLabTimeError(
-            "adaptive pair return mode currently requires one particle per role"
+            "adaptive pair return mode requires nonempty one-dimensional time arrays"
         )
     values = (float(rider_time[0]), float(driver_time[0]))
-    if not all(np.isfinite(value) for value in values):
+    if max(np.ptp(rider_time), np.ptp(driver_time)) > tolerance_ns:
+        raise SharedLabTimeError("accepted particles do not share a lab-time barrier")
+    if not np.all(np.isfinite(rider_time)) or not np.all(np.isfinite(driver_time)):
         raise SharedLabTimeError("accepted pair coordinate time is not finite")
     if abs(values[0] - values[1]) > tolerance_ns:
         raise SharedLabTimeError("accepted rider and driver times are not synchronized")
@@ -360,6 +378,8 @@ def attempt_exact_pair_adaptive_step(
     maximum_step_ns: float,
     magnetic_dipole: MagneticDipoleConfig,
     include_dipole_source: bool,
+    same_bunch_fields: bool = False,
+    beamline_geometry: Any = None,
     spin_interpolation_model: str = "causal_frozen_c1",
     absolute_time_tolerance_ns: float = 1.0e-18,
     relative_time_tolerance: float = 1.0e-12,
@@ -473,6 +493,8 @@ def attempt_exact_pair_adaptive_step(
         driver_initial_proper_step_ns=(controller_state.driver_proper_step_guess_ns),
         magnetic_dipole=magnetic_dipole,
         include_dipole_source=include_dipole_source,
+        same_bunch_fields=same_bunch_fields,
+        beamline_geometry=beamline_geometry,
         tolerances=tolerances,
         method_order=controller_config.method_order,
         causal_c5_source_history=(
@@ -514,7 +536,11 @@ def attempt_exact_pair_adaptive_step(
         )
 
     accepted = bool(trial.assessment.accepted and not cap_failures)
-    controller_error = float(trial.assessment.normalized_error)
+    controller_error = float(
+        trial.assessment.normalized_error
+        if trial.assessment.controller_error is None
+        else trial.assessment.controller_error
+    )
     if cap_failures:
         controller_error = max(controller_error, 4.0)
     next_step_ns = propose_next_step_ns(
@@ -655,6 +681,8 @@ def run_exact_pair_adaptive_window(
     public_sample_interval_ns: float,
     magnetic_dipole: MagneticDipoleConfig,
     include_dipole_source: bool,
+    same_bunch_fields: bool = False,
+    beamline_geometry: Any = None,
     public_output_state: AdaptivePairPublicOutputState | None = None,
     checkpoint_store: _AcceptedPairCheckpoint | None = None,
     spin_interpolation_model: str = "causal_frozen_c1",
@@ -829,10 +857,12 @@ def run_exact_pair_adaptive_window(
             flush_interrupted_checkpoint()
             raise IntegrationCancelled("Integration cancelled by caller.")
         if attempts >= maximum_attempts:
+            flush_interrupted_checkpoint()
             raise SharedLabTimeError(
                 "adaptive pair window exhausted its maximum trial attempts"
             )
         if accepted_slabs >= maximum_accepted_slabs:
+            flush_interrupted_checkpoint()
             raise SharedLabTimeError(
                 "adaptive pair window exhausted its maximum accepted slabs"
             )
@@ -863,6 +893,8 @@ def run_exact_pair_adaptive_window(
                 maximum_step_ns=maximum_step_ns,
                 magnetic_dipole=magnetic_dipole,
                 include_dipole_source=include_dipole_source,
+                same_bunch_fields=same_bunch_fields,
+                beamline_geometry=beamline_geometry,
                 spin_interpolation_model=spin_interpolation_model,
                 absolute_time_tolerance_ns=absolute_time_tolerance_ns,
                 relative_time_tolerance=relative_time_tolerance,
@@ -885,7 +917,7 @@ def run_exact_pair_adaptive_window(
                     growable_causal_local_source_history
                 ),
             )
-        except IntegrationCancelled:
+        except (IntegrationCancelled, SharedLabTimeError):
             flush_interrupted_checkpoint()
             raise
         attempts += 1
@@ -910,6 +942,30 @@ def run_exact_pair_adaptive_window(
                     ),
                     rest_spin_error_index=assessment.rest_spin_error_index,
                     diagnostics_error_index=assessment.diagnostics_error_index,
+                    diagnostic_floor_changed_acceptance=assessment.diagnostic_floor_changed_acceptance,
+                    floored_diagnostic_entries=assessment.floored_diagnostic_entries,
+                    floored_groups=assessment.floored_groups,
+                    controller_error=assessment.controller_error,
+                    rejected_floor_excess_error=assessment.rejected_floor_excess_error,
+                    rejected_floor_excess_entries=assessment.rejected_floor_excess_entries,
+                    step_size_group=(
+                        "medina_impulse_cap"
+                        if any(
+                            "Medina impulse cap" in f
+                            for f in result.trial.health_failures
+                        )
+                        else assessment.step_size_group
+                    ),
+                    projection_floor_applied=assessment.projection_floor_applied,
+                    projection_floor_changed_acceptance=(
+                        assessment.projection_floor_changed_acceptance
+                    ),
+                    diagnostics_error_without_floor=(
+                        assessment.diagnostics_error_without_floor
+                    ),
+                    maximum_projection_floor_native=(
+                        assessment.maximum_projection_floor_native
+                    ),
                 )
             )
         if not result.accepted:
@@ -919,8 +975,13 @@ def run_exact_pair_adaptive_window(
             )
             if state.current_step_ns >= attempted_step - shrink_tolerance:
                 assessment = result.trial.assessment
+                flush_interrupted_checkpoint()
                 raise SharedLabTimeError(
-                    "adaptive pair trial was rejected at the minimum usable step; "
+                    "adaptive pair trial was rejected without a shrinking proposal; "
+                    f"attempted step={attempted_step:.6e} ns, "
+                    f"proposed step={state.current_step_ns:.6e} ns, "
+                    f"minimum step={attempt_minimum:.6e} ns, "
+                    f"maximum step={maximum_step_ns:.6e} ns; "
                     f"normalized error={assessment.normalized_error:.6e} "
                     f"(position={assessment.position_error:.6e}, "
                     f"momentum={assessment.mechanical_momentum_error:.6e}, "

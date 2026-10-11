@@ -6,6 +6,7 @@ import numpy as np
 from numba import njit
 
 from .constants import C_MMNS
+from .precise_charge import precise_segment_jets
 
 _JET_SIZE = 21
 _GRADIENT_START = 1
@@ -131,8 +132,33 @@ def quintic_charge_potential_jet_strict_serial(
     position_coefficients_mm: np.ndarray,
     retarded_time_ns: float,
     jet_newton_iterations: int = 4,
+    source_proper_velocity: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, float, np.ndarray, np.ndarray, float]:
-    """Return ``A, dA, d2A`` using the strict compiled Taylor algebra."""
+    """Return ``A, dA, d2A`` using strict compiled Taylor algebra.
+
+    Optional source_proper_velocity is dimensionless u at the selected root.
+    The beta-only specialization retains the original arithmetic ordering.
+    """
+
+    if source_proper_velocity is not None:
+        potential, _electric, _magnetic, root, residual, _kappa = precise_segment_jets(
+            observer_position_mm,
+            charge_native,
+            segment_start_time_ns,
+            segment_duration_ns,
+            position_coefficients_mm,
+            retarded_time_ns,
+            source_proper_velocity,
+        )
+        return (
+            potential[:, 0].copy(),
+            potential[:, 1:5].T.copy(),
+            potential[:, 5:].copy().reshape((4, 4, 4)).transpose(1, 2, 0).copy(),
+            retarded_time_ns,
+            root[1:5].copy(),
+            root[5:].reshape((4, 4)).copy(),
+            np.max(np.abs(residual)),
+        )
 
     observer_coordinates = np.empty((4, _JET_SIZE), dtype=np.float64)
     observer_coordinates[0] = _variable(C_MMNS * observer_time_ns, 0)

@@ -756,7 +756,7 @@ class IntegratorGUI(
             value=self.options.self_consistency_mass_shell_tolerance
         )
         self.self_consistency_verbosity_var = tk.IntVar(
-            value=getattr(self.options, "self_consistency_verbosity", 2)
+            value=getattr(self.options, "self_consistency_verbosity", 0)
         )
         self.chrono_interpolate_var = tk.BooleanVar(
             value=getattr(
@@ -921,10 +921,18 @@ class IntegratorGUI(
         # max_substeps is now calculated from min_timestep_factor (read-only display)
         self.adaptive_timestep_max_substeps_display_var = tk.StringVar(value="")
 
+        self.source_history_representation_var = tk.StringVar(
+            value=self.options.source_history_representation
+        )
         self.radiation_reaction_mode_var = tk.StringVar(
             value=getattr(self.options, "radiation_reaction_mode", "medina_lad")
         )
 
+        self.space_charge_instantaneous_clock_var = tk.StringVar(
+            value=getattr(
+                self.options, "space_charge_instantaneous_clock", "legacy_same_index"
+            )
+        )
         self.space_charge_enabled_var = tk.BooleanVar(value=False)
         self.space_charge_retarded_var = tk.BooleanVar(value=True)
         self.space_charge_softening_mm_var = tk.DoubleVar(value=0.0)

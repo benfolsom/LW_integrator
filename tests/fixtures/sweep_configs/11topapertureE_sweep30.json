@@ -1,0 +1,139 @@
+{
+  "simulation_type": "CONDUCTING_WALL",
+  "mode": "blind_sweep",
+  "aperture_min": 0.04,
+  "aperture_max": 0.55,
+  "aperture_points": 100,
+  "aperture_log_scale": true,
+  "energy_min": 1.8,
+  "energy_max": 90.0,
+  "energy_points": 100,
+  "energy_log_scale": true,
+  "transverse_offset_fractions": [
+    0.0
+  ],
+  "starting_z_positions": [
+    0.0
+  ],
+  "wall_z": 1000.0,
+  "wall_z_range": null,
+  "wall_z_points": 1,
+  "cavity_spacing": 100000.0,
+  "steps": 1000,
+  "objective": "max_percent_energy_gain",
+  "save_top_n_trajectories": false,
+  "save_all_trajectories": false,
+  "save_failed_trajectories": false,
+  "trajectory_stride": 10,
+  "metrics_export_format": "json",
+  "metrics_export_scope": "all",
+  "log_verbosity": "full",
+  "optimization_method": "genetic_algorithm",
+  "optimization_maxiter": 50,
+  "optimization_population_size": 20,
+  "optimization_mutation_rate": 0.1,
+  "optimization_crossover_rate": 0.7,
+  "optimization_n_starts": 5,
+  "optimization_save_top_n": 100,
+  "optimization_convergence_tol": 1e-06,
+  "optimization_convergence_patience": 10,
+  "self_consistency_enabled": true,
+  "self_consistency_tolerance": 0.0001,
+  "self_consistency_max_iterations": 5,
+  "self_consistency_verbosity": 0,
+  "self_consistency_chrono_interpolate": true,
+  "self_consistency_chrono_tolerance": 0.001,
+  "self_consistency_chrono_high_precision": false,
+  "self_consistency_chrono_adaptive_tolerance": true,
+  "energy_monitor_halt_on_jump": false,
+  "adaptive_timestep_enabled": true,
+  "adaptive_timestep_threshold": 0.01,
+  "adaptive_timestep_reduction_factor": 3,
+  "adaptive_timestep_max_attempts": 6,
+  "adaptive_timestep_min_factor": 0.001,
+  "adaptive_timestep_cooldown_steps": 30,
+  "adaptive_timestep_probe_threshold": 0.001,
+  "adaptive_timestep_max_probe_steps": 3,
+  "adaptive_timestep_debug": true,
+  "per_run_timeout": 200.0,
+  "skip_failed_runs": true,
+  "failed_run_retry_attempts": 1,
+  "smoothness_enabled": true,
+  "smoothness_window_size": 20,
+  "smoothness_oscillation_threshold": 0.76,
+  "smoothness_trend_threshold": 0.3,
+  "smoothness_reject_on_violation": true,
+  "smoothness_max_violations": 3,
+  "macroparticle_enabled": true,
+  "macroparticle_charge_multiplier": 1000.0,
+  "macroparticle_sigma_multiplier": 2.0,
+  "macroparticle_use_momentum_errors": false,
+  "image_subcharge_count": 20,
+  "use_image_weighting": true,
+  "timestep_strategy": "auto_distance",
+  "target_distance_mm": 100.0,
+  "timestep": 3e-07,
+  "energy_scale_exponent": 1.0,
+  "timestep_mode": "duration",
+  "auto_steps_distance": 200.0,
+  "rider_stripped_ions": 1.0,
+  "driver_stripped_ions": 54.0,
+  "sweep_parameters": {
+    "rider_m_particle": {
+      "enabled": false,
+      "fixed_value": "0.00054857990907"
+    },
+    "rider_charge_sign": {
+      "enabled": false,
+      "fixed_value": "-1.0"
+    },
+    "rider_pcount": {
+      "enabled": false,
+      "fixed_value": "1"
+    },
+    "rider_transv_mom": {
+      "enabled": false,
+      "fixed_value": "2.2e-8"
+    },
+    "rider_transv_dist": {
+      "enabled": false,
+      "fixed_value": "0.01"
+    },
+    "macroparticle_charge_multiplier": {
+      "enabled": false,
+      "fixed_value": "1000"
+    },
+    "macroparticle_sigma_multiplier": {
+      "enabled": false,
+      "fixed_value": "2"
+    },
+    "driver_m_particle": {
+      "enabled": false,
+      "fixed_value": "207.2"
+    },
+    "driver_charge_sign": {
+      "enabled": false,
+      "fixed_value": "1.0"
+    },
+    "driver_pcount": {
+      "enabled": false,
+      "fixed_value": "5"
+    },
+    "driver_transv_mom": {
+      "enabled": false,
+      "fixed_value": "0.0"
+    },
+    "driver_transv_dist": {
+      "enabled": false,
+      "fixed_value": "-0.07998"
+    },
+    "driver_starting_distance": {
+      "enabled": false,
+      "fixed_value": "1000.0"
+    },
+    "driver_starting_Pz": {
+      "enabled": false,
+      "fixed_value": "-4925.0"
+    }
+  }
+}

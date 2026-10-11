@@ -1549,8 +1549,14 @@ def _convert_json_config_to_dataclass(config_dict: Dict[str, Any]) -> Dict[str, 
         "self_consistency_chrono_high_precision": "chrono_high_precision",
         "self_consistency_chrono_adaptive_tolerance": "chrono_adaptive_tolerance",
     }
+    # The canonical chrono_* key wins when both are present (as in the CLI and
+    # SimulationOptions.from_dict). Mirror it into the legacy alias so that
+    # OptimizationConfig.__post_init__ cannot OR/override it with a stale alias.
     for legacy_key, chrono_key in _chrono_legacy_map.items():
-        if chrono_key not in converted and legacy_key in converted:
+        if chrono_key in converted:
+            if legacy_key in converted:
+                converted[legacy_key] = converted[chrono_key]
+        elif legacy_key in converted:
             converted[chrono_key] = converted[legacy_key]
 
     # Convert sweep_parameters to appropriate ranges and fixed values

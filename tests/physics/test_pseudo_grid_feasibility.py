@@ -118,6 +118,8 @@ def _run_irregular_layout_case(
         z_span_mm=0.004,
         angle_offset=np.pi / 24.0,
     )
+    # retarded_integrator also returns diagnostics; the tests need the
+    # rider/driver trajectories and their SOA views only.
     return retarded_integrator(
         steps=24,
         h_step=1.0e-4,
@@ -138,7 +140,7 @@ def _run_irregular_layout_case(
         ),
         use_numba=False,
         radiation_reaction_mode="power_matched_damping",
-    )
+    )[:4]
 
 
 def _run_crossing_case(
@@ -166,6 +168,8 @@ def _run_crossing_case(
         charge_scale=-charge_scale,
         seed=200 + n_particles,
     )
+    # retarded_integrator also returns diagnostics; the tests need the
+    # rider/driver trajectories and their SOA views only.
     return retarded_integrator(
         steps=steps,
         h_step=h_step,
@@ -182,7 +186,7 @@ def _run_crossing_case(
         adaptive_timestep=adaptive_timestep,
         use_numba=False,
         radiation_reaction_mode="power_matched_damping",
-    )
+    )[:4]
 
 
 def _assert_finite_crossing(rider_soa, driver_soa) -> None:

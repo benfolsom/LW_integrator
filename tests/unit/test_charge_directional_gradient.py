@@ -16,7 +16,6 @@ from core.retarded_potential_directional_jet import (
 )
 from tests.unit.test_analytic_charge_response_provider import _uniform_history
 
-
 RATE = "partial_antisymmetric_response_along_velocity"
 DIRECTION = np.array([500.0, 100.0, -70.0, 50.0])
 
@@ -130,7 +129,7 @@ def test_provider_preserves_ordinary_outputs_and_reuses_compiled_roots(monkeypat
     import core.charge_response_jet_numba as compiled
     import core.retarded_fields as fields
 
-    original = compiled.evaluate_charge_response_coefficients_one_event_strict_serial
+    original = fields.solve_null_quintic_numba
     calls = []
 
     def counted(*args):
@@ -145,12 +144,12 @@ def test_provider_preserves_ordinary_outputs_and_reuses_compiled_roots(monkeypat
     )
     event = ObserverEvent(-1e-5, (0.9, 1.1, -0.5))
     old = provider(history, event, relative_step=2.5e-6)
+    monkeypatch.setattr(fields, "solve_null_quintic_numba", counted)
     monkeypatch.setattr(
         compiled,
         "evaluate_charge_response_coefficients_one_event_strict_serial",
-        counted,
+        forbidden,
     )
-    monkeypatch.setattr(fields, "_solve_retarded_sample", forbidden)
     new = provider(
         history, event, relative_step=2.5e-6, observer_four_velocity_mm_ns=DIRECTION
     )
@@ -166,16 +165,34 @@ def test_provider_preserves_ordinary_outputs_and_reuses_compiled_roots(monkeypat
     assert new.directional_unavailable_reason is None
 
 
-def test_boundary_fallback_explicitly_withholds_directional_gradient():
+def test_stationary_knot_keeps_analytic_directional_gradient():
     history = _uniform_history(times_ns=np.array([-0.01, 0, 0.01]), beta=np.zeros(3))
     response = provider(
         history,
         ObserverEvent(1 / C_MMNS, (1, 0, 0)),
         observer_four_velocity_mm_ns=DIRECTION,
     )
-    assert response.fallback_used
-    assert getattr(response, RATE) is None
-    assert "fallback" in response.directional_unavailable_reason
+    assert not response.fallback_used
+    assert response.directional_unavailable_reason is None
+    # Identical stationary segments have a smooth Coulomb field at the knot.
+    # Differentiate its spatial Jacobian independently of the source jet.
+    radius = np.array([1.0, 0.0, 0.0])
+    velocity = DIRECTION[1:]
+    expected = np.zeros((4, 6))
+    for i in range(3):
+        for j in range(3):
+            expected[i + 1, j] = 1.3 * (
+                -3.0
+                * (
+                    float(i == j) * (radius @ velocity)
+                    + velocity[i] * radius[j]
+                    + velocity[j] * radius[i]
+                )
+                + 15.0 * radius[i] * radius[j] * (radius @ velocity)
+            )
+    np.testing.assert_allclose(
+        getattr(response, RATE), expected, rtol=3e-14, atol=1e-12
+    )
 
 
 def test_excluded_and_missing_sources_remain_distinct():

@@ -47,7 +47,9 @@ from optimization.single_integration_helpers import calculate_rider_starting_pz
 AMU_TO_MEV = 931.494
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
-SWEEP_CONFIG_DIR = PROJECT_ROOT / "configs" / "sweep_configs"
+# User sweep configs under configs/sweep_configs are git-ignored; the configs
+# these parity tests need are tracked as fixtures instead.
+SWEEP_CONFIG_DIR = PROJECT_ROOT / "tests" / "fixtures" / "sweep_configs"
 RUN_CONFIG_DIR = PROJECT_ROOT / "configs" / "run_configs"
 
 

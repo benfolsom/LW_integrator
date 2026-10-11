@@ -121,9 +121,7 @@ class OptimizationConfig:
     )
     driver_transv_dist_points: int = 1
     driver_transv_dist_log_scale: bool = False
-    driver_long_dist_range: Optional[Tuple[float, float]] = (
-        None  # mm (BUNCH_TO_BUNCH)
-    )
+    driver_long_dist_range: Optional[Tuple[float, float]] = None  # mm (BUNCH_TO_BUNCH)
     driver_long_dist_points: int = 1
     driver_long_dist_log_scale: bool = False
     driver_starting_distance_range: Optional[Tuple[float, float]] = (
@@ -280,10 +278,10 @@ class OptimizationConfig:
     self_consistency_tolerance: float = 1e-4
     self_consistency_convergence_mode: str = "fixed_geometry"
     self_consistency_target_ms_tolerance: float = 1e-6
-    self_consistency_max_iterations: int = 5
+    self_consistency_max_iterations: int = 2
     self_consistency_mass_shell_tolerance: float = 1e-2
     self_consistency_mass_shell_relaxation: float = 0.7
-    self_consistency_verbosity: int = 2  # 0=silent, 1=summary, 2=failures, 3=full
+    self_consistency_verbosity: int = 0  # 0=silent, 1=summary, 2=failures, 3=full
 
     # Chrono-matching options for retarded-time sampling. The legacy
     # self_consistency_chrono_* fields are retained below for compatibility.
@@ -335,6 +333,7 @@ class OptimizationConfig:
     space_charge_retarded: bool = True
     space_charge_softening_mm: float = 0.0
     space_charge_bunch_sigma_mm: float = 0.01
+    space_charge_instantaneous_clock: str = "legacy_same_index"
     space_charge_min_retarded_steps: Optional[int] = None
 
     # Prescribed external uniform field options
@@ -352,6 +351,7 @@ class OptimizationConfig:
     external_field_t_max: Optional[float] = None
 
     # Radiation-reaction handling
+    source_history_representation: str = "light_cone_quintic"
     radiation_reaction_mode: str = "medina_lad"
 
     # Fixed-size particle-loss options
@@ -403,6 +403,11 @@ class OptimizationConfig:
 
     def __post_init__(self):
         """Set defaults for list fields."""
+        from core.proper_velocity_history import validate_source_history_representation
+
+        self.source_history_representation = validate_source_history_representation(
+            self.source_history_representation
+        )
         if self.transverse_offset_fractions is None:
             self.transverse_offset_fractions = [0.0]
         if self.starting_z_positions is None:
@@ -633,6 +638,9 @@ class OptimizationConfig:
             space_charge_bunch_sigma_mm=getattr(
                 options, "space_charge_bunch_sigma_mm", 0.01
             ),
+            space_charge_instantaneous_clock=getattr(
+                options, "space_charge_instantaneous_clock", "legacy_same_index"
+            ),
             space_charge_min_retarded_steps=getattr(
                 options, "space_charge_min_retarded_steps", None
             ),
@@ -662,6 +670,9 @@ class OptimizationConfig:
             external_field_z_max=getattr(options, "external_field_z_max", None),
             external_field_t_min=getattr(options, "external_field_t_min", None),
             external_field_t_max=getattr(options, "external_field_t_max", None),
+            source_history_representation=getattr(
+                options, "source_history_representation", "light_cone_quintic"
+            ),
             radiation_reaction_mode=getattr(
                 options,
                 "radiation_reaction_mode",

@@ -8,15 +8,32 @@ and example notebooks.
 
 from __future__ import annotations
 
+from .resolved_knot import RESOLVED_KNOT_FIELDS
+
 import copy
 from dataclasses import dataclass, field, fields
 from enum import Enum, IntEnum, auto
 from itertools import count
-from typing import Dict, List, Mapping, Sequence, cast
+from typing import TYPE_CHECKING, Dict, List, Mapping, Sequence, cast
+
+if TYPE_CHECKING:
+    from .external_field_provider import ExternalFieldProvider
+
 
 import numpy as np
 
 from .constants import C_MMNS
+
+INERTIAL_CHARGE_BOUNDARY_FIELDS = (
+    "inertial_charge_boundary_ready",
+    "inertial_charge_boundary_time_ns",
+    "inertial_charge_boundary_position_x",
+    "inertial_charge_boundary_position_y",
+    "inertial_charge_boundary_position_z",
+    "inertial_charge_boundary_u_x",
+    "inertial_charge_boundary_u_y",
+    "inertial_charge_boundary_u_z",
+)
 
 ParticleState = Dict[str, np.ndarray]
 Trajectory = List[ParticleState]
@@ -43,6 +60,10 @@ class _TrajectoryStorageState:
     generation: int = 0
     rewrite_epoch: int = 0
     array_revision: int = 0
+    # Capacity replacements preserve all existing values. Keep their count
+    # separate so prepared providers can retain owned prefix data, while old
+    # trajectory wrappers still fail the ordinary array-revision check.
+    capacity_revision: int = 0
 
     def __deepcopy__(self, memo: dict[int, object]) -> "_TrajectoryStorageState":
         """Copy one storage graph while minting a collision-free token."""
@@ -50,13 +71,14 @@ class _TrajectoryStorageState:
         copied = _TrajectoryStorageState(
             capacity=self.capacity,
             generation=self.generation,
+            capacity_revision=self.capacity_revision,
             rewrite_epoch=self.rewrite_epoch,
             array_revision=self.array_revision,
         )
         memo[id(self)] = copied
         return copied
 
-    def __reduce__(self) -> tuple[object, tuple[int, int, int, int]]:
+    def __reduce__(self) -> tuple[object, tuple[int, int, int, int, int]]:
         """Never persist a process-local allocation token through pickle."""
 
         return (
@@ -66,6 +88,7 @@ class _TrajectoryStorageState:
                 self.generation,
                 self.rewrite_epoch,
                 self.array_revision,
+                self.capacity_revision,
             ),
         )
 
@@ -75,12 +98,14 @@ def _restore_trajectory_storage_state(
     generation: int,
     rewrite_epoch: int,
     array_revision: int,
+    capacity_revision: int = 0,
 ) -> _TrajectoryStorageState:
     return _TrajectoryStorageState(
         capacity=capacity,
         generation=generation,
         rewrite_epoch=rewrite_epoch,
         array_revision=array_revision,
+        capacity_revision=capacity_revision,
     )
 
 
@@ -102,19 +127,33 @@ class SimulationType(IntEnum):
 
 
 class ChronoMatchingMode(Enum):
-    """Retardation sampling strategies used by chrono-matching.
+    """Retardation sampling strategies used by sampled chrono-matching.
 
-    ``FAST`` (default) reproduces the historical implementation by evaluating
-    the causal delay once using the instantaneous dot product of particle
-    velocity and the line-of-sight unit vector (``Δt = R (1 + β·n̂) / c``).
+    Both modes estimate the delay ``Δt = t_obs - t_ret`` from the source sample
+    at the current source step, then search the recorded source history for the
+    sample nearest ``t_src - Δt``. Here ``R`` is the distance from that source
+    sample to the observer, ``n̂ = (x_obs - x_src) / R`` is the unit vector
+    **from the source to the observer**, and ``β`` is the source velocity at
+    that sample.
 
-    ``AVERAGED`` is reserved for internal use with ``APPROXIMATE_BACK_HISTORY``
-    startup mode. It samples two limiting cases—first assuming the source
-    particle is stationary (``R / c``) and then assuming it moves at the speed
-    of light in the line-of-sight direction (``2R / c``). The averaged dot
-    product from those two samples is used to compute the retardation interval.
-    This mode should NOT be used in production until APPROXIMATE_BACK_HISTORY
-    is fully implemented and validated.
+    ``FAST`` (default for every entry point and API function) evaluates
+
+        ``Δt = R (1 + β·n̂) / (c (1 - (β·n̂)²)) = R / (c (1 - β·n̂))``
+
+    with ``1 - (β·n̂)²`` clamped to ``±1e-12``; when ``|1 - β·n̂| < 1e-15`` it
+    falls back to ten characteristic times. A source moving towards the
+    observer (``β·n̂ > 0``) therefore gets a longer delay. This equals the exact
+    uniform-motion light-cone delay only when ``β`` is parallel to ``n̂``;
+    otherwise it is the maintained estimate that the history search then
+    refines by nearest-sample (or linearly interpolated) matching.
+
+    ``AVERAGED`` is a diagnostic alternative. It samples the source history at
+    ``R / c`` and ``2R / c`` before the current source time, averages the two
+    ``β·n̂`` projections and uses the averaged projection in the same delay
+    formula. It has no effect under ``APPROXIMATE_BACK_HISTORY`` (that startup
+    mode bypasses sampled chrono matching for external sources), on the exact
+    RFS/dipole ``INERTIAL_PREHISTORY`` path, or for same-bunch space charge
+    (always ``FAST``).
     """
 
     FAST = auto()
@@ -250,9 +289,16 @@ class MacroparticleSmearingConfig:
         ):
             if value is not None and value < 0.0:
                 raise ValueError(f"macroparticle smearing {name} must be non-negative")
-        if self.refresh_policy not in {"fixed_per_particle", "per_step"}:
+        if self.refresh_policy not in {
+            "fixed_per_particle",
+            "legacy_fixed_per_particle",
+            "legacy_per_step",
+            "per_step",
+        }:
             raise ValueError(
-                "macroparticle smearing refresh_policy must be fixed_per_particle or per_step"
+                "macroparticle smearing refresh_policy must be fixed_per_particle, "
+                "legacy_fixed_per_particle, or legacy_per_step "
+                "(per_step is a compatibility alias)"
             )
         if self.apply_to_passive_updates:
             raise ValueError(
@@ -836,6 +882,8 @@ class MagneticDipoleConfig:
     exact_retarded_backend: str = "python"
     exact_retarded_update: str = "first_order_endpoint"
     intrinsic_spin_self_reaction_mode: str = "off"
+    # Bound by the integration runner for persistent charge-only clouds.
+    exact_charge_cloud: MacroparticleSmearingConfig | None = None
     source: DipoleSourceConfig = field(default_factory=DipoleSourceConfig)
     rider: MagneticDipoleParticleConfig = field(
         default_factory=lambda: MagneticDipoleParticleConfig(species="electron")
@@ -847,6 +895,10 @@ class MagneticDipoleConfig:
     def __post_init__(self) -> None:
         self.enabled = bool(self.enabled)
         self.spin_precession_enabled = bool(self.spin_precession_enabled)
+        if isinstance(self.exact_charge_cloud, dict):
+            self.exact_charge_cloud = MacroparticleSmearingConfig(
+                **self.exact_charge_cloud
+            )
         self.stern_gerlach_force_enabled = bool(self.stern_gerlach_force_enabled)
         self.spin_model = str(self.spin_model).strip().lower()
         self.stern_gerlach_model = str(self.stern_gerlach_model).strip().lower()
@@ -953,17 +1005,32 @@ class MagneticDipoleConfig:
 
 @dataclass
 class AdaptivePairReturnConfig:
-    """Checkpointable shared-lab-time integration for one exact particle pair.
+    """Checkpointable shared-lab-time integration for exact source bunches.
 
-    The mode is deliberately narrow: one rider and one driver, exact inertial
-    prehistory, causal-frozen spin history, step doubling, and joint pair
-    commits. ``time_step`` remains the initial proper-time guess; the factors
+    Multiple particles per bunch require charge sources with spin self-reaction
+    off. Every particle reaches a shared lab-time barrier; step doubling retains
+    accepted midpoints and jointly commits both bunches. One-particle roles
+    retain the existing dipole and spin-reaction support. ``time_step`` remains the initial proper-time guess; the factors
     below bound the adaptive shared-lab-time slab relative to that value.
+    ``diagnostics_absolute_tolerance_native`` optionally supplies an absolute
+    native-energy budget for radiation, recoil work, and mass-shell projection.
+    None preserves the original scaled tolerance. ``diagnostic_ulp_floor`` is
+    default-off. When enabled, diagnostic acceptance uses at least
+    ``diagnostic_ulp_multiplier`` ulps of its reference, and entries dominated
+    by that budget are excluded from accepted-step proposals. On rejection,
+    their above-floor excess can request a shrink using the unchanged physical
+    diagnostic tolerance, with a unit lower bound to ensure progress. Projection uses
+    per-observer endpoint kinetic energy; other increments use their magnitudes.
+    Position, momentum, spin, and health guards retain their original scales.
     """
 
     enabled: bool = False
     target_lab_time_ns: float | None = None
     tolerance_scale: float = 1.0
+    diagnostics_absolute_tolerance_native: float | None = None
+    diagnostic_ulp_floor: bool = False
+    diagnostic_ulp_multiplier: float = 4.0
+    position_momentum_tolerance_scale: float = 1.0
     minimum_step_factor: float = 1.0 / 64.0
     maximum_step_factor: float = 64.0
     public_sample_interval_ns: float | None = None
@@ -974,8 +1041,24 @@ class AdaptivePairReturnConfig:
 
     def __post_init__(self) -> None:
         self.enabled = bool(self.enabled)
+        self.diagnostic_ulp_floor = bool(self.diagnostic_ulp_floor)
+        self.diagnostic_ulp_multiplier = float(self.diagnostic_ulp_multiplier)
+        self.position_momentum_tolerance_scale = float(
+            self.position_momentum_tolerance_scale
+        )
         if self.target_lab_time_ns is not None:
             self.target_lab_time_ns = float(self.target_lab_time_ns)
+        if self.diagnostics_absolute_tolerance_native is not None:
+            self.diagnostics_absolute_tolerance_native = float(
+                self.diagnostics_absolute_tolerance_native
+            )
+            if (
+                not np.isfinite(self.diagnostics_absolute_tolerance_native)
+                or self.diagnostics_absolute_tolerance_native <= 0
+            ):
+                raise ValueError(
+                    "diagnostics_absolute_tolerance_native must be finite and positive"
+                )
         self.tolerance_scale = float(self.tolerance_scale)
         self.minimum_step_factor = float(self.minimum_step_factor)
         self.maximum_step_factor = float(self.maximum_step_factor)
@@ -990,6 +1073,11 @@ class AdaptivePairReturnConfig:
 
         positive = (
             ("tolerance_scale", self.tolerance_scale),
+            ("diagnostic_ulp_multiplier", self.diagnostic_ulp_multiplier),
+            (
+                "position_momentum_tolerance_scale",
+                self.position_momentum_tolerance_scale,
+            ),
             ("minimum_step_factor", self.minimum_step_factor),
             ("maximum_step_factor", self.maximum_step_factor),
         )
@@ -1076,6 +1164,8 @@ class IntegratorConfig:
     radiation_reaction_mode:
         Radiation-reaction handling mode forwarded to the canonical integrator.
         Defaults to ``"medina_lad"`` for user-facing runs.
+        ``"medina_lad_validity"`` opts into rest-frame and step validity checks
+        without clipping the reaction impulse.
     macroparticle_charge_multiplier:
         Multiplier for particle and image charges in macroparticle simulations.
         Defaults to ``1.0`` (no scaling). Use > 1.0 for macroparticle mode.
@@ -1123,6 +1213,7 @@ class IntegratorConfig:
     z_cutoff_mode: str = "absolute"
     image_subcharge_count: int = 12
     use_image_weighting: bool = True
+    source_history_representation: str = "light_cone_quintic"
     radiation_reaction_mode: str = "medina_lad"
     macroparticle_charge_multiplier: float = 1.0
     macroparticle_sigma_multiplier: float = 1.0
@@ -1144,6 +1235,19 @@ class IntegratorConfig:
     adaptive_pair_return: AdaptivePairReturnConfig = field(
         default_factory=AdaptivePairReturnConfig
     )
+
+    stochastic_emission: object = None
+
+    def __post_init__(self) -> None:
+        from .proper_velocity_history import validate_source_history_representation
+        from .stochastic_emission import StochasticEmissionConfig
+
+        self.stochastic_emission = StochasticEmissionConfig.from_dict(
+            self.stochastic_emission
+        )
+        self.source_history_representation = validate_source_history_representation(
+            self.source_history_representation
+        )
 
 
 @dataclass
@@ -1224,7 +1328,23 @@ class SpaceChargeConfig:
         None  # None = auto from bunch_sigma_mm / (c * h_step)
     )
 
+    # Preserve the existing clock unless simultaneous lab sampling is requested.
+    instantaneous_clock: str = "legacy_same_index"
+
+    @property
+    def synchronizes_lab_time(self) -> bool:
+        """Include auto startup and adaptive returns to instantaneous forces."""
+        return (
+            self.enabled
+            and self.instantaneous_clock == "lab_time"
+            and (not self.retarded or self.min_retarded_steps != 0)
+        )
+
     def __post_init__(self) -> None:
+        if self.instantaneous_clock not in {"lab_time", "legacy_same_index"}:
+            raise ValueError(
+                "space-charge instantaneous_clock must be lab_time or legacy_same_index"
+            )
         if self.softening_mm < 0.0:
             raise ValueError("space-charge softening_mm must be non-negative")
         if self.bunch_sigma_mm <= 0.0:
@@ -1261,8 +1381,15 @@ class ExternalFieldConfig:
 
     This first implementation supports uniform fields, plus an optional linear
     magnetic-field gradient in SI T/m, with simple spatial/temporal windows.
-    More general field maps or callable field providers can build on the same
-    integrator hook later.
+    ``provider`` optionally supplies smooth spatial fields and analytic first
+    field derivatives; see ``core.external_field_provider``. It replaces the
+    configured fields and cannot be combined with hard windows.
+    The default non-exact route is first order in dt for provider fields.
+    Prefer the exact ``second_order_start_taylor_endpoint`` route with
+    ``INERTIAL_PREHISTORY`` for channeling and energy-loss claims, and check
+    timestep convergence. Analytic Medina/LAD derivatives do not by themselves
+    make the trajectory update second order. Checkpointing requires a dataclass
+    provider with serializable fields; plain functions are unsupported there.
     """
 
     enabled: bool = True
@@ -1282,7 +1409,25 @@ class ExternalFieldConfig:
     t_min: float | None = None
     t_max: float | None = None
 
+    provider: ExternalFieldProvider | None = None
+
     def __post_init__(self) -> None:
+        if self.provider is not None:
+            if not callable(self.provider):
+                raise ValueError("external field provider must be callable")
+            if (
+                np.any(self.electric_field_native)
+                or np.any(self.magnetic_field_native)
+                or np.any(self.magnetic_field_gradient_t_per_m)
+                or any(
+                    getattr(self, f"{axis}_{side}") is not None
+                    for axis in "xyzt"
+                    for side in ("min", "max")
+                )
+            ):
+                raise ValueError(
+                    "provider replaces base fields and requires smooth provider-owned windows"
+                )
         gradient = np.asarray(self.magnetic_field_gradient_t_per_m, dtype=float)
         if gradient.shape != (3, 3) or not np.all(np.isfinite(gradient)):
             raise ValueError(
@@ -1417,6 +1562,82 @@ class TrajectoryArrays:
     particle_failure_info: dict  # keyed by (step, particle_idx)
     pseudo_grid_schedule: list  # length n_steps, object or None
 
+    medina_provider_force_x: np.ndarray = field(
+        default_factory=lambda: np.zeros((0, 0)), repr=False
+    )
+    medina_provider_force_y: np.ndarray = field(
+        default_factory=lambda: np.zeros((0, 0)), repr=False
+    )
+    medina_provider_force_z: np.ndarray = field(
+        default_factory=lambda: np.zeros((0, 0)), repr=False
+    )
+
+    # Optional analytic inertial boundary constants. The quintic knots and
+    # their derivatives retain their existing representation.
+    inertial_charge_boundary_ready: np.ndarray = field(
+        default_factory=lambda: np.zeros(0), repr=False
+    )
+    inertial_charge_boundary_time_ns: np.ndarray = field(
+        default_factory=lambda: np.zeros(0), repr=False
+    )
+    inertial_charge_boundary_position_x: np.ndarray = field(
+        default_factory=lambda: np.zeros(0), repr=False
+    )
+    inertial_charge_boundary_position_y: np.ndarray = field(
+        default_factory=lambda: np.zeros(0), repr=False
+    )
+    inertial_charge_boundary_position_z: np.ndarray = field(
+        default_factory=lambda: np.zeros(0), repr=False
+    )
+    inertial_charge_boundary_u_x: np.ndarray = field(
+        default_factory=lambda: np.zeros(0), repr=False
+    )
+    inertial_charge_boundary_u_y: np.ndarray = field(
+        default_factory=lambda: np.zeros(0), repr=False
+    )
+    inertial_charge_boundary_u_z: np.ndarray = field(
+        default_factory=lambda: np.zeros(0), repr=False
+    )
+
+    # Resolved charge-knot sidecars; empty on pre-stage-2 unmanaged histories.
+    source_u_x: np.ndarray = field(default_factory=lambda: np.zeros((0, 0)), repr=False)
+    source_u_y: np.ndarray = field(default_factory=lambda: np.zeros((0, 0)), repr=False)
+    source_u_z: np.ndarray = field(default_factory=lambda: np.zeros((0, 0)), repr=False)
+    source_kinematics_ready: np.ndarray = field(
+        default_factory=lambda: np.zeros((0, 0)), repr=False
+    )
+    source_position_low_x: np.ndarray = field(
+        default_factory=lambda: np.zeros((0, 0)), repr=False
+    )
+    source_position_low_y: np.ndarray = field(
+        default_factory=lambda: np.zeros((0, 0)), repr=False
+    )
+    source_position_low_z: np.ndarray = field(
+        default_factory=lambda: np.zeros((0, 0)), repr=False
+    )
+    source_time_low_ns: np.ndarray = field(
+        default_factory=lambda: np.zeros((0, 0)), repr=False
+    )
+
+    source_position_tail_x: np.ndarray = field(
+        default_factory=lambda: np.zeros((0, 0)), repr=False
+    )
+    source_position_tail_y: np.ndarray = field(
+        default_factory=lambda: np.zeros((0, 0)), repr=False
+    )
+    source_position_tail_z: np.ndarray = field(
+        default_factory=lambda: np.zeros((0, 0)), repr=False
+    )
+    source_time_tail_ns: np.ndarray = field(
+        default_factory=lambda: np.zeros((0, 0)), repr=False
+    )
+    source_history_mode: np.ndarray = field(
+        default_factory=lambda: np.empty((0, 0), dtype=float)
+    )
+    source_speed_deficit: np.ndarray = field(
+        default_factory=lambda: np.zeros((0, 0)), repr=False
+    )
+
     # Builder-owned live metadata. Manually constructed SOA objects deliberately
     # leave this unset and are therefore not eligible for persistent caches.
     _storage_state: _TrajectoryStorageState | None = field(
@@ -1429,6 +1650,28 @@ class TrajectoryArrays:
         repr=False,
         compare=False,
     )
+
+    potential_inclusion_delta_A_x: np.ndarray = field(default=None, repr=False)
+    potential_inclusion_delta_A_y: np.ndarray = field(default=None, repr=False)
+    potential_inclusion_delta_A_z: np.ndarray = field(default=None, repr=False)
+    potential_inclusion_delta_A_t: np.ndarray = field(default=None, repr=False)
+    sampled_source_canonical_ready: np.ndarray = field(default=None, repr=False)
+    potential_inclusion_state: np.ndarray = field(default=None, repr=False)
+
+    def __post_init__(self) -> None:
+        shape = self.x.shape
+        if self.potential_inclusion_delta_A_x is None:
+            self.potential_inclusion_delta_A_x = np.zeros(shape, dtype=float)
+        if self.potential_inclusion_delta_A_y is None:
+            self.potential_inclusion_delta_A_y = np.zeros(shape, dtype=float)
+        if self.potential_inclusion_delta_A_z is None:
+            self.potential_inclusion_delta_A_z = np.zeros(shape, dtype=float)
+        if self.potential_inclusion_delta_A_t is None:
+            self.potential_inclusion_delta_A_t = np.zeros(shape, dtype=float)
+        if self.sampled_source_canonical_ready is None:
+            self.sampled_source_canonical_ready = np.zeros(shape, dtype=bool)
+        if self.potential_inclusion_state is None:
+            self.potential_inclusion_state = np.full(shape, "", dtype="U1")
 
     @property
     def n_steps(self) -> int:
@@ -1540,6 +1783,14 @@ class TrajectoryArrays:
             "beta_samples": self.beta_samples[step],
             "_dead_particles": self.dead[step],
         }
+        for name in RESOLVED_KNOT_FIELDS:
+            values = getattr(self, name)
+            if values.shape == self.x.shape:
+                s[name] = values[step]
+        if np.any(self.inertial_charge_boundary_ready):
+            s.update(
+                {key: getattr(self, key) for key in INERTIAL_CHARGE_BOUNDARY_FIELDS}
+            )
         if self.halted_early[step]:
             metadata = cast(Dict[str, object], s)
             metadata["_halted_early"] = bool(self.halted_early[step])
@@ -1566,6 +1817,17 @@ class TrajectoryArrays:
                     "medina_external_force_sample_time": (
                         self.medina_external_force_sample_time[step]
                     ),
+                }
+            )
+        if self.medina_provider_force_x.shape == self.x.shape and any(
+            np.any(getattr(self, f"medina_provider_force_{a}")[step]) for a in "xyz"
+        ):
+            s.update(
+                {
+                    f"medina_provider_force_{a}": getattr(
+                        self, f"medina_provider_force_{a}"
+                    )[step]
+                    for a in "xyz"
                 }
             )
         if np.any(self.magnetic_dipole_active):
@@ -1598,6 +1860,12 @@ class TrajectoryArrays:
                     "stern_gerlach_active": self.stern_gerlach_active,
                 }
             )
+        s.update(
+            {
+                name: getattr(self, name)[step]
+                for name in TrajectoryBuilder._INCLUSION_FIELDS
+            }
+        )
         return s
 
     def to_legacy(self) -> "Trajectory":
@@ -1807,6 +2075,13 @@ class IndexedTrajectoryArrays:
                 self.particle_indices,
             ],
         }
+        for name in RESOLVED_KNOT_FIELDS:
+            if getattr(self.base, name).shape == self.base.x.shape:
+                state[name] = self.row(name, step)
+        if np.any(self.base.inertial_charge_boundary_ready):
+            state.update(
+                {key: self.constant(key) for key in INERTIAL_CHARGE_BOUNDARY_FIELDS}
+            )
         pseudo_grid_schedule = self.base.pseudo_grid_schedule[global_step]
         if pseudo_grid_schedule is not None:
             state["_pseudo_grid_schedule"] = pseudo_grid_schedule
@@ -1838,6 +2113,17 @@ class IndexedTrajectoryArrays:
                     "medina_external_force_sample_time": self.row(
                         "medina_external_force_sample_time", step
                     ),
+                }
+            )
+        if self.base.medina_provider_force_x.shape == self.base.x.shape and any(
+            np.any(self.row(f"medina_provider_force_{a}", step)) for a in "xyz"
+        ):
+            state.update(
+                {
+                    f"medina_provider_force_{a}": self.row(
+                        f"medina_provider_force_{a}", step
+                    )
+                    for a in "xyz"
                 }
             )
         if self.base.halted_early[global_step]:
@@ -1883,6 +2169,9 @@ class IndexedTrajectoryArrays:
                     "stern_gerlach_active": self.constant("stern_gerlach_active"),
                 }
             )
+        state.update(
+            {name: self.row(name, step) for name in TrajectoryBuilder._INCLUSION_FIELDS}
+        )
         return state
 
     def to_legacy(self) -> "Trajectory":
@@ -1897,33 +2186,47 @@ class TrajectoryBuilder:
     """
 
     # Fields present in legacy state dicts that map to 2-D kinematic arrays
+    _INCLUSION_FLOAT_FIELDS: tuple = (
+        "potential_inclusion_delta_A_x",
+        "potential_inclusion_delta_A_y",
+        "potential_inclusion_delta_A_z",
+        "potential_inclusion_delta_A_t",
+    )
+    _INCLUSION_FIELDS: tuple = _INCLUSION_FLOAT_FIELDS + (
+        "sampled_source_canonical_ready",
+        "potential_inclusion_state",
+    )
     _KINEMATIC_FIELDS: tuple = (
-        "x",
-        "y",
-        "z",
-        "t",
-        "Px",
-        "Py",
-        "Pz",
-        "Pt",
-        "gamma",
-        "bx",
-        "by",
-        "bz",
-        "bdotx",
-        "bdoty",
-        "bdotz",
-        "radiation_power",
-        "radiation_energy",
-        "radiation_energy_applied",
-        "mass_shell_projection_energy",
-        "origin_x",
-        "origin_y",
-        "origin_z",
-        "beta_avg_x",
-        "beta_avg_y",
-        "beta_avg_z",
-        "beta_samples",
+        RESOLVED_KNOT_FIELDS
+        + (
+            "x",
+            "y",
+            "z",
+            "t",
+            "Px",
+            "Py",
+            "Pz",
+            "Pt",
+            "gamma",
+            "bx",
+            "by",
+            "bz",
+            "bdotx",
+            "bdoty",
+            "bdotz",
+            "radiation_power",
+            "radiation_energy",
+            "radiation_energy_applied",
+            "mass_shell_projection_energy",
+            "origin_x",
+            "origin_y",
+            "origin_z",
+            "beta_avg_x",
+            "beta_avg_y",
+            "beta_avg_z",
+            "beta_samples",
+        )
+        + _INCLUSION_FLOAT_FIELDS
     )
     _SOURCE_START_FLOAT_FIELDS: tuple = (
         "source_start_beta_prime_x_per_mm",
@@ -1946,13 +2249,21 @@ class TrajectoryBuilder:
         "medina_external_force_x",
         "medina_external_force_y",
         "medina_external_force_z",
+        "medina_provider_force_x",
+        "medina_provider_force_y",
+        "medina_provider_force_z",
         "medina_external_force_sample_time",
+    )
+    _PROVIDER_FLOAT_FIELDS: tuple = (
+        "medina_provider_force_x",
+        "medina_provider_force_y",
+        "medina_provider_force_z",
     )
     _MEDINA_BOOL_FIELDS: tuple = (
         "medina_force_derivative_ready",
         "medina_impulse_capped",
     )
-    _PARTICLE_CONST_FIELDS: tuple = (
+    _PARTICLE_CONST_FIELDS: tuple = INERTIAL_CHARGE_BOUNDARY_FIELDS + (
         "q",
         "q_species",
         "q_observer",
@@ -1977,6 +2288,7 @@ class TrajectoryBuilder:
         self._n_particles = n_particles
         self._magnetic_arrays_allocated = bool(magnetic_dipole)
         self._medina_arrays_allocated = False
+        self._provider_arrays_allocated = False
         self._storage_state = _TrajectoryStorageState(capacity=int(n_steps))
         self._published_stop = 0
 
@@ -2017,6 +2329,12 @@ class TrajectoryBuilder:
                 (n_steps, n_particles),
             )
         self._arrays["dead"] = np.zeros((n_steps, n_particles), dtype=bool)
+        self._arrays["sampled_source_canonical_ready"] = np.zeros(
+            (n_steps, n_particles), dtype=bool
+        )
+        self._arrays["potential_inclusion_state"] = np.full(
+            (n_steps, n_particles), "", dtype="U1"
+        )
 
         for field_name in self._PARTICLE_CONST_FIELDS:
             self._arrays[field_name] = np.zeros(n_particles, dtype=np.float64)
@@ -2041,7 +2359,11 @@ class TrajectoryBuilder:
             raise ValueError("new trajectory capacity must exceed the old capacity")
 
         old_capacity = self._n_steps
-        always_allocated = set(self._KINEMATIC_FIELDS) | {"dead"}
+        always_allocated = set(self._KINEMATIC_FIELDS) | {
+            "dead",
+            "sampled_source_canonical_ready",
+            "potential_inclusion_state",
+        }
         magnetic_fields = set(self._MAGNETIC_KINEMATIC_FIELDS)
         magnetic_bool_fields = set(self._MAGNETIC_BOOL_FIELDS)
         medina_float_fields = set(self._MEDINA_FLOAT_FIELDS)
@@ -2065,6 +2387,14 @@ class TrajectoryBuilder:
             ):
                 replacement = np.broadcast_to(
                     np.array(False, dtype=bool),
+                    (new_capacity, self._n_particles),
+                )
+            elif (
+                field_name in self._PROVIDER_FLOAT_FIELDS
+                and not self._provider_arrays_allocated
+            ):
+                replacement = np.broadcast_to(
+                    np.array(0.0, dtype=np.float64),
                     (new_capacity, self._n_particles),
                 )
             elif (
@@ -2100,8 +2430,19 @@ class TrajectoryBuilder:
 
         self._n_steps = new_capacity
         self._storage_state.capacity = new_capacity
+        self._storage_state.capacity_revision += 1
         self._storage_state.rewrite_epoch += 1
         self._storage_state.array_revision += 1
+
+    def _ensure_inclusion_string_width(self, values: np.ndarray) -> None:
+        width = max(1, np.asarray(values, dtype=str).dtype.itemsize // 4)
+        target = self._arrays["potential_inclusion_state"]
+        if target.dtype.itemsize // 4 < width:
+            self._arrays["potential_inclusion_state"] = target.astype(
+                f"U{2 ** (width - 1).bit_length()}"
+            )
+            self._storage_state.array_revision += 1
+            self._storage_state.rewrite_epoch += 1
 
     def set_step(self, step: int, state: ParticleState) -> None:
         """Copy *state* fields into row *step* of the pre-allocated arrays."""
@@ -2137,6 +2478,8 @@ class TrajectoryBuilder:
             field_name in state for field_name in medina_fields
         ):
             for field_name in self._MEDINA_FLOAT_FIELDS:
+                if field_name in self._PROVIDER_FLOAT_FIELDS:
+                    continue
                 if field_name == "medina_external_force_sample_time":
                     self._arrays[field_name] = np.full(
                         (self._n_steps, self._n_particles),
@@ -2157,10 +2500,26 @@ class TrajectoryBuilder:
             self._storage_state.rewrite_epoch += 1
             self._storage_state.array_revision += 1
 
+        if not self._provider_arrays_allocated and any(
+            field_name in state for field_name in self._PROVIDER_FLOAT_FIELDS
+        ):
+            self._allocate_provider_arrays()
+            self._storage_state.rewrite_epoch += 1
+
         for field_name in self._KINEMATIC_FIELDS + magnetic_fields + medina_fields:
             if field_name in state:
                 self._arrays[field_name][step] = state[field_name]
             # else leave as zero (already pre-allocated)
+
+        if "potential_inclusion_state" in state:
+            self._ensure_inclusion_string_width(state["potential_inclusion_state"])
+            self._arrays["potential_inclusion_state"][step] = state[
+                "potential_inclusion_state"
+            ]
+        if "sampled_source_canonical_ready" in state:
+            self._arrays["sampled_source_canonical_ready"][step] = state[
+                "sampled_source_canonical_ready"
+            ]
 
         dead = state.get("_dead_particles")
         if dead is not None:
@@ -2213,6 +2572,15 @@ class TrajectoryBuilder:
                 raise ValueError(f"{field_name} must contain only finite values")
             self._arrays[field_name][step] = values
 
+    def _allocate_provider_arrays(self) -> None:
+        """Materialize provider history only when a state or checkpoint has it."""
+        for field_name in self._PROVIDER_FLOAT_FIELDS:
+            self._arrays[field_name] = np.zeros(
+                (self._n_steps, self._n_particles), dtype=np.float64
+            )
+        self._provider_arrays_allocated = True
+        self._storage_state.array_revision += 1
+
     def restore_checkpoint_rows(
         self,
         start: int,
@@ -2261,6 +2629,8 @@ class TrajectoryBuilder:
             self._storage_state.array_revision += 1
         if not self._medina_arrays_allocated and medina_fields & row_arrays.keys():
             for field_name in self._MEDINA_FLOAT_FIELDS:
+                if field_name in self._PROVIDER_FLOAT_FIELDS:
+                    continue
                 fill = (
                     np.nan if field_name == "medina_external_force_sample_time" else 0.0
                 )
@@ -2273,6 +2643,10 @@ class TrajectoryBuilder:
                 )
             self._medina_arrays_allocated = True
             self._storage_state.array_revision += 1
+        if not self._provider_arrays_allocated and (
+            set(self._PROVIDER_FLOAT_FIELDS) & row_arrays.keys()
+        ):
+            self._allocate_provider_arrays()
 
         expected_row_fields = set(
             self._KINEMATIC_FIELDS
@@ -2280,7 +2654,7 @@ class TrajectoryBuilder:
             + self._MAGNETIC_BOOL_FIELDS
             + self._MEDINA_FLOAT_FIELDS
             + self._MEDINA_BOOL_FIELDS
-            + ("dead",)
+            + ("dead", "sampled_source_canonical_ready", "potential_inclusion_state")
         )
         # Fixed-step checkpoint schema 1 predates the exact-pair source-start
         # acceleration sidecars. Those fields have a safe all-zero/unready
@@ -2288,7 +2662,16 @@ class TrajectoryBuilder:
         optional_source_start_fields = set(
             self._SOURCE_START_FLOAT_FIELDS + self._MAGNETIC_BOOL_FIELDS
         )
-        missing = expected_row_fields - optional_source_start_fields - row_arrays.keys()
+        optional_source_start_fields.update(self._INCLUSION_FIELDS)
+        optional_source_start_fields.update(self._PROVIDER_FLOAT_FIELDS)
+        if "potential_inclusion_state" in row_arrays:
+            self._ensure_inclusion_string_width(row_arrays["potential_inclusion_state"])
+        missing = (
+            expected_row_fields
+            - optional_source_start_fields
+            - set(RESOLVED_KNOT_FIELDS)
+            - row_arrays.keys()
+        )
         if missing:
             raise ValueError(
                 "checkpoint row block is missing fields: " + ", ".join(sorted(missing))
@@ -2317,7 +2700,9 @@ class TrajectoryBuilder:
 
         if particle_constants is not None:
             missing_constants = (
-                set(self._PARTICLE_CONST_FIELDS) - particle_constants.keys()
+                set(self._PARTICLE_CONST_FIELDS)
+                - set(INERTIAL_CHARGE_BOUNDARY_FIELDS)
+                - particle_constants.keys()
             )
             if missing_constants:
                 raise ValueError(
@@ -2325,6 +2710,8 @@ class TrajectoryBuilder:
                     + ", ".join(sorted(missing_constants))
                 )
             for field_name in self._PARTICLE_CONST_FIELDS:
+                if field_name not in particle_constants:
+                    continue
                 values = np.asarray(particle_constants[field_name])
                 target = self._arrays[field_name]
                 if values.shape != target.shape:
@@ -2380,6 +2767,7 @@ class TrajectoryBuilder:
             bx=self._arrays["bx"][:s],
             by=self._arrays["by"][:s],
             bz=self._arrays["bz"][:s],
+            **{name: self._arrays[name][:s] for name in RESOLVED_KNOT_FIELDS},
             bdotx=self._arrays["bdotx"][:s],
             bdoty=self._arrays["bdoty"][:s],
             bdotz=self._arrays["bdotz"][:s],
@@ -2410,6 +2798,9 @@ class TrajectoryBuilder:
                 :s
             ],
             medina_impulse_capped=self._arrays["medina_impulse_capped"][:s],
+            medina_provider_force_x=self._arrays["medina_provider_force_x"][:s],
+            medina_provider_force_y=self._arrays["medina_provider_force_y"][:s],
+            medina_provider_force_z=self._arrays["medina_provider_force_z"][:s],
             medina_external_force_x=self._arrays["medina_external_force_x"][:s],
             medina_external_force_y=self._arrays["medina_external_force_y"][:s],
             medina_external_force_z=self._arrays["medina_external_force_z"][:s],
@@ -2430,6 +2821,24 @@ class TrajectoryBuilder:
             local_magnetic_field_y_t=self._arrays["local_magnetic_field_y_t"][:s],
             local_magnetic_field_z_t=self._arrays["local_magnetic_field_z_t"][:s],
             dead=self._arrays["dead"][:s],
+            inertial_charge_boundary_ready=self._arrays[
+                "inertial_charge_boundary_ready"
+            ],
+            inertial_charge_boundary_time_ns=self._arrays[
+                "inertial_charge_boundary_time_ns"
+            ],
+            inertial_charge_boundary_position_x=self._arrays[
+                "inertial_charge_boundary_position_x"
+            ],
+            inertial_charge_boundary_position_y=self._arrays[
+                "inertial_charge_boundary_position_y"
+            ],
+            inertial_charge_boundary_position_z=self._arrays[
+                "inertial_charge_boundary_position_z"
+            ],
+            inertial_charge_boundary_u_x=self._arrays["inertial_charge_boundary_u_x"],
+            inertial_charge_boundary_u_y=self._arrays["inertial_charge_boundary_u_y"],
+            inertial_charge_boundary_u_z=self._arrays["inertial_charge_boundary_u_z"],
             q=self._arrays["q"],
             q_species=self._arrays["q_species"],
             q_observer=self._arrays["q_observer"],
@@ -2450,6 +2859,22 @@ class TrajectoryBuilder:
             halt_reason=self._halt_reason,
             particle_failure_info=self._particle_failure_info,
             pseudo_grid_schedule=self._pseudo_grid_schedule[:s],
+            potential_inclusion_delta_A_x=self._arrays["potential_inclusion_delta_A_x"][
+                :s
+            ],
+            potential_inclusion_delta_A_y=self._arrays["potential_inclusion_delta_A_y"][
+                :s
+            ],
+            potential_inclusion_delta_A_z=self._arrays["potential_inclusion_delta_A_z"][
+                :s
+            ],
+            potential_inclusion_delta_A_t=self._arrays["potential_inclusion_delta_A_t"][
+                :s
+            ],
+            sampled_source_canonical_ready=self._arrays[
+                "sampled_source_canonical_ready"
+            ][:s],
+            potential_inclusion_state=self._arrays["potential_inclusion_state"][:s],
             _storage_state=self._storage_state,
             _storage_array_revision=self._storage_state.array_revision,
         )._make_managed_arrays_read_only()
@@ -2470,6 +2895,7 @@ class TrajectoryBuilder:
             bx=self._arrays["bx"],
             by=self._arrays["by"],
             bz=self._arrays["bz"],
+            **{name: self._arrays[name] for name in RESOLVED_KNOT_FIELDS},
             bdotx=self._arrays["bdotx"],
             bdoty=self._arrays["bdoty"],
             bdotz=self._arrays["bdotz"],
@@ -2494,6 +2920,9 @@ class TrajectoryBuilder:
             ],
             medina_force_derivative_ready=self._arrays["medina_force_derivative_ready"],
             medina_impulse_capped=self._arrays["medina_impulse_capped"],
+            medina_provider_force_x=self._arrays["medina_provider_force_x"],
+            medina_provider_force_y=self._arrays["medina_provider_force_y"],
+            medina_provider_force_z=self._arrays["medina_provider_force_z"],
             medina_external_force_x=self._arrays["medina_external_force_x"],
             medina_external_force_y=self._arrays["medina_external_force_y"],
             medina_external_force_z=self._arrays["medina_external_force_z"],
@@ -2514,6 +2943,24 @@ class TrajectoryBuilder:
             local_magnetic_field_y_t=self._arrays["local_magnetic_field_y_t"],
             local_magnetic_field_z_t=self._arrays["local_magnetic_field_z_t"],
             dead=self._arrays["dead"],
+            inertial_charge_boundary_ready=self._arrays[
+                "inertial_charge_boundary_ready"
+            ],
+            inertial_charge_boundary_time_ns=self._arrays[
+                "inertial_charge_boundary_time_ns"
+            ],
+            inertial_charge_boundary_position_x=self._arrays[
+                "inertial_charge_boundary_position_x"
+            ],
+            inertial_charge_boundary_position_y=self._arrays[
+                "inertial_charge_boundary_position_y"
+            ],
+            inertial_charge_boundary_position_z=self._arrays[
+                "inertial_charge_boundary_position_z"
+            ],
+            inertial_charge_boundary_u_x=self._arrays["inertial_charge_boundary_u_x"],
+            inertial_charge_boundary_u_y=self._arrays["inertial_charge_boundary_u_y"],
+            inertial_charge_boundary_u_z=self._arrays["inertial_charge_boundary_u_z"],
             q=self._arrays["q"],
             q_species=self._arrays["q_species"],
             q_observer=self._arrays["q_observer"],
@@ -2534,6 +2981,14 @@ class TrajectoryBuilder:
             halt_reason=self._halt_reason,
             particle_failure_info=self._particle_failure_info,
             pseudo_grid_schedule=self._pseudo_grid_schedule,
+            potential_inclusion_delta_A_x=self._arrays["potential_inclusion_delta_A_x"],
+            potential_inclusion_delta_A_y=self._arrays["potential_inclusion_delta_A_y"],
+            potential_inclusion_delta_A_z=self._arrays["potential_inclusion_delta_A_z"],
+            potential_inclusion_delta_A_t=self._arrays["potential_inclusion_delta_A_t"],
+            sampled_source_canonical_ready=self._arrays[
+                "sampled_source_canonical_ready"
+            ],
+            potential_inclusion_state=self._arrays["potential_inclusion_state"],
             _storage_state=self._storage_state,
             _storage_array_revision=self._storage_state.array_revision,
         )._make_managed_arrays_read_only()

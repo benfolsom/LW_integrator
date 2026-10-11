@@ -110,6 +110,7 @@ def test_potential_values_and_derivative_orientation_match_by_displacement():
     [
         dict(x_min=0),
         dict(t_max=1),
+        dict(provider=lambda **_: None),
         dict(magnetic_field_gradient_t_per_m=((1, 0, 0), (0, -1, 0), (0, 0, 0))),
     ],
 )

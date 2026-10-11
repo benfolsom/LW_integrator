@@ -124,6 +124,13 @@ def _looks_like_sweep_or_optimization_config(path: Path) -> bool:
     return any(key in data for key in _SWEEP_OR_OPTIMIZATION_KEYS)
 
 
+def _normalize_chrono_matching_mode(value: object) -> str:
+    """Normalize a saved retardation-mode name to ``FAST`` or ``AVERAGED``."""
+
+    text = str(value or "FAST").strip().replace("-", "_").upper()
+    return "AVERAGED" if text in {"AVERAGED", "AVERAGE", "BLENDED"} else "FAST"
+
+
 class IntegratorGUIConfigMixin:
     """Translate between GUI state and ``SimulationOptions`` configs."""
 
@@ -986,6 +993,55 @@ class IntegratorGUIConfigMixin:
             self._set_status(f"Loaded sweep/optimization config: {path.name}")
         print("[INFO] Auto-switched to Sweep/Optim run mode")
 
+    def _current_chrono_matching_mode(self) -> str:
+        """Return the retardation mode to save/run (loaded value, else FAST)."""
+
+        loaded = getattr(self, "_loaded_chrono_matching_mode", None)
+        if loaded is None:
+            loaded = getattr(
+                getattr(self, "options", None), "chrono_matching_mode", None
+            )
+        return _normalize_chrono_matching_mode(loaded)
+
+    def _apply_space_charge_options_to_ui(self, options: SimulationOptions) -> None:
+        """Load the same source-clock choice used by CLI and saved runs."""
+        self.space_charge_enabled_var.set(
+            getattr(options, "space_charge_enabled", False)
+        )
+        self.space_charge_retarded_var.set(
+            getattr(options, "space_charge_retarded", True)
+        )
+        self.space_charge_softening_mm_var.set(
+            getattr(options, "space_charge_softening_mm", 0.0)
+        )
+        self.space_charge_bunch_sigma_mm_var.set(
+            getattr(options, "space_charge_bunch_sigma_mm", 0.01)
+        )
+        self.space_charge_instantaneous_clock_var.set(
+            getattr(options, "space_charge_instantaneous_clock", "legacy_same_index")
+        )
+        min_ret_steps = getattr(options, "space_charge_min_retarded_steps", None)
+        self.space_charge_min_retarded_steps_var.set(
+            "" if min_ret_steps is None else str(min_ret_steps)
+        )
+
+    def _build_space_charge_options_from_ui(self) -> dict[str, Any]:
+        """Collect same-bunch settings without requiring a Tk display."""
+        return dict(
+            space_charge_enabled=bool(self.space_charge_enabled_var.get()),
+            space_charge_retarded=bool(self.space_charge_retarded_var.get()),
+            space_charge_softening_mm=float(self.space_charge_softening_mm_var.get()),
+            space_charge_bunch_sigma_mm=float(
+                self.space_charge_bunch_sigma_mm_var.get()
+            ),
+            space_charge_instantaneous_clock=self.space_charge_instantaneous_clock_var.get(),
+            space_charge_min_retarded_steps=(
+                int(self.space_charge_min_retarded_steps_var.get())
+                if self.space_charge_min_retarded_steps_var.get().strip()
+                else None
+            ),
+        )
+
     def _apply_options_to_ui(
         self, options: SimulationOptions, preserve_directories: bool = False
     ) -> None:
@@ -1133,6 +1189,11 @@ class IntegratorGUIConfigMixin:
             options.self_consistency_mass_shell_tolerance
         )
         self.self_consistency_verbosity_var.set(options.self_consistency_verbosity)
+        # No GUI control exists for the retardation mode; carry a loaded
+        # non-FAST value through to the next run/save instead of resetting it.
+        self._loaded_chrono_matching_mode = _normalize_chrono_matching_mode(
+            getattr(options, "chrono_matching_mode", "FAST")
+        )
         self.chrono_interpolate_var.set(
             getattr(
                 options,
@@ -1236,25 +1297,14 @@ class IntegratorGUIConfigMixin:
             )
         )
         self._update_max_substeps_display()
+        if hasattr(self, "source_history_representation_var"):
+            self.source_history_representation_var.set(
+                options.source_history_representation
+            )
         self.radiation_reaction_mode_var.set(
             getattr(options, "radiation_reaction_mode", "medina_lad")
         )
-        self.space_charge_enabled_var.set(
-            getattr(options, "space_charge_enabled", False)
-        )
-        self.space_charge_retarded_var.set(
-            getattr(options, "space_charge_retarded", True)
-        )
-        self.space_charge_softening_mm_var.set(
-            getattr(options, "space_charge_softening_mm", 0.0)
-        )
-        self.space_charge_bunch_sigma_mm_var.set(
-            getattr(options, "space_charge_bunch_sigma_mm", 0.01)
-        )
-        min_ret_steps = getattr(options, "space_charge_min_retarded_steps", None)
-        self.space_charge_min_retarded_steps_var.set(
-            "" if min_ret_steps is None else str(min_ret_steps)
-        )
+        self._apply_space_charge_options_to_ui(options)
         self.external_field_enabled_var.set(
             getattr(options, "external_field_enabled", False)
         )
@@ -1747,8 +1797,8 @@ class IntegratorGUIConfigMixin:
             self_consistency_gamma_reconciliation_fixed_weight=float(
                 self.self_consistency_gamma_reconciliation_fixed_weight_var.get()
             ),
-            chrono_matching_mode="FAST",
-            self_consistency_chrono_matching_mode="FAST",
+            chrono_matching_mode=self._current_chrono_matching_mode(),
+            self_consistency_chrono_matching_mode=self._current_chrono_matching_mode(),
             energy_monitor_enabled=False,
             energy_monitor_threshold=2.0,
             energy_monitor_check_interval=10,
@@ -1794,17 +1844,7 @@ class IntegratorGUIConfigMixin:
             adaptive_timestep_bunch_proximity_transition_n_sigma=float(
                 self.adaptive_timestep_bunch_proximity_transition_n_sigma_var.get()
             ),
-            space_charge_enabled=bool(self.space_charge_enabled_var.get()),
-            space_charge_retarded=bool(self.space_charge_retarded_var.get()),
-            space_charge_softening_mm=float(self.space_charge_softening_mm_var.get()),
-            space_charge_bunch_sigma_mm=float(
-                self.space_charge_bunch_sigma_mm_var.get()
-            ),
-            space_charge_min_retarded_steps=(
-                int(self.space_charge_min_retarded_steps_var.get())
-                if self.space_charge_min_retarded_steps_var.get().strip()
-                else None
-            ),
+            **self._build_space_charge_options_from_ui(),
             external_field_enabled=external_field_enabled,
             external_electric_field_native=external_electric_native,
             external_electric_field_v_per_m=external_electric_si,
@@ -1817,6 +1857,11 @@ class IntegratorGUIConfigMixin:
             external_field_z_max=external_bounds["z_max"],
             external_field_t_min=external_bounds["t_min"],
             external_field_t_max=external_bounds["t_max"],
+            source_history_representation=(
+                str(self.source_history_representation_var.get())
+                if hasattr(self, "source_history_representation_var")
+                else self.options.source_history_representation
+            ),
             radiation_reaction_mode=(
                 str(self.radiation_reaction_mode_var.get())
                 if hasattr(self, "radiation_reaction_mode_var")

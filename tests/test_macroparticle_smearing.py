@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from core.constants import ELEMENTARY_CHARGE
-from core.macroparticle_smearing import smear_source_samples
+from core.macroparticle_smearing import fixed_cloud_offsets, smear_source_samples
 from core.types import MacroparticleSmearingConfig
 from core.vectorized_interactions import ExternalSampleBatch
 
@@ -48,17 +48,25 @@ def test_smearing_conserves_charge_and_is_deterministic() -> None:
         seed=99,
         position_sigma_mm=1.0,
     )
+    initial_samples = _samples()
+    initial = {a: getattr(initial_samples, a).copy() for a in "xyz"}
+    initial.update(
+        q=initial_samples.charge, macro_population=initial_samples.macro_population
+    )
+    offsets = fixed_cloud_offsets([initial], config)
     first, first_nhat = smear_source_samples(
         samples=_samples(),
         observer_position=(0.0, 0.0, 10.0),
         config=config,
         step_index=7,
+        fixed_offsets=offsets,
     )
     second, second_nhat = smear_source_samples(
         samples=_samples(),
         observer_position=(0.0, 0.0, 10.0),
         config=config,
         step_index=7,
+        fixed_offsets=offsets,
     )
 
     assert first.charge.size == 8
@@ -108,3 +116,52 @@ def test_smearing_preserves_explicit_macro_population_metadata() -> None:
         smeared.macro_population,
         np.repeat(np.array([100.0, 1.0]), 4),
     )
+
+
+def test_fixed_cloud_ignores_event_spacing_masks_and_checkpoint_reconstruction():
+    import copy
+    from core.macroparticle_smearing import fixed_cloud_offsets, _initial_cloud
+
+    samples = _samples()
+    initial = {a: getattr(samples, a).copy() for a in "xyz"}
+    initial.update(
+        q=samples.charge.copy(), macro_population=samples.macro_population.copy()
+    )
+    config = MacroparticleSmearingConfig(
+        enabled=True,
+        subcharge_count=4,
+        seed=42,
+        position_sigma_mm=10.0,
+        longitudinal_sigma_mm=10.0,
+    )
+    offsets = fixed_cloud_offsets([initial], config)
+    moved = copy.deepcopy(samples)
+    moved.x *= 100
+    moved.valid_mask[1] = False
+    smeared, _ = smear_source_samples(
+        samples=moved,
+        observer_position=(3.0, 4.0, 5.0),
+        config=config,
+        step_index=91,
+        fixed_offsets=offsets,
+    )
+    actual = np.column_stack([getattr(smeared, a) for a in "xyz"]) - np.repeat(
+        np.column_stack([getattr(moved, a) for a in "xyz"]), 4, axis=0
+    )
+    np.testing.assert_allclose(actual, offsets.reshape(-1, 3), rtol=0.0, atol=6e-14)
+    # Evicting a cache or loading a detached initial checkpoint row changes
+    # neither the cloud nor random draws at later accepted steps.
+    _initial_cloud.cache_clear()
+    reconstructed = fixed_cloud_offsets([copy.deepcopy(initial)], config)
+    np.testing.assert_array_equal(reconstructed, offsets)
+    assert not reconstructed.flags.writeable
+
+
+def test_default_cloud_cannot_silently_resize_after_initialization():
+    with pytest.raises(ValueError, match="retained initial cloud"):
+        smear_source_samples(
+            samples=_samples(),
+            observer_position=(0.0, 0.0, 10.0),
+            config=MacroparticleSmearingConfig(enabled=True),
+            step_index=1,
+        )

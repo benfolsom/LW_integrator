@@ -73,6 +73,7 @@ DEFAULT_SIMULATION: Dict[str, Any] = {
     "image_subcharge_count": 12,
     "use_image_weighting": True,
     "radiation_reaction_mode": "medina_lad",
+    "source_history_representation": "light_cone_quintic",
 }
 
 RADIATION_REACTION_MODE_CHOICES: Tuple[str, ...] = (
@@ -80,6 +81,7 @@ RADIATION_REACTION_MODE_CHOICES: Tuple[str, ...] = (
     "diagnostic_only",
     "power_matched_damping",
     "medina_lad",
+    "medina_lad_validity",
 )
 
 DEFAULT_RIDER: Dict[str, Any] = {
@@ -290,6 +292,21 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         "--config",
         type=Path,
         help="Path to a native direct-integrator JSON configuration.",
+    )
+    parser.add_argument(
+        "--pic-config",
+        type=Path,
+        help="Native PIC JSON config (lab time, explicit radiation reaction off).",
+    )
+    parser.add_argument(
+        "--pic-backend",
+        choices=("auto", "cpu", "mlx", "cupy"),
+        help="Override PIC backend; auto stays CPU. Requires --pic-config.",
+    )
+    parser.add_argument(
+        "--pic-precision",
+        choices=("float32", "float64"),
+        help="Override PIC precision (MLX float32; CuPy defaults to float64).",
     )
     parser.add_argument(
         "--testbed-config",
@@ -667,14 +684,38 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--source-history-representation",
+        choices=("light_cone_quintic", "proper_velocity"),
+        default=None,
+        help="Source interpolation; proper_velocity preserves accepted knots and enforces timelike interpolation.",
+    )
+    parser.add_argument(
         "--radiation-reaction-mode",
         dest="radiation_reaction_mode",
         choices=RADIATION_REACTION_MODE_CHOICES,
         help=(
             "Radiation-reaction mode for single runs. Default: medina_lad. "
+            "medina_lad_validity opts into rest-frame and step validity checks. "
             "Choose off or diagnostic_only for baselines."
         ),
     )
+    parser.add_argument(
+        "--stochastic-emission",
+        action="store_true",
+        default=None,
+        help=(
+            "Enable discrete quantum synchrotron photons "
+            "(physical electrons; fixed B2B)."
+        ),
+    )
+    parser.add_argument("--emission-chi-threshold", type=float, default=None)
+    parser.add_argument("--emission-recoil-threshold", type=float, default=None)
+    parser.add_argument(
+        "--emission-rate-model",
+        choices=("quantum_lcfa", "classical_capped"),
+        default=None,
+    )
+    parser.add_argument("--emission-seed", type=int, default=None)
     parser.add_argument(
         "--magnetic-dipoles",
         dest="magnetic_dipole_enabled",
@@ -1146,9 +1187,16 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--macroparticle-smearing-refresh-policy",
-        choices=("fixed-per-particle", "fixed_per_particle", "per-step", "per_step"),
+        choices=(
+            "fixed-per-particle",
+            "fixed_per_particle",
+            "legacy_fixed_per_particle",
+            "legacy_per_step",
+            "per-step",
+            "per_step",
+        ),
         dest="macroparticle_smearing_refresh_policy",
-        help="Use persistent per-particle offsets or refresh them each step.",
+        help="Use fixed reciprocal clouds, or an explicitly non-conservative legacy cloud policy.",
     )
 
     parser.add_argument(
@@ -1225,6 +1273,12 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
             "Bunch width used to auto-delay retarded intra-bunch space charge "
             "(default: 0.01 mm)."
         ),
+    )
+    parser.add_argument(
+        "--space-charge-instantaneous-clock",
+        choices=("lab_time", "legacy_same_index"),
+        default=None,
+        help="Instantaneous source clock (default: legacy_same_index; lab_time is opt-in).",
     )
     parser.add_argument(
         "--space-charge-min-retarded-steps",
@@ -1504,6 +1558,11 @@ def _build_testbed_report(
         "driver_gamma_final": result.driver_gamma_final,
         "energy_ledger_metrics": result.energy_ledger_metrics or {},
         "saved_paths": {name: str(path) for name, path in result.saved_paths.items()},
+        **(
+            {"stochastic_emission": result.stochastic_emission}
+            if getattr(result, "stochastic_emission", None) is not None
+            else {}
+        ),
     }
     if options is not None:
         source_report: dict[str, Any] = {
@@ -1613,6 +1672,29 @@ def run_testbed_config(args: argparse.Namespace) -> int:
         from .testbed_runner import load_config, run_testbed
 
         options = load_config(config_path)
+        emission = dict(options.stochastic_emission or {})
+        for argument, field in (
+            ("stochastic_emission", "enabled"),
+            ("emission_chi_threshold", "chi_threshold"),
+            ("emission_recoil_threshold", "recoil_threshold"),
+            ("emission_rate_model", "rate_model"),
+            ("emission_seed", "seed"),
+        ):
+            value = getattr(args, argument, None)
+            if value is not None:
+                emission[field] = value
+        from core.stochastic_emission import StochasticEmissionConfig
+        from dataclasses import asdict
+
+        options.stochastic_emission = asdict(
+            StochasticEmissionConfig.from_dict(emission)
+        )
+        if args.space_charge_instantaneous_clock is not None:
+            options.space_charge_instantaneous_clock = (
+                args.space_charge_instantaneous_clock
+            )
+        if args.source_history_representation is not None:
+            options.source_history_representation = args.source_history_representation
         if args.resume_from is not None:
             options.checkpoint_resume_from = args.resume_from
             options.checkpoint_directory = None
@@ -1694,12 +1776,25 @@ def _merge_simulation_payload(
             result[key] = file_payload[key]
     # These newer nested settings are not members of DEFAULT_SIMULATION.
     # Preserve file values before applying the explicit CLI overrides below.
-    for key in ("checkpoint", "adaptive_pair_return"):
+    for key in ("checkpoint", "adaptive_pair_return", "stochastic_emission"):
         if key in file_payload:
             value = file_payload[key]
             if value is not None and not isinstance(value, Mapping):
                 raise SimulationConfigError(f"'{key}' must be an object or null")
             result[key] = None if value is None else dict(value)
+    emission = dict(result.get("stochastic_emission") or {})
+    for argument, field in (
+        ("stochastic_emission", "enabled"),
+        ("emission_chi_threshold", "chi_threshold"),
+        ("emission_recoil_threshold", "recoil_threshold"),
+        ("emission_rate_model", "rate_model"),
+        ("emission_seed", "seed"),
+    ):
+        value = getattr(args, argument, None)
+        if value is not None:
+            emission[field] = value
+    if emission:
+        result["stochastic_emission"] = emission
     file_particle_loss = file_payload.get("particle_loss")
     if isinstance(file_particle_loss, Mapping):
         result["particle_loss"].update(file_particle_loss)
@@ -1772,6 +1867,7 @@ def _merge_simulation_payload(
         "space_charge_retarded",
         "space_charge_softening_mm",
         "space_charge_bunch_sigma_mm",
+        "space_charge_instantaneous_clock",
         "space_charge_min_retarded_steps",
         "auto_duration_enabled",
         "auto_duration_crossing_steps",
@@ -1785,6 +1881,11 @@ def _merge_simulation_payload(
         "self_consistency_verbosity",
         "self_consistency_gamma_reconciliation_method",
         "self_consistency_gamma_reconciliation_fixed_weight",
+        "self_consistency_gamma_reconciliation_low_beta_threshold",
+        "self_consistency_gamma_reconciliation_high_beta_threshold",
+        "self_consistency_gamma_reconciliation_low_beta_weight",
+        "self_consistency_gamma_reconciliation_high_beta_weight",
+        "self_consistency_gamma_reconciliation_mid_beta_weight",
         "chrono_interpolate",
         "chrono_tolerance",
         "chrono_high_precision",
@@ -1798,6 +1899,9 @@ def _merge_simulation_payload(
     for key in passthrough_keys:
         if key in file_payload:
             result[key] = file_payload[key]
+    result["chrono_mode"] = _resolve_file_chrono_mode(
+        file_payload, result["chrono_mode"]
+    )
     legacy_adaptive_keys = {
         "adaptive_timestep_enabled": "enabled",
         "adaptive_timestep_threshold": "energy_jump_threshold",
@@ -1830,6 +1934,7 @@ def _merge_simulation_payload(
         "chrono_mode",
         "startup_mode",
         "radiation_reaction_mode",
+        "source_history_representation",
         "image_subcharge_count",
         "use_image_weighting",
     )
@@ -1846,10 +1951,11 @@ def _merge_simulation_payload(
     ):
         if getattr(args, key, None) is not None:
             result[key] = getattr(args, key)
-    if "chrono_matching_mode" not in result and "chrono_mode" in result:
-        result["chrono_matching_mode"] = (
-            str(result["chrono_mode"]).replace("-", "_").upper()
-        )
+    # The runtime retardation mode is chrono_mode; keep the carried aliases
+    # (SelfConsistencyConfig.chrono_matching_mode) consistent with it.
+    resolved_chrono_mode = _parse_chrono_mode(result["chrono_mode"]).name
+    result["chrono_matching_mode"] = resolved_chrono_mode
+    result["self_consistency_chrono_matching_mode"] = resolved_chrono_mode
 
     cavity_exit = result.get("cavity_exit")
     if not isinstance(cavity_exit, MutableMapping):
@@ -1880,6 +1986,10 @@ def _merge_simulation_payload(
         result["space_charge_softening_mm"] = args.space_charge_softening_mm
     if getattr(args, "space_charge_bunch_sigma_mm", None) is not None:
         result["space_charge_bunch_sigma_mm"] = args.space_charge_bunch_sigma_mm
+    if getattr(args, "space_charge_instantaneous_clock", None) is not None:
+        result["space_charge_instantaneous_clock"] = (
+            args.space_charge_instantaneous_clock
+        )
     if getattr(args, "space_charge_min_retarded_steps", None) is not None:
         result["space_charge_min_retarded_steps"] = args.space_charge_min_retarded_steps
 
@@ -2261,6 +2371,9 @@ def _build_adaptive_pair_return_config(payload: Any) -> AdaptivePairReturnConfig
             enabled=bool(payload.get("enabled", False)),
             target_lab_time_ns=payload.get("target_lab_time_ns"),
             tolerance_scale=float(payload.get("tolerance_scale", 1.0)),
+            diagnostics_absolute_tolerance_native=payload.get(
+                "diagnostics_absolute_tolerance_native"
+            ),
             minimum_step_factor=float(payload.get("minimum_step_factor", 1.0 / 64.0)),
             maximum_step_factor=float(payload.get("maximum_step_factor", 64.0)),
             public_sample_interval_ns=payload.get("public_sample_interval_ns"),
@@ -2278,6 +2391,17 @@ def _build_adaptive_pair_return_config(payload: Any) -> AdaptivePairReturnConfig
     except (TypeError, ValueError) as exc:
         raise SimulationConfigError(
             f"Invalid adaptive_pair_return configuration: {exc}"
+        ) from exc
+
+
+def _build_stochastic_emission_config(payload: Any) -> Any:
+    from core.stochastic_emission import StochasticEmissionConfig
+
+    try:
+        return StochasticEmissionConfig.from_dict(payload)
+    except (TypeError, ValueError) as exc:
+        raise SimulationConfigError(
+            f"Invalid stochastic_emission settings: {exc}"
         ) from exc
 
 
@@ -2354,11 +2478,17 @@ def _build_integrator_config(payload: Mapping[str, Any]) -> IntegratorConfig:
         ),
         image_subcharge_count=image_subcharge_count,
         use_image_weighting=use_image_weighting,
+        source_history_representation=str(
+            payload.get("source_history_representation", "light_cone_quintic")
+        ),
         radiation_reaction_mode=str(
             payload.get(
                 "radiation_reaction_mode",
                 DEFAULT_SIMULATION["radiation_reaction_mode"],
             )
+        ),
+        stochastic_emission=_build_stochastic_emission_config(
+            payload.get("stochastic_emission")
         ),
         pseudo_grid=pseudo_grid,
         macroparticle_smearing=macroparticle_smearing,
@@ -2504,6 +2634,40 @@ def _parse_simulation_type(value: Any) -> SimulationType:
         if key in SIMULATION_TYPE_ALIASES:
             return SIMULATION_TYPE_ALIASES[key]
     raise SimulationConfigError(f"Unknown simulation type: {value!r}")
+
+
+_CHRONO_MODE_FILE_KEYS = (
+    "chrono_mode",
+    "chrono_matching_mode",
+    "self_consistency_chrono_matching_mode",
+)
+
+
+def _resolve_file_chrono_mode(file_payload: Mapping[str, Any], default: Any) -> Any:
+    """Resolve ``chrono_mode`` and its testbed/legacy aliases from a config file.
+
+    ``chrono_mode`` is canonical. ``chrono_matching_mode`` and
+    ``self_consistency_chrono_matching_mode`` (testbed/GUI spellings) are
+    accepted as aliases; any present keys must agree.
+    """
+
+    present = {
+        key: _parse_chrono_mode(file_payload[key])
+        for key in _CHRONO_MODE_FILE_KEYS
+        if key in file_payload and file_payload[key] is not None
+    }
+    if not present:
+        return default
+    if len(set(present.values())) > 1:
+        detail = ", ".join(f"{key}={mode.name}" for key, mode in present.items())
+        raise SimulationConfigError(
+            f"Conflicting retardation modes in configuration: {detail}. "
+            "Set chrono_mode only (chrono_matching_mode is an alias)."
+        )
+    for key in _CHRONO_MODE_FILE_KEYS:
+        if key in present:
+            return file_payload[key]
+    return default
 
 
 def _parse_chrono_mode(value: Any) -> ChronoMatchingMode:
@@ -3005,31 +3169,56 @@ def _build_space_charge_config(
         softening_mm=softening_mm,
         bunch_sigma_mm=bunch_sigma_mm,
         min_retarded_steps=min_retarded_steps,
+        instantaneous_clock=str(
+            payload.get("space_charge_instantaneous_clock", "legacy_same_index")
+        ),
     )
+
+
+def _strict_optional_bool(payload: Mapping[str, Any], key: str) -> Optional[bool]:
+    """Return a JSON boolean, ``None`` when absent, or raise for other types."""
+
+    if key not in payload or payload[key] is None:
+        return None
+    value = payload[key]
+    if isinstance(value, (bool, np.bool_)):
+        return bool(value)
+    raise SimulationConfigError(
+        f"{key} must be a JSON boolean (true/false), got {value!r} "
+        f"({type(value).__name__})"
+    )
+
+
+def _strict_bool_with_alias(
+    payload: Mapping[str, Any], key: str, alias: str, default: bool
+) -> bool:
+    value = _strict_optional_bool(payload, key)
+    if value is not None:
+        return value
+    alias_value = _strict_optional_bool(payload, alias)
+    return default if alias_value is None else alias_value
 
 
 def _build_self_consistency_config(
     payload: Mapping[str, Any],
 ) -> Optional[SelfConsistencyConfig]:
-    chrono_interpolate = bool(
-        payload.get(
-            "chrono_interpolate",
-            payload.get("self_consistency_chrono_interpolate", False),
-        )
+    chrono_interpolate = _strict_bool_with_alias(
+        payload, "chrono_interpolate", "self_consistency_chrono_interpolate", False
     )
-    chrono_high_precision = bool(
-        payload.get(
-            "chrono_high_precision",
-            payload.get("self_consistency_chrono_high_precision", False),
-        )
+    chrono_high_precision = _strict_bool_with_alias(
+        payload,
+        "chrono_high_precision",
+        "self_consistency_chrono_high_precision",
+        False,
     )
-    chrono_adaptive_tolerance = bool(
-        payload.get(
-            "chrono_adaptive_tolerance",
-            payload.get("self_consistency_chrono_adaptive_tolerance", False),
-        )
+    chrono_adaptive_tolerance = _strict_bool_with_alias(
+        payload,
+        "chrono_adaptive_tolerance",
+        "self_consistency_chrono_adaptive_tolerance",
+        False,
     )
-    sc_enabled = bool(payload.get("self_consistency_enabled", False))
+    sc_enabled_value = _strict_optional_bool(payload, "self_consistency_enabled")
+    sc_enabled = True if sc_enabled_value is None else sc_enabled_value
     if not sc_enabled and not (
         chrono_interpolate or chrono_high_precision or chrono_adaptive_tolerance
     ):
@@ -3045,6 +3234,7 @@ def _build_self_consistency_config(
             f"Unknown gamma reconciliation method: {method_name!r}"
         ) from None
 
+    reference = SelfConsistencyConfig
     try:
         return SelfConsistencyConfig(
             enabled=sc_enabled,
@@ -3060,7 +3250,12 @@ def _build_self_consistency_config(
             mass_shell_relaxation=float(
                 payload.get("self_consistency_mass_shell_relaxation", 0.7)
             ),
-            max_iterations=int(payload.get("self_consistency_max_iterations", 2)),
+            max_iterations=int(
+                payload.get(
+                    "self_consistency_max_iterations",
+                    reference.max_iterations,
+                )
+            ),
             verbosity=int(payload.get("self_consistency_verbosity", 0)),
             chrono_interpolate=chrono_interpolate,
             chrono_tolerance=float(
@@ -3069,22 +3264,52 @@ def _build_self_consistency_config(
                     payload.get("self_consistency_chrono_tolerance", 1e-3),
                 )
             ),
-            chrono_matching_mode=str(
+            chrono_matching_mode=_parse_chrono_mode(
                 payload.get(
                     "chrono_matching_mode",
                     payload.get("self_consistency_chrono_matching_mode", "FAST"),
                 )
-            ),
+            ).name,
             chrono_high_precision=chrono_high_precision,
             chrono_adaptive_tolerance=chrono_adaptive_tolerance,
             gamma_reconciliation_method=gamma_method,
             gamma_reconciliation_fixed_weight=float(
                 payload.get("self_consistency_gamma_reconciliation_fixed_weight", 0.5)
             ),
+            gamma_reconciliation_low_beta_threshold=float(
+                payload.get(
+                    "self_consistency_gamma_reconciliation_low_beta_threshold",
+                    reference.gamma_reconciliation_low_beta_threshold,
+                )
+            ),
+            gamma_reconciliation_high_beta_threshold=float(
+                payload.get(
+                    "self_consistency_gamma_reconciliation_high_beta_threshold",
+                    reference.gamma_reconciliation_high_beta_threshold,
+                )
+            ),
+            gamma_reconciliation_low_beta_weight=float(
+                payload.get(
+                    "self_consistency_gamma_reconciliation_low_beta_weight",
+                    reference.gamma_reconciliation_low_beta_weight,
+                )
+            ),
+            gamma_reconciliation_high_beta_weight=float(
+                payload.get(
+                    "self_consistency_gamma_reconciliation_high_beta_weight",
+                    reference.gamma_reconciliation_high_beta_weight,
+                )
+            ),
+            gamma_reconciliation_mid_beta_weight=float(
+                payload.get(
+                    "self_consistency_gamma_reconciliation_mid_beta_weight",
+                    reference.gamma_reconciliation_mid_beta_weight,
+                )
+            ),
         )
     except (TypeError, ValueError) as exc:
         raise SimulationConfigError(
-            "Invalid self-consistency or chrono-matching option"
+            f"Invalid self-consistency or chrono-matching option: {exc}"
         ) from exc
 
 
@@ -3371,6 +3596,8 @@ def run_simulation(request: SimulationRequest) -> tuple:
         image_subcharge_count=request.config.image_subcharge_count,
         use_conducting_image_weighting=request.config.use_image_weighting,
         radiation_reaction_mode=request.config.radiation_reaction_mode,
+        stochastic_emission=request.config.stochastic_emission,
+        source_history_representation=request.config.source_history_representation,
         adaptive_timestep=request.adaptive_timestep,
         self_consistency=request.self_consistency,
         space_charge=request.space_charge,
@@ -3475,6 +3702,8 @@ def build_report(
             # Keep actual accepted-interval counts, restart status and lifetime
             # recoil work visible; public output-row counts are not step counts.
             report["adaptive_pair_return"] = dict(adaptive_summary)
+    if trajectory and "_stochastic_emission" in trajectory[-1]:
+        report["stochastic_emission"] = trajectory[-1]["_stochastic_emission"]
     if driver is not None:
         report["driver_summary"] = summarise_trajectory(driver)
     if magnetic_dipole is not None:
@@ -3662,6 +3891,76 @@ def _print_results_report(report: Mapping[str, Any]) -> None:
 
 def main(argv: Optional[list[str]] = None) -> int:
     args = parse_args(argv)
+    emission_flags = any(
+        getattr(args, name, None) is not None
+        for name in (
+            "stochastic_emission",
+            "emission_chi_threshold",
+            "emission_recoil_threshold",
+            "emission_rate_model",
+            "emission_seed",
+        )
+    )
+    if emission_flags and (
+        args.pic_config is not None
+        or args.sweep_config is not None
+        or args.results_file is not None
+    ):
+        print(
+            "Error: stochastic emission flags support direct and testbed "
+            "single runs only.",
+            file=sys.stderr,
+        )
+        return 2
+
+    if args.pic_config is None and (
+        args.pic_backend is not None or args.pic_precision is not None
+    ):
+        print(
+            "Error: PIC backend/precision options require --pic-config.",
+            file=sys.stderr,
+        )
+        return 2
+
+    if args.pic_config is not None:
+        if any(
+            value is not None
+            for value in (
+                args.config,
+                args.testbed_config,
+                args.sweep_config,
+                args.results_file,
+            )
+        ):
+            print(
+                "Error: --pic-config cannot be combined with another input mode.",
+                file=sys.stderr,
+            )
+            return 2
+        from core.pic import run_pic
+
+        try:
+            config = json.loads(args.pic_config.read_text(encoding="utf-8"))
+            if args.pic_backend is not None:
+                config["backend"] = args.pic_backend
+            if args.pic_precision is not None:
+                config["precision"] = args.pic_precision
+            report = run_pic(config)
+        except (ValueError, KeyError, TypeError, OSError, RuntimeError) as exc:
+            print(f"Error: PIC config/run: {exc}", file=sys.stderr)
+            return 2
+        if args.output is not None:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(
+                json.dumps(report, indent=2, allow_nan=False) + "\n", encoding="utf-8"
+            )
+        if not args.quiet:
+            last = report["diagnostics"][-1]
+            print(
+                f"PIC completed: {last['step']} lab steps, "
+                f"weighted kinetic energy {last['kinetic_energy_j']:.8g} J"
+            )
+        return 0
 
     if args.testbed_config is not None:
         return run_testbed_config(args)

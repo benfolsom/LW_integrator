@@ -46,6 +46,21 @@ scales; a number suitable for a dimensionless test is not a native-unit default.
 diagnostic comparison. Neither method may accept a source interval whose
 polynomial speed bound reaches the supplied speed limit.
 
+## Retarded roots near segment joins
+
+The full-dipole response solves the light cone with an absolute tolerance of
+four machine epsilons times the segment duration (in length-time units), plus
+SciPy's four-epsilon relative tolerance. Endpoint recognition uses a roundoff
+allowance based on the event and source coordinate magnitudes. This replaces a
+fixed absolute length tolerance that could round an interior root onto a join
+in picometre encounters. The strict smooth-segment guard is unchanged: a true
+join still requires the caller's explicit boundary policy. This change does not
+relax the caller's source-position budget or establish close-encounter energy
+conservation. At these scales, a checkpoint produced by the older root solver
+can fail the existing endpoint velocity/dipole consistency check when restored.
+Regenerate the encounter from its preparation; do not rewrite stored endpoints
+or bypass that check.
+
 ## Restart and scope
 
 `to_checkpoint_payload()` and `from_checkpoint_payload()` preserve the accepted

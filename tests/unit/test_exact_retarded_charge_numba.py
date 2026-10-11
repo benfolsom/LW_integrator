@@ -206,14 +206,14 @@ def test_full_strict_charge_provider_is_deterministic_with_reference_center() ->
     )
 
 
-def test_charge_backends_preserve_first_displaced_history_failure() -> None:
+def test_named_charge_stencil_preserves_first_displaced_history_failure() -> None:
     pytest.importorskip("numba")
     history = _first_displaced_failure_history()
     event = ObserverEvent(0.0, (0.0, 0.0, 0.0))
 
     def capture(backend: str) -> tuple[type[Exception], str]:
         try:
-            evaluate_retarded_charge_field_gradient_native(
+            retarded_fields.evaluate_retarded_charge_field_gradient_stencil_native(
                 history,
                 event,
                 relative_step=0.04,
@@ -300,14 +300,15 @@ def test_initial_charge_jit_failure_has_named_capability_error(
     monkeypatch, kernel_name: str, backend: str
 ) -> None:
     numba = pytest.importorskip("numba")
-    import core.exact_retarded_numba as compiled
+    import core.retarded_fields as compiled
 
     def failed_compilation(*args, **kwargs):
         del args, kwargs
         raise numba.core.errors.TypingError("synthetic compilation failure")
 
     failed_compilation.signatures = ()
-    monkeypatch.setattr(compiled, kernel_name, failed_compilation)
+    # Both stored-worldline backends now compile the resolved null root.
+    monkeypatch.setattr(compiled, "solve_null_quintic_numba", failed_compilation)
     with pytest.raises(
         ExactRetardedBackendUnavailableError,
         match="failed during initial JIT compilation",

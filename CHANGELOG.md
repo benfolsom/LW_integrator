@@ -2,6 +2,160 @@
 
 ## Unreleased
 
+## v0.11.0 — 2026-10-10 — exact histories, native PIC, and boundary studies
+
+### Exact retarded fields and source histories
+
+- Add directional visibility gates for exact charge fields, trajectory-based
+  dipole fields, and canonical potentials at each retarded source event. Split
+  steps at gate changes, retain split knots through reload and checkpoints,
+  rebase canonical momentum without a mechanical kick, and restart Medina/LAD
+  on the new branch. Resolve gates relative to the occluder and recognize
+  crossings at accepted endpoints. Gates remain an ideal visibility model;
+  material screening, screen heat, and boundary radiation are not included.
+- Support fixed-step charge driver trains with translated `INERTIAL_PREHISTORY`.
+  Expand the train before constructing each particle's causal prefix. Adaptive
+  or resumable trains, intrinsic dipole-source trains, and persistent finite
+  train clouds remain unsupported.
+- Add exact same-bunch charge fields to force, canonical potentials, prehistory
+  preflight, and endpoint reconstruction, excluding self-sources. Require
+  inertial prehistory, retarded evaluation, and zero point-charge softening.
+  The Python provider can continue the last accepted segment for close
+  same-bunch queries and bounded cross-bunch endpoint-time mismatch; gated
+  future-history continuation remains rejected.
+- Extend `adaptive_pair_return` to multiple charge particles per bunch and
+  same-bunch charge fields. Step doubling checks all particles at shared lab-time
+  barriers, and both bunches commit midpoint and endpoint histories together.
+  Unequal-spaced histories survive restart. Charge bunches require dipole
+  sources and intrinsic spin self-reaction off. Optional
+  `diagnostics_absolute_tolerance_native` separates the diagnostic energy budget
+  from position and momentum tolerances.
+- Compile strict root and polynomial-sampling helpers and batch source jets
+  while preserving source-reduction order. Bounded warm-run controls report
+  about 1.6–1.7× faster complete runs with each backend's prior output bytes
+  preserved; backend choices and numerical defaults are unchanged.
+- Remove roundoff curvature from constant-beta, zero-acceleration charge
+  histories while preserving accelerated segments. Add a slow free-crossing
+  null regression for the exact pair-return path.
+- Scale full-dipole root tolerances with segment duration and coordinate
+  roundoff, retaining strict join checks and caller position budgets. See the
+  [root and pseudo-grid review](docs/pseudo_grid_guard_and_full_dipole_root_fix_2026-09-27.md).
+- Add opt-in `MomentumCenterParticle.reaction_source_order` (2–7) for full-dipole
+  reaction with analytic derivatives. `full_dipole_response.local_source_polynomial`
+  builds source Taylor data at the declared order to avoid treating unresolved
+  high derivatives at history joins as physical reaction. Default `None` retains
+  prior behavior; checkpoints store the selection. Point responses are unchanged.
+- Increase preserved-history segment-map caches from 4,096 to 65,536 entries,
+  avoiding repeated exact-map rebuilding on long checkpoint restores without
+  changing results.
+
+### Native PIC and K-cloud correction
+
+- Add native lab-time PIC with NumPy/Numba CPU, MLX Metal float32, and CuPy CUDA
+  backends. `auto` remains CPU; explicit unavailable GPU requests fail. The
+  solver uses quasi-static rest-frame grids, free-space FFT fields, matched
+  deposition/gathering, and a relativistic Boris push.
+- Cache Green spectra for two GPU mesh geometries so alternating bunch frames
+  can reuse setup. Canonicalize only MLX Green mesh spacing to float32, then
+  evaluate cell integrals in CPU float64. Particle states, frame transformations,
+  and grid coordinates retain their existing precision. Reported MLX driver
+  phases improve by about 30× in the bounded profiling control.
+- Add opt-in CPU float64 K-cloud LW correction: fit persistent population-weighted
+  cohorts, subtract their matched quasi-static fields from exact retarded cloud
+  fields, and interpolate the difference to particles. Batch node evaluation
+  with certified bracket hints and strict charge jets; bounded controls preserve
+  saved fields and states and report about 2× faster corrected steps.
+- Add optional matched far-field monopole compression, certified inertial
+  skipping, and frozen RMS widths scaled by $K^{-1/3}$. Fixed widths and full
+  refit/evaluation cadence remain the defaults. Sparse causal hold and
+  extrapolation remain diagnostic options, not validated physics settings.
+- Add per-axis bunch-sized correction lattices with longitudinal refinement,
+  phase controls, and configurable inertial prehistory. Add experimental
+  breathing clouds fitted to full cohort covariance with causal shape filtering
+  and moving subcharge histories. Frozen-cloud defaults remain unchanged;
+  close-crossing accuracy requires independent convergence checks.
+- Add experimental finite-source near-field pair replacement and a causal
+  midpoint predictor. Record population-weighted cloud projection and
+  `coupled_kick` work/impulse ledgers, including the changed PIC response.
+  Restricted experimental `medina_lad` requires midpoint prediction, both
+  cadences equal to one, and near-field replacement disabled. Mechanical kick
+  closure does not establish a closed electromagnetic energy ledger.
+
+### Experimental boundaries and prescribed fields
+
+- Add the separate CPU float64 `core.boundary` module for axisymmetric scattered
+  fields from prescribed LW drives and grid-aligned Drude walls. Include saved
+  material histories, particle replay, field/particle ledgers, and an explicit
+  SI adapter for PIC observers. Production LW and PIC defaults are unchanged.
+- Add experimental conformal perfect-conductor walls with physical-field
+  gathering on a smooth wall-following mesh. Separately, opt-in finite-window
+  axial two-way Drude coupling feeds responding trajectories into fresh material
+  passes, requires feedback convergence, and rejects unsaved future history.
+  Mapped material coupling and whole-system closure remain open.
+- Add `ExternalFieldConfig(provider=...)` for smooth spatial and time-dependent
+  external fields, analytic Medina/LAD derivatives, and magnetic gradients for
+  Stern–Gerlach forces. The default provider update is first order; prefer the
+  exact second-order route and check timestep convergence for energy-loss claims.
+
+### Stochastic quantum emission
+
+- Add opt-in electron/positron emission with quantum/recoil thresholds, quantum
+  LCFA and capped classical spectra, seeded photon logs, on-shell recoil, a
+  background-impulse ledger, and checkpointed random-generator state. Supported
+  entry points are zero-spin fixed-RK4 native pairs and guarded fixed-step
+  sampled `BUNCH_TO_BUNCH` runs. Finite-spin quantum recoil and closed
+  electron–ion conservation remain open. Saved testbed and GUI configs include
+  a disabled settings block; deterministic defaults remain unchanged.
+- Reject emission on the general exact `INERTIAL_PREHISTORY` path with
+  `NotImplementedError` until recoil kicks are stored as split velocity knots.
+  A kick diagnostic found a classical radiation pulse whose peak and fluence
+  grow under timestep refinement. The sampled and native pair kick controls
+  avoid that pulse, without establishing general trajectory accuracy. Earlier
+  exact-emission smoke runs predate this guard and are not supported workflows.
+- In enabled quantum mode, scale continuous classical reaction below activation
+  by the LCFA quantum/classical power ratio. Subdivide intervals exceeding the
+  probability cap and update momentum after each photon. Keep emission payloads
+  only on the final trajectory row and preserve seeded checkpoint continuation.
+- Add reversible activation with `deactivation_fraction` hysteresis (default
+  0.8), log transitions, and restart Medina/LAD force history after kicks and
+  on re-entry. Old checkpoints lacking the setting retain persistent activation.
+  Allow passive pair updates when emission is disabled. Encounter-based recoil
+  triggers and nonlocal rates remain planned, not implemented.
+- Share local constant-field spectral diagnostics through `lcfa_spectral_brackets`.
+  Document quantum, recoil-only, and classical comparisons, and the limits on
+  reproducing E-146 and NA63 material or crystal spectra end to end.
+
+### Defaults, compatibility, and documentation
+
+- Unify missing-key self-consistency defaults across API, CLI, GUI/testbed, and
+  sweeps: enabled, `fixed_geometry`, two trials, verbosity zero, gamma
+  reconciliation `DISABLED`, chrono interpolation off, and retardation mode
+  `FAST`. A keyless CLI config now enables self-consistency; explicit settings
+  remain unchanged. Reject unknown convergence modes and enabled iteration
+  limits below two. Spatial momentum sets the mass shell; its residual does
+  not certify force accuracy. See the
+  [option audit](docs/self_consistency_option_audit.md) for migration details.
+- Default direct retardation APIs to `FAST`. Deprecate `chrono_high_precision`,
+  which has no effect in the maintained array runner. Warn for ignored gamma
+  and chrono options. Preserve GUI non-FAST selections, pass CLI adaptive gamma
+  thresholds and weights through, and resolve chrono aliases consistently.
+  Require JSON booleans and reject unknown gamma-reconciliation names.
+- Update the counter-propagating proton-bunch example to the maintained
+  two-trial, gamma-disabled, chrono-off, Medina/LAD settings. Remove the unused
+  sweep stability-confirmation dialog.
+- Reject invalid pseudo-grid reconstructed live states with `PseudoGridStateError`,
+  reporting the step, particle index, speed, and time. Check finite kinematics,
+  subluminal speed, and increasing time before publication. Live weighted
+  passives without anchors now raise; explicit frozen and dead states remain.
+- Fix NumPy 2 compatibility in translating-shell linear solves and Medina test
+  quadrature, stale pseudo-grid test unpacking, and missing sweep fixtures.
+  Headless sweeps no longer import Tk; Tk-only tests skip when Tk is unavailable.
+- Refresh Sphinx coverage of exact histories and gates, PIC and correction
+  settings, boundary APIs, external fields, and stochastic-emission guards.
+  Correct overview, quickstart, self-consistency claims, navigation, and math
+  markup. Add the classical-limit and bremsstrahlung validity discussion and
+  synchronize version metadata to 0.11.0.
+
 ## v0.10.0 — 2026-09-23 — many-particle full-spin milestone
 
 Release validation: 1,776 unit tests passed; five failures reproduce on

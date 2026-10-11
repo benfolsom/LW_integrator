@@ -160,10 +160,11 @@ def test_force_pulse_recovers_larmor_after_boundary_accounting() -> None:
         radiated_powers[index] = result.far_radiated_power
         cross_energies[index] = result.cross_field_energy
 
-    # ``np.trapz`` keeps this oracle compatible with the project's supported
-    # NumPy 1.x environments; ``np.trapezoid`` was added only in NumPy 2.0.
-    reaction_work = float(np.trapz(reaction_powers, times))
-    radiated_energy = float(np.trapz(radiated_powers, times))
+    # ``np.trapezoid`` exists only from NumPy 2.0 and ``np.trapz`` was removed in
+    # NumPy 2.4; use whichever the installed NumPy provides.
+    trapezoid = getattr(np, "trapezoid", None) or np.trapz
+    reaction_work = float(trapezoid(reaction_powers, times))
+    radiated_energy = float(trapezoid(radiated_powers, times))
     larmor_energy = float(
         2.0
         * ELEMENTARY_CHARGE**2

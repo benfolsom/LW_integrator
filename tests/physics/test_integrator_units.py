@@ -157,7 +157,13 @@ class TestTrajectoryIntegratorUnits:
             mass = state.get("m", state.get("mass"))
             gamma = state["gamma"]
 
-            assert np.allclose(Pt**2, Px**2 + Py**2 + Pz**2, rtol=1e-6, atol=1e-6)
+            # These particles have nonzero rest mass: E²/c² = p² + m²c².
+            assert np.allclose(
+                Pt**2,
+                Px**2 + Py**2 + Pz**2 + (mass * C_MMNS) ** 2,
+                rtol=1e-6,
+                atol=1e-6,
+            )
             assert np.all(gamma >= 1.0)
             assert np.all(mass > 0)
 

@@ -131,10 +131,13 @@ def _compute_delta_t(
 ) -> float:
     """Resolve the retardation interval for a single particle sample.
 
-    Uses the correct Liénard-Wiechert formula: delta_t = R / (c * (1 - β·n̂))
-
-    For numerical stability at ultra-relativistic energies, this is computed using
-    the factored form: delta_t = R * (1 + β·n̂) / (c * (1 - (β·n̂)²))
+    ``FAST`` computes ``delta_t = R * (1 + β·n̂) / (c * (1 - (β·n̂)²))``, which
+    equals ``R / (c * (1 - β·n̂))``, with ``n̂ = (x_obs - x_src) / R`` pointing
+    from the source sample to the observer and ``β`` the source velocity at that
+    sample. The factored form is used for numerical stability; the denominator
+    is clamped to ``±1e-12``. This is the exact uniform-motion delay only when
+    ``β`` is parallel to ``n̂``; otherwise it is an estimate refined by the
+    history search.
 
     ``FAST`` mode uses the validated single-sample delay by evaluating the causal delay
     once using the instantaneous line-of-sight projection ``β·n̂``.  ``AVERAGED``
@@ -450,7 +453,7 @@ def chrono_match_indices_soa(
     index_traj: int,
     index_part: int,
     *,
-    mode: ChronoMatchingMode = ChronoMatchingMode.AVERAGED,
+    mode: ChronoMatchingMode = ChronoMatchingMode.FAST,
     interpolate: bool = False,
     tolerance: float = 1e-3,
     verbosity: int = 0,
@@ -643,7 +646,7 @@ def chrono_match_indices(
     index_traj: int,
     index_part: int,
     *,
-    mode: ChronoMatchingMode = ChronoMatchingMode.AVERAGED,
+    mode: ChronoMatchingMode = ChronoMatchingMode.FAST,
     interpolate: bool = False,
     tolerance: float = 1e-3,
     verbosity: int = 0,
@@ -663,8 +666,10 @@ def chrono_match_indices(
         Particle within ``trajectory[index_traj]`` to match against the entire
         external bunch.
     mode:
-        ``ChronoMatchingMode.FAST`` uses the validated single-sample
-        delay ``Δt = R (1 + β·n̂) / c``. ``ChronoMatchingMode.AVERAGED`` blends
+        ``ChronoMatchingMode.FAST`` (default) uses the single-sample delay
+        ``Δt = R (1 + β·n̂) / (c (1 - (β·n̂)²)) = R / (c (1 - β·n̂))`` with
+        ``n̂`` pointing from the source sample to the observer (see
+        ``core.types.ChronoMatchingMode``). ``ChronoMatchingMode.AVERAGED`` blends
         two samples corresponding to emission after ``R / c`` (stationary
         source) and ``2R / c`` (ultrarelativistic source), which can provide a
         smoother retardation sequence for high-``γ`` bunches.
@@ -677,8 +682,9 @@ def chrono_match_indices(
     verbosity:
         If >= 2, print warnings when residuals exceed tolerance.
     high_precision:
-        If True, use cubic interpolation and position interpolation. Requires at
-        least 4 trajectory points for accurate cubic fit.
+        Deprecated. In this non-SOA fallback only, use cubic interpolation and
+        position interpolation (at least 4 trajectory points). The SOA matcher
+        used by the maintained runner ignores it.
     adaptive_tolerance:
         If True, automatically set tolerance = 0.1 × timestep_h.
     timestep_h:

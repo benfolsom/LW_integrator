@@ -4,13 +4,12 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-
 _PERSISTED_CONFIG_DEFAULTS: dict[str, Any] = {
     "self_consistency_enabled": True,
     "self_consistency_tolerance": 1e-4,
     "self_consistency_convergence_mode": "fixed_geometry",
     "self_consistency_target_ms_tolerance": 1e-6,
-    "self_consistency_max_iterations": 5,
+    "self_consistency_max_iterations": 2,
     "self_consistency_mass_shell_tolerance": 1e-2,
     "self_consistency_mass_shell_relaxation": 0.7,
     "self_consistency_verbosity": 0,
@@ -37,6 +36,7 @@ _PERSISTED_CONFIG_DEFAULTS: dict[str, Any] = {
     "space_charge_retarded": True,
     "space_charge_softening_mm": 0.0,
     "space_charge_bunch_sigma_mm": 0.01,
+    "space_charge_instantaneous_clock": "legacy_same_index",
     "space_charge_min_retarded_steps": None,
     "external_field_enabled": False,
     "external_electric_field_native": (0.0, 0.0, 0.0),
@@ -121,6 +121,15 @@ def metrics_export_settings_from_data(data: Dict[str, Any]) -> tuple[str, str]:
     )
 
 
+_CHRONO_ALIAS_SUFFIXES = (
+    "interpolate",
+    "tolerance",
+    "matching_mode",
+    "high_precision",
+    "adaptive_tolerance",
+)
+
+
 def apply_persisted_config_overrides(config: Any, data: Dict[str, Any]) -> Any:
     """Apply persisted config values and defaults onto an OptimizationConfig."""
     nested_driver_train = data.get("driver_train")
@@ -139,6 +148,21 @@ def apply_persisted_config_overrides(config: Any, data: Dict[str, Any]) -> Any:
 
     for attr_name, default in _PERSISTED_CONFIG_DEFAULTS.items():
         setattr(config, attr_name, data.get(attr_name, default))
+    # Chrono settings have a canonical chrono_* key and a legacy
+    # self_consistency_chrono_* alias. The canonical key wins when both are
+    # saved (matching the CLI and SimulationOptions.from_dict); otherwise the
+    # alias fills both so downstream OR/non-default merging cannot diverge.
+    for suffix in _CHRONO_ALIAS_SUFFIXES:
+        canonical_key = f"chrono_{suffix}"
+        legacy_key = f"self_consistency_chrono_{suffix}"
+        if canonical_key in data:
+            value = data[canonical_key]
+        elif legacy_key in data:
+            value = data[legacy_key]
+        else:
+            continue
+        setattr(config, canonical_key, value)
+        setattr(config, legacy_key, value)
     config.driver_train_z_offsets_mm = tuple(config.driver_train_z_offsets_mm or ())
     config.transverse_geometry = data.get(
         "rider_transverse_geometry", data.get("transverse_geometry", "square")
@@ -268,6 +292,7 @@ def build_saved_config_payload(
         "space_charge_retarded": config.space_charge_retarded,
         "space_charge_softening_mm": config.space_charge_softening_mm,
         "space_charge_bunch_sigma_mm": config.space_charge_bunch_sigma_mm,
+        "space_charge_instantaneous_clock": config.space_charge_instantaneous_clock,
         "space_charge_min_retarded_steps": config.space_charge_min_retarded_steps,
         "external_field_enabled": config.external_field_enabled,
         "external_electric_field_native": list(config.external_electric_field_native),

@@ -8,6 +8,7 @@ return shape used by the CLI and GUI.
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from typing import Any, Callable, Sequence, cast
 
 import numpy as np
@@ -24,10 +25,10 @@ from .causal_c5_dipole_provider import (
 )
 from .causal_local_source_history import AcceptedPairCausalLocalSourceHistory
 from .exact_pair_trial import ExactPairEOMOptions, make_exact_role_eom_advance
-from .integration_checkpoint import AcceptedPairCheckpointStore
 from .growable_causal_local_source_history import (
     GrowableAcceptedPairCausalLocalSourceHistory,
 )
+from .integration_checkpoint import AcceptedPairCheckpointStore
 from .self_consistency import SelfConsistencyConfig
 from .spin_self_force_reduction_history import (
     AcceptedPairIntrinsicSpinReductionHistory,
@@ -65,14 +66,32 @@ def _step_controller_config(*, causal_c5_enabled: bool) -> StepControllerConfig:
     )
 
 
-def _scaled_tolerances(scale: float) -> StepDoublingTolerances:
+def _scaled_tolerances(
+    scale: float,
+    diagnostics_absolute: float | None = None,
+    *,
+    position_momentum_scale: float = 1.0,
+    diagnostic_ulp_floor: bool = False,
+    diagnostic_ulp_multiplier: float = 4.0,
+) -> StepDoublingTolerances:
     """Return the validated scale-1 first-pass error model."""
 
     return StepDoublingTolerances(
-        position_mm=ErrorScale(scale * 1.0e-15, scale * 1.0e-10),
-        mechanical_momentum_native=ErrorScale(scale * 1.0e-14, scale * 1.0e-10),
+        position_mm=ErrorScale(
+            scale * 1.0e-15 * position_momentum_scale,
+            scale * 1.0e-10 * position_momentum_scale,
+        ),
+        mechanical_momentum_native=ErrorScale(
+            scale * 1.0e-14 * position_momentum_scale,
+            scale * 1.0e-10 * position_momentum_scale,
+        ),
         rest_spin=ErrorScale(scale * 1.0e-13, scale * 1.0e-10),
-        diagnostics_native=ErrorScale(scale * 1.0e-13, scale * 1.0e-8),
+        diagnostics_native=ErrorScale(
+            scale * 1.0e-13 if diagnostics_absolute is None else diagnostics_absolute,
+            scale * 1.0e-8,
+        ),
+        diagnostic_ulp_floor=diagnostic_ulp_floor,
+        diagnostic_ulp_multiplier=diagnostic_ulp_multiplier,
     )
 
 
@@ -122,8 +141,8 @@ def _new_builder_from_seed(
     if not seed:
         raise ValueError("exact-pair adaptive seed history must not be empty")
     particle_count = int(np.asarray(seed[-1].get("x", np.zeros(0))).size)
-    if particle_count != 1:
-        raise ValueError("exact-pair adaptive mode requires one particle per role")
+    if particle_count < 1:
+        raise ValueError("exact-pair adaptive mode requires nonempty bunches")
     builder = GrowableTrajectoryBuilder(
         max(8, len(seed) + 1),
         particle_count,
@@ -139,9 +158,11 @@ def run_exact_pair_adaptive_integrator(
     rider_seed: Sequence[ParticleState],
     driver_seed: Sequence[ParticleState],
     initial_step_ns: float,
+    space_charge: Any = None,
     requested_public_samples: int,
     aperture_radius_mm: float,
     magnetic_dipole: MagneticDipoleConfig,
+    beamline_geometry: Any = None,
     self_consistency: SelfConsistencyConfig | None,
     chrono_mode: ChronoMatchingMode,
     radiation_reaction_mode: str,
@@ -162,7 +183,7 @@ def run_exact_pair_adaptive_integrator(
     TrajectoryArrays,
     list[dict[str, float]],
 ]:
-    """Run or resume the strict one-rider/one-driver adaptive production path."""
+    """Run or resume adaptive exact pairs or charge-source bunches."""
 
     if not adaptive.enabled or adaptive.target_lab_time_ns is None:
         raise ValueError("exact-pair adaptive production mode is not enabled")
@@ -172,6 +193,16 @@ def run_exact_pair_adaptive_integrator(
     if checkpoint_directory is None:  # pragma: no cover - CheckpointConfig invariant
         raise ValueError("exact-pair adaptive checkpoint directory is required")
 
+    if not rider_seed or not driver_seed:
+        raise ValueError("exact-pair adaptive seed histories must not be empty")
+    bunch_mode = len(rider_seed[-1]["x"]) > 1 or len(driver_seed[-1]["x"]) > 1
+    if bunch_mode and (
+        magnetic_dipole.source.active
+        or magnetic_dipole.intrinsic_spin_self_reaction_mode != "off"
+    ):
+        raise NotImplementedError(
+            "adaptive bunches support charge sources with spin self-reaction off"
+        )
     resume = checkpoint.resume_from is not None
     store = AcceptedPairCheckpointStore(
         checkpoint_directory,
@@ -185,7 +216,9 @@ def run_exact_pair_adaptive_integrator(
     reduction_history: AcceptedPairIntrinsicSpinReductionHistory | None = None
     reduction_candidate_builder: IntrinsicSpinReductionCandidate | None = None
     reduction_diagnostic_enabled = bool(
-        magnetic_dipole.exact_retarded_update == "second_order_start_taylor_endpoint"
+        not bunch_mode
+        and magnetic_dipole.exact_retarded_update
+        == "second_order_start_taylor_endpoint"
     )
     causal_c5_enabled = bool(
         magnetic_dipole.source.active
@@ -198,8 +231,12 @@ def run_exact_pair_adaptive_integrator(
     growable_c5_history: GrowableAcceptedPairCausalC5SourceHistory | None = None
     growable_local_history: GrowableAcceptedPairCausalLocalSourceHistory | None = None
     if resume:
-        rider_builder = GrowableTrajectoryBuilder(8, 1, magnetic_dipole=True)
-        driver_builder = GrowableTrajectoryBuilder(8, 1, magnetic_dipole=True)
+        rider_builder = GrowableTrajectoryBuilder(
+            8, len(rider_seed[-1]["x"]), magnetic_dipole=True
+        )
+        driver_builder = GrowableTrajectoryBuilder(
+            8, len(driver_seed[-1]["x"]), magnetic_dipole=True
+        )
         store.restore_pair(rider_builder, driver_builder)
         controller = AdaptivePairControllerState.from_checkpoint_state(
             store.controller_state
@@ -315,7 +352,9 @@ def run_exact_pair_adaptive_integrator(
         ExactPairEOMOptions(
             aperture_radius_mm=aperture_radius_mm,
             magnetic_dipole=magnetic_dipole,
+            beamline_geometry=beamline_geometry,
             self_consistency=self_consistency,
+            space_charge=space_charge,
             chrono_mode=chrono_mode,
             radiation_reaction_mode=radiation_reaction_mode,
             external_field=external_field,
@@ -346,7 +385,13 @@ def run_exact_pair_adaptive_integrator(
         controller_config=_step_controller_config(
             causal_c5_enabled=(causal_c5_enabled or causal_local_enabled)
         ),
-        tolerances=_scaled_tolerances(adaptive.tolerance_scale),
+        tolerances=_scaled_tolerances(
+            adaptive.tolerance_scale,
+            adaptive.diagnostics_absolute_tolerance_native,
+            position_momentum_scale=adaptive.position_momentum_tolerance_scale,
+            diagnostic_ulp_floor=adaptive.diagnostic_ulp_floor,
+            diagnostic_ulp_multiplier=adaptive.diagnostic_ulp_multiplier,
+        ),
         target_time_ns=adaptive.target_lab_time_ns,
         minimum_step_ns=initial_step_ns * adaptive.minimum_step_factor,
         maximum_step_ns=initial_step_ns * adaptive.maximum_step_factor,
@@ -355,6 +400,8 @@ def run_exact_pair_adaptive_integrator(
         public_sample_interval_ns=public_interval,
         magnetic_dipole=magnetic_dipole,
         include_dipole_source=magnetic_dipole.source.active,
+        same_bunch_fields=bool(space_charge is not None and space_charge.enabled),
+        beamline_geometry=beamline_geometry,
         public_output_state=public_output,
         checkpoint_store=store,
         spin_interpolation_model="causal_frozen_c1",
@@ -362,6 +409,7 @@ def run_exact_pair_adaptive_integrator(
         relative_time_tolerance=adaptive.shared_time_relative_tolerance,
         cancel_callback=cancel_callback,
         accepted_progress_callback=progress,
+        record_attempt_diagnostics=adaptive.diagnostic_ulp_floor,
         intrinsic_spin_reduction_history=reduction_history,
         build_intrinsic_spin_reduction_candidate=reduction_candidate_builder,
         growable_causal_c5_source_history=growable_c5_history,
@@ -415,6 +463,20 @@ def run_exact_pair_adaptive_integrator(
             magnetic_dipole.intrinsic_spin_self_reaction_mode,
         ),
     }
+    if adaptive.diagnostic_ulp_floor:
+        summary["diagnostic_ulp_floor"] = {
+            "reference": "per-diagnostic increment magnitude; projection uses endpoint kinetic energy; maximum of full and refined",
+            "controller_policy": "exclude floor-dominated diagnostic entries",
+            "multiplier": adaptive.diagnostic_ulp_multiplier,
+            "floor_applied_trials": sum(
+                bool(d.floored_groups) for d in result.attempt_diagnostics
+            ),
+            "floor_changed_acceptances": sum(
+                d.accepted and d.diagnostic_floor_changed_acceptance
+                for d in result.attempt_diagnostics
+            ),
+            "attempt_diagnostics": [asdict(d) for d in result.attempt_diagnostics],
+        }
     cast(dict[str, Any], rider_legacy[-1])["_adaptive_pair_return"] = dict(summary)
     cast(dict[str, Any], driver_legacy[-1])["_adaptive_pair_return"] = dict(summary)
     return rider_legacy, driver_legacy, rider, driver, []

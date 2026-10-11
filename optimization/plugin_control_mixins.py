@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import math
 import threading
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import messagebox
 from typing import Optional
 
 from core.types import SimulationType
@@ -28,11 +27,6 @@ from optimization.ui_helpers import (
 
 def _existing_config_value(config: OptimizationConfig | None, attr: str, default):
     return getattr(config, attr) if config is not None else default
-
-
-def _stability_dialog_logging_defaults(config: OptimizationConfig) -> tuple[str, bool]:
-    """Return logging defaults without silently enabling debug output."""
-    return str(config.self_consistency_verbosity), bool(config.adaptive_timestep_debug)
 
 
 class OptimizationPluginControlMixin:
@@ -154,7 +148,7 @@ class OptimizationPluginControlMixin:
             "self_consistency_max_iterations": setting(
                 "self_consistency_max_iterations_var",
                 "self_consistency_max_iterations",
-                5,
+                2,
             ),
             "self_consistency_mass_shell_tolerance": setting(
                 "self_consistency_mass_shell_tolerance_var",
@@ -561,276 +555,6 @@ class OptimizationPluginControlMixin:
             linked_energy_sweep=linked_energy_sweep,
             debug=print,
         )
-
-    def _confirm_stability_options(self) -> bool:
-        """Show the stability options confirmation dialog."""
-        dialog = tk.Toplevel(self)
-        dialog.title("Confirm Stability Options")
-        dialog.transient(self)
-        dialog.grab_set()
-
-        result = [False]
-
-        main_frame = ttk.Frame(dialog, padding=15)
-        main_frame.pack(fill="both", expand=True)
-
-        info_label = ttk.Label(
-            main_frame,
-            text="The following stability options will be used for all sweep runs.\n"
-            "These settings affect convergence, energy monitoring, and timestep adaptation.",
-            wraplength=500,
-            justify="left",
-        )
-        info_label.pack(pady=(0, 10))
-
-        use_single_run_var = tk.BooleanVar(value=True)
-        use_single_run_frame = ttk.Frame(main_frame)
-        use_single_run_frame.pack(fill="x", pady=(0, 10))
-
-        use_single_run_cb = ttk.Checkbutton(
-            use_single_run_frame,
-            text="Use single-run stability settings (uncheck for safer sweep defaults)",
-            variable=use_single_run_var,
-        )
-        use_single_run_cb.pack(anchor="w")
-
-        canvas = tk.Canvas(main_frame, height=300, width=550)
-        scrollbar = ttk.Scrollbar(main_frame, orient="vertical", command=canvas.yview)
-        scrollable = ttk.Frame(canvas)
-
-        scrollable.bind(
-            "<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
-        )
-
-        canvas.create_window((0, 0), window=scrollable, anchor="nw")
-        canvas.configure(yscrollcommand=scrollbar.set)
-
-        all_widgets = []
-
-        sc_frame = ttk.LabelFrame(scrollable, text="Self-Consistency", padding=10)
-        sc_frame.pack(fill="x", pady=5, padx=5)
-
-        sc_enabled_var = tk.BooleanVar(value=self.config.self_consistency_enabled)
-        sc_enabled_cb = ttk.Checkbutton(
-            sc_frame, text="Enabled", variable=sc_enabled_var
-        )
-        sc_enabled_cb.pack(anchor="w")
-        all_widgets.append(sc_enabled_cb)
-
-        ttk.Label(sc_frame, text="Tolerance:").pack(anchor="w", pady=(5, 0))
-        sc_tol_var = tk.StringVar(value=f"{self.config.self_consistency_tolerance:.1e}")
-        sc_tol_entry = ttk.Entry(sc_frame, textvariable=sc_tol_var, width=15)
-        sc_tol_entry.pack(anchor="w")
-        all_widgets.append(sc_tol_entry)
-
-        ttk.Label(sc_frame, text="Max iterations:").pack(anchor="w", pady=(5, 0))
-        sc_iter_var = tk.StringVar(
-            value=str(self.config.self_consistency_max_iterations)
-        )
-        sc_iter_entry = ttk.Entry(sc_frame, textvariable=sc_iter_var, width=15)
-        sc_iter_entry.pack(anchor="w")
-        all_widgets.append(sc_iter_entry)
-
-        ttk.Label(
-            sc_frame, text="Verbosity (0=silent, 1=summary, 2=failures, 3=full):"
-        ).pack(anchor="w", pady=(5, 0))
-        ttk.Label(
-            sc_frame,
-            text="  Note: Full logging inherits this; truncated/none suppress it during sweep/optim",
-            font=("TkDefaultFont", 8, "italic"),
-            foreground="gray",
-        ).pack(anchor="w")
-        sc_verbosity, adaptive_debug = _stability_dialog_logging_defaults(self.config)
-        sc_verb_var = tk.StringVar(value=sc_verbosity)
-        sc_verb_entry = ttk.Entry(sc_frame, textvariable=sc_verb_var, width=15)
-        sc_verb_entry.pack(anchor="w")
-        all_widgets.append(sc_verb_entry)
-
-        at_frame = ttk.LabelFrame(scrollable, text="Adaptive Timestep", padding=10)
-        at_frame.pack(fill="x", pady=5, padx=5)
-
-        at_enabled_var = tk.BooleanVar(value=self.config.adaptive_timestep_enabled)
-        at_enabled_cb = ttk.Checkbutton(
-            at_frame, text="Enabled", variable=at_enabled_var
-        )
-        at_enabled_cb.pack(anchor="w")
-        all_widgets.append(at_enabled_cb)
-
-        ttk.Label(at_frame, text="Energy jump threshold:").pack(anchor="w", pady=(5, 0))
-        at_thresh_var = tk.StringVar(value=str(self.config.adaptive_timestep_threshold))
-        at_thresh_entry = ttk.Entry(at_frame, textvariable=at_thresh_var, width=15)
-        at_thresh_entry.pack(anchor="w")
-        all_widgets.append(at_thresh_entry)
-
-        ttk.Label(at_frame, text="Reduction factor:").pack(anchor="w", pady=(5, 0))
-        at_factor_var = tk.StringVar(
-            value=str(self.config.adaptive_timestep_reduction_factor)
-        )
-        at_factor_entry = ttk.Entry(at_frame, textvariable=at_factor_var, width=15)
-        at_factor_entry.pack(anchor="w")
-        all_widgets.append(at_factor_entry)
-
-        try:
-            reduction_factor = self.config.adaptive_timestep_reduction_factor
-            min_factor = self.config.adaptive_timestep_min_factor
-            if reduction_factor > 1 and min_factor > 0:
-                calculated_attempts = math.ceil(
-                    math.log(1.0 / min_factor) / math.log(reduction_factor)
-                )
-                attempts_display = (
-                    f"{max(1, calculated_attempts)} "
-                    "(auto-calculated from reduction factor & min timestep)"
-                )
-            else:
-                attempts_display = "N/A"
-        except (ValueError, ZeroDivisionError):
-            attempts_display = "N/A"
-
-        ttk.Label(at_frame, text="Max reduction attempts:").pack(
-            anchor="w", pady=(5, 0)
-        )
-        at_attempts_display = ttk.Label(
-            at_frame,
-            text=attempts_display,
-            relief="sunken",
-            background="#f0f0f0",
-            foreground="#606060",
-            padding=(5, 2),
-            font=("TkDefaultFont", 9, "italic"),
-        )
-        at_attempts_display.pack(anchor="w")
-        all_widgets.append(at_attempts_display)
-
-        at_halt_var = tk.BooleanVar(value=self.config.energy_monitor_halt_on_jump)
-        at_halt_cb = ttk.Checkbutton(
-            at_frame, text="Halt simulation on energy jump", variable=at_halt_var
-        )
-        at_halt_cb.pack(anchor="w", pady=(5, 0))
-        all_widgets.append(at_halt_cb)
-
-        at_debug_var = tk.BooleanVar(value=adaptive_debug)
-        at_debug_cb = ttk.Checkbutton(
-            at_frame,
-            text="Debug logging (single run only; sweep/optim uses Log verbosity)",
-            variable=at_debug_var,
-        )
-        at_debug_cb.pack(anchor="w", pady=(5, 0))
-        all_widgets.append(at_debug_cb)
-
-        def apply_sweep_defaults():
-            sc_verb_var.set("1")
-            at_debug_var.set(True)
-            at_halt_var.set(False)
-
-        def on_checkbox_toggle():
-            if use_single_run_var.get():
-                for widget in all_widgets:
-                    widget.configure(state="disabled")
-            else:
-                for widget in all_widgets:
-                    widget.configure(state="normal")
-                apply_sweep_defaults()
-
-        use_single_run_cb.configure(command=on_checkbox_toggle)
-        on_checkbox_toggle()
-
-        canvas.pack(side="left", fill="both", expand=True)
-        scrollbar.pack(side="right", fill="y")
-
-        sweep_frame = ttk.LabelFrame(main_frame, text="Sweep Robustness", padding=10)
-        sweep_frame.pack(fill="x", pady=(10, 0))
-
-        ttk.Label(sweep_frame, text="Per-run timeout (seconds, 0=unlimited):").pack(
-            anchor="w"
-        )
-        timeout_var = tk.StringVar(value=str(self.config.per_run_timeout))
-        timeout_entry = ttk.Entry(sweep_frame, textvariable=timeout_var, width=15)
-        timeout_entry.pack(anchor="w", pady=(0, 5))
-
-        skip_failed_var = tk.BooleanVar(value=self.config.skip_failed_runs)
-        skip_failed_cb = ttk.Checkbutton(
-            sweep_frame,
-            text="Skip failed runs and continue sweep",
-            variable=skip_failed_var,
-        )
-        skip_failed_cb.pack(anchor="w")
-
-        button_frame = ttk.Frame(main_frame)
-        button_frame.pack(pady=(10, 0))
-
-        def on_confirm():
-            try:
-                self.config.self_consistency_enabled = sc_enabled_var.get()
-                sc_tolerance = float(sc_tol_var.get())
-                self.config.self_consistency_tolerance = sc_tolerance
-                self.config.self_consistency_target_ms_tolerance = sc_tolerance
-                self.config.self_consistency_max_iterations = int(sc_iter_var.get())
-                self.config.self_consistency_verbosity = int(sc_verb_var.get())
-
-                self.config.energy_monitor_enabled = False
-                self.config.energy_monitor_halt_on_jump = at_halt_var.get()
-
-                self.config.adaptive_timestep_enabled = at_enabled_var.get()
-                self.config.adaptive_timestep_threshold = float(at_thresh_var.get())
-                self.config.adaptive_timestep_reduction_factor = int(
-                    at_factor_var.get()
-                )
-                self.config.adaptive_timestep_debug = at_debug_var.get()
-
-                self.config.per_run_timeout = float(timeout_var.get())
-                self.config.skip_failed_runs = skip_failed_var.get()
-
-                self.per_run_timeout_var.set(str(self.config.per_run_timeout))
-                self.skip_failed_runs_var.set(self.config.skip_failed_runs)
-
-                result[0] = True
-                dialog.destroy()
-            except ValueError as e:
-                _show_error_dialog(
-                    dialog, "Invalid Input", f"Please check your inputs: {e}"
-                )
-
-        def on_cancel():
-            result[0] = False
-            dialog.destroy()
-
-        confirm_btn = ttk.Button(
-            button_frame, text="Proceed with Sweep", command=on_confirm, width=20
-        )
-        confirm_btn.pack(side="left", padx=5)
-
-        cancel_btn = ttk.Button(
-            button_frame, text="Cancel", command=on_cancel, width=15
-        )
-        cancel_btn.pack(side="left", padx=5)
-
-        dialog.update_idletasks()
-        width = dialog.winfo_width()
-        height = dialog.winfo_height()
-        x = (dialog.winfo_screenwidth() // 2) - (width // 2)
-        y = (dialog.winfo_screenheight() // 2) - (height // 2)
-        dialog.geometry(f"+{x}+{y}")
-
-        dialog.wait_window()
-
-        if result[0]:
-            self._log_result("[INFO] Stability options confirmed for sweep:")
-            self._log_result(
-                f"  Self-consistency: {self.config.self_consistency_enabled} (tol={self.config.self_consistency_tolerance:.1e}, max_iter={self.config.self_consistency_max_iterations}, verbosity={self.config.self_consistency_verbosity})"
-            )
-            self._log_result(
-                f"  Adaptive timestep: {self.config.adaptive_timestep_enabled} (threshold={self.config.adaptive_timestep_threshold * 100:.0f}%, reduction={self.config.adaptive_timestep_reduction_factor}x, min_factor={self.config.adaptive_timestep_min_factor}, debug={self.config.adaptive_timestep_debug})"
-            )
-            self._log_result(
-                f"  Per-run timeout: {self.config.per_run_timeout}s, Skip failed: {self.config.skip_failed_runs}"
-            )
-            if not use_single_run_var.get():
-                self._log_result(
-                    "  [NOTE] Using safer sweep defaults (single-run settings overridden)"
-                )
-            self._log_result("")
-
-        return result[0]
 
     def _check_extreme_parameters(self) -> Optional[str]:
         """Check for extreme parameter combinations that might cause issues."""

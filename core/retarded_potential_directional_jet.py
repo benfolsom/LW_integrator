@@ -38,6 +38,7 @@ import numpy as np
 from .constants import C_MMNS
 
 if TYPE_CHECKING:
+    from .light_cone_history import LightConeSegment
     from .retarded_fields import ObserverEvent, TrajectoryHistory
 
 _DIMENSION = 4
@@ -432,29 +433,27 @@ def _directional_potential_result(
 def sum_potential_directional_derivatives_native(
     *values: PotentialDirectionalDerivatives,
 ) -> PotentialDirectionalDerivatives:
-    """Add charge/dipole/source contributions without changing their ordering."""
+    """Compensate each component of the charge, dipole, and source jet sums."""
 
-    four_potential = np.zeros(4, dtype=float)
-    partial_a = np.zeros((4, 4), dtype=float)
-    partial2_a = np.zeros((4, 4, 4), dtype=float)
-    partial3_velocity = np.zeros((4, 4, 4), dtype=float)
-    partial3_acceleration = np.zeros((4, 4, 4), dtype=float)
-    partial4_velocity_twice = np.zeros((4, 4, 4), dtype=float)
-    for value in values:
-        four_potential += value.four_potential
-        partial_a += value.partial_a
-        partial2_a += value.partial2_a
-        partial3_velocity += value.partial3_a_along_velocity
-        partial3_acceleration += value.partial3_a_along_acceleration
-        partial4_velocity_twice += value.partial4_a_along_velocity_twice
-    return PotentialDirectionalDerivatives(
-        four_potential=four_potential,
-        partial_a=partial_a,
-        partial2_a=partial2_a,
-        partial3_a_along_velocity=partial3_velocity,
-        partial3_a_along_acceleration=partial3_acceleration,
-        partial4_a_along_velocity_twice=partial4_velocity_twice,
-    )
+    from .retarded_fields import _sum_source_terms
+
+    shapes = {
+        "four_potential": (4,),
+        "partial_a": (4, 4),
+        "partial2_a": (4, 4, 4),
+        "partial3_a_along_velocity": (4, 4, 4),
+        "partial3_a_along_acceleration": (4, 4, 4),
+        "partial4_a_along_velocity_twice": (4, 4, 4),
+    }
+    summed = {
+        name: _sum_source_terms(
+            np.asarray([getattr(value, name) for value in values]).reshape(
+                (len(values),) + shape
+            )
+        )
+        for name, shape in shapes.items()
+    }
+    return PotentialDirectionalDerivatives(**summed)
 
 
 def _quintic_charge_potential_taylor_native(
@@ -548,6 +547,116 @@ def _quintic_charge_potential_taylor_native(
     ]
     light_cone = observer[0] - root_coordinate - separation
     return potential, root_coordinate, light_cone, (root_time - start_time) / duration
+
+
+def _null_charge_potential_directional_jet_native(
+    segment: "LightConeSegment",
+    fraction: float,
+    event: "ObserverEvent",
+    charge: float,
+    velocity: np.ndarray,
+    acceleration: np.ndarray,
+) -> PotentialDirectionalDerivativeJet:
+    """Differentiate the stored null worldline from its retained root fraction."""
+    from .light_cone_history import endpoint_geometry
+
+    space = _jet_space(4)
+    length = C_MMNS * segment.duration_ns
+    geometry = endpoint_geometry(
+        segment,
+        event.time_ns,
+        np.asarray(event.position_mm),
+        event.time_low_ns,
+        np.asarray(event.position_low_mm),
+        event.time_tail_ns,
+        np.asarray(event.position_tail_mm),
+    )
+    shift = [_TaylorJet.variable(space, 0.0, axis) for axis in range(4)]
+
+    def linear(weights: np.ndarray, jets: Sequence[_TaylorJet]) -> _TaylorJet:
+        result = _TaylorJet.constant(space, 0.0)
+        for weight, jet in zip(weights, jets):
+            result += float(weight) * jet
+        return result
+
+    projected = [linear(row, shift[1:]) for row in segment.frame]
+    observer_null = geometry[0] + shift[0] - projected[0]
+    observer_other_null = geometry[4] + shift[0] + projected[0]
+    coordinate = _TaylorJet.constant(space, length * fraction)
+    if np.all(segment.speed_deficit == 1.0) and np.all(
+        segment.coefficients_mm[2:] == 0.0
+    ):
+        # Symbolically remove the retarded coordinate for a stationary source.
+        # This avoids roundoff derivatives of root - length*(root/length).
+        separation = [geometry[i + 1] + projected[i] for i in range(3)]
+        radius = _norm(separation)
+        scalar = float(charge) / radius
+        zero = _TaylorJet.constant(space, 0.0)
+        return _directional_potential_result(
+            potential=[scalar, zero, zero, zero],
+            velocity=velocity,
+            acceleration=acceleration,
+            retarded_coordinate=coordinate + C_MMNS * segment.time_ns,
+            light_cone=zero,
+            segment_fraction=fraction,
+        )
+
+    def geometry_at(
+        root: _TaylorJet,
+    ) -> tuple[_TaylorJet, _TaylorJet, list[_TaylorJet], _TaylorJet]:
+        tau = root / length
+        values = [
+            _polynomial(
+                tuple(float(value) for value in segment.coefficients_mm[:, i]), tau
+            )
+            for i in range(3)
+        ]
+        slope = [
+            _polynomial(
+                tuple(j * segment.coefficients_mm[j, i] / length for j in range(1, 6)),
+                tau,
+            )
+            for i in range(3)
+        ]
+        parallel = geometry[1] + projected[0] - root + values[0]
+        transverse = [
+            geometry[i + 2] + projected[i + 1] - values[i + 1] for i in range(2)
+        ]
+        radius = _norm([parallel, *transverse])
+        difference = (
+            _dot(transverse, transverse) / (radius + parallel)
+            if parallel.value > 0
+            else radius - parallel
+        )
+        residual = observer_null - values[0] - difference
+        if parallel.value <= 0:
+            a = observer_null - values[0]
+            b = observer_other_null - 2 * root + values[0]
+            residual = (a * b - _dot(transverse, transverse)) / (a + parallel + radius)
+        kappa = (
+            difference + parallel * slope[0] - _dot(transverse, slope[1:])
+        ) / radius
+        local_beta = [1.0 - slope[0], slope[1], slope[2]]
+        beta = [linear(segment.frame[:, i], local_beta) for i in range(3)]
+        return residual, kappa, beta, radius
+
+    for _ in range(5):
+        residual, kappa, _, _ = geometry_at(coordinate)
+        if kappa.value <= 0:
+            raise ValueError("resolved charge potential has nonpositive kappa")
+        coordinate = coordinate + residual.with_value(0.0) / kappa
+    residual, kappa, beta, radius = geometry_at(coordinate)
+    scalar = float(charge) / (kappa * radius)
+    potential = [scalar, *(scalar * component for component in beta)]
+    public_coordinate = coordinate + C_MMNS * segment.time_ns
+    return _directional_potential_result(
+        potential=potential,
+        velocity=velocity,
+        acceleration=acceleration,
+        retarded_coordinate=public_coordinate,
+        light_cone=residual,
+        segment_fraction=fraction,
+    )
 
 
 def quintic_charge_potential_directional_jet_native(
@@ -975,6 +1084,16 @@ def evaluate_retarded_charge_potential_directional_jet_native(
         max_root_iterations,
     )
     prepared = _prepare_history(history, excluded_source_indices)
+    from .proper_velocity_history import ProperVelocitySegment
+
+    if any(
+        isinstance(segment, ProperVelocitySegment)
+        for source in prepared.sources.values()
+        for segment in source.light_cone_segments
+    ):
+        raise ValueError(
+            "proper_velocity does not support spin C5 or higher-potential derivative histories"
+        )
     arrays = prepared.arrays
     identities: tuple[Hashable, ...] = tuple(range(arrays.n_sources))
     valid_sources = np.zeros(arrays.n_sources, dtype=bool)
@@ -985,6 +1104,7 @@ def evaluate_retarded_charge_potential_directional_jet_native(
     missing_sources: list[int] = []
     observer_time = float(observer_event.time_ns)
     observer_position = np.asarray(observer_event.position_mm, dtype=float)
+    samples = {}
     for source_index, source in prepared.sources.items():
         sample = _solve_retarded_sample(
             source,
@@ -992,6 +1112,10 @@ def evaluate_retarded_charge_potential_directional_jet_native(
             observer_position_mm=observer_position,
             root_tolerance_mm=tolerance,
             max_root_iterations=iterations,
+            observer_time_low_ns=observer_event.time_low_ns,
+            observer_position_low_mm=np.asarray(observer_event.position_low_mm),
+            observer_time_tail_ns=observer_event.time_tail_ns,
+            observer_position_tail_mm=np.asarray(observer_event.position_tail_mm),
         )
         if sample is None:
             if _source_terminated_before_light_cone(
@@ -1010,6 +1134,7 @@ def evaluate_retarded_charge_potential_directional_jet_native(
             )
         valid_sources[source_index] = True
         retarded_times[source_index] = sample.time_ns
+        samples[source_index] = sample
     if require_complete_history and missing_sources:
         raise RetardedHistoryError(
             "source history does not bracket the observer light cone for source "
@@ -1021,7 +1146,17 @@ def evaluate_retarded_charge_potential_directional_jet_native(
         if not valid_sources[source_index]:
             continue
         root_time = float(retarded_times[source_index])
-        segment, fraction = _segment_at_retarded_time(source.time_ns, root_time)
+        sample = samples[source_index]
+        if (
+            sample.source_segment_index is not None
+            and sample.source_segment_fraction is not None
+        ):
+            segment, fraction = (
+                sample.source_segment_index,
+                sample.source_segment_fraction,
+            )
+        else:
+            segment, fraction = _segment_at_retarded_time(source.time_ns, root_time)
         segment_indices[source_index] = segment
         segment_fractions[source_index] = fraction
         if fraction <= guard or fraction >= 1.0 - guard:
@@ -1038,17 +1173,27 @@ def evaluate_retarded_charge_potential_directional_jet_native(
                 segment_fraction=segment_fractions,
                 jet_residual=jet_residuals,
             )
-        result = quintic_charge_potential_directional_jet_native(
-            observer_time_ns=observer_time,
-            observer_position_mm=observer_position,
-            charge_native=float(arrays.charge_native[source_index]),
-            segment_start_time_ns=float(source.time_ns[segment]),
-            segment_duration_ns=float(source.segment_duration_ns[segment]),
-            position_coefficients_mm=source.position_coefficients_mm[segment],
-            retarded_time_ns=root_time,
-            four_velocity_mm_ns=velocity,
-            four_acceleration_mm_ns2=acceleration,
-        )
+        if source.light_cone_segments and sample.source_segment_index is not None:
+            result = _null_charge_potential_directional_jet_native(
+                source.light_cone_segments[segment],
+                fraction,
+                observer_event,
+                float(arrays.charge_native[source_index]),
+                velocity,
+                acceleration,
+            )
+        else:
+            result = quintic_charge_potential_directional_jet_native(
+                observer_time_ns=observer_time,
+                observer_position_mm=observer_position,
+                charge_native=float(arrays.charge_native[source_index]),
+                segment_start_time_ns=float(source.time_ns[segment]),
+                segment_duration_ns=float(source.segment_duration_ns[segment]),
+                position_coefficients_mm=source.position_coefficients_mm[segment],
+                retarded_time_ns=root_time,
+                four_velocity_mm_ns=velocity,
+                four_acceleration_mm_ns2=acceleration,
+            )
         jet_residuals[source_index] = result.light_cone_jet_residual
         source_results.append(result.derivatives)
     derivatives = sum_potential_directional_derivatives_native(*source_results)
