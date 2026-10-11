@@ -157,6 +157,18 @@ def test_prepared_analytic_history_can_declare_instantaneous_acceleration() -> N
         supplied_endpoint_derivative,
     )
 
+    # Kick metadata on a different source must not replace this source's
+    # explicitly instantaneous bdot with finite-difference reconstruction.
+    arrays.gate_prime_before = np.full((len(times_ns), 1, 3), np.nan)
+    arrays.gate_prime_after = np.full((len(times_ns), 1, 3), np.nan)
+    arrays.kick_beta_before = np.full((len(times_ns), 1, 3), np.nan)
+    bystander = retarded_fields._prepare_source_history(
+        arrays, 0, source_acceleration_semantics="instantaneous"
+    )
+    np.testing.assert_array_equal(
+        bystander.beta_prime_per_mm, supplied_endpoint_derivative
+    )
+
 
 def _reference_full_scan_knot_bracket(
     source: retarded_fields._PreparedSourceHistory,

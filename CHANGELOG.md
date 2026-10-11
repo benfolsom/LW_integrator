@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Keep gate and recoil knots aligned across a bunch after particle loss, and
+  resume incremental charge and dipole preparation outside the three-knot
+  split window. Decode only appended metadata, and copy one source's split
+  derivatives at a time. Preserve instantaneous acceleration for unkicked
+  sources. Deterministic defaults remain unchanged. General-runner recoil
+  metadata uses null derivatives and incoming-state keys that require a reader
+  supporting split kicks; older checkpoints remain readable. Document the
+  provisional ballistic outgoing branch and the remaining cost of frequent
+  split events.
+
 - Record accepted stochastic recoils as split velocity knots on the general
   exact retarded path, and remove its emission guard. Source reconstruction
   uses incoming and outgoing smooth branches without adding a classical pulse

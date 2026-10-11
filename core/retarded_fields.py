@@ -488,12 +488,15 @@ def _build_null_segments(
     start: int,
     stop: int,
     beta_primes: np.ndarray,
+    gate_primes: tuple[np.ndarray, np.ndarray] | None = None,
 ) -> tuple[LightConeSegment, ...]:
     result = []
     for knot in range(start, max(start, stop - 1)):
         sl = slice(knot, knot + 2)
         betas, data = _branch_kinematics(history, source_index, knot, knot + 1)
-        primes = _segment_beta_primes(history, source_index, knot, beta_primes)
+        primes = _segment_beta_primes(
+            history, source_index, knot, beta_primes, gate_primes
+        )
         segment = build_light_cone_segment(
             history.time_ns[sl, source_index],
             history.position_mm[sl, source_index],
@@ -540,22 +543,34 @@ def _branch_kinematics(
         if np.all(np.isfinite(incoming)):
             betas = np.array(betas, copy=True)
             betas[-1] = incoming
-            if data is not None:
+            if data is not None and history.kick_resolved_before is not None:
                 data = np.array(data, copy=True)
                 data[-1] = history.kick_resolved_before[right, source_index]
+            else:
+                # A direct caller may supply velocity splits without resolved
+                # kinematics. Never reuse the outgoing proper velocity here.
+                data = None
     return betas, data
 
 
 def _segment_beta_primes(
-    history: _HistoryArrays, source_index: int, knot: int, beta_primes: np.ndarray
+    history: _HistoryArrays,
+    source_index: int,
+    knot: int,
+    beta_primes: np.ndarray,
+    gate_primes: tuple[np.ndarray, np.ndarray] | None = None,
 ) -> np.ndarray:
     primes = np.array(beta_primes[knot : knot + 2], copy=True)
     for endpoint, values in (
-        (0, history.gate_prime_after),
-        (1, history.gate_prime_before),
+        (0, history.gate_prime_after if gate_primes is None else gate_primes[1]),
+        (1, history.gate_prime_before if gate_primes is None else gate_primes[0]),
     ):
         if values is not None:
-            value = values[knot + endpoint, source_index]
+            value = (
+                values[knot + endpoint, source_index]
+                if gate_primes is None
+                else values[knot + endpoint]
+            )
             if np.all(np.isfinite(value)):
                 primes[endpoint] = value
     return primes
@@ -1283,28 +1298,33 @@ def _prepare_source_history(
             ),
         )
     )
-    if history.gate_prime_before is not None and (
-        acceleration_semantics != "instantaneous"
-        or history.kick_beta_before is not None
+    kicks = (
+        np.zeros(alive_stop, dtype=bool)
+        if history.kick_beta_before is None
+        else np.all(
+            np.isfinite(history.kick_beta_before[:alive_stop, source_index]), axis=1
+        )
+    )
+    gate_primes = None
+    if (
+        alive_stop
+        and history.gate_prime_before is not None
+        and (acceleration_semantics != "instantaneous" or kicks.any())
     ):
         # Reconstruct on each smooth side separately. Even the neighbours of
         # a gate knot must not difference velocities across its force jump.
-        split = np.all(
-            np.isfinite(history.gate_prime_before[:alive_stop, source_index]),
-            axis=1,
+        before = history.gate_prime_before[:alive_stop, source_index]
+        after = (
+            np.full_like(before, np.nan)
+            if history.gate_prime_after is None
+            else history.gate_prime_after[:alive_stop, source_index]
         )
-        if history.kick_beta_before is not None:
-            kicks = np.all(
-                np.isfinite(history.kick_beta_before[:alive_stop, source_index]),
-                axis=1,
-            )
-            split |= kicks
-            # One-sided reconstructed primes belong to this prepared view.
-            history = replace(
-                history,
-                gate_prime_before=np.array(history.gate_prime_before, copy=True),
-                gate_prime_after=np.array(history.gate_prime_after, copy=True),
-            )
+        split = np.all(np.isfinite(before), axis=1) | kicks
+        if kicks.any():
+            # Only this source's one-sided primes belong to the prepared view.
+            before, after = before.copy(), after.copy()
+            beta_primes = beta_primes.copy()
+        gate_primes = (before, after)
         breaks = np.flatnonzero(split)
         boundaries = sorted(set((0, *breaks, alive_stop - 1)))
         for left, right in zip(boundaries[:-1], boundaries[1:]):
@@ -1319,21 +1339,26 @@ def _prepare_source_history(
                 branch_data,
             )
             beta_primes[sl] = branch_primes
-            if history.kick_beta_before is not None:
-                for index, side, prime in (
-                    (left, "after", branch_primes[0]),
-                    (right, "before", branch_primes[-1]),
-                ):
-                    values = getattr(history, f"gate_prime_{side}")
-                    if kicks[index] and not np.all(
-                        np.isfinite(values[index, source_index])
-                    ):
-                        values[index, source_index] = prime
-        if history.kick_beta_before is not None and alive_stop and kicks[-1]:
-            # No outgoing interval has been accepted yet. Prime its derivative
-            # from future smooth samples when they arrive, as Medina does.
-            history.gate_prime_after[alive_stop - 1, source_index] = 0.0
+            for index, values, prime in (
+                (left, after, branch_primes[0]),
+                (right, before, branch_primes[-1]),
+            ):
+                if kicks[index] and not np.all(np.isfinite(values[index])):
+                    values[index] = prime
+        if alive_stop and kicks[-1]:
+            # The provisional outgoing branch is ballistic until another
+            # accepted smooth sample supplies its one-sided acceleration.
+            after[-1] = 0.0
             beta_primes[-1] = 0.0
+    kick_boundary = None
+    if alive_stop and kicks[-1]:
+        proper = (
+            history.resolved_knots[alive_stop - 1, source_index, :3]
+            if history.resolved_knots is not None
+            and history.resolved_knots[alive_stop - 1, source_index, 3]
+            else betas[-1] / np.sqrt(1.0 - betas[-1] @ betas[-1])
+        )
+        kick_boundary = (times[-1], positions[-1], proper)
     durations, coefficients = _quintic_position_coefficients_mm(
         times,
         positions,
@@ -1347,7 +1372,9 @@ def _prepare_source_history(
                 times[knot : knot + 2],
                 positions[knot : knot + 2],
                 segment_betas,
-                _segment_beta_primes(history, source_index, knot, beta_primes),
+                _segment_beta_primes(
+                    history, source_index, knot, beta_primes, gate_primes
+                ),
             )
             coefficients[knot] = piece[0]
     prepared = _PreparedSourceHistory(
@@ -1361,22 +1388,12 @@ def _prepare_source_history(
         ended_by_loss=alive_stop != history.time_ns.shape[0],
         source_acceleration_semantics=acceleration_semantics,
         inertial_boundary=inertial_boundary,
-        kick_boundary=(
-            (
-                times[-1],
-                positions[-1],
-                history.resolved_knots[alive_stop - 1, source_index, :3],
-            )
-            if alive_stop
-            and history.kick_beta_before is not None
-            and np.all(
-                np.isfinite(history.kick_beta_before[alive_stop - 1, source_index])
-            )
-            else None
-        ),
+        kick_boundary=kick_boundary,
         light_cone_segments=(
             list(
-                _build_null_segments(history, source_index, 0, alive_stop, beta_primes)
+                _build_null_segments(
+                    history, source_index, 0, alive_stop, beta_primes, gate_primes
+                )
             )
             if light_cone_enabled
             else ()
@@ -1630,7 +1647,9 @@ def _append_prepared_history(
     previous.arrays._maximum_capacity = capacity
     for source in previous.sources.values():
         source._maximum_capacity = capacity
-    arrays = _append_history_arrays(previous.arrays, history, old_stop)
+    arrays = _append_history_arrays(
+        _without_split_metadata(previous.arrays), history, old_stop
+    )
     # A changed constant forces _append_history_arrays to re-extract the full
     # history. Rebuild source selection as well instead of treating it as an
     # append under stale charges.
@@ -1645,7 +1664,24 @@ def _append_prepared_history(
     for source in previous.sources.values():
         _append_prepared_source_history(source, arrays, old_stop)
     previous.trials.clear()
-    return previous
+    return previous if arrays is previous.arrays else replace(previous, arrays=arrays)
+
+
+def _without_split_metadata(arrays: _HistoryArrays) -> _HistoryArrays:
+    """Raw splits are unnecessary outside a certified split-free append window.
+
+    Prepared prefix segments retain their one-sided velocities and primes.
+    New splits always trigger preparation from the persisted expanded rows.
+    """
+    if arrays.gate_prime_before is None and arrays.kick_beta_before is None:
+        return arrays
+    return replace(
+        arrays,
+        gate_prime_before=None,
+        gate_prime_after=None,
+        kick_beta_before=None,
+        kick_resolved_before=None,
+    )
 
 
 def _prepare_history(
@@ -1699,8 +1735,21 @@ def _prepare_history(
             while len(macro.clouds) > 4:
                 del macro.clouds[next(iter(macro.clouds))]
         return _exclude_prepared_sources(cloud, excluded_source_indices)
-    from .exact_visibility_history import expanded_visibility_history
+    from .exact_visibility_history import expanded_visibility_history, split_free_tail
 
+    if isinstance(history, TrialTrajectoryHistory):
+        base_expanded = expanded_visibility_history(history.base)
+        if (
+            acceleration_semantics != "instantaneous"
+            and base_expanded is not None
+            and split_free_tail(base_expanded, len(base_expanded))
+            and split_free_tail(
+                expanded_visibility_history(list(history.tail)) or history.tail, 0
+            )
+        ):
+            return _prepare_trial_history(
+                history, excluded_source_indices, acceleration_semantics
+            )
     expanded = expanded_visibility_history(history)
     if expanded is not None:
         prepared = _CHARGE_PREPARED_HISTORY_CACHE.prepare(
@@ -1709,8 +1758,15 @@ def _prepare_history(
             prepare_full=lambda current: _prepare_history_uncached(
                 expanded, (), source_acceleration_semantics=acceleration_semantics
             ),
-            append=lambda previous, current, old_stop: _prepare_history_uncached(
-                expanded, (), source_acceleration_semantics=acceleration_semantics
+            append=lambda previous, current, old_stop: (
+                _append_prepared_history(
+                    previous, expanded, previous.arrays.time_ns.shape[0]
+                )
+                if acceleration_semantics != "instantaneous"
+                and split_free_tail(expanded, previous.arrays.time_ns.shape[0])
+                else _prepare_history_uncached(
+                    expanded, (), source_acceleration_semantics=acceleration_semantics
+                )
             ),
         ).value
         return _exclude_prepared_sources(prepared, excluded_source_indices)

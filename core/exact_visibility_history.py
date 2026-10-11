@@ -38,7 +38,9 @@ KNOT_FIELDS = (
     "spin_z",
     *RESOLVED_KNOT_FIELDS,
 )
-_EXPANSIONS = AppendAwarePreparedHistoryCache()
+_EXPANSIONS: AppendAwarePreparedHistoryCache[Any, list[ParticleState] | None] = (
+    AppendAwarePreparedHistoryCache(preserve_capacity_growth=True)
+)
 
 
 def save_visibility_knots(
@@ -47,19 +49,42 @@ def save_visibility_knots(
     """Publish split knots per source, preserving unrelated inclusion metadata."""
     count = len(state["t"])
     metadata = list(state.get("potential_inclusion_state", [""] * count))
-    for particle in range(count):
-        saved = decode_inclusion_state(str(metadata[particle]))
-        existing = saved.pop("exact_gate_history", None)
+    saved_states = [decode_inclusion_state(str(value)) for value in metadata]
+    existing = [saved.pop("exact_gate_history", None) for saved in saved_states]
+    keep_existing = append and all(
+        value is not None and value["endpoint_time_ns"] == float(state["t"][i])
+        for i, value in enumerate(existing)
+    )
+    # A frozen dead clock can also match stale metadata from an earlier step.
+    # Preserve the prior batch only when it belongs to this whole endpoint.
+    entries_by_particle = [
+        list(value["knots"]) if keep_existing and value is not None else []
+        for value in existing
+    ]
+    # Knot indices identify bunch-wide events. Frozen times after particle
+    # loss must not make just one particle merge an interior gate with a kick.
+    live = np.flatnonzero(
+        ~np.asarray(state.get("_dead_particles", np.zeros(count, dtype=bool)))
+    )
+    deciding = live if live.size else range(count)
+    merge_rows = []
+    last_times = [
+        entries[-1]["t"] if entries else None for entries in entries_by_particle
+    ]
+    for row in knots:
+        merge_rows.append(
+            append
+            and all(last is not None for last in last_times)
+            and all(last_times[i] == float(row["t"][i]) for i in deciding)
+        )
+        last_times = [float(value) for value in row["t"]]
+    for particle, saved in enumerate(saved_states):
         if knots:
-            entries = []
-            if (
-                append
-                and existing is not None
-                and existing["endpoint_time_ns"] == float(state["t"][particle])
-            ):
-                entries.extend(existing["knots"])
-            for row in knots:
-                entry = {k: float(row[k][particle]) for k in KNOT_FIELDS if k in row}
+            entries = entries_by_particle[particle]
+            for row, merge in zip(knots, merge_rows):
+                entry: dict[str, Any] = {
+                    k: float(row[k][particle]) for k in KNOT_FIELDS if k in row
+                }
                 for side in ("before", "after"):
                     prime = row[f"_gate_prime_{side}"][particle]
                     entry[side] = prime.tolist() if np.all(np.isfinite(prime)) else None
@@ -70,9 +95,11 @@ def save_visibility_knots(
                     entry["resolved_before"] = row["_kick_resolved_before"][
                         particle
                     ].tolist()
-                if append and entries and entries[-1]["t"] == entry["t"]:
+                if merge:
                     # A recoil at a gate endpoint keeps the incoming gate
                     # branch and starts a fresh outgoing velocity branch.
+                    # Its old after-prime used the pre-recoil velocity and
+                    # must be reconstructed after a kick, not preserved.
                     old = entries[-1]
                     if old.get("before") is not None:
                         entry["before"] = old["before"]
@@ -108,12 +135,12 @@ def _metadata_rows(history: Any) -> Any:
     return [row.get("potential_inclusion_state", []) for row in history]
 
 
-def _rows(history: Any) -> list[ParticleState]:
+def _rows(history: Any, start: int = 0) -> list[ParticleState]:
     if isinstance(history, TrialTrajectoryHistory):
-        return _rows(history.base) + list(history.tail)
+        return (_rows(history.base) + list(history.tail))[start:]
     if isinstance(history, (TrajectoryArrays, IndexedTrajectoryArrays)):
-        return [history.state_at(i) for i in range(history.n_steps)]
-    return list(history)
+        return [history.state_at(i) for i in range(start, history.n_steps)]
+    return list(history[start:])
 
 
 def _expand(history: Any) -> list[ParticleState] | None:
@@ -129,7 +156,7 @@ def _expand(history: Any) -> list[ParticleState] | None:
     if not found:
         return None
     rows = _rows(history)
-    result = []
+    result: list[ParticleState] = []
     for endpoint, saved in zip(rows, saved_rows):
         valid = [
             (
@@ -145,7 +172,7 @@ def _expand(history: Any) -> list[ParticleState] | None:
             if len(lengths) != 1 or any(value is None for value in valid):
                 raise ValueError("gate source knots must be aligned across a bunch")
             for knot in range(next(iter(lengths))):
-                entries = [value["knots"][knot] for value in valid]
+                entries = [value["knots"][knot] for value in valid if value is not None]
                 row = dict(endpoint)
                 for field in KNOT_FIELDS:
                     if field in entries[0]:
@@ -169,7 +196,7 @@ def _expand(history: Any) -> list[ParticleState] | None:
                             for e in entries
                         ]
                     )
-                row["potential_inclusion_state"] = [""] * len(entries)
+                row["potential_inclusion_state"] = np.full(len(entries), "", dtype=str)
                 if result and np.array_equal(row["t"], result[-1]["t"]):
                     result[-1] = row
                 else:
@@ -195,8 +222,8 @@ def expanded_visibility_history(history: Any) -> list[ParticleState] | None:
     """Return a cached expanded view only when accepted split knots exist.
 
     Persisted metadata is authoritative, including in a fresh interpreter.
-    Rebuild on an append: neighbouring one-sided derivatives may change, but
-    the original managed history and rejected trial histories stay untouched.
+    Only newly accepted rows are decoded on append. Prepared providers decide
+    which neighbouring one-sided derivatives must be reconstructed.
     """
     if isinstance(history, TrialTrajectoryHistory):
         return _expand(history)
@@ -204,5 +231,30 @@ def expanded_visibility_history(history: Any) -> list[ParticleState] | None:
         history,
         variant="gate_knots",
         prepare_full=_expand,
-        append=lambda previous, current, old_stop: _expand(current),
+        append=_append_expansion,
     ).value
+
+
+def _append_expansion(
+    previous: list[ParticleState] | None, current: Any, old_stop: int
+) -> list[ParticleState] | None:
+    tail = _rows(current, old_stop)
+    expanded_tail = _expand(tail)
+    if previous is None:
+        if expanded_tail is None:
+            return None
+        previous = _rows(current, 0)[:old_stop]
+    tail = tail if expanded_tail is None else expanded_tail
+    if tail and previous and np.array_equal(previous[-1]["t"], tail[0]["t"]):
+        # Retain the full coalescing semantics for coincident bunch endpoints.
+        return _expand(current)
+    previous.extend(tail)
+    return previous
+
+
+def split_free_tail(rows: Sequence[ParticleState], start: int) -> bool:
+    """Whether the append's three-knot derivative window avoids every split."""
+    return not any(
+        "_gate_prime_before" in row or "_kick_beta_before" in row
+        for row in rows[max(0, start - 3) :]
+    )

@@ -184,7 +184,32 @@ resolved proper velocities. Acceleration reconstruction and position intervals
 use the matching smooth branch on each side. The next continuous interval
 primes the outgoing acceleration; the velocity jump itself contributes no
 classical acceleration pulse. Earlier visibility knots retain their one-sided
-force data.
+force data. While the kick is the newest knot, endpoint and trial predictions
+use a ballistic outgoing branch with zero acceleration; the next accepted
+sample reconstructs that provisional one-sided derivative.
+
+The sampled runner also stores these split knots. Its trajectory calculation
+is unchanged, but subsequent exact-field diagnostics on that trajectory use
+the recorded velocity split. General-runner kick metadata contains null
+one-sided derivatives and incoming velocity/resolved-state keys. Older
+readers predating this feature cannot load it; old checkpoints without kicks
+remain readable by the current code.
+
+For managed, append-only histories, charge and dipole preparation returns to
+incremental updates once a split leaves the three-knot derivative window.
+Accepted metadata decoding then touches only newly appended rows. A new
+split and the next three appended rows still rebuild the expanded history,
+as do provisional evaluations while that split remains in the window.
+Thus one isolated kick no longer forces a full rebuild for every later step.
+For N accepted rows and K well-separated split events, full-rebuild work is
+bounded by O(KN), in addition to ordinary incremental preparation. Frequent
+kicks or gate switches can still give O(N²) preparation cost. Unmanaged lists,
+history rewrites, and checkpoint reloads also require full preparation.
+Explicit instantaneous-acceleration histories with split metadata retain full
+reconstruction. Dipole trial preparation retains its existing prefix-copy cost.
+Metadata storage remains proportional to the number of sources times the
+number of split knots. Benchmark the intended source count and emission rate
+before long runs.
 
 For the same isolated kick between coasting branches, the default sampled
 path has exactly zero residual radiation, and the native pair path is at

@@ -163,17 +163,8 @@ def _forced_pair_payload() -> tuple[dict, float]:
     return payload, width
 
 
-@pytest.mark.parametrize(
-    "runner",
-    ["pair", "general_exact", "general_exact_proper", "general_exact_compiled"],
-)
-def test_pair_checkpoint_resume_is_bit_identical_after_forced_photon_kick(
-    runner, tmp_path
-) -> None:
-    """Protect velocity splits, event/RNG persistence, and restart identity."""
-    if runner != "pair":
-        _check_general_exact_restart(tmp_path, runner)
-        return
+def test_pair_checkpoint_resume_is_bit_identical_after_forced_photon_kick() -> None:
+    """Protect pair velocity splits, event/RNG persistence, and restart identity."""
     payload, width = _forced_pair_payload()
     uninterrupted, _ = advance_pair(copy.deepcopy(payload), width, 2)
     after_kick, _ = advance_pair(copy.deepcopy(payload), width, 1)
@@ -189,7 +180,12 @@ def test_pair_checkpoint_resume_is_bit_identical_after_forced_photon_kick(
     assert len(uninterrupted["histories"][0]["velocity_jumps"]) == 1
 
 
-def _check_general_exact_restart(tmp_path, runner):
+@pytest.mark.parametrize(
+    "runner", ["general_exact", "general_exact_proper", "general_exact_compiled"]
+)
+def test_general_exact_checkpoint_resume_is_bit_identical_after_photon_kick(
+    tmp_path, runner
+):
     from dataclasses import fields
 
     from core.integration_runner import IntegrationCancelled
@@ -304,3 +300,61 @@ def _check_general_exact_restart(tmp_path, runner):
     # Smooth background acceleration survives the split, on both branches.
     assert np.linalg.norm(source.light_cone_segments[index - 1].sample(1)[2]) > 0
     assert np.linalg.norm(source.light_cone_segments[index].sample(0)[2]) > 0
+
+
+@pytest.mark.parametrize("dt", [0.1, 0.05])
+@pytest.mark.parametrize(
+    "backend",
+    ["python", "numba_full_strict_serial", "numba_analytic_charge_response_serial"],
+)
+def test_coasting_kick_field_matches_ballistic_branches(dt, backend):
+    """A recoil must not create a classical pulse, including on its light cone."""
+    from core.exact_visibility_history import save_visibility_knots
+    from core.retarded_fields import (
+        ObserverEvent,
+        _extract_history,
+        evaluate_retarded_charge_field_native,
+    )
+    from tests.unit.test_inertial_prehistory import _state
+
+    incoming = np.array([0.0, 0.0, 0.8])
+    outgoing = np.array([0.0, 0.02, 0.7])
+    knot_position = np.array([0.0, 0.0, C * 0.8])
+    times = np.arange(round(2 / dt) + 1) * dt
+
+    def branch(velocity):
+        rows = []
+        for t in times:
+            state = _state(
+                position_mm=tuple(knot_position + C * (t - 1) * velocity),
+                beta=tuple(velocity),
+                source_charge=1.0,
+            )
+            state["t"][:] = t
+            rows.append(state)
+        return rows
+
+    before, after = branch(incoming), branch(outgoing)
+    index = round(1 / dt)
+    rows = copy.deepcopy(before[:index] + after[index:])
+    knot = dict(rows[index])
+    knot["_kick_mask"] = np.ones(1, dtype=bool)
+    knot["_kick_beta_before"] = incoming[None, :]
+    knot["_kick_resolved_before"] = _extract_history([before[index]]).resolved_knots[0]
+    knot["_gate_prime_before"] = np.full((1, 3), np.nan)
+    knot["_gate_prime_after"] = np.full((1, 3), np.nan)
+    save_visibility_knots(rows[index], [knot], append=True)
+    observer = np.array([30.0, 0.0, 120.0])
+    cone_time = 1.0 + np.linalg.norm(observer - knot_position) / C
+    for offset in (-0.2, -0.05, 0.0, 0.05, 0.2):
+        event = ObserverEvent(cone_time + offset, tuple(observer))
+        actual = evaluate_retarded_charge_field_native(rows, event, backend=backend)
+        expected = evaluate_retarded_charge_field_native(
+            before if offset < 0 else after, event, backend=backend
+        )
+        np.testing.assert_array_equal(
+            actual.electric_field_native, expected.electric_field_native
+        )
+        np.testing.assert_array_equal(
+            actual.magnetic_field_native, expected.magnetic_field_native
+        )
