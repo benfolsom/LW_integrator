@@ -85,7 +85,6 @@ def _coast(
         max_iterations=2,
         target_ms_tolerance=1e-6,
         mass_shell_tolerance=0.01,
-        mass_shell_relaxation=0.7,
         gamma_reconciliation_method="DISABLED",
     )
     for step in range(1, steps):

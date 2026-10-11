@@ -242,7 +242,6 @@ def test_build_single_integration_setup_resolves_defaults_and_options(tmp_path):
     assert setup.options.self_consistency_chrono_high_precision is True
     assert setup.options.self_consistency_chrono_adaptive_tolerance is True
     assert setup.options.self_consistency_mass_shell_tolerance == pytest.approx(4e-3)
-    assert setup.options.self_consistency_mass_shell_relaxation == pytest.approx(0.42)
     assert (
         setup.options.self_consistency_gamma_reconciliation_method == "FIXED_WEIGHTED"
     )

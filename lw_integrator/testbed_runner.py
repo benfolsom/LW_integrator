@@ -55,6 +55,7 @@ from core.types import (
     SimulationType,
 )
 from input_output.bunch_initialization import create_bunch_from_params
+from input_output.config_migration import discard_inert_self_consistency_keys
 
 from .trajectory_metrics import compute_delta_energy_components, normalize_state
 
@@ -341,9 +342,6 @@ class SimulationOptions:
 
     # Self-consistency options
     self_consistency_enabled: bool = True
-    self_consistency_tolerance: float = (
-        1e-4  # Legacy parameter for backward compatibility
-    )
     self_consistency_convergence_mode: str = "fixed_geometry"  # or "variable_geometry"
     self_consistency_target_ms_tolerance: float = 1e-6  # Mass-shell loop criterion
     self_consistency_max_iterations: int = (
@@ -351,9 +349,6 @@ class SimulationOptions:
     )
     self_consistency_mass_shell_tolerance: float = (
         1e-2  # Safety net threshold enforced after loop
-    )
-    self_consistency_mass_shell_relaxation: float = (
-        0.7  # Relaxation weight for Pt correction (0.0-1.0, default 0.7)
     )
     self_consistency_verbosity: int = (
         0  # 0=silent, 1=summary, 2=failures, 3=full (console and saved logs)
@@ -767,12 +762,10 @@ class SimulationOptions:
                 ),
             },
             "self_consistency_enabled": self.self_consistency_enabled,
-            "self_consistency_tolerance": self.self_consistency_tolerance,
             "self_consistency_convergence_mode": self.self_consistency_convergence_mode,
             "self_consistency_target_ms_tolerance": self.self_consistency_target_ms_tolerance,
             "self_consistency_max_iterations": self.self_consistency_max_iterations,
             "self_consistency_mass_shell_tolerance": self.self_consistency_mass_shell_tolerance,
-            "self_consistency_mass_shell_relaxation": self.self_consistency_mass_shell_relaxation,
             "self_consistency_verbosity": self.self_consistency_verbosity,
             "chrono_interpolate": self.chrono_interpolate,
             "chrono_tolerance": self.chrono_tolerance,
@@ -997,8 +990,8 @@ class SimulationOptions:
 
     @classmethod
     def from_dict(cls, payload: Dict[str, object]) -> "SimulationOptions":
+        payload = discard_inert_self_consistency_keys(payload)
         # Prefer the namespaced source-model surface; retain old saved inputs.
-        payload = dict(payload)
         for suffix in ("enabled", "rider_count", "driver_count"):
             name = f"exact_source_reduction_{suffix}"
             canonical = f"magnetic_dipole_{name}"
@@ -1675,7 +1668,6 @@ class SimulationOptions:
                 "breathing_response_time_ns", 0.01
             ),
             self_consistency_enabled=_strict_bool("self_consistency_enabled", True),
-            self_consistency_tolerance=_float("self_consistency_tolerance", 1e-4),
             self_consistency_convergence_mode=canonicalize_self_consistency_mode(
                 payload.get("self_consistency_convergence_mode", "fixed_geometry")
             ),
@@ -1685,9 +1677,6 @@ class SimulationOptions:
             self_consistency_max_iterations=_int("self_consistency_max_iterations", 2),
             self_consistency_mass_shell_tolerance=_float(
                 "self_consistency_mass_shell_tolerance", 1e-2
-            ),
-            self_consistency_mass_shell_relaxation=_float(
-                "self_consistency_mass_shell_relaxation", 0.7
             ),
             self_consistency_verbosity=_int("self_consistency_verbosity", 0),
             chrono_interpolate=_strict_bool(
@@ -2952,11 +2941,9 @@ def build_self_consistency_config(options: SimulationOptions) -> Optional[object
         target_ms_tolerance=options.self_consistency_target_ms_tolerance,
         max_iterations=options.self_consistency_max_iterations,
         mass_shell_tolerance=options.self_consistency_mass_shell_tolerance,
-        mass_shell_relaxation=options.self_consistency_mass_shell_relaxation,
         verbosity=options.self_consistency_verbosity,
         chrono_interpolate=chrono_interpolate,
         chrono_tolerance=float(getattr(options, "chrono_tolerance", 1e-3)),
-        chrono_matching_mode=str(getattr(options, "chrono_matching_mode", "FAST")),
         chrono_high_precision=chrono_high_precision,
         chrono_adaptive_tolerance=chrono_adaptive_tolerance,
         gamma_reconciliation_method=gamma_method,
@@ -3502,8 +3489,7 @@ def run_testbed(
     _log(
         f"  Self-consistency: {options.self_consistency_enabled} (mode={options.self_consistency_convergence_mode}, "
         f"ms_tol={options.self_consistency_target_ms_tolerance:.1e}, "
-        f"max_iter={options.self_consistency_max_iterations}, safety_net={options.self_consistency_mass_shell_tolerance:.1e}, "
-        f"relaxation={options.self_consistency_mass_shell_relaxation:.1f})"
+        f"max_iter={options.self_consistency_max_iterations}, safety_net={options.self_consistency_mass_shell_tolerance:.1e})"
     )
     _log(
         f"  Chrono matching: interpolate={options.chrono_interpolate}, "

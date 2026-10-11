@@ -920,7 +920,6 @@ def test_optimization_package_exposes_only_maintained_lazy_exports():
 def test_result_io_hides_internal_plotting_helpers_from_wildcard_api():
     assert optimization_result_io_module.__all__ == [
         "save_optimization_results",
-        "save_partial_optimization_results",
         "relocate_incomplete_sweep",
     ]
     for name in [

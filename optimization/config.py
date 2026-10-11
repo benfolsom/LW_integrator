@@ -275,12 +275,10 @@ class OptimizationConfig:
 
     # Stability and robustness options (from SimulationOptions)
     self_consistency_enabled: bool = True
-    self_consistency_tolerance: float = 1e-4
     self_consistency_convergence_mode: str = "fixed_geometry"
     self_consistency_target_ms_tolerance: float = 1e-6
     self_consistency_max_iterations: int = 2
     self_consistency_mass_shell_tolerance: float = 1e-2
-    self_consistency_mass_shell_relaxation: float = 0.7
     self_consistency_verbosity: int = 0  # 0=silent, 1=summary, 2=failures, 3=full
 
     # Chrono-matching options for retarded-time sampling. The legacy
@@ -563,7 +561,6 @@ class OptimizationConfig:
             output_dir=str(options.output_dir.parent / "optimization_results"),
             # Preserve stability options from main config
             self_consistency_enabled=options.self_consistency_enabled,
-            self_consistency_tolerance=options.self_consistency_tolerance,
             self_consistency_convergence_mode=getattr(
                 options, "self_consistency_convergence_mode", "fixed_geometry"
             ),
@@ -573,9 +570,6 @@ class OptimizationConfig:
             self_consistency_max_iterations=options.self_consistency_max_iterations,
             self_consistency_mass_shell_tolerance=getattr(
                 options, "self_consistency_mass_shell_tolerance", 1e-2
-            ),
-            self_consistency_mass_shell_relaxation=getattr(
-                options, "self_consistency_mass_shell_relaxation", 0.7
             ),
             self_consistency_verbosity=options.self_consistency_verbosity,
             chrono_interpolate=getattr(options, "chrono_interpolate", False),

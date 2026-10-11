@@ -37,7 +37,6 @@
   "optimization_n_starts": 5,
   "optimization_save_top_n": 3,
   "self_consistency_enabled": true,
-  "self_consistency_tolerance": 0.0001,
   "self_consistency_max_iterations": 5,
   "self_consistency_verbosity": 0,
   "energy_monitor_halt_on_jump": false,

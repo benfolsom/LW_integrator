@@ -48,6 +48,7 @@ from core.types import (
     Trajectory,
 )
 from input_output.bunch_initialization import create_bunch_from_energy
+from input_output.config_migration import discard_inert_self_consistency_keys
 from optimization.plugin_results_helpers import (
     parse_results_payload,
     summarize_result_row,
@@ -1683,8 +1684,9 @@ def run_testbed_config(args: argparse.Namespace) -> int:
             value = getattr(args, argument, None)
             if value is not None:
                 emission[field] = value
-        from core.stochastic_emission import StochasticEmissionConfig
         from dataclasses import asdict
+
+        from core.stochastic_emission import StochasticEmissionConfig
 
         options.stochastic_emission = asdict(
             StochasticEmissionConfig.from_dict(emission)
@@ -1756,6 +1758,7 @@ def run_testbed_config(args: argparse.Namespace) -> int:
 def _merge_simulation_payload(
     file_payload: Mapping[str, Any], args: argparse.Namespace
 ) -> Dict[str, Any]:
+    file_payload = discard_inert_self_consistency_keys(file_payload)
     result = dict(DEFAULT_SIMULATION)
     result["particle_loss"] = dict(DEFAULT_PARTICLE_LOSS)
     result["pseudo_grid"] = dict(DEFAULT_PSEUDO_GRID)
@@ -1877,7 +1880,6 @@ def _merge_simulation_payload(
         "self_consistency_target_ms_tolerance",
         "self_consistency_max_iterations",
         "self_consistency_mass_shell_tolerance",
-        "self_consistency_mass_shell_relaxation",
         "self_consistency_verbosity",
         "self_consistency_gamma_reconciliation_method",
         "self_consistency_gamma_reconciliation_fixed_weight",
@@ -1951,8 +1953,7 @@ def _merge_simulation_payload(
     ):
         if getattr(args, key, None) is not None:
             result[key] = getattr(args, key)
-    # The runtime retardation mode is chrono_mode; keep the carried aliases
-    # (SelfConsistencyConfig.chrono_matching_mode) consistent with it.
+    # Keep the input aliases consistent with the actual solver mode.
     resolved_chrono_mode = _parse_chrono_mode(result["chrono_mode"]).name
     result["chrono_matching_mode"] = resolved_chrono_mode
     result["self_consistency_chrono_matching_mode"] = resolved_chrono_mode
@@ -3202,6 +3203,7 @@ def _strict_bool_with_alias(
 def _build_self_consistency_config(
     payload: Mapping[str, Any],
 ) -> Optional[SelfConsistencyConfig]:
+    payload = discard_inert_self_consistency_keys(payload)
     chrono_interpolate = _strict_bool_with_alias(
         payload, "chrono_interpolate", "self_consistency_chrono_interpolate", False
     )
@@ -3247,9 +3249,6 @@ def _build_self_consistency_config(
             mass_shell_tolerance=float(
                 payload.get("self_consistency_mass_shell_tolerance", 1e-2)
             ),
-            mass_shell_relaxation=float(
-                payload.get("self_consistency_mass_shell_relaxation", 0.7)
-            ),
             max_iterations=int(
                 payload.get(
                     "self_consistency_max_iterations",
@@ -3264,12 +3263,6 @@ def _build_self_consistency_config(
                     payload.get("self_consistency_chrono_tolerance", 1e-3),
                 )
             ),
-            chrono_matching_mode=_parse_chrono_mode(
-                payload.get(
-                    "chrono_matching_mode",
-                    payload.get("self_consistency_chrono_matching_mode", "FAST"),
-                )
-            ).name,
             chrono_high_precision=chrono_high_precision,
             chrono_adaptive_tolerance=chrono_adaptive_tolerance,
             gamma_reconciliation_method=gamma_method,

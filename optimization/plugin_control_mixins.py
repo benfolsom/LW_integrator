@@ -130,11 +130,6 @@ class OptimizationPluginControlMixin:
             "self_consistency_enabled": setting(
                 "self_consistency_enabled_var", "self_consistency_enabled", True
             ),
-            "self_consistency_tolerance": setting(
-                "self_consistency_target_ms_tolerance_var",
-                "self_consistency_tolerance",
-                1e-4,
-            ),
             "self_consistency_convergence_mode": setting(
                 "self_consistency_convergence_mode_var",
                 "self_consistency_convergence_mode",
@@ -154,11 +149,6 @@ class OptimizationPluginControlMixin:
                 "self_consistency_mass_shell_tolerance_var",
                 "self_consistency_mass_shell_tolerance",
                 1e-2,
-            ),
-            "self_consistency_mass_shell_relaxation": setting(
-                "self_consistency_mass_shell_relaxation_var",
-                "self_consistency_mass_shell_relaxation",
-                0.7,
             ),
             "self_consistency_verbosity": setting(
                 "self_consistency_verbosity_var", "self_consistency_verbosity", 0

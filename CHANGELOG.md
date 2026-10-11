@@ -118,7 +118,8 @@ and boundary studies), plus subsequent integration updates.
   and GUI configs include a disabled settings block; deterministic defaults
   remain unchanged.
 - Record accepted stochastic recoils as split velocity knots on the general
-  exact `INERTIAL_PREHISTORY` path, and remove its temporary emission guard.
+  exact `INERTIAL_PREHISTORY` path, and remove its temporary `NotImplementedError`
+  emission guard.
   Source reconstruction uses incoming and outgoing smooth branches, preserving
   visibility knots and the masked Medina/LAD restart. This fixes the extra
   classical radiation pulse whose peak and fluence grew under timestep
@@ -126,6 +127,8 @@ and boundary studies), plus subsequent integration updates.
   radiation under timestep refinement; sampled and native pair controls also
   avoid that pulse, without establishing general trajectory accuracy. Earlier
   exact-emission smoke results predate both the guard and this correction.
+  Historical kick diagnostics and the broader source-history fix plan remain
+  documented.
 - Keep gate and recoil knots aligned across a bunch after particle loss, and
   resume incremental charge and dipole preparation outside the three-knot
   split window. Decode only appended metadata, copy one source's split
@@ -162,6 +165,30 @@ and boundary studies), plus subsequent integration updates.
   and chrono options. Preserve GUI non-FAST selections, pass CLI adaptive gamma
   thresholds and weights through, and resolve chrono aliases consistently.
   Require JSON booleans and reject unknown gamma-reconciliation names.
+- Remove inert self-consistency plumbing and the GUI relaxation control. Retain
+  `SelfConsistencyConfig.mass_shell_relaxation` for direct study callers, and
+  restore its inert `chrono_matching_mode` field with the historical `"FAST"`
+  default. Saved `self_consistency_mass_shell_relaxation`,
+  `self_consistency_tolerance`, and `mass_shell_relaxation` keys are deprecated
+  and ignored with one warning per parsed input. Defensive cleanup also drops
+  `mass_shell_relaxation` and the duplicate `chrono_matching_mode` inside evidence
+  summaries' `self_consistency` objects; no configuration loader consumes that
+  nested shape. Outer chrono-mode selectors and their aliases retain their
+  solver behavior.
+- Remove four unused helpers (`_get_current_particle_gamma_and_beta`,
+  `initialize_particle_bunches`,
+  `build_field_representative_space_charge_source_charges`, and
+  `_evaluate_cli_stability`), the private `_CliStabilityOutcome` type, the unused
+  `save_partial_optimization_results` writer, and `_check_gamma_consistency`.
+  Keep live pseudo-grid accounting and cancellation output.
+- Collapse the constant on-shell branch, share identical accepted-source
+  numerical helpers, and remove historical repository and dialog absence tests.
+  Retain numerical reference tests and useful configuration validation.
+- Remove deprecated keys from shipped examples, misleading test patches, and
+  a redundant timestep assignment. Keep the beta-to-gamma helper as a documented
+  diagnostic utility. Correct the proper-velocity debug text, compact the
+  self-consistency GUI grid, and tidy formatting and audit documentation.
+  Solver defaults and arithmetic are unchanged.
 - Update the counter-propagating proton-bunch example to the maintained
   two-trial, gamma-disabled, chrono-off, Medina/LAD settings. Remove the unused
   sweep stability-confirmation dialog.

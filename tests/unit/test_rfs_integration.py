@@ -670,7 +670,6 @@ def test_medina_predictor_and_post_kick_endpoint_share_one_contract(
         self_consistency=SelfConsistencyConfig(
             enabled=True,
             max_iterations=2,
-            mass_shell_relaxation=0.7,
         ),
         radiation_reaction_mode="medina_lad",
         external_field=ExternalFieldConfig(magnetic_field_native=(0.0, 1.0e7, 0.0)),

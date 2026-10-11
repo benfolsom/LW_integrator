@@ -1176,9 +1176,6 @@ class IntegratorGUIConfigMixin:
         self.self_consistency_convergence_mode_var.set(
             options.self_consistency_convergence_mode
         )
-        self.self_consistency_mass_shell_relaxation_var.set(
-            options.self_consistency_mass_shell_relaxation
-        )
         self.self_consistency_target_ms_tolerance_var.set(
             options.self_consistency_target_ms_tolerance
         )
@@ -1752,9 +1749,6 @@ class IntegratorGUIConfigMixin:
             self_consistency_enabled=bool(self.self_consistency_enabled_var.get()),
             self_consistency_convergence_mode=str(
                 self.self_consistency_convergence_mode_var.get()
-            ),
-            self_consistency_mass_shell_relaxation=float(
-                self.self_consistency_mass_shell_relaxation_var.get()
             ),
             self_consistency_target_ms_tolerance=float(
                 self.self_consistency_target_ms_tolerance_var.get()

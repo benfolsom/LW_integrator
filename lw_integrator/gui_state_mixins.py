@@ -213,8 +213,6 @@ class IntegratorGUIStateMixin:
             self.sc_max_iterations_entry,
             self.sc_mass_shell_tolerance_label,
             self.sc_mass_shell_tolerance_entry,
-            self.sc_relaxation_label,
-            self.sc_relaxation_entry,
             self.sc_verbosity_label,
             self.sc_verbosity_entry,
             self.sc_gamma_reconciliation_method_combo,

@@ -198,7 +198,6 @@ def _build_options_from_config(
         use_image_weighting=config.use_image_weighting,
         output_dir=output_dir,
         self_consistency_enabled=config.self_consistency_enabled,
-        self_consistency_tolerance=config.self_consistency_tolerance,
         self_consistency_max_iterations=config.self_consistency_max_iterations,
         self_consistency_verbosity=0,  # silence for tests
         self_consistency_chrono_interpolate=config.self_consistency_chrono_interpolate,
@@ -349,7 +348,6 @@ class TestCoreRunTestbedParity:
             transverse_save=True,
             output_dir=tmp_output_dir / "run_a",
             self_consistency_enabled=True,
-            self_consistency_tolerance=1e-4,
             self_consistency_max_iterations=5,
             self_consistency_verbosity=0,
             adaptive_timestep_enabled=False,
@@ -376,7 +374,6 @@ class TestCoreRunTestbedParity:
             transverse_save=True,
             output_dir=tmp_output_dir / "run_b",
             self_consistency_enabled=opts.self_consistency_enabled,
-            self_consistency_tolerance=opts.self_consistency_tolerance,
             self_consistency_max_iterations=opts.self_consistency_max_iterations,
             self_consistency_verbosity=0,
             adaptive_timestep_enabled=opts.adaptive_timestep_enabled,
@@ -444,7 +441,6 @@ class TestCoreRunTestbedParity:
             transverse_display=False,
             transverse_save=True,
             self_consistency_enabled=True,
-            self_consistency_tolerance=1e-4,
             self_consistency_max_iterations=5,
             self_consistency_verbosity=0,
             adaptive_timestep_enabled=False,
@@ -519,7 +515,6 @@ class TestCliGuiOptionsParity:
             stripped_ions=1.0,
             seed=seed,
             self_consistency_enabled=True,
-            self_consistency_tolerance=1e-4,
             self_consistency_max_iterations=5,
             self_consistency_verbosity=0,
             adaptive_timestep_enabled=False,
@@ -607,7 +602,6 @@ class TestCliGuiOptionsParity:
             stripped_ions=1.0,
             seed=555,
             self_consistency_enabled=True,
-            self_consistency_tolerance=1e-4,
             self_consistency_max_iterations=5,
             self_consistency_verbosity=0,
             adaptive_timestep_enabled=False,
@@ -749,7 +743,6 @@ class TestConfigConversion:
         assert config.energy_range == (0.5, 300.0)
         assert config.energy_points == 30
         assert config.self_consistency_enabled is True
-        assert config.self_consistency_tolerance == pytest.approx(1e-7)
         assert config.self_consistency_max_iterations == 10
 
         # Check that rider_transv_dist sweep was parsed
@@ -1205,7 +1198,6 @@ class TestTwoParticleDemo8:
             z_cutoff_mode=str(core_p.get("z_cutoff_mode", "absolute")),
             startup_mode=str(core_p.get("startup_mode", "COLD_START")),
             self_consistency_enabled=direct_ref.self_consistency_enabled,
-            self_consistency_tolerance=direct_ref.self_consistency_tolerance,
             self_consistency_max_iterations=direct_ref.self_consistency_max_iterations,
             self_consistency_verbosity=0,
             self_consistency_chrono_interpolate=direct_ref.self_consistency_chrono_interpolate,
@@ -1471,7 +1463,6 @@ class TestCliSweepRunnerE2E:
             stripped_ions=1.0,
             seed=42,
             self_consistency_enabled=True,
-            self_consistency_tolerance=1e-4,
             self_consistency_max_iterations=3,
             self_consistency_verbosity=0,
             adaptive_timestep_enabled=False,
@@ -1540,7 +1531,6 @@ class TestCliSweepRunnerE2E:
             driver_energy_gev=50.0,
             driver_stripped_ions=5e7,
             self_consistency_enabled=True,
-            self_consistency_tolerance=1e-4,
             self_consistency_max_iterations=3,
             self_consistency_verbosity=0,
             adaptive_timestep_enabled=False,
@@ -1703,7 +1693,6 @@ class TestLogVerbosityModes:
             seed=1,
             self_consistency_enabled=True,
             self_consistency_verbosity=2,  # would be verbose
-            self_consistency_tolerance=1e-4,
             self_consistency_max_iterations=3,
             adaptive_timestep_enabled=False,
             adaptive_timestep_debug=True,  # would be verbose

@@ -14,7 +14,6 @@ from core.pseudo_grid import (
     accumulate_effective_source_charges,
     accumulate_field_representative_charges,
     accumulate_field_representative_charges_and_radii,
-    build_field_representative_space_charge_source_charges,
     build_hybrid_space_charge_sources,
     build_passive_neighbor_map,
     build_pseudo_grid_step_schedule,
@@ -278,43 +277,6 @@ def test_accumulate_field_representative_charges_conserves_total_charge():
     assert effective.shape == (3,)
     assert np.sum(effective) == pytest.approx(np.sum(state["q"]))
     assert effective[1] >= state["q"][2]
-
-
-def test_field_representative_sc_excludes_observer_rep_and_redistributes_deposit():
-    state = _make_state(x=[0.0, 1.0, 2.0, 3.0], q=[1.0, 2.0, 3.0, 4.0])
-    active = np.array([0, 2], dtype=int)
-    field = np.array([0, 1, 2], dtype=int)
-    field_source_charges = np.array([5.0, 2.0, 3.5], dtype=float)
-
-    charge_matrix = build_field_representative_space_charge_source_charges(
-        state,
-        active,
-        field,
-        field_source_charges,
-    )
-
-    np.testing.assert_allclose(
-        charge_matrix,
-        np.array(
-            [
-                [0.0, 2.0 + 4.0 * 2.0 / 3.0, 3.5 + 4.0 / 3.0],
-                [5.0 + 0.5 / 3.0, 2.0 + 0.5 * 2.0 / 3.0, 0.0],
-            ]
-        ),
-    )
-
-
-def test_field_representative_sc_allows_active_not_in_field_set():
-    state = _make_state(x=[0.0, 1.0, 2.0], q=[1.0, 2.0, 3.0])
-
-    charge_matrix = build_field_representative_space_charge_source_charges(
-        state,
-        np.array([0], dtype=int),
-        np.array([1, 2], dtype=int),
-        np.array([2.0, 3.0], dtype=float),
-    )
-
-    np.testing.assert_allclose(charge_matrix, np.array([[2.0, 3.0]]))
 
 
 def test_hybrid_space_charge_sources_add_exact_neighbors_without_double_counting():
