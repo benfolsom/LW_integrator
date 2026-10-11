@@ -21,6 +21,12 @@ from io import StringIO
 
 import matplotlib
 
+from core.legacy_gamma_reconciliation import (
+    legacy_gamma_constructor,
+    legacy_gamma_payload,
+    normalize_legacy_gamma_payload,
+)
+
 matplotlib.use("Agg")
 
 from dataclasses import asdict, dataclass, field
@@ -247,6 +253,7 @@ class TeeStringIO(StringIO):
 # ---------------------------------------------------------------------------
 
 
+@legacy_gamma_constructor()
 @dataclass
 class SimulationOptions:
     """Full parameter surface matching the notebook widget snapshot."""
@@ -371,28 +378,7 @@ class SimulationOptions:
     self_consistency_chrono_matching_mode: str = "FAST"
     self_consistency_chrono_high_precision: bool = False
     self_consistency_chrono_adaptive_tolerance: bool = False
-    # Gamma reconciliation options
-    self_consistency_gamma_reconciliation_method: str = (
-        "DISABLED"  # Method: DISABLED, ADAPTIVE_WEIGHTED, USE_VELOCITY, USE_ENERGY, FIXED_WEIGHTED (default DISABLED for v0.4.8 compatibility)
-    )
-    self_consistency_gamma_reconciliation_low_beta_threshold: float = (
-        0.9  # Below this β: trust energy (for ADAPTIVE_WEIGHTED)
-    )
-    self_consistency_gamma_reconciliation_high_beta_threshold: float = (
-        0.99  # Above this β: trust velocity (for ADAPTIVE_WEIGHTED)
-    )
-    self_consistency_gamma_reconciliation_low_beta_weight: float = (
-        0.8  # Weight α for β < low threshold (for ADAPTIVE_WEIGHTED)
-    )
-    self_consistency_gamma_reconciliation_high_beta_weight: float = (
-        0.2  # Weight α for β > high threshold (for ADAPTIVE_WEIGHTED)
-    )
-    self_consistency_gamma_reconciliation_mid_beta_weight: float = (
-        0.5  # Weight α for mid β range (for ADAPTIVE_WEIGHTED)
-    )
-    self_consistency_gamma_reconciliation_fixed_weight: float = (
-        0.5  # Weight α for FIXED_WEIGHTED method
-    )
+    legacy_study_gamma_reconciliation: dict | None = None
 
     # Energy monitoring options
     energy_monitor_enabled: bool = True
@@ -771,13 +757,6 @@ class SimulationOptions:
             "self_consistency_chrono_matching_mode": self.chrono_matching_mode,
             "self_consistency_chrono_high_precision": self.chrono_high_precision,
             "self_consistency_chrono_adaptive_tolerance": self.chrono_adaptive_tolerance,
-            "self_consistency_gamma_reconciliation_method": self.self_consistency_gamma_reconciliation_method,
-            "self_consistency_gamma_reconciliation_low_beta_threshold": self.self_consistency_gamma_reconciliation_low_beta_threshold,
-            "self_consistency_gamma_reconciliation_high_beta_threshold": self.self_consistency_gamma_reconciliation_high_beta_threshold,
-            "self_consistency_gamma_reconciliation_low_beta_weight": self.self_consistency_gamma_reconciliation_low_beta_weight,
-            "self_consistency_gamma_reconciliation_high_beta_weight": self.self_consistency_gamma_reconciliation_high_beta_weight,
-            "self_consistency_gamma_reconciliation_mid_beta_weight": self.self_consistency_gamma_reconciliation_mid_beta_weight,
-            "self_consistency_gamma_reconciliation_fixed_weight": self.self_consistency_gamma_reconciliation_fixed_weight,
             "energy_monitor_enabled": self.energy_monitor_enabled,
             "energy_monitor_threshold": self.energy_monitor_threshold,
             "energy_monitor_check_interval": self.energy_monitor_check_interval,
@@ -973,10 +952,12 @@ class SimulationOptions:
             "save_log_file": self.save_log_file,
             "log_file_path": self.log_file_path,
         }
+        payload.update(legacy_gamma_payload(self))
         return payload
 
     @classmethod
     def from_dict(cls, payload: Dict[str, object]) -> "SimulationOptions":
+        payload = normalize_legacy_gamma_payload(payload)
         sweep_keys = {"sweep_parameters", "energy_min", "energy_max", "energy_points"}
         if (
             "rider_params" not in payload
@@ -1970,26 +1951,8 @@ class SimulationOptions:
                 "preserve_prehistory_in_output",
                 False,
             ),
-            self_consistency_gamma_reconciliation_method=_str(
-                "self_consistency_gamma_reconciliation_method", "DISABLED"
-            ),
-            self_consistency_gamma_reconciliation_low_beta_threshold=_float(
-                "self_consistency_gamma_reconciliation_low_beta_threshold", 0.9
-            ),
-            self_consistency_gamma_reconciliation_high_beta_threshold=_float(
-                "self_consistency_gamma_reconciliation_high_beta_threshold", 0.99
-            ),
-            self_consistency_gamma_reconciliation_low_beta_weight=_float(
-                "self_consistency_gamma_reconciliation_low_beta_weight", 0.8
-            ),
-            self_consistency_gamma_reconciliation_high_beta_weight=_float(
-                "self_consistency_gamma_reconciliation_high_beta_weight", 0.2
-            ),
-            self_consistency_gamma_reconciliation_mid_beta_weight=_float(
-                "self_consistency_gamma_reconciliation_mid_beta_weight", 0.5
-            ),
-            self_consistency_gamma_reconciliation_fixed_weight=_float(
-                "self_consistency_gamma_reconciliation_fixed_weight", 0.5
+            legacy_study_gamma_reconciliation=payload.get(
+                "legacy_study_gamma_reconciliation"
             ),
             save_log_file=_bool("save_log_file", False),
             log_file_path=(
@@ -2889,7 +2852,7 @@ def build_self_consistency_config(options: SimulationOptions) -> Optional[object
     # (as the CLI does) instead of silently enabling a non-default blend.
     method_str = str(options.self_consistency_gamma_reconciliation_method).upper()
     try:
-        gamma_method = GammaReconciliationMethod[method_str]
+        GammaReconciliationMethod[method_str]
     except KeyError:
         valid = ", ".join(method.name for method in GammaReconciliationMethod)
         raise ValueError(
@@ -2911,13 +2874,7 @@ def build_self_consistency_config(options: SimulationOptions) -> Optional[object
         chrono_matching_mode=str(getattr(options, "chrono_matching_mode", "FAST")),
         chrono_high_precision=chrono_high_precision,
         chrono_adaptive_tolerance=chrono_adaptive_tolerance,
-        gamma_reconciliation_method=gamma_method,
-        gamma_reconciliation_low_beta_threshold=options.self_consistency_gamma_reconciliation_low_beta_threshold,
-        gamma_reconciliation_high_beta_threshold=options.self_consistency_gamma_reconciliation_high_beta_threshold,
-        gamma_reconciliation_low_beta_weight=options.self_consistency_gamma_reconciliation_low_beta_weight,
-        gamma_reconciliation_high_beta_weight=options.self_consistency_gamma_reconciliation_high_beta_weight,
-        gamma_reconciliation_mid_beta_weight=options.self_consistency_gamma_reconciliation_mid_beta_weight,
-        gamma_reconciliation_fixed_weight=options.self_consistency_gamma_reconciliation_fixed_weight,
+        legacy_study_gamma_reconciliation=options.legacy_study_gamma_reconciliation,
     )
 
 

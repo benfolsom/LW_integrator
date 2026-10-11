@@ -1,11 +1,12 @@
-"""Unit tests for the :class:`core.trajectory_integrator` compatibility shim."""
+"""Unit tests for function runners re-exported by core.trajectory_integrator."""
 
 from __future__ import annotations
 
 import numpy as np
 import pytest
 
-from core.trajectory_integrator import LienardWiechertIntegrator
+from core.trajectory_integrator import retarded_integrator
+from core.types import SimulationType
 from tests.test_config import (
     BASIC_TWO_PARTICLE,
     PROTON,
@@ -30,21 +31,20 @@ def _basic_config() -> TestConfiguration:
 
 @pytest.mark.unit
 def test_integrate_retarded_fields_respects_step_count() -> None:
-    integrator = LienardWiechertIntegrator()
     config = _basic_config()
     bunch = create_bunch_uniform_distribution(config, PROTON, "line")
 
-    trajectory, driver = integrator.integrate_retarded_fields(
-        static_steps=2,
-        ret_steps=2,
+    trajectory, driver, *_ = retarded_integrator(
+        steps=4,
         h_step=config.step_size,
-        wall_Z=config.wall_z,
-        apt_R=config.aperture_r,
-        sim_type=config.sim_type,
+        wall_z=config.wall_z,
+        aperture_radius=config.aperture_r,
+        sim_type=SimulationType(config.sim_type),
         init_rider=bunch,
         init_driver=bunch.copy(),
-        bunch_dist=1e5,
+        mean=1e5,
         z_cutoff=config.z_cutoff,
+        cav_spacing=0.0,
     )
 
     assert len(trajectory) == 4
@@ -54,22 +54,21 @@ def test_integrate_retarded_fields_respects_step_count() -> None:
 
 @pytest.mark.unit
 def test_integrate_retarded_fields_does_not_modify_inputs() -> None:
-    integrator = LienardWiechertIntegrator()
     config = BASIC_TWO_PARTICLE
     bunch = create_bunch_uniform_distribution(config, PROTON, "line")
     original_pt = bunch["Pt"].copy()
 
-    _ = integrator.integrate_retarded_fields(
-        static_steps=1,
-        ret_steps=2,
+    _ = retarded_integrator(
+        steps=3,
         h_step=config.step_size,
-        wall_Z=config.wall_z,
-        apt_R=config.aperture_r,
-        sim_type=config.sim_type,
+        wall_z=config.wall_z,
+        aperture_radius=config.aperture_r,
+        sim_type=SimulationType(config.sim_type),
         init_rider=bunch,
         init_driver=bunch.copy(),
-        bunch_dist=1e5,
+        mean=1e5,
         z_cutoff=config.z_cutoff,
+        cav_spacing=0.0,
     )
 
     assert np.array_equal(bunch["Pt"], original_pt)

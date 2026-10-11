@@ -217,13 +217,6 @@ class IntegratorGUIStateMixin:
             self.sc_relaxation_entry,
             self.sc_verbosity_label,
             self.sc_verbosity_entry,
-            self.sc_gamma_reconciliation_method_combo,
-            self.sc_gamma_low_beta_threshold_entry,
-            self.sc_gamma_high_beta_threshold_entry,
-            self.sc_gamma_low_beta_weight_entry,
-            self.sc_gamma_high_beta_weight_entry,
-            self.sc_gamma_mid_beta_weight_entry,
-            self.sc_gamma_fixed_weight_entry,
         ]
 
         for control in controls_to_toggle:
@@ -390,22 +383,6 @@ class IntegratorGUIStateMixin:
             self.driver_train_enabled_var.set(False)
 
         self._toggle_driver_train_controls()
-
-    def _toggle_gamma_reconciliation_params(self) -> None:
-        if not hasattr(self, "sc_gamma_reconciliation_adaptive_frame"):
-            return
-
-        method = self.self_consistency_gamma_reconciliation_method_var.get()
-
-        if method == "ADAPTIVE_WEIGHTED":
-            self.sc_gamma_reconciliation_adaptive_frame.grid()
-            self.sc_gamma_reconciliation_fixed_frame.grid_remove()
-        elif method == "FIXED_WEIGHTED":
-            self.sc_gamma_reconciliation_adaptive_frame.grid_remove()
-            self.sc_gamma_reconciliation_fixed_frame.grid()
-        else:
-            self.sc_gamma_reconciliation_adaptive_frame.grid_remove()
-            self.sc_gamma_reconciliation_fixed_frame.grid_remove()
 
     def _toggle_adaptive_timestep_controls(self) -> None:
         if not hasattr(self, "adaptive_threshold_label"):

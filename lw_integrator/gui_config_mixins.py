@@ -1222,43 +1222,6 @@ class IntegratorGUIConfigMixin:
                 getattr(options, "self_consistency_chrono_adaptive_tolerance", False),
             )
         )
-        self.self_consistency_gamma_reconciliation_method_var.set(
-            getattr(
-                options,
-                "self_consistency_gamma_reconciliation_method",
-                "DISABLED",
-            )
-        )
-        self.self_consistency_gamma_reconciliation_low_beta_threshold_var.set(
-            getattr(
-                options, "self_consistency_gamma_reconciliation_low_beta_threshold", 0.9
-            )
-        )
-        self.self_consistency_gamma_reconciliation_high_beta_threshold_var.set(
-            getattr(
-                options,
-                "self_consistency_gamma_reconciliation_high_beta_threshold",
-                0.99,
-            )
-        )
-        self.self_consistency_gamma_reconciliation_low_beta_weight_var.set(
-            getattr(
-                options, "self_consistency_gamma_reconciliation_low_beta_weight", 0.8
-            )
-        )
-        self.self_consistency_gamma_reconciliation_high_beta_weight_var.set(
-            getattr(
-                options, "self_consistency_gamma_reconciliation_high_beta_weight", 0.2
-            )
-        )
-        self.self_consistency_gamma_reconciliation_mid_beta_weight_var.set(
-            getattr(
-                options, "self_consistency_gamma_reconciliation_mid_beta_weight", 0.5
-            )
-        )
-        self.self_consistency_gamma_reconciliation_fixed_weight_var.set(
-            getattr(options, "self_consistency_gamma_reconciliation_fixed_weight", 0.5)
-        )
         self.adaptive_timestep_enabled_var.set(options.adaptive_timestep_enabled)
         self.adaptive_timestep_halt_on_jump_var.set(options.energy_monitor_halt_on_jump)
         self.adaptive_timestep_threshold_var.set(options.adaptive_timestep_threshold)
@@ -1778,25 +1741,7 @@ class IntegratorGUIConfigMixin:
             self_consistency_chrono_adaptive_tolerance=bool(
                 self.chrono_adaptive_tolerance_var.get()
             ),
-            self_consistency_gamma_reconciliation_method=self.self_consistency_gamma_reconciliation_method_var.get(),
-            self_consistency_gamma_reconciliation_low_beta_threshold=float(
-                self.self_consistency_gamma_reconciliation_low_beta_threshold_var.get()
-            ),
-            self_consistency_gamma_reconciliation_high_beta_threshold=float(
-                self.self_consistency_gamma_reconciliation_high_beta_threshold_var.get()
-            ),
-            self_consistency_gamma_reconciliation_low_beta_weight=float(
-                self.self_consistency_gamma_reconciliation_low_beta_weight_var.get()
-            ),
-            self_consistency_gamma_reconciliation_high_beta_weight=float(
-                self.self_consistency_gamma_reconciliation_high_beta_weight_var.get()
-            ),
-            self_consistency_gamma_reconciliation_mid_beta_weight=float(
-                self.self_consistency_gamma_reconciliation_mid_beta_weight_var.get()
-            ),
-            self_consistency_gamma_reconciliation_fixed_weight=float(
-                self.self_consistency_gamma_reconciliation_fixed_weight_var.get()
-            ),
+            legacy_study_gamma_reconciliation=self.options.legacy_study_gamma_reconciliation,
             chrono_matching_mode=self._current_chrono_matching_mode(),
             self_consistency_chrono_matching_mode=self._current_chrono_matching_mode(),
             energy_monitor_enabled=False,

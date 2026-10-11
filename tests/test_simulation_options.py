@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from core.external_fields import electric_field_v_per_m_to_native
+from core.legacy_gamma_reconciliation import LegacyGammaReconciliationWarning
 from core.types import SimulationType, StartupMode
 from lw_integrator.testbed_runner import (
     CORE_PARAM_DEFAULTS,
@@ -90,7 +91,20 @@ def test_simulation_options_roundtrip_preserves_gamma_reconciliation_fields(
     )
 
     payload = options.to_dict()
-    loaded = SimulationOptions.from_dict(payload)
+    assert not any(
+        key.startswith("self_consistency_gamma_reconciliation_") for key in payload
+    )
+    assert payload["legacy_study_gamma_reconciliation"] == {
+        "method": "FIXED_WEIGHTED",
+        "low_beta_threshold": 0.85,
+        "high_beta_threshold": 0.995,
+        "low_beta_weight": 0.9,
+        "high_beta_weight": 0.1,
+        "mid_beta_weight": 0.6,
+        "fixed_weight": 0.7,
+    }
+    with pytest.warns(LegacyGammaReconciliationWarning):
+        loaded = SimulationOptions.from_dict(payload)
 
     assert payload["simulation_type"] == "CONDUCTING_WALL"
     assert payload["output_dir"] == str(tmp_path / "outputs")

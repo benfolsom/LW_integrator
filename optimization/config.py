@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 
 from core.constants import C_MMNS  # type: ignore[import]
+from core.legacy_gamma_reconciliation import legacy_gamma_constructor
 from core.types import SimulationType  # type: ignore[import]
 from optimization.simulation_type_helpers import is_bunch_to_bunch
 
@@ -24,6 +25,7 @@ _ENERGY_THRESHOLD_SCALE = _ELECTRON_ENERGY_THRESHOLD_GEV / (
 )
 
 
+@legacy_gamma_constructor()
 @dataclass
 class OptimizationConfig:
     """Configuration for parameter sweep or optimization run."""
@@ -296,14 +298,8 @@ class OptimizationConfig:
     self_consistency_chrono_high_precision: bool = False
     self_consistency_chrono_adaptive_tolerance: bool = False
 
-    # Gamma reconciliation parameters
-    self_consistency_gamma_reconciliation_method: str = "DISABLED"
-    self_consistency_gamma_reconciliation_low_beta_threshold: float = 0.9
-    self_consistency_gamma_reconciliation_high_beta_threshold: float = 0.99
-    self_consistency_gamma_reconciliation_low_beta_weight: float = 0.8
-    self_consistency_gamma_reconciliation_high_beta_weight: float = 0.2
-    self_consistency_gamma_reconciliation_mid_beta_weight: float = 0.5
-    self_consistency_gamma_reconciliation_fixed_weight: float = 0.5
+    # Deprecated study interpretation; omitted from ordinary saved configs.
+    legacy_study_gamma_reconciliation: dict | None = None
 
     # Energy monitoring removed - functionality integrated into adaptive timestep
     energy_monitor_enabled: bool = False
@@ -578,6 +574,9 @@ class OptimizationConfig:
                 options, "self_consistency_mass_shell_relaxation", 0.7
             ),
             self_consistency_verbosity=options.self_consistency_verbosity,
+            legacy_study_gamma_reconciliation=getattr(
+                options, "legacy_study_gamma_reconciliation", None
+            ),
             chrono_interpolate=getattr(options, "chrono_interpolate", False),
             chrono_tolerance=getattr(options, "chrono_tolerance", 1e-3),
             chrono_matching_mode=getattr(options, "chrono_matching_mode", "FAST"),

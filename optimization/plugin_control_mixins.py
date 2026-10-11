@@ -266,53 +266,12 @@ class OptimizationPluginControlMixin:
             ),
         }
 
-    def _gather_gamma_reconciliation_kwargs(
-        self, existing_config: OptimizationConfig | None
-    ) -> dict:
-        """Return self-consistency gamma-reconciliation keyword arguments."""
-        config_value = _existing_config_value
-
-        def setting(var_name: str, attr: str, default):
-            return self._get_gui_stability_setting(
-                var_name, config_value(existing_config, attr, default)
-            )
-
+    def _gather_gamma_reconciliation_kwargs(self, existing_config) -> dict:
+        """Preserve a loaded study without offering retired GUI controls."""
         return {
-            "self_consistency_gamma_reconciliation_method": setting(
-                "self_consistency_gamma_reconciliation_method_var",
-                "self_consistency_gamma_reconciliation_method",
-                "DISABLED",
-            ),
-            "self_consistency_gamma_reconciliation_low_beta_threshold": setting(
-                "self_consistency_gamma_reconciliation_low_beta_threshold_var",
-                "self_consistency_gamma_reconciliation_low_beta_threshold",
-                0.9,
-            ),
-            "self_consistency_gamma_reconciliation_high_beta_threshold": setting(
-                "self_consistency_gamma_reconciliation_high_beta_threshold_var",
-                "self_consistency_gamma_reconciliation_high_beta_threshold",
-                0.99,
-            ),
-            "self_consistency_gamma_reconciliation_low_beta_weight": setting(
-                "self_consistency_gamma_reconciliation_low_beta_weight_var",
-                "self_consistency_gamma_reconciliation_low_beta_weight",
-                0.8,
-            ),
-            "self_consistency_gamma_reconciliation_high_beta_weight": setting(
-                "self_consistency_gamma_reconciliation_high_beta_weight_var",
-                "self_consistency_gamma_reconciliation_high_beta_weight",
-                0.2,
-            ),
-            "self_consistency_gamma_reconciliation_mid_beta_weight": setting(
-                "self_consistency_gamma_reconciliation_mid_beta_weight_var",
-                "self_consistency_gamma_reconciliation_mid_beta_weight",
-                0.5,
-            ),
-            "self_consistency_gamma_reconciliation_fixed_weight": setting(
-                "self_consistency_gamma_reconciliation_fixed_weight_var",
-                "self_consistency_gamma_reconciliation_fixed_weight",
-                0.5,
-            ),
+            "legacy_study_gamma_reconciliation": getattr(
+                existing_config, "legacy_study_gamma_reconciliation", None
+            )
         }
 
     def _gather_search_config_kwargs(

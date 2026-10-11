@@ -22,6 +22,7 @@ import numpy as np
 
 from core.constants import C_MMNS, ELECTRON_MASS_AMU
 from core.integration_runner import AdaptiveTimestepConfig, retarded_integrator
+from core.legacy_gamma_reconciliation import normalize_legacy_gamma_payload
 from core.self_consistency import SelfConsistencyConfig
 from core.species import SPECIES, resolve_species
 from core.types import (
@@ -1756,6 +1757,12 @@ def run_testbed_config(args: argparse.Namespace) -> int:
 def _merge_simulation_payload(
     file_payload: Mapping[str, Any], args: argparse.Namespace
 ) -> Dict[str, Any]:
+    try:
+        file_payload = normalize_legacy_gamma_payload(file_payload)
+    except (TypeError, ValueError) as exc:
+        raise SimulationConfigError(
+            f"Invalid legacy gamma-reconciliation option: {exc}"
+        ) from exc
     result = dict(DEFAULT_SIMULATION)
     result["particle_loss"] = dict(DEFAULT_PARTICLE_LOSS)
     result["pseudo_grid"] = dict(DEFAULT_PSEUDO_GRID)
@@ -1879,13 +1886,7 @@ def _merge_simulation_payload(
         "self_consistency_mass_shell_tolerance",
         "self_consistency_mass_shell_relaxation",
         "self_consistency_verbosity",
-        "self_consistency_gamma_reconciliation_method",
-        "self_consistency_gamma_reconciliation_fixed_weight",
-        "self_consistency_gamma_reconciliation_low_beta_threshold",
-        "self_consistency_gamma_reconciliation_high_beta_threshold",
-        "self_consistency_gamma_reconciliation_low_beta_weight",
-        "self_consistency_gamma_reconciliation_high_beta_weight",
-        "self_consistency_gamma_reconciliation_mid_beta_weight",
+        "legacy_study_gamma_reconciliation",
         "chrono_interpolate",
         "chrono_tolerance",
         "chrono_high_precision",
@@ -3202,6 +3203,13 @@ def _strict_bool_with_alias(
 def _build_self_consistency_config(
     payload: Mapping[str, Any],
 ) -> Optional[SelfConsistencyConfig]:
+    try:
+        payload = normalize_legacy_gamma_payload(payload)
+    except (TypeError, ValueError) as exc:
+        raise SimulationConfigError(
+            f"Invalid legacy gamma-reconciliation option: {exc}"
+        ) from exc
+    legacy_gamma = payload.get("legacy_study_gamma_reconciliation")
     chrono_interpolate = _strict_bool_with_alias(
         payload, "chrono_interpolate", "self_consistency_chrono_interpolate", False
     )
@@ -3224,11 +3232,9 @@ def _build_self_consistency_config(
     ):
         return None
 
-    method_name = str(
-        payload.get("self_consistency_gamma_reconciliation_method", "DISABLED")
-    ).upper()
+    method_name = str((legacy_gamma or {}).get("method", "DISABLED")).upper()
     try:
-        gamma_method = GammaReconciliationMethod[method_name]
+        GammaReconciliationMethod[method_name]
     except KeyError:
         raise SimulationConfigError(
             f"Unknown gamma reconciliation method: {method_name!r}"
@@ -3272,40 +3278,7 @@ def _build_self_consistency_config(
             ).name,
             chrono_high_precision=chrono_high_precision,
             chrono_adaptive_tolerance=chrono_adaptive_tolerance,
-            gamma_reconciliation_method=gamma_method,
-            gamma_reconciliation_fixed_weight=float(
-                payload.get("self_consistency_gamma_reconciliation_fixed_weight", 0.5)
-            ),
-            gamma_reconciliation_low_beta_threshold=float(
-                payload.get(
-                    "self_consistency_gamma_reconciliation_low_beta_threshold",
-                    reference.gamma_reconciliation_low_beta_threshold,
-                )
-            ),
-            gamma_reconciliation_high_beta_threshold=float(
-                payload.get(
-                    "self_consistency_gamma_reconciliation_high_beta_threshold",
-                    reference.gamma_reconciliation_high_beta_threshold,
-                )
-            ),
-            gamma_reconciliation_low_beta_weight=float(
-                payload.get(
-                    "self_consistency_gamma_reconciliation_low_beta_weight",
-                    reference.gamma_reconciliation_low_beta_weight,
-                )
-            ),
-            gamma_reconciliation_high_beta_weight=float(
-                payload.get(
-                    "self_consistency_gamma_reconciliation_high_beta_weight",
-                    reference.gamma_reconciliation_high_beta_weight,
-                )
-            ),
-            gamma_reconciliation_mid_beta_weight=float(
-                payload.get(
-                    "self_consistency_gamma_reconciliation_mid_beta_weight",
-                    reference.gamma_reconciliation_mid_beta_weight,
-                )
-            ),
+            legacy_study_gamma_reconciliation=legacy_gamma,
         )
     except (TypeError, ValueError) as exc:
         raise SimulationConfigError(

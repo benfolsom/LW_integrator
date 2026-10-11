@@ -368,10 +368,10 @@ class TestOptimizationPluginIntegration:
         assert kwargs["self_consistency_enabled"] is False
         assert kwargs["adaptive_timestep_threshold"] == pytest.approx(0.25)
         assert kwargs["radiation_reaction_mode"] == mode
-        assert (
-            kwargs["self_consistency_gamma_reconciliation_method"] == "FIXED_WEIGHTED"
-        )
-        assert kwargs["self_consistency_gamma_reconciliation_fixed_weight"] == 0.7
+        assert kwargs["legacy_study_gamma_reconciliation"] == {
+            "method": "FIXED_WEIGHTED",
+            "fixed_weight": 0.7,
+        }
 
     def test_gather_output_and_failure_kwargs_includes_worker_count(self):
         harness = OptimizationPluginControlMixin()

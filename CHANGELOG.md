@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Remove the historical mutable integrator class while preserving function
+  re-exports. Retire gamma-reconciliation controls and ordinary configuration
+  fields; interpret saved settings through the deprecated
+  `legacy_study_gamma_reconciliation` namespace with warnings. Preserve default
+  numerical behavior and the legacy iteration-seed arithmetic.
+
 ## v0.11.0 — 2026-10-10 — exact histories, native PIC, and boundary studies
 
 ### Exact retarded fields and source histories

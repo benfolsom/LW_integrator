@@ -52,6 +52,8 @@ See :class:`core.self_consistency.SelfConsistencyConfig` for configuration.
 
 from __future__ import annotations
 
+from core.legacy_gamma_reconciliation import reconcile_legacy_gamma
+
 from .resolved_knot import (
     initialize_resolved_result,
     knot_proper_velocity,
@@ -5029,41 +5031,9 @@ def retarded_equations_of_motion(
 
                 method = self_consistency.gamma_reconciliation_method
 
-                if method == GammaReconciliationMethod.USE_VELOCITY:
-                    gamma_reconciled = gamma_from_velocity
-                    alpha = 0.0
-                elif method == GammaReconciliationMethod.USE_ENERGY:
-                    gamma_reconciled = gamma_from_energy
-                    alpha = 1.0
-                elif method == GammaReconciliationMethod.FIXED_WEIGHTED:
-                    alpha = self_consistency.gamma_reconciliation_fixed_weight
-                    gamma_reconciled = (
-                        alpha * gamma_from_energy + (1.0 - alpha) * gamma_from_velocity
-                    )
-                elif method == GammaReconciliationMethod.ADAPTIVE_WEIGHTED:
-                    low_threshold = (
-                        self_consistency.gamma_reconciliation_low_beta_threshold
-                    )
-                    high_threshold = (
-                        self_consistency.gamma_reconciliation_high_beta_threshold
-                    )
-                    low_weight = self_consistency.gamma_reconciliation_low_beta_weight
-                    high_weight = self_consistency.gamma_reconciliation_high_beta_weight
-                    mid_weight = self_consistency.gamma_reconciliation_mid_beta_weight
-
-                    if beta_total < low_threshold:
-                        alpha = low_weight
-                    elif beta_total > high_threshold:
-                        alpha = high_weight
-                    else:
-                        alpha = mid_weight
-
-                    gamma_reconciled = (
-                        alpha * gamma_from_energy + (1.0 - alpha) * gamma_from_velocity
-                    )
-                else:
-                    gamma_reconciled = gamma_from_energy
-                    alpha = 1.0
+                gamma_reconciled, alpha = reconcile_legacy_gamma(
+                    self_consistency, gamma_from_energy, gamma_from_velocity, beta_total
+                )
 
                 reconciled_gamma_for_iteration = float(gamma_reconciled)
 

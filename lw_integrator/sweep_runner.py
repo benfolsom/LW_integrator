@@ -29,6 +29,8 @@ and debugging workflows.
 
 from __future__ import annotations
 
+from core.legacy_gamma_reconciliation import normalize_legacy_gamma_payload
+
 import concurrent.futures
 import itertools
 import json
@@ -1405,7 +1407,7 @@ def _convert_json_config_to_dataclass(config_dict: Dict[str, Any]) -> Dict[str, 
     OptimizationConfig scalar fields so that the CLI sweep runner uses the
     correct particle parameters instead of hard-coded defaults.
     """
-    converted = dict(config_dict)
+    converted = normalize_legacy_gamma_payload(config_dict)
     if "mode" in converted:
         converted["mode"] = normalize_sweep_or_optimization_mode(converted["mode"])
 

@@ -4,6 +4,11 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
+from core.legacy_gamma_reconciliation import (
+    legacy_gamma_payload,
+    normalize_legacy_gamma_payload,
+)
+
 _PERSISTED_CONFIG_DEFAULTS: dict[str, Any] = {
     "self_consistency_enabled": True,
     "self_consistency_tolerance": 1e-4,
@@ -74,13 +79,6 @@ _PERSISTED_CONFIG_DEFAULTS: dict[str, Any] = {
     "driver_train_z_offsets_mm": (),
     "driver_train_prehistory_steps": 0,
     "driver_train_preserve_prehistory_in_output": False,
-    "self_consistency_gamma_reconciliation_method": "DISABLED",
-    "self_consistency_gamma_reconciliation_low_beta_threshold": 0.9,
-    "self_consistency_gamma_reconciliation_high_beta_threshold": 0.99,
-    "self_consistency_gamma_reconciliation_low_beta_weight": 0.8,
-    "self_consistency_gamma_reconciliation_high_beta_weight": 0.2,
-    "self_consistency_gamma_reconciliation_mid_beta_weight": 0.5,
-    "self_consistency_gamma_reconciliation_fixed_weight": 0.5,
     "workers": 1,
     "per_run_timeout": 300.0,
     "skip_failed_runs": True,
@@ -132,6 +130,10 @@ _CHRONO_ALIAS_SUFFIXES = (
 
 def apply_persisted_config_overrides(config: Any, data: Dict[str, Any]) -> Any:
     """Apply persisted config values and defaults onto an OptimizationConfig."""
+    data = normalize_legacy_gamma_payload(data)
+    config.legacy_study_gamma_reconciliation = data.get(
+        "legacy_study_gamma_reconciliation"
+    )
     nested_driver_train = data.get("driver_train")
     if isinstance(nested_driver_train, dict):
         data = dict(data)
@@ -189,6 +191,7 @@ def build_saved_config_payload(
 ) -> Dict[str, Any]:
     """Build the persisted config payload from config and UI-only fields."""
     return {
+        **legacy_gamma_payload(config),
         "simulation_type": config.simulation_type.name,
         "mode": config.mode,
         "aperture_min": config.aperture_range[0],
@@ -241,27 +244,6 @@ def build_saved_config_payload(
         "self_consistency_chrono_matching_mode": config.chrono_matching_mode,
         "self_consistency_chrono_high_precision": config.chrono_high_precision,
         "self_consistency_chrono_adaptive_tolerance": config.chrono_adaptive_tolerance,
-        "self_consistency_gamma_reconciliation_method": (
-            config.self_consistency_gamma_reconciliation_method
-        ),
-        "self_consistency_gamma_reconciliation_low_beta_threshold": (
-            config.self_consistency_gamma_reconciliation_low_beta_threshold
-        ),
-        "self_consistency_gamma_reconciliation_high_beta_threshold": (
-            config.self_consistency_gamma_reconciliation_high_beta_threshold
-        ),
-        "self_consistency_gamma_reconciliation_low_beta_weight": (
-            config.self_consistency_gamma_reconciliation_low_beta_weight
-        ),
-        "self_consistency_gamma_reconciliation_high_beta_weight": (
-            config.self_consistency_gamma_reconciliation_high_beta_weight
-        ),
-        "self_consistency_gamma_reconciliation_mid_beta_weight": (
-            config.self_consistency_gamma_reconciliation_mid_beta_weight
-        ),
-        "self_consistency_gamma_reconciliation_fixed_weight": (
-            config.self_consistency_gamma_reconciliation_fixed_weight
-        ),
         "energy_monitor_halt_on_jump": config.energy_monitor_halt_on_jump,
         "adaptive_timestep_enabled": config.adaptive_timestep_enabled,
         "adaptive_timestep_threshold": config.adaptive_timestep_threshold,

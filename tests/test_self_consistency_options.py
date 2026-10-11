@@ -17,6 +17,7 @@ import numpy as np
 import pytest
 
 from core.constants import C_MMNS, PROTON_MASS_AMU
+from core.legacy_gamma_reconciliation import LegacyGammaReconciliationWarning
 from core.self_consistency import (
     ChronoHighPrecisionDeprecationWarning,
     SelfConsistencyConfig,
@@ -139,18 +140,40 @@ def test_testbed_rejects_unknown_gamma_reconciliation_method():
 
 
 @pytest.mark.parametrize("name", [method.name for method in GammaReconciliationMethod])
-def test_testbed_accepts_every_gamma_reconciliation_method(name: str):
-    options = SimulationOptions.from_dict(
-        {
-            "self_consistency_enabled": True,
-            "self_consistency_gamma_reconciliation_method": name.lower(),
-        }
+@pytest.mark.parametrize("surface", ["saved_flat", "legacy_study"])
+def test_testbed_accepts_every_gamma_reconciliation_method(name: str, surface: str):
+    payload = {"self_consistency_enabled": True}
+    if surface == "saved_flat":
+        payload["self_consistency_gamma_reconciliation_method"] = name.lower()
+    else:
+        # Explicit study keys win over stale flat keys saved beside them.
+        payload["self_consistency_gamma_reconciliation_method"] = "NONE"
+        payload["legacy_study_gamma_reconciliation"] = {"method": name.lower()}
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", LegacyGammaReconciliationWarning)
+        options = SimulationOptions.from_dict(payload)
+        config = build_self_consistency_config(options)
+        converted = _convert_json_config_to_dataclass(payload)
+        valid = {field.name for field in fields(OptimizationConfig)}
+        sweep = OptimizationConfig(**{k: v for k, v in converted.items() if k in valid})
+        restored = apply_persisted_config_overrides(OptimizationConfig(), payload)
+        main_gui_sweep = OptimizationConfig.from_simulation_options(options)
+        cli_config = cli._build_self_consistency_config(payload)
+    assert caught
+    assert all(
+        issubclass(item.category, LegacyGammaReconciliationWarning) for item in caught
     )
-
-    config = build_self_consistency_config(options)
-
     assert config is not None
     assert config.gamma_reconciliation_method is GammaReconciliationMethod[name]
+    assert cli_config.gamma_reconciliation_method is GammaReconciliationMethod[name]
+    assert sweep.self_consistency_gamma_reconciliation_method == name
+    assert restored.self_consistency_gamma_reconciliation_method == name
+    assert main_gui_sweep.self_consistency_gamma_reconciliation_method == name
+    saved = options.to_dict()
+    assert not any(
+        key.startswith("self_consistency_gamma_reconciliation_") for key in saved
+    )
+    assert saved["legacy_study_gamma_reconciliation"]["method"].upper() == name
 
 
 # ---------------------------------------------------------------------------
@@ -199,14 +222,29 @@ def test_core_and_standard_preset_use_unified_defaults():
 
 
 def test_keyless_cli_config_enables_self_consistency_with_unified_defaults():
-    config = cli._build_self_consistency_config({})
-
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        config = cli._build_self_consistency_config({})
+    assert not caught
+    assert config.legacy_study_gamma_reconciliation is None
     assert config is not None
     assert _sc_defaults(config) == EXPECTED_SC_DEFAULTS
 
 
 def test_testbed_gui_and_sweep_entry_points_use_unified_defaults():
-    assert _option_defaults(SimulationOptions()) == EXPECTED_SC_DEFAULTS
+    ordinary = SimulationOptions()
+    assert "legacy_study_gamma_reconciliation" not in ordinary.to_dict()
+    assert not any(
+        key.startswith("self_consistency_gamma_reconciliation_")
+        for key in ordinary.to_dict()
+    )
+    for cls in (SelfConsistencyConfig, SimulationOptions, OptimizationConfig):
+        assert not any(
+            "gamma_reconciliation" in item.name
+            and not item.name.startswith("legacy_study_")
+            for item in fields(cls)
+        )
+    assert _option_defaults(ordinary) == EXPECTED_SC_DEFAULTS
     assert _option_defaults(SimulationOptions.from_dict({})) == EXPECTED_SC_DEFAULTS
     assert (
         _sc_defaults(build_self_consistency_config(SimulationOptions.from_dict({})))
@@ -469,27 +507,25 @@ def test_api_chrono_mode_defaults_are_fast():
         )
 
 
-def test_trajectory_integrator_without_config_uses_fast(monkeypatch):
+def test_trajectory_integrator_reexports_runner_with_fast_default():
     import core.trajectory_integrator as trajectory_integrator
-    from tests.unit.test_trajectory_integrator_helpers import (
-        _make_single_particle_state,
+    from core.integration_runner import retarded_integrator, run_integrator
+
+    assert trajectory_integrator.retarded_integrator is retarded_integrator
+    assert trajectory_integrator.run_integrator is run_integrator
+    assert (
+        inspect.signature(trajectory_integrator.retarded_integrator)
+        .parameters["chrono_mode"]
+        .default
+        is ChronoMatchingMode.FAST
     )
-
-    captured = {}
-
-    def fake_retarded_integrator(**kwargs):
-        captured.update(kwargs)
-        return [kwargs["init_rider"]], [kwargs["init_driver"]]
-
-    monkeypatch.setattr(
-        trajectory_integrator, "retarded_integrator", fake_retarded_integrator
-    )
-    state = _make_single_particle_state(t=0.0, z=0.0, charge=1.0)
-    trajectory_integrator.LienardWiechertIntegrator(None).integrate_retarded_fields(
-        0, 1, 1e-3, 0.0, 1.0, SimulationType.BUNCH_TO_BUNCH, state, state, 0.0, 0.0
-    )
-
-    assert captured["chrono_mode"] is ChronoMatchingMode.FAST
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        with pytest.raises(AttributeError):
+            _ = trajectory_integrator.LienardWiechertIntegrator
+    assert len(caught) == 1
+    assert issubclass(caught[0].category, FutureWarning)
+    assert "has been removed" in str(caught[0].message)
 
 
 # ---------------------------------------------------------------------------

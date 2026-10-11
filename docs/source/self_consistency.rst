@@ -25,7 +25,6 @@ missing. This is a settings fragment, not a complete run configuration:
      "self_consistency_max_iterations": 2,
      "self_consistency_mass_shell_tolerance": 0.01,
      "self_consistency_verbosity": 0,
-     "self_consistency_gamma_reconciliation_method": "DISABLED",
      "chrono_interpolate": false,
      "chrono_tolerance": 0.001,
      "chrono_high_precision": false,
@@ -52,11 +51,37 @@ not silently accepted. With the maintained tolerances, the later
 the loop.
 
 ``mass_shell_relaxation`` is retained for compatibility but unused on the
-corrected path; omit it from new settings. Gamma reconciliation is a diagnostic
-option that can reseed an iteration on supported paths. It is not an energy
-conservation correction and should remain ``DISABLED``. The runner warns when
-it cannot act, including the exact RFS/dipole route, Medina/LAD, or disabled
-self-consistency.
+corrected path; omit it from new settings. Gamma reconciliation has been retired
+from ordinary configuration fields and the GUI. Its default remains disabled;
+ordinary runs derive gamma and beta from on-shell spatial momentum.
+
+Legacy studies can explicitly select the deprecated interpretation with
+``legacy_study_gamma_reconciliation``. For example:
+
+.. code-block:: json
+
+   {
+     "legacy_study_gamma_reconciliation": {
+       "method": "FIXED_WEIGHTED",
+       "fixed_weight": 0.25
+     }
+   }
+
+This namespace accepts ``method``, ``low_beta_threshold``,
+``high_beta_threshold``, ``low_beta_weight``, ``high_beta_weight``,
+``mid_beta_weight``, and ``fixed_weight``. Saved flat keys and explicit old
+Python keyword arguments are interpreted with deprecation warnings. Explicit
+nested keys take precedence over old flat keys. Saves use the study namespace
+and omit it for ordinary runs. The choices only preserve historical iteration
+seeding; they do not certify accuracy, stability, or energy conservation. The
+runner also warns where they have no effect, including the exact RFS/dipole
+route, Medina/LAD, or disabled self-consistency.
+
+The mutable ``LienardWiechertIntegrator`` class has been removed. Imports of
+functions from ``core.trajectory_integrator`` remain supported. Use
+``retarded_integrator`` or ``run_integrator`` instead; the modern runner takes
+proper-time steps, whereas the removed class's ``drift_step`` took lab-time
+steps. Do not substitute one timestep interpretation for the other.
 
 What to validate
 ------------------

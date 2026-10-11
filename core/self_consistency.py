@@ -23,6 +23,8 @@ from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any, Callable, Optional
 
+from core.legacy_gamma_reconciliation import legacy_gamma_constructor
+
 from .types import (
     ChronoMatchingMode,
     GammaReconciliationMethod,
@@ -77,6 +79,7 @@ def canonicalize_self_consistency_mode(mode: object) -> str:
     return aliases.get(mode_str, mode_str)
 
 
+@legacy_gamma_constructor(core=True)
 @dataclass
 class SelfConsistencyConfig:
     """Configuration for self-consistency iterations.
@@ -222,16 +225,7 @@ class SelfConsistencyConfig:
     mass_shell_tolerance: float = 1e-2  # Safety net after loop
     mass_shell_relaxation: float = 0.7  # Relaxation weight applied after correction
 
-    # Gamma reconciliation parameters
-    gamma_reconciliation_method: GammaReconciliationMethod = (
-        GammaReconciliationMethod.DISABLED
-    )
-    gamma_reconciliation_low_beta_threshold: float = 0.9  # Below this: trust energy
-    gamma_reconciliation_high_beta_threshold: float = 0.99  # Above this: trust velocity
-    gamma_reconciliation_low_beta_weight: float = 0.8  # α for β < low threshold
-    gamma_reconciliation_high_beta_weight: float = 0.2  # α for β > high threshold
-    gamma_reconciliation_mid_beta_weight: float = 0.5  # α for mid range
-    gamma_reconciliation_fixed_weight: float = 0.5  # α for FIXED_WEIGHTED method
+    legacy_study_gamma_reconciliation: dict | None = None
 
     chrono_interpolate: bool = False  # Enable chrono-match interpolation
     chrono_tolerance: float = 1e-3  # Time residual tolerance (ns)

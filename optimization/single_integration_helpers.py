@@ -9,6 +9,7 @@ from typing import Any, Mapping, cast
 import numpy as np
 
 from core.constants import C_MMNS
+from core.legacy_gamma_reconciliation import legacy_gamma_settings
 from core.smoothness_analyzer import SmoothnessConfig, analyze_trajectory_smoothness
 from lw_integrator.testbed_runner import SimulationOptions
 from optimization.simulation_type_helpers import is_bunch_to_bunch
@@ -303,37 +304,7 @@ def build_single_integration_setup(
             getattr(config, "chrono_adaptive_tolerance", False)
             or getattr(config, "self_consistency_chrono_adaptive_tolerance", False)
         ),
-        self_consistency_gamma_reconciliation_method=getattr(
-            config, "self_consistency_gamma_reconciliation_method", "DISABLED"
-        ),
-        self_consistency_gamma_reconciliation_low_beta_threshold=getattr(
-            config,
-            "self_consistency_gamma_reconciliation_low_beta_threshold",
-            0.9,
-        ),
-        self_consistency_gamma_reconciliation_high_beta_threshold=getattr(
-            config,
-            "self_consistency_gamma_reconciliation_high_beta_threshold",
-            0.99,
-        ),
-        self_consistency_gamma_reconciliation_low_beta_weight=getattr(
-            config,
-            "self_consistency_gamma_reconciliation_low_beta_weight",
-            0.8,
-        ),
-        self_consistency_gamma_reconciliation_high_beta_weight=getattr(
-            config,
-            "self_consistency_gamma_reconciliation_high_beta_weight",
-            0.2,
-        ),
-        self_consistency_gamma_reconciliation_mid_beta_weight=getattr(
-            config,
-            "self_consistency_gamma_reconciliation_mid_beta_weight",
-            0.5,
-        ),
-        self_consistency_gamma_reconciliation_fixed_weight=getattr(
-            config, "self_consistency_gamma_reconciliation_fixed_weight", 0.5
-        ),
+        legacy_study_gamma_reconciliation=legacy_gamma_settings(config),
         energy_monitor_enabled=False,
         energy_monitor_threshold=2.0,
         energy_monitor_check_interval=10,

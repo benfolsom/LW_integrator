@@ -794,60 +794,6 @@ class IntegratorGUI(
         self.self_consistency_chrono_adaptive_tolerance_var = (
             self.chrono_adaptive_tolerance_var
         )
-        # Gamma reconciliation options
-        self.self_consistency_gamma_reconciliation_method_var = tk.StringVar(
-            value=getattr(
-                self.options,
-                "self_consistency_gamma_reconciliation_method",
-                "DISABLED",
-            )
-        )
-        self.self_consistency_gamma_reconciliation_low_beta_threshold_var = (
-            tk.DoubleVar(
-                value=getattr(
-                    self.options,
-                    "self_consistency_gamma_reconciliation_low_beta_threshold",
-                    0.9,
-                )
-            )
-        )
-        self.self_consistency_gamma_reconciliation_high_beta_threshold_var = (
-            tk.DoubleVar(
-                value=getattr(
-                    self.options,
-                    "self_consistency_gamma_reconciliation_high_beta_threshold",
-                    0.99,
-                )
-            )
-        )
-        self.self_consistency_gamma_reconciliation_low_beta_weight_var = tk.DoubleVar(
-            value=getattr(
-                self.options,
-                "self_consistency_gamma_reconciliation_low_beta_weight",
-                0.8,
-            )
-        )
-        self.self_consistency_gamma_reconciliation_high_beta_weight_var = tk.DoubleVar(
-            value=getattr(
-                self.options,
-                "self_consistency_gamma_reconciliation_high_beta_weight",
-                0.2,
-            )
-        )
-        self.self_consistency_gamma_reconciliation_mid_beta_weight_var = tk.DoubleVar(
-            value=getattr(
-                self.options,
-                "self_consistency_gamma_reconciliation_mid_beta_weight",
-                0.5,
-            )
-        )
-        self.self_consistency_gamma_reconciliation_fixed_weight_var = tk.DoubleVar(
-            value=getattr(
-                self.options,
-                "self_consistency_gamma_reconciliation_fixed_weight",
-                0.5,
-            )
-        )
         # chrono_matching_mode kept at FAST (internal only, not exposed in GUI)
 
         # Trace to update control states

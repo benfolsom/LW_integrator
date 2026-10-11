@@ -127,61 +127,14 @@ class OptimizationPluginConfigMixin:
                     config.radiation_reaction_mode
                 )
 
-            if hasattr(
-                self.gui_controller, "self_consistency_gamma_reconciliation_method_var"
-            ):
-                self.gui_controller.self_consistency_gamma_reconciliation_method_var.set(
-                    config.self_consistency_gamma_reconciliation_method
-                )
-            if hasattr(
-                self.gui_controller,
-                "self_consistency_gamma_reconciliation_low_beta_threshold_var",
-            ):
-                self.gui_controller.self_consistency_gamma_reconciliation_low_beta_threshold_var.set(
-                    f"{config.self_consistency_gamma_reconciliation_low_beta_threshold:.2f}"
-                )
-            if hasattr(
-                self.gui_controller,
-                "self_consistency_gamma_reconciliation_high_beta_threshold_var",
-            ):
-                self.gui_controller.self_consistency_gamma_reconciliation_high_beta_threshold_var.set(
-                    f"{config.self_consistency_gamma_reconciliation_high_beta_threshold:.2f}"
-                )
-            if hasattr(
-                self.gui_controller,
-                "self_consistency_gamma_reconciliation_low_beta_weight_var",
-            ):
-                self.gui_controller.self_consistency_gamma_reconciliation_low_beta_weight_var.set(
-                    f"{config.self_consistency_gamma_reconciliation_low_beta_weight:.2f}"
-                )
-            if hasattr(
-                self.gui_controller,
-                "self_consistency_gamma_reconciliation_high_beta_weight_var",
-            ):
-                self.gui_controller.self_consistency_gamma_reconciliation_high_beta_weight_var.set(
-                    f"{config.self_consistency_gamma_reconciliation_high_beta_weight:.2f}"
-                )
-            if hasattr(
-                self.gui_controller,
-                "self_consistency_gamma_reconciliation_mid_beta_weight_var",
-            ):
-                self.gui_controller.self_consistency_gamma_reconciliation_mid_beta_weight_var.set(
-                    f"{config.self_consistency_gamma_reconciliation_mid_beta_weight:.2f}"
-                )
-            if hasattr(
-                self.gui_controller,
-                "self_consistency_gamma_reconciliation_fixed_weight_var",
-            ):
-                self.gui_controller.self_consistency_gamma_reconciliation_fixed_weight_var.set(
-                    f"{config.self_consistency_gamma_reconciliation_fixed_weight:.2f}"
-                )
+            self.gui_controller.options.legacy_study_gamma_reconciliation = (
+                config.legacy_study_gamma_reconciliation
+            )
 
             if hasattr(self.gui_controller, "_toggle_self_consistency_controls"):
                 self.gui_controller._toggle_self_consistency_controls()
             if hasattr(self.gui_controller, "_toggle_adaptive_timestep_controls"):
                 self.gui_controller._toggle_adaptive_timestep_controls()
-            if hasattr(self.gui_controller, "_toggle_gamma_reconciliation_params"):
-                self.gui_controller._toggle_gamma_reconciliation_params()
 
             self._log_result(
                 "[OK] Stability settings synced to main GUI's Stability tab"

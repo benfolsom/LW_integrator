@@ -595,6 +595,31 @@ class TestPluginPersistenceHelpers:
         )
 
         assert payload["simulation_type"] == "BUNCH_TO_BUNCH"
+        assert "legacy_study_gamma_reconciliation" not in payload
+        assert not any(
+            key.startswith("self_consistency_gamma_reconciliation_") for key in payload
+        )
+        config.legacy_study_gamma_reconciliation = {
+            "method": "FIXED_WEIGHTED",
+            "fixed_weight": 0.7,
+        }
+        legacy_payload = build_saved_config_payload(
+            config,
+            timestep_mode="auto",
+            auto_steps_distance=42.0,
+            rider_stripped_ions=2.0,
+            driver_stripped_ions=3.0,
+            driver_direction="-z",
+            sweep_state={},
+        )
+        with pytest.warns(FutureWarning, match="deprecated"):
+            loaded = apply_persisted_config_overrides(
+                OptimizationConfig(), legacy_payload
+            )
+        assert (
+            loaded.legacy_study_gamma_reconciliation
+            == config.legacy_study_gamma_reconciliation
+        )
         assert payload["mode"] == "optimization"
         assert payload["save_top_n_trajectories"] is True
         assert payload["driver_direction"] == "+z"
@@ -997,9 +1022,7 @@ class TestOptimizationResultsMixin:
             "transverse_geometry": "square",
             "starting_distance": 321.0,
             "starting_Pz": pytest.approx(
-                -calculate_rider_starting_pz(
-                    12.0, 20.0, SimulationType.BUNCH_TO_BUNCH
-                )
+                -calculate_rider_starting_pz(12.0, 20.0, SimulationType.BUNCH_TO_BUNCH)
             ),
             "stripped_ions": 5.0,
             "transv_offset_x": 0.6,

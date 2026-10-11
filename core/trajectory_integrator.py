@@ -3,15 +3,11 @@
 Earlier project layouts imported functionality directly from
 ``core.trajectory_integrator``. The implementation has since been modularised
 into smaller, focused modules. This wrapper re-exports the public symbols to
-maintain import compatibility while also providing a light-weight class based
-API used by historical notebooks and regression tests.
+maintain function import compatibility. The historical mutable class is retired;
+use the function runners with an explicit configuration instead.
 """
 
 from __future__ import annotations
-
-from typing import Any, MutableMapping, Optional, overload
-
-import numpy as np
 
 from .constants import C_MMNS
 from .distances import (
@@ -40,171 +36,32 @@ from .types import (
 )
 
 
-class LienardWiechertIntegrator:
-    """Compatibility wrapper mimicking the historical integrator facade.
+def __getattr__(name: str):
+    if name == "LienardWiechertIntegrator":
+        import warnings
 
-    The historic API exposed a mutable class with helper methods that several
-    notebooks and regression tests relied upon. The present codebase is
-    function-oriented, but a class wrapper keeps downstream integrations
-    working without modification.
-    """
-
-    def __init__(self, config: Optional[IntegratorConfig] = None) -> None:
-        self.c_mmns = C_MMNS
-        self.config = config
-
-    @staticmethod
-    @overload
-    def _clone_state(state: ParticleState) -> ParticleState: ...
-
-    @staticmethod
-    @overload
-    def _clone_state(state: None) -> None: ...
-
-    @staticmethod
-    def _clone_state(state: ParticleState | None) -> ParticleState | None:
-        """Return a deep copy of a particle state dictionary.
-
-        ``None`` is propagated through to support optional driver states.
-        """
-
-        if state is None:
-            return None
-
-        return {key: np.copy(value) for key, value in state.items()}
-
-    def drift_step(
-        self, h_step: float, state: ParticleState, _index: int
-    ) -> ParticleState:
-        """Propagate particles forward assuming a field-free drift.
-
-        Particles advance according to their current velocity while conjugate
-        momentum and Lorentz factor remain constant.
-        """
-
-        result = self._clone_state(state)
-
-        if "bx" in state and "x" in state:
-            result["x"] = state["x"] + state["bx"] * C_MMNS * h_step
-        if "by" in state and "y" in state:
-            result["y"] = state["y"] + state["by"] * C_MMNS * h_step
-        if "bz" in state and "z" in state:
-            result["z"] = state["z"] + state["bz"] * C_MMNS * h_step
-
-        if "t" in state:
-            result["t"] = state["t"] + h_step
-
-        for key in ("Px", "Py", "Pz", "Pt", "gamma"):
-            if key in state:
-                result[key] = np.copy(state[key])
-
-        for key in ("bdotx", "bdoty", "bdotz"):
-            if key in state:
-                result[key] = np.zeros_like(state[key])
-
-        return result
-
-    def integrate_retarded_fields(
-        self,
-        static_steps: int,
-        ret_steps: int,
-        h_step: float,
-        wall_Z: float,
-        apt_R: float,
-        sim_type: SimulationType | int,
-        init_rider: ParticleState,
-        init_driver: Optional[ParticleState],
-        bunch_dist: float,
-        z_cutoff: float,
-        *,
-        extra_config: Optional[MutableMapping[str, Any]] = None,
-    ) -> tuple[Trajectory, Trajectory]:
-        """Execute retarded-field integration using the modern core runner.
-
-        Parameters mirror the historical signature but are forwarded to
-        :func:`core.integration_runner.retarded_integrator`. ``static_steps`` is
-        preserved for backwards compatibility and contributes to the total step
-        count.
-        """
-
-        sim_type_enum = (
-            sim_type
-            if isinstance(sim_type, SimulationType)
-            else SimulationType(int(sim_type))
+        warnings.warn(
+            "LienardWiechertIntegrator has been removed; use retarded_integrator "
+            "or run_integrator. The historical drift_step used lab time, whereas "
+            "the modern runner uses proper time.",
+            FutureWarning,
+            stacklevel=2,
         )
-
-        total_steps = max(int(static_steps) + int(ret_steps), 1)
-
-        rider_state = self._clone_state(init_rider)
-        driver_state = self._clone_state(init_driver)
-
-        image_subcharge_override = None
-        image_weighting_override = None
-        if extra_config:
-            wall_Z = float(extra_config.get("wall_Z", wall_Z))
-            apt_R = float(extra_config.get("apt_R", apt_R))
-            bunch_dist = float(extra_config.get("bunch_dist", bunch_dist))
-            z_cutoff = float(extra_config.get("z_cutoff", z_cutoff))
-            if "image_subcharge_count" in extra_config:
-                image_subcharge_override = extra_config.get("image_subcharge_count")
-            if "use_image_weighting" in extra_config:
-                image_weighting_override = extra_config.get("use_image_weighting")
-
-        if image_subcharge_override is not None:
-            try:
-                image_subcharge_count = int(image_subcharge_override)
-            except (TypeError, ValueError):
-                image_subcharge_count = (
-                    self.config.image_subcharge_count if self.config else 12
-                )
-        else:
-            image_subcharge_count = (
-                self.config.image_subcharge_count if self.config else 12
-            )
-
-        if image_weighting_override is not None:
-            use_image_weighting = bool(image_weighting_override)
-        else:
-            use_image_weighting = (
-                self.config.use_image_weighting if self.config else True
-            )
-
-        trajectory, driver, *_soa_out = retarded_integrator(
-            steps=total_steps,
-            h_step=float(h_step),
-            wall_z=float(wall_Z),
-            aperture_radius=float(apt_R),
-            sim_type=sim_type_enum,
-            init_rider=rider_state,
-            init_driver=driver_state,
-            mean=float(bunch_dist),
-            cav_spacing=0.0,
-            z_cutoff=float(z_cutoff),
-            chrono_mode=(
-                self.config.chrono_mode if self.config else ChronoMatchingMode.FAST
-            ),
-            startup_mode=(
-                self.config.startup_mode if self.config else StartupMode.COLD_START
-            ),
-            image_subcharge_count=image_subcharge_count,
-            use_conducting_image_weighting=use_image_weighting,
-            driver_train=self.config.driver_train if self.config else None,
-            magnetic_dipole=self.config.magnetic_dipole if self.config else None,
-        )
-
-        return trajectory, driver
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 __all__ = [
-    "AdaptiveTimestepConfig",
     "C_MMNS",
+    "AdaptiveTimestepConfig",
+    "ChronoMatchingMode",
     "DistanceResult",
+    "DriverTrainConfig",
     "EnergyMonitorConfig",
     "IntegratorConfig",
-    "DriverTrainConfig",
     "ParticleLossConfig",
     "ParticleState",
     "SimulationType",
+    "StartupMode",
     "Trajectory",
     "chrono_match_indices",
     "compute_instantaneous_distance",
@@ -214,5 +71,4 @@ __all__ = [
     "retarded_equations_of_motion",
     "retarded_integrator",
     "run_integrator",
-    "LienardWiechertIntegrator",
 ]
