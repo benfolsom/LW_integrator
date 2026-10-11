@@ -981,10 +981,21 @@ class SimulationOptions:
             "save_log_file": self.save_log_file,
             "log_file_path": self.log_file_path,
         }
+        if self.exact_source_reduction_enabled:
+            for suffix in ("enabled", "rider_count", "driver_count"):
+                name = f"exact_source_reduction_{suffix}"
+                payload[f"magnetic_dipole_{name}"] = payload.pop(name)
         return payload
 
     @classmethod
     def from_dict(cls, payload: Dict[str, object]) -> "SimulationOptions":
+        # Prefer the namespaced source-model surface; retain old saved inputs.
+        payload = dict(payload)
+        for suffix in ("enabled", "rider_count", "driver_count"):
+            name = f"exact_source_reduction_{suffix}"
+            canonical = f"magnetic_dipole_{name}"
+            if canonical in payload:
+                payload[name] = payload[canonical]
         sweep_keys = {"sweep_parameters", "energy_min", "energy_max", "energy_points"}
         if (
             "rider_params" not in payload

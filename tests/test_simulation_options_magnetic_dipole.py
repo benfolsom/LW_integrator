@@ -41,6 +41,20 @@ def test_magnetic_dipole_nested_config_round_trip() -> None:
         ),
     )
 
+    for suffix, value in (("enabled", True), ("rider_count", 8), ("driver_count", 12)):
+        canonical = f"magnetic_dipole_exact_source_reduction_{suffix}"
+        assert options.to_dict()[canonical] == value
+        restored_alias = SimulationOptions.from_dict({canonical: value})
+        assert getattr(restored_alias, f"exact_source_reduction_{suffix}") == value
+    legacy = SimulationOptions.from_dict(
+        {
+            "exact_source_reduction_enabled": True,
+            "exact_source_reduction_rider_count": 8,
+            "exact_source_reduction_driver_count": 12,
+        }
+    )
+    assert legacy.exact_source_reduction_rider_count == 8
+    assert legacy.exact_source_reduction_driver_count == 12
     restored = SimulationOptions.from_dict(options.to_dict())
     config = build_magnetic_dipole_config(restored)
     external = build_external_field_config(restored)

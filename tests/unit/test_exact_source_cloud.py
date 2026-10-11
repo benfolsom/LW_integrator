@@ -127,6 +127,42 @@ def test_cloud_matches_individually_translated_worldlines_and_roots(
     result = evaluate_retarded_charge_field_native(
         exact_cloud_history(source, config), event, backend=backend
     )
+    if accelerated is True:
+        # Constant-width breathing must preserve an accelerated centre's
+        # reconstructed derivative, not just the inertial special case.
+        constant = copy.deepcopy(source)
+        initial_beta = np.array([constant[0]["b" + a][0] for a in "xyz"])
+        proper = initial_beta / np.sqrt(1 - initial_beta @ initial_beta)
+        for state in constant:
+            state["inertial_charge_boundary_ready"] = np.ones(1)
+            state["inertial_charge_boundary_time_ns"] = constant[0]["t"].copy()
+            for i, axis in enumerate("xyz"):
+                state[f"inertial_charge_boundary_position_{axis}"] = constant[0][
+                    axis
+                ].copy()
+                state[f"inertial_charge_boundary_u_{axis}"] = np.array([proper[i]])
+            if cell_sigma:
+                state["exact_source_breathing_ready"] = np.ones(1)
+                state["exact_source_cell_epoch_ns"] = constant[0]["t"].copy()
+                state["exact_source_cell_xv_mm2_ns"] = np.zeros(1)
+                state["exact_source_cell_vv_mm2_ns2"] = np.zeros(1)
+        dynamic = evaluate_retarded_charge_field_native(
+            exact_cloud_history(constant, replace(config, breathing_enabled=True)),
+            event,
+            backend=backend,
+        )
+        for name in (
+            "electric_field_native",
+            "magnetic_field_native",
+            "four_potential",
+            "retarded_time_ns",
+        ):
+            np.testing.assert_allclose(
+                getattr(dynamic, name),
+                getattr(result, name),
+                rtol=2e-14,
+                atol=8 * np.finfo(float).eps * np.max(np.abs(getattr(result, name))),
+            )
     offsets, fractions = transverse_offsets(
         np.array([0, 0, -0.8]),
         config,
@@ -312,6 +348,44 @@ def test_whole_parent_exclusion_in_field_and_mutual_provider(breathing):
             actual, expected[:, None] * np.ones((1, 2)), rtol=2e-14
         )
         assert rates[-1].min() > 0
+        from core.exact_source_cloud import breathing_width_tail
+
+        asynchronous = centres.time_ns.copy()
+        dynamic = np.flatnonzero(asynchronous[:, 0] > 0)
+        asynchronous[dynamic, 1] *= 0.9
+        aligned_positions = centres.position_mm.copy()
+        aligned_positions[dynamic, 1] = np.array([4, 0, 0]) + (
+            asynchronous[dynamic, 1, None]
+            * 299.792458
+            * np.array([state["bx"][1], 0, state["bz"][1]])
+        )
+        prefix = len(asynchronous) - 2
+        initial_response = breathing_width_tail(
+            wrapped := exact_cloud_history(source, config),
+            asynchronous[:prefix],
+            aligned_positions[:prefix],
+            centres.beta[:prefix],
+            centres.dead[:prefix],
+        )
+        incremental = breathing_width_tail(
+            wrapped,
+            asynchronous,
+            aligned_positions,
+            centres.beta,
+            centres.dead,
+            start=prefix,
+            previous=initial_response[3],
+        )
+        fresh = breathing_width_tail(
+            wrapped,
+            asynchronous,
+            aligned_positions,
+            centres.beta,
+            centres.dead,
+        )
+        for before, tail, full in zip(initial_response[:3], incremental[:3], fresh[:3]):
+            np.testing.assert_array_equal(np.concatenate((before, tail)), full)
+
     wrapped = exact_cloud_history(source, config)
     lab_time = 0.02 if breathing else 0
     events = [

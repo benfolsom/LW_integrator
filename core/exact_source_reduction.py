@@ -14,7 +14,7 @@ from typing import Any
 import numpy as np
 
 from .constants import C_MMNS
-from .types import MacroparticleSmearingConfig, ParticleState
+from .types import PARTICLE_STATE_FIELDS, MacroparticleSmearingConfig, ParticleState
 
 
 def fixed_spatial_partition(
@@ -37,12 +37,12 @@ def fixed_spatial_partition(
         distances = np.minimum(
             distances, np.sum((position - position[index]) ** 2, axis=1)
         )
-    seeds = np.asarray(seeds, dtype=int)
-    distances = np.sum((position[:, None] - position[seeds][None]) ** 2, axis=2)
+    seed_indices = np.asarray(seeds, dtype=int)
+    distances = np.sum((position[:, None] - position[seed_indices][None]) ** 2, axis=2)
     cells = np.argmin(distances, axis=1)
     # Distinct identities at coincident positions still own their seed cell.
-    cells[seeds] = np.arange(count)
-    return seeds, cells
+    cells[seed_indices] = np.arange(count)
+    return seed_indices, cells
 
 
 def reduce_exact_initial_state(
@@ -122,7 +122,9 @@ def reduce_exact_initial_state(
     result = {
         key: (
             value[seeds].copy()
-            if isinstance(value, np.ndarray) and value.shape[:1] == (total,)
+            if key in PARTICLE_STATE_FIELDS
+            and isinstance(value, np.ndarray)
+            and value.shape[:1] == (total,)
             else copy.deepcopy(value)
         )
         for key, value in state.items()
@@ -227,7 +229,12 @@ def reduce_exact_initial_state(
         cell_sigma_mm=cell_sigma.tolist(),
     )
     if cloud is not None and cloud.enabled:
-        original_width = cloud.position_sigma_mm * cloud.sigma_multiplier
+        from .exact_source_cloud import validate_exact_cloud
+
+        validate_exact_cloud(cloud)
+        width = cloud.position_sigma_mm
+        assert width is not None
+        original_width = width * cloud.sigma_multiplier
         mapping.update(
             original_effective_width_mm=original_width,
             group_effective_width_mm=np.maximum(cell_sigma, original_width).tolist(),

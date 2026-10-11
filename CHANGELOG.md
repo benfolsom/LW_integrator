@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Restrict opt-in exact-source breathing to reduced cells with retained velocity
+  covariance, including driver-train templates. Cache accepted breathing widths
+  and child histories so appends and private trials rebuild only a short suffix.
+  Preserve unrelated metadata during source reduction and train expansion, and
+  accept namespaced reduction settings while retaining legacy input aliases.
+  Clarify the floored cell-width model and unresolved internal cell forces.
+  Add an opt-in shared lab-time clock to the light/heavy probe harness; production
+  clocks and disabled-feature defaults remain unchanged.
+
 - Docs: add the physics discussion "Classical limit, bremsstrahlung, and
   validity" (`docs/source/classical_limit_bremsstrahlung.rst`, under Physics
   background). It covers:

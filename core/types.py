@@ -3181,6 +3181,31 @@ class GrowableTrajectoryBuilder(TrajectoryBuilder):
         return self.build_current()
 
 
+# Explicit particle-axis schema: matching a bunch metadata vector's length
+# never makes it a particle array. Reuse the trajectory field definitions.
+PARTICLE_STATE_FIELDS = frozenset(
+    TrajectoryBuilder._KINEMATIC_FIELDS
+    + TrajectoryBuilder._MAGNETIC_KINEMATIC_FIELDS
+    + TrajectoryBuilder._MAGNETIC_BOOL_FIELDS
+    + TrajectoryBuilder._MEDINA_FLOAT_FIELDS
+    + TrajectoryBuilder._MEDINA_BOOL_FIELDS
+    + TrajectoryBuilder._PARTICLE_CONST_FIELDS
+    + TrajectoryBuilder._INCLUSION_FIELDS
+    + (
+        "_dead_particles",
+        "charge_source_canonical_ready",
+        "dipole_source_canonical_ready",
+        "canonical_state",
+        "stripped_ions",
+        "_exact_source_endpoint_rebase_required",
+        "_exact_source_start_four_potential",
+        "_source_start_acceleration_complete",
+        "_gate_prime_before",
+        "_gate_prime_after",
+        "_exact_visibility_force_history_restarted",
+    )
+)
+
 __all__ = [
     "ParticleState",
     "Trajectory",

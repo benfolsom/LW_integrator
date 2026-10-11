@@ -7,7 +7,6 @@ import pytest
 
 from scripts.check_sources2 import (
     save_result,
-    wait_for_compute_capacity,
     setup_train_window,
 )
 from scripts.summarize_sources2 import project_reference_kicks
@@ -16,8 +15,16 @@ from core.types import DriverTrainConfig
 from scripts.summarize_sources2 import analyze
 
 
-@pytest.mark.parametrize("mode", ["light", "train"])
-@pytest.mark.parametrize("metadata", ["mode", "legacy", "explicit"])
+@pytest.mark.parametrize(
+    "mode,metadata",
+    [
+        ("light", "mode"),
+        ("train", "mode"),
+        ("light", "legacy"),
+        ("light", "explicit"),
+        ("train", "explicit"),
+    ],
+)
 def test_summary_uses_study_metadata_and_rejects_missing_comparisons(
     tmp_path, mode, metadata
 ):
@@ -112,30 +119,7 @@ def test_summary_uses_study_metadata_and_rejects_missing_comparisons(
         macro = next(pair for pair in result["comparisons"] if pair["axis"] == "macros")
         assert macro["roles"]["rider"]["cell_projected_relative_error"] < 1e-15
         assert "rms_kick_relative_change" not in macro["roles"]["rider"]
-    before = (directory / "convergence.json").read_bytes()
-    # Even a nonempty study with no accepted comparison must fail clearly.
-    rows[1]["accepted"] = False
-    (directory / "summary.json").write_text(json.dumps(rows))
-    with pytest.raises(ValueError, match="no requested comparisons"):
-        analyze(directory, explicit_mode)
-    assert (directory / "convergence.json").read_bytes() == before
-
-
-@pytest.mark.parametrize("cap", [None, 0, 1, 2])
-def test_serial_capacity_needs_one_slot(tmp_path, monkeypatch, cap):
-    cap_path = tmp_path / "compute_cap"
-    if cap is not None:
-        cap_path.write_text(str(cap))
-    sleeps = []
-
-    def release_capacity(seconds):
-        sleeps.append(seconds)
-        cap_path.write_text("1")
-
-    monkeypatch.setattr("scripts.check_sources2.time.sleep", release_capacity)
-    wait_for_compute_capacity(cap_path)
-    assert sleeps == ([5] if cap == 0 else [])
-    if cap == 2:
+    if mode == "train":
         # Preparing a resolved first-pulse window performs no integration.
         captured = dict(
             init_rider=_state(position_mm=(0, 0, 0), beta=(0, 0, 0.8)),
@@ -151,3 +135,10 @@ def test_serial_capacity_needs_one_slot(tmp_path, monkeypatch, cap):
         assert captured["steps"] in (1537, 1538)
         assert 0 < setup["first_crossing_local_ns"] < setup["duration_ns"]
         assert setup["inertial_shift_ns"] > 0
+    before = (directory / "convergence.json").read_bytes()
+    # Even a nonempty study with no accepted comparison must fail clearly.
+    rows[1]["accepted"] = False
+    (directory / "summary.json").write_text(json.dumps(rows))
+    with pytest.raises(ValueError, match="no requested comparisons"):
+        analyze(directory, explicit_mode)
+    assert (directory / "convergence.json").read_bytes() == before

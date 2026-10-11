@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from math import isqrt
 from statistics import NormalDist
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 
@@ -129,15 +129,17 @@ def exact_cloud_history(
     if config.subcharge_count == 1:
         return history
     sigmas = _cell_sigmas(history)
+    width = config.position_sigma_mm
+    assert width is not None  # validate_exact_cloud rejects missing widths.
     widths = (
-        tuple(np.maximum(sigmas, config.position_sigma_mm * config.sigma_multiplier))
+        tuple(np.maximum(sigmas, width * config.sigma_multiplier))
         if np.any(sigmas)
         else None
     )
     # A one-node transverse rule is the centre, and coincident children do
     # not resolve a finite source. Preserve point-source summation arithmetic.
     if (
-        config.position_sigma_mm * config.sigma_multiplier == 0.0
+        width * config.sigma_multiplier == 0.0
         and widths is None
         and not config.breathing_enabled
     ):
@@ -171,10 +173,10 @@ def initial_cloud_state(history: Any) -> dict[str, np.ndarray]:
     if isinstance(history, TrialTrajectoryHistory):
         return initial_cloud_state(history.base)
     if isinstance(history, (TrajectoryArrays, IndexedTrajectoryArrays)):
-        return history.state_at(0)
+        return cast(dict[str, np.ndarray], history.state_at(0))
     if hasattr(history, "base"):
         return initial_cloud_state(history.base)
-    return history[0]
+    return cast(dict[str, np.ndarray], history[0])
 
 
 def breathing_separation_frame(
@@ -213,6 +215,17 @@ def breathing_separation_frame(
         )
 
 
+@dataclass(frozen=True)
+class BreathingResponse:
+    """Filter endpoint and fixed baseline owned by one accepted prefix."""
+
+    target: np.ndarray
+    width: np.ndarray
+    rate: np.ndarray
+    acceleration: np.ndarray
+    baseline: np.ndarray | None = None
+
+
 def breathing_width_knots(
     cloud: ExactCloudHistory,
     times: np.ndarray,
@@ -220,18 +233,26 @@ def breathing_width_knots(
     betas: np.ndarray,
     dead: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Return C2 width knots: sigma, d sigma/dt, and d2 sigma/dt2.
+    """Return C2 width knots from the initial inertial boundary."""
+    return breathing_width_tail(cloud, times, positions, betas, dead)[:3]
 
-    The critically damped filter obeys tau² sigma'' + 2 tau sigma' +
-    sigma = target. It is solved analytically for each linear target interval,
-    starting with zero expansion velocity and acceleration at the inertial
-    boundary. Appending a target never changes earlier width knots.
 
-    Reduced cells use retained population covariance moments and ballistic
-    relative velocities. Unreduced clouds scale their initial widths with
-    the live ensemble's transverse RMS in each fixed initial cloud plane.
-    This isotropic closure uses half the transverse covariance trace; it
-    does not rotate clouds or resolve anisotropy or internal self-forces.
+def breathing_width_tail(
+    cloud: ExactCloudHistory,
+    times: Any,
+    positions: Any,
+    betas: Any,
+    dead: Any,
+    *,
+    start: int = 0,
+    previous: BreathingResponse | None = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, BreathingResponse]:
+    """Advance the critically damped filter over new knots only.
+
+    The previous endpoint supplies the last target, width, and derivatives.
+    Trial callers own the returned endpoint; accepted state is never changed.
+    Reduced targets use retained ballistic covariance. Live ensemble targets
+    remain available for prescribed-history diagnostics, outside the integrator.
     """
     validate_exact_cloud(cloud.config)
     state = initial_cloud_state(cloud.base)
@@ -240,20 +261,25 @@ def breathing_width_knots(
     if not np.all(ready):
         raise ValueError("breathing exact clouds require INERTIAL_PREHISTORY")
     epoch = np.asarray(state["inertial_charge_boundary_time_ns"])
-    floor = cloud.config.position_sigma_mm * cloud.config.sigma_multiplier
+    width = cloud.config.position_sigma_mm
+    assert width is not None
+    floor = width * cloud.config.sigma_multiplier
     initial = (
         np.full(count, floor)
         if cloud.widths_mm is None
         else np.asarray(cloud.widths_mm)
     )
-    targets = np.broadcast_to(initial, times.shape).copy()
+    context_start = start - 1 if previous is not None else start
+    local_times = np.stack(tuple(times[context_start:]))
+    targets = np.broadcast_to(initial, local_times.shape).copy()
+    baseline = None if previous is None else previous.baseline
     if np.any(state.get("exact_source_original_count", 0)):
         if not np.all(state.get("exact_source_breathing_ready", np.zeros(count))):
             raise ValueError(
                 "breathing reduced clouds require retained cell velocity covariance; "
                 "reduce with the breathing cloud config"
             )
-        age = np.maximum(0, times - state["exact_source_cell_epoch_ns"])
+        age = np.maximum(0, local_times - state["exact_source_cell_epoch_ns"])
         variance = (
             np.asarray(state["exact_source_cell_sigma_mm"]) ** 2
             + 2 * age * state["exact_source_cell_xv_mm2_ns"]
@@ -265,7 +291,7 @@ def breathing_width_knots(
             raise ValueError(
                 "live breathing covariance requires a common initial epoch"
             )
-        if np.any(dead):
+        if np.any(dead[start:]):
             raise ValueError(
                 "live breathing covariance does not support particle losses"
             )
@@ -274,50 +300,53 @@ def breathing_width_knots(
             raise ValueError(
                 "breathing covariance requires positive finite populations"
             )
-        synchronous = np.all(times == times[:, :1])
-        delta = positions - np.average(positions, axis=1, weights=population)[:, None]
+        synchronous = np.all(local_times == local_times[:, :1])
+        local_positions = np.stack(tuple(positions[context_start:]))
+        delta = (
+            local_positions
+            - np.average(local_positions, axis=1, weights=population)[:, None]
+        )
+        if baseline is None:
+            baseline = np.empty(count)
         for parent in range(count):
-            start = int(np.searchsorted(times[:, parent], epoch[parent]))
-            if start == len(times) or times[start, parent] != epoch[parent]:
-                raise ValueError(
-                    "breathing history must retain its initial boundary knot"
-                )
             normal = betas[0, parent]
             speed = np.linalg.norm(normal)
             normal = normal / speed if speed else np.array([0.0, 0.0, 1.0])
             parent_delta = delta
             if not synchronous:
-                # Use only this row's accepted prefix, so an appended trial
-                # cannot repaint past targets. Interpolate simultaneous events
-                # with cubic endpoint positions/velocities; coast when a member
-                # has not yet reached the requested lab time. This predictor
-                # needs independent timestep convergence for physics claims.
-                common = np.array(positions, copy=True)
-                for knot in range(start, len(times)):
-                    for member in range(count):
-                        t = times[knot, parent]
-                        upper = int(np.searchsorted(times[: knot + 1, member], t))
-                        if upper == 0 or upper > knot:
-                            anchor = min(upper, knot)
-                            common[knot, member] = (
-                                positions[anchor, member]
-                                + (t - times[anchor, member])
-                                * C_MMNS
-                                * betas[anchor, member]
-                            )
-                        else:
-                            lower = upper - 1
-                            dt = times[upper, member] - times[lower, member]
-                            s = (t - times[lower, member]) / dt
-                            common[knot, member] = (
-                                (2 * s**3 - 3 * s**2 + 1) * positions[lower, member]
-                                + (s**3 - 2 * s**2 + s)
-                                * dt
-                                * C_MMNS
-                                * betas[lower, member]
-                                + (-2 * s**3 + 3 * s**2) * positions[upper, member]
-                                + (s**3 - s**2) * dt * C_MMNS * betas[upper, member]
-                            )
+                common = np.array(local_positions, copy=True)
+                members = np.arange(count)
+                for local_knot in range(len(local_times)):
+                    knot = context_start + local_knot
+                    t = local_times[local_knot, parent]
+                    # Search each member's prefix, then interpolate all members
+                    # together. No Python loop over member positions/velocities.
+                    upper = np.array(
+                        [
+                            times[: knot + 1, member].searchsorted(t)
+                            for member in members
+                        ]
+                    )
+                    coast = (upper == 0) | (upper > knot)
+                    anchor = np.minimum(upper, knot)
+                    lower = np.maximum(0, anchor - 1)
+                    t0 = np.array([times[i, j] for i, j in zip(lower, members)])
+                    t1 = np.array([times[i, j] for i, j in zip(anchor, members)])
+                    x0 = np.array([positions[i, j] for i, j in zip(lower, members)])
+                    x1 = np.array([positions[i, j] for i, j in zip(anchor, members)])
+                    b0 = np.array([betas[i, j] for i, j in zip(lower, members)])
+                    b1 = np.array([betas[i, j] for i, j in zip(anchor, members)])
+                    dt = np.where(coast, 1.0, t1 - t0)[:, None]
+                    fraction = (t - t0)[:, None] / dt
+                    common[local_knot] = (
+                        (2 * fraction**3 - 3 * fraction**2 + 1) * x0
+                        + (fraction**3 - 2 * fraction**2 + fraction) * dt * C_MMNS * b0
+                        + (-2 * fraction**3 + 3 * fraction**2) * x1
+                        + (fraction**3 - fraction**2) * dt * C_MMNS * b1
+                    )
+                    common[local_knot, coast] = (
+                        x1[coast] + (t - t1[coast])[:, None] * C_MMNS * b1[coast]
+                    )
                 parent_delta = (
                     common - np.average(common, axis=1, weights=population)[:, None]
                 )
@@ -326,26 +355,49 @@ def breathing_width_knots(
                 np.average(np.sum(transverse**2, axis=2), axis=1, weights=population)
                 / 2
             )
-            baseline = variance[start]
-            if baseline > 0:
+            if previous is None:
+                boundary = int(np.searchsorted(local_times[:, parent], epoch[parent]))
+                if (
+                    boundary == len(local_times)
+                    or local_times[boundary, parent] != epoch[parent]
+                ):
+                    raise ValueError(
+                        "breathing history must retain its initial boundary knot"
+                    )
+                baseline[parent] = variance[boundary]
+            if baseline[parent] > 0:
                 targets[:, parent] = np.maximum(
-                    floor, initial[parent] * np.sqrt(variance / baseline)
+                    floor, initial[parent] * np.sqrt(variance / baseline[parent])
                 )
             else:
                 targets[:, parent] = np.sqrt(initial[parent] ** 2 + variance)
-    targets[times <= epoch] = np.broadcast_to(initial, times.shape)[times <= epoch]
+    targets[local_times <= epoch] = np.broadcast_to(initial, local_times.shape)[
+        local_times <= epoch
+    ]
     if not np.isfinite(targets).all():
         raise ValueError("breathing covariance targets must be finite")
-    widths = np.broadcast_to(initial, times.shape).copy()
-    rates = np.zeros_like(times)
-    accelerations = np.zeros_like(times)
+    widths = np.broadcast_to(initial, local_times.shape).copy()
+    rates = np.zeros_like(local_times)
+    accelerations = np.zeros_like(local_times)
+    if previous is not None:
+        targets[0] = previous.target
+        widths[0] = previous.width
+        rates[0] = previous.rate
+        accelerations[0] = previous.acceleration
     tau = cloud.config.breathing_response_time_ns
     for parent in range(count):
-        start = int(np.searchsorted(times[:, parent], epoch[parent]))
-        if start == len(times) or times[start, parent] != epoch[parent]:
+        boundary = (
+            0
+            if previous is not None
+            else int(np.searchsorted(local_times[:, parent], epoch[parent]))
+        )
+        if previous is None and (
+            boundary == len(local_times)
+            or local_times[boundary, parent] != epoch[parent]
+        ):
             raise ValueError("breathing history must retain its initial boundary knot")
-        for knot in range(start, len(times) - 1):
-            dt = times[knot + 1, parent] - times[knot, parent]
+        for knot in range(boundary, len(local_times) - 1):
+            dt = local_times[knot + 1, parent] - local_times[knot, parent]
             if dt <= 0:
                 raise ValueError("breathing knot times must increase")
             slope = (targets[knot + 1, parent] - targets[knot, parent]) / dt
@@ -362,4 +414,12 @@ def breathing_width_knots(
             )
     if not np.isfinite(widths).all() or np.any(widths < 0):
         raise ValueError("breathing response produced invalid widths")
-    return widths, rates, accelerations
+    endpoint = BreathingResponse(
+        targets[-1].copy(),
+        widths[-1].copy(),
+        rates[-1].copy(),
+        accelerations[-1].copy(),
+        baseline,
+    )
+    skip = int(previous is not None)
+    return widths[skip:], rates[skip:], accelerations[skip:], endpoint

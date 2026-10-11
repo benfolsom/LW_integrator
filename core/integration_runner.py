@@ -745,6 +745,8 @@ def _build_driver_train_initial_state(
     init_driver: ParticleState,
     driver_train: DriverTrainConfig,
 ) -> ParticleState:
+    from .types import PARTICLE_STATE_FIELDS
+
     offsets = driver_train.resolved_z_offsets_mm()
     if not driver_train.enabled and len(offsets) == 1 and offsets[0] == 0.0:
         return _copy_particle_state(init_driver)
@@ -752,7 +754,11 @@ def _build_driver_train_initial_state(
     particle_count = len(np.asarray(init_driver["x"]))
     train_state: ParticleState = {}
     for key, value in init_driver.items():
-        if isinstance(value, np.ndarray) and value.shape[:1] == (particle_count,):
+        if (
+            key in PARTICLE_STATE_FIELDS
+            and isinstance(value, np.ndarray)
+            and value.shape[:1] == (particle_count,)
+        ):
             pieces = []
             for z_offset in offsets:
                 piece = np.copy(value)
@@ -3972,6 +3978,29 @@ def retarded_integrator(
             init_driver, _ = reduce_exact_initial_state(
                 init_driver, reduction.driver_count, magnetic_dipole.exact_charge_cloud
             )
+
+    cloud = magnetic_dipole.exact_charge_cloud
+    if cloud is not None and cloud.enabled and cloud.breathing_enabled:
+        # Full-count and zero-count reduction requests are identities. Check
+        # actual retained covariance, including explicitly pre-reduced inputs,
+        # before train expansion or any source-history work.
+        for role, state in (("rider", init_rider), ("driver", init_driver)):
+            if state is None:
+                continue
+            count = len(state["x"])
+            original = np.asarray(state.get("exact_source_original_count", []))
+            ready = np.asarray(state.get("exact_source_breathing_ready", []))
+            if (
+                original.shape != (count,)
+                or not np.all(original > 0)
+                or ready.shape != (count,)
+                or not np.all(ready)
+            ):
+                raise NotImplementedError(
+                    f"breathing exact sources require reduced {role} cells with "
+                    "retained velocity covariance; unreduced breathing is "
+                    "unsupported, including driver trains"
+                )
 
     driver_train_bunch_ranges: tuple[slice, ...] = ()
     if driver_train_enabled and init_driver is not None:

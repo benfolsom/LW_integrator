@@ -60,12 +60,26 @@ def test_reduction_preserves_initial_population_charge_position_and_momentum(
     source = ensemble()
     if neutral:
         source["q_source"][:] = 0
+    source["bunch_metadata_vector"] = np.arange(8.0)
     original = copy.deepcopy(source)
     config = cloud_config(4, width)
     config.breathing_enabled = breathing
     reduced, mapping = reduce_exact_initial_state(source, 3, config)
     assert mapping["original_count"] == 8 and mapping["reduced_count"] == 3
     assert len(reduced["x"]) == 3
+    np.testing.assert_array_equal(
+        reduced["bunch_metadata_vector"], source["bunch_metadata_vector"]
+    )
+    from core.integration_runner import _build_driver_train_initial_state
+    from core.types import DriverTrainConfig
+
+    train = _build_driver_train_initial_state(
+        source, DriverTrainConfig(enabled=True, bunch_count=2, z_spacing_mm=10)
+    )
+    np.testing.assert_array_equal(
+        train["bunch_metadata_vector"], source["bunch_metadata_vector"]
+    )
+    assert len(train["x"]) == 16
     for name in ("macro_population", "q_source"):
         np.testing.assert_allclose(reduced[name].sum(), source[name].sum(), rtol=2e-15)
     for name in ("m", "m_species", "q_species", "q_observer", "char_time"):
@@ -222,13 +236,52 @@ def test_exact_full_count_route_is_bitwise_identity_and_reduced_route_uses_cloud
         macroparticle_smearing=cloud_config(4, 0.02),
     )
     options["macroparticle_smearing"].breathing_enabled = breathing
-    direct = crossing_run(1, None, **options)
-    full = crossing_run(1, None, **options, magnetic_dipole=magnetic(8))
-    for before_role, after_role in zip(direct[:2], full[:2]):
-        for before, after in zip(before_role, after_role):
-            for name, value in before.items():
-                if isinstance(value, np.ndarray):
-                    assert value.tobytes() == after[name].tobytes(), name
+    if breathing:
+        from core.types import DriverTrainConfig
+
+        for count, train in (
+            (0, None),
+            (8, None),
+            (12, None),
+            (8, DriverTrainConfig(enabled=True, bunch_count=2, z_spacing_mm=10)),
+        ):
+            with pytest.raises(NotImplementedError, match="unreduced breathing"):
+                crossing_run(
+                    1,
+                    None,
+                    **options,
+                    magnetic_dipole=magnetic(count),
+                    driver_train=train,
+                )
+        # Reducing just one role, or using the degenerate one-child rule,
+        # cannot bypass the covariance guard. Both configuration entry points
+        # must reject before preparing any source history.
+        for role in ("rider", "driver"):
+            config = magnetic(3)
+            setattr(config.exact_source_reduction, f"{role}_count", 8)
+            with pytest.raises(NotImplementedError, match=f"reduced {role}"):
+                crossing_run(1, None, **options, magnetic_dipole=config)
+        options["macroparticle_smearing"].subcharge_count = 1
+        with pytest.raises(NotImplementedError, match="unreduced breathing"):
+            crossing_run(1, None, **options)
+        config = magnetic(0)
+        config.exact_charge_cloud = options["macroparticle_smearing"]
+        with pytest.raises(NotImplementedError, match="unreduced breathing"):
+            crossing_run(
+                1,
+                None,
+                **{**options, "macroparticle_smearing": None},
+                magnetic_dipole=config,
+            )
+        options["macroparticle_smearing"].subcharge_count = 4
+    else:
+        direct = crossing_run(1, None, **options)
+        full = crossing_run(1, None, **options, magnetic_dipole=magnetic(8))
+        for before_role, after_role in zip(direct[:2], full[:2]):
+            for before, after in zip(before_role, after_role):
+                for name, value in before.items():
+                    if isinstance(value, np.ndarray):
+                        assert value.tobytes() == after[name].tobytes(), name
     reduced = crossing_run(1, None, **options, magnetic_dipole=magnetic(3))
     assert len(reduced[0][0]["x"]) == len(reduced[1][0]["x"]) == 3
     assert reduced[0][0]["macro_population"].sum() == 36

@@ -392,9 +392,7 @@ fixed-step gate splitter. Adaptive many-observer gate clocks remain rejected;
 no joint adaptive clock or reduced pseudo-grid source implementation is added.
 Intrinsic dipole-source clouds remain rejected.
 
-The historical harness
-``~/work/extracurr/LW_integrator-exact-audit-sources/scripts/check_exact_audit_sources.py``
-records explicit counterparts to the
+The historical local audit used explicit counterparts to the
 resolved mini-synchrotron and light/heavy configurations. It preserves the
 particle realization, species, population, timestep, visibility geometry,
 and Medina/LAD mode, selects zero intrinsic moments and inertial prehistory,
@@ -433,29 +431,35 @@ speed checks. Gated continuation beyond the latest supplied source knot is
 still rejected because it requires additional gate events. Short-window
 acceptance cannot certify a complete encounter or a timestep-converged
 reference, and changing width is a physical-model comparison rather than
-quadrature convergence. The evidence and remaining gaps are recorded in
-``~/work/extracurr/LW_integrator-exact-audit-sources/codex_report_exact_audit_sources.md``.
-The current reduced-source and train harness is ``scripts/check_sources2.py``;
-its report is ``codex_report_sources2.md`` at this checkout's root. This report
-is a local evidence artifact and is not part of the published documentation.
+quadrature convergence. The current reduced-source and train harness is ``scripts/check_sources2.py``.
+Historical audit commands, run archives, and local reports are workspace
+artifacts outside the published documentation; the limits described here
+apply independently of access to those artifacts.
 
 Opt-in breathing widths
 ~~~~~~~~~~~~~~~~~~~~~~~
 
-Set ``breathing_enabled: true`` and an explicit positive
-``breathing_response_time_ns`` in ``macroparticle_smearing`` (or the exact
-charge-cloud configuration). The default is disabled. A critically damped
+Set ``breathing_enabled: true`` in ``macroparticle_smearing`` (or the exact
+charge-cloud configuration). Breathing is disabled by default;
+``breathing_response_time_ns`` defaults to 0.01 ns and must be positive and
+finite when enabled. Set it explicitly for reproducible studies. A critically damped
 response smooths the covariance-derived target; its response time is a
 physical source-model parameter, in lab nanoseconds, and requires a
 timestep-sensitivity study. It is not inferred from the integration step.
 
+The integrator accepts breathing only for reduced cells with retained initial
+velocity covariance in both roles, including driver-train templates. A zero
+reduction count, a full-count identity request, or reduction of only one role
+does not enable unreduced breathing. Explicitly pre-reduced inputs with retained
+covariance are accepted. The unreduced prescribed-history provider is a local
+diagnostic: its parent-specific projection and pooling of multiple bunches
+have unresolved model defects and must not support physical conclusions.
+
 The scalar target uses half the population-weighted transverse covariance
-trace in each fixed initial cloud plane. Unreduced clouds scale their initial
-width with the live ensemble's transverse RMS, retaining the original width
-as a floor. Asynchronous proper-time rows are aligned using cubic endpoint
-positions and velocities from the available row prefix, with coasting prediction
-for members that have not reached the requested lab time. Appending history
-does not revise earlier width targets. This predictor needs timestep convergence.
+trace in each fixed initial cell plane, floored at the requested member width.
+Accepted appends retain the width-filter endpoint and stable child prefix;
+only new width knots and a short centre-acceleration suffix are prepared.
+Rejected trial tails do not publish width state or revise accepted widths.
 
 Reduced cells retain initial transverse position, position–velocity, and
 velocity covariance moments. Since their original members no longer have
@@ -472,13 +476,20 @@ Quintic child segments share position, velocity, and acceleration at their
 knots away from physical gate acceleration jumps. Requests that cannot certify
 subluminal child curves fail with a
 request to refine the timestep or increase the response time; velocities
-are never clipped. Proper-velocity source histories remain unsupported.
+are never clipped. High-order Gaussian rules place outer nodes roughly
+3–4 RMS widths from the centre; their expansion speeds can trigger the guard
+even when every original member is subluminal. The child proper velocity is
+currently reconstructed from binary64 beta, so breathing does not preserve
+resolved centre-velocity precision above gamma of roughly 1,000. Such runs
+need an independently validated precision treatment. Proper-velocity source
+histories remain unsupported.
 
 The prescribed-field validation harness is
 ``scripts/check_breathing_sources.py``. It compares an expanding Gaussian
 against analytic child worldlines with independently solved light cones,
-refines Gaussian quadrature, and optionally compares frozen widths. See the
-local ``codex_report_breathing.md`` for commands, costs, and remaining limits.
+refines Gaussian quadrature, and optionally compares frozen widths. This is
+a prescribed-worldline control, not a coupled evolution or energy-balance
+validation. Local run reports and archives are not published with these docs.
 
 ``scripts/check_exact_macroparticle_startup.py --route adaptive`` repeats the
 Part 1 point probe, with a common lab-time target covering twice the initial
@@ -571,8 +582,15 @@ centre, carries the cell's conserved source charge and diagnostic population,
 and retains physical species charge and inertia. Population-weighted spatial
 mechanical momentum is conserved by averaging momentum and reconstructing
 on-shell velocity. Internal velocity spread and cell self-fields are
-unresolved. Initial kinetic energy and current need not be conserved by this
-coarse model. The current (and magnetic source term) error is second order in
+unresolved. The macro-count axis is citable only for cross-bunch observables,
+with independent convergence evidence. Same-bunch per-cell kicks do not
+converge reliably, and smooth self-expansion observables converge only slowly
+as the merged fraction shrinks: members within a cell no longer repel.
+Breathing's ballistic covariance does not restore those internal self-fields.
+Report same-bunch results as model-dependent; light/heavy observables sensitive
+to self-expansion require an independently validated internal-field correction
+before reduced runs can support a claim. Initial kinetic energy and current
+need not be conserved by this coarse model. The current (and magnetic source term) error is second order in
 the velocity spread inside a cell.
 
 For each cell, let $C$ be its population-weighted position covariance, and
@@ -581,9 +599,11 @@ The persistent isotropic transverse width is
 $\sigma_{cell}=\max(\sigma_{original},\sqrt{\mathrm{tr}(PCP)/2})$,
 where the original width includes ``sigma_multiplier``. A stationary cell uses
 the existing z-normal plane. The mapping records the covariance, cell size,
-original width, and realized width. This isotropic approximation retains the
-transverse second-moment trace when the floor is inactive; it does not retain
-anisotropy, longitudinal extent, or within-cell motion. Full count retains the
+original width, and realized width. This is a floored cell RMS; it does not
+add the original members' cloud variance in quadrature. Its width represents
+the cell-centre transverse second-moment trace when the floor is inactive,
+not the combined second moment of finite-width members. It does not retain
+anisotropy, longitudinal extent, or force-driven within-cell motion. Full count retains the
 original clouds bit for bit. Point sources and one-child rules remain point
 representations and cannot resolve cell extent.
 
@@ -598,9 +618,17 @@ Reduced trajectory states and arrays carry ``exact_source_original_count``
 (per template for a train) and ``exact_source_cell_sigma_mm`` through prehistory,
 indexed views, and checkpoints. Unreduced states omit these keys.
 
-The testbed JSON surface exposes ``exact_source_reduction_enabled``,
-``exact_source_reduction_rider_count``, and
-``exact_source_reduction_driver_count``. They default to disabled and zero.
+The testbed JSON surface exposes
+``magnetic_dipole_exact_source_reduction_enabled``,
+``magnetic_dipole_exact_source_reduction_rider_count``, and
+``magnetic_dipole_exact_source_reduction_driver_count``. They default to
+disabled and zero. The older unprefixed ``exact_source_reduction_*`` keys
+remain readable; namespaced keys take precedence and enabled configurations
+serialize with that prefix. The Python field remains under
+``MagneticDipoleConfig`` for compatibility with the existing exact-route
+container; reduction and breathing describe the charge-source model and
+do not introduce intrinsic magnetic moments. Breathing uses the existing
+nested ``macroparticle_smearing`` block or its prefixed flat aliases.
 ``scripts/check_sources2.py`` saves the initial mapping and resolved inputs.
 Refine macro count to the original ensemble as well as transverse child count,
 explicit width, and proper timestep before treating this as a useful reference.
@@ -620,7 +648,7 @@ inertial transport; it does not validate coupled evolution before that window.
 ``--train-window full-train`` retains the original initial state and covers all
 centre crossings at the same resolution. ``--prepare-only`` writes the plan,
 resolution, and historical cost estimate without integration. Place ``--output``
-under the study's ``results_local/`` (an ignored link to external storage).
+in external result storage outside the synchronized checkout.
 
 Driver trains now accept persistent transverse clouds on the fixed-step exact
 route. Reduction, when requested, applies to the template before each bunch

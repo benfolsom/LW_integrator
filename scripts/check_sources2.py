@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import argparse
 import copy
+from contextlib import contextmanager, nullcontext
 from dataclasses import asdict, is_dataclass, replace
+from functools import wraps
 import hashlib
 import json
 import math
@@ -60,6 +62,68 @@ def wait_for_compute_capacity(cap_path=Path("/tmp/compute_cap")):
     while cap_path.exists() and int(cap_path.read_text()) < 1:
         print("Waiting for wrapper compute cap 1", flush=True)
         time.sleep(5)
+
+
+@contextmanager
+def shared_lab_clock(h_lab_ns):
+    """Give this serial probe common lab barriers, using proper-time roots.
+
+    Equal proper steps make a relativistic rider outrun a slow driver's source
+    history. Keep the production clock untouched and solve each probe particle's
+    proper step against the existing immutable bunch clock solver instead.
+    Missing history (including within a single slab) still raises normally.
+    """
+    import core.integration_runner as runner
+    from core.retarded_fields import RetardedHistoryError
+    from core.shared_lab_time import solve_shared_lab_time_bunch
+
+    if not np.isfinite(h_lab_ns) or h_lab_ns <= 0:
+        raise ValueError("shared lab step must be positive and finite")
+    original = runner.self_consistent_step
+
+    @wraps(original)
+    def step(equation, h, trajectory, external, index, *args, **kwargs):
+        @wraps(equation)
+        def clocked_equation(*eq_args, **eq_kwargs):
+            state = trajectory[index]
+            alive = ~np.asarray(
+                state.get("_dead_particles", np.zeros(len(state["t"]), dtype=bool))
+            )
+
+            def advance(proper_steps):
+                return equation(
+                    *eq_args, **eq_kwargs, _particle_proper_steps_ns=proper_steps
+                )
+
+            def advance_particle(proper_steps, particle):
+                return equation(
+                    *eq_args,
+                    **eq_kwargs,
+                    _particle_proper_steps_ns=proper_steps,
+                    _observer_trial_index=particle,
+                )
+
+            return solve_shared_lab_time_bunch(
+                advance,
+                state,
+                "light/heavy probe",
+                advance_particle=advance_particle,
+                finalize=advance,
+                start_time_ns=float(state["t"][0]),
+                delta_time_ns=h_lab_ns,
+                particle_mask=alive,
+                propagate_trial_exceptions=(RetardedHistoryError,),
+            ).state
+
+        return original(
+            clocked_equation, h, trajectory, external, index, *args, **kwargs
+        )
+
+    runner.self_consistent_step = step
+    try:
+        yield
+    finally:
+        runner.self_consistent_step = original
 
 
 def setup_train_window(captured, trials, samples, half_widths, impact, window):
@@ -168,6 +232,12 @@ def main():
     )
     parser.add_argument("--compute-cap", type=Path, default=Path("/tmp/compute_cap"))
     parser.add_argument(
+        "--light-clock",
+        choices=("shared_lab_time", "proper_time"),
+        default="proper_time",
+        help="Opt into shared lab barriers for the light/heavy probe",
+    )
+    parser.add_argument(
         "--prepare-only",
         action="store_true",
         help="Write resolved plans and cost estimates without integrating",
@@ -189,6 +259,8 @@ def main():
         default="first_order_endpoint",
     )
     args = parser.parse_args()
+    if args.light_clock != "proper_time" and args.mode != "light":
+        parser.error("--light-clock shared_lab_time is only for light mode")
     if args.steps is not None and (args.steps < 2 or args.mode == "train"):
         parser.error(
             "--steps must be at least two and is only for light or parity mode"
@@ -304,6 +376,7 @@ def main():
     assert captured
     captured.pop("logger", None)
     captured.pop("progress_callback", None)
+    light_h_lab = captured["h_step"] * float(captured["init_rider"]["gamma"].max())
     (args.output / "provenance.json").write_text(
         json.dumps(
             dict(
@@ -312,6 +385,7 @@ def main():
                 input_sha256=hashlib.sha256(input_path.read_bytes()).hexdigest(),
                 source_root=str(args.source_root.resolve()),
                 serial=True,
+                clock=args.light_clock if args.mode == "light" else "proper_time",
             ),
             indent=2,
         )
@@ -409,6 +483,11 @@ def main():
                 base_h_step_ns=captured["h_step"],
                 train_resolution=resolution,
                 prepare_only=args.prepare_only,
+                light_h_lab_ns=(
+                    light_h_lab
+                    if args.mode == "light" and args.light_clock == "shared_lab_time"
+                    else None
+                ),
             ),
             indent=2,
         )
@@ -457,6 +536,9 @@ def main():
                 json.dumps(mappings, indent=2) + "\n"
             )
         cost = expected_seconds(args.mode, trial, kw["steps"])
+        if args.mode == "light" and args.light_clock == "shared_lab_time":
+            # The old estimates measured equal proper steps, without clock roots.
+            cost = None
         samples_per_width = (
             resolution["minimum_samples_per_width"]
             * trial["width"]
@@ -481,7 +563,13 @@ def main():
         started = time.monotonic()
         print(f"Starting {trial['label']}", flush=True)
         try:
-            result = retarded_integrator(**kw)
+            clock = (
+                shared_lab_clock(light_h_lab / trial["refinement"])
+                if args.mode == "light" and args.light_clock == "shared_lab_time"
+                else nullcontext()
+            )
+            with clock:
+                result = retarded_integrator(**kw)
             save_result(
                 args.output,
                 trial["label"],
