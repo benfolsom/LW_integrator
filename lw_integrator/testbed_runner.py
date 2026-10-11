@@ -31,8 +31,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.figure import Figure
 
-from input_output.config_migration import discard_inert_self_consistency_keys
-
 from core.constants import C_MMNS
 from core.debug_logger import get_current_log_path, initialize_debug_logging
 from core.particle_config import (
@@ -57,6 +55,7 @@ from core.types import (
     SimulationType,
 )
 from input_output.bunch_initialization import create_bunch_from_params
+from input_output.config_migration import discard_inert_self_consistency_keys
 
 from .trajectory_metrics import compute_delta_energy_components, normalize_state
 

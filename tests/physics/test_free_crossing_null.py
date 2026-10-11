@@ -103,7 +103,6 @@ def _config(checkpoint_dir: Path) -> tuple[dict[str, Any], float]:
         "self_consistency_target_ms_tolerance": 1e-6,
         "self_consistency_max_iterations": 2,
         "self_consistency_mass_shell_tolerance": 0.01,
-        "self_consistency_mass_shell_relaxation": 0.7,
         "self_consistency_verbosity": 0,
         "self_consistency_gamma_reconciliation_method": "DISABLED",
         "chrono_interpolate": False,

@@ -9,7 +9,7 @@ import copy
 import inspect
 import json
 import warnings
-from dataclasses import fields
+from dataclasses import asdict, fields
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -30,6 +30,10 @@ from core.types import (
     SpaceChargeConfig,
     StartupMode,
 )
+from input_output.config_migration import (
+    InertSelfConsistencyKeyWarning,
+    discard_inert_self_consistency_keys,
+)
 from lw_integrator import cli
 from lw_integrator.sweep_runner import _convert_json_config_to_dataclass
 from lw_integrator.testbed_runner import (
@@ -38,10 +42,6 @@ from lw_integrator.testbed_runner import (
 )
 from optimization.config import OptimizationConfig
 from optimization.plugin_persistence_helpers import apply_persisted_config_overrides
-from input_output.config_migration import (
-    InertSelfConsistencyKeyWarning,
-    discard_inert_self_consistency_keys,
-)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -108,6 +108,7 @@ def test_inert_input_migration_is_idempotent_and_preserves_solver_mode_aliases()
         "self_consistency_chrono_matching_mode": "AVERAGED",
     }
 
+
 # A hand-edited saved config: the canonical keys were changed, the legacy
 # aliases written alongside them were not.
 CONFLICTING_CHRONO_PAYLOAD = {
@@ -143,7 +144,9 @@ def test_cli_and_testbed_prefer_canonical_chrono_keys():
         SimulationOptions.from_dict(dict(CONFLICTING_CHRONO_PAYLOAD))
     )
 
-    expected = {k: v for k, v in EXPECTED_CANONICAL.items() if k != "chrono_matching_mode"}
+    expected = {
+        k: v for k, v in EXPECTED_CANONICAL.items() if k != "chrono_matching_mode"
+    }
     assert {k: getattr(cli_config, k) for k in expected} == expected
     assert {k: getattr(testbed_config, k) for k in expected} == expected
 
@@ -256,8 +259,20 @@ def _option_defaults(options) -> dict:
     }
 
 
-def test_core_and_standard_preset_use_unified_defaults():
-    assert _sc_defaults(SelfConsistencyConfig()) == EXPECTED_SC_DEFAULTS
+@pytest.mark.parametrize(
+    "compatibility_fields",
+    [{}, {"chrono_matching_mode": "AVERAGED", "mass_shell_relaxation": 0.3}],
+)
+def test_core_and_standard_preset_use_unified_defaults(compatibility_fields):
+    config = SelfConsistencyConfig(**compatibility_fields)
+    assert _sc_defaults(config) == EXPECTED_SC_DEFAULTS
+    for key, default in (
+        ("chrono_matching_mode", "FAST"),
+        ("mass_shell_relaxation", 0.7),
+    ):
+        expected = compatibility_fields.get(key, default)
+        assert getattr(config, key) == expected
+        assert asdict(config)[key] == expected
     assert _sc_defaults(SelfConsistencyConfig.standard()) == EXPECTED_SC_DEFAULTS
     # Named non-default presets are unchanged.
     assert SelfConsistencyConfig.aggressive().max_iterations == 20
@@ -658,6 +673,15 @@ def test_json_booleans_are_accepted():
 
 
 def test_shipped_b2b_example_uses_maintained_defaults():
+    # All shipped examples should load without deprecated inert-key warnings.
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", InertSelfConsistencyKeyWarning)
+        for example in sorted((REPO_ROOT / "configs").rglob("*.json")):
+            example_payload = json.loads(example.read_text())
+            assert (
+                discard_inert_self_consistency_keys(example_payload) == example_payload
+            ), example
+
     path = (
         REPO_ROOT
         / "configs"

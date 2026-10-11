@@ -1309,12 +1309,13 @@ def _calculate_one_minus_beta_squared(
 
 
 def _calculate_gamma_from_beta(beta_x: float, beta_y: float, beta_z: float) -> float:
-    """Calculate Lorentz factor from velocity components.
+    """Calculate Lorentz factor from velocity components for diagnostic callers.
 
     γ = 1 / √(1 - β²)
 
     Uses Kahan summation and float64 precision to handle extremely relativistic
     particles accurately, avoiding catastrophic cancellation at β → 1.
+    The production solver instead computes gamma from mechanical proper velocity.
     """
     one_minus_beta_sq = _calculate_one_minus_beta_squared(beta_x, beta_y, beta_z)
     return float(1.0 / np.sqrt(np.float64(one_minus_beta_sq)))
@@ -4801,13 +4802,9 @@ def retarded_equations_of_motion(
             # ================================================================
 
             coordinate_dt = proper_to_coordinate_dt
-            if coordinate_dt == 0.0:
-                coordinate_dt = proper_to_coordinate_dt
             # Use the same on-shell mechanical momentum as gamma. Subtracting
             # nearby positions can erase motion for a nearly stationary particle.
-            beta_denominator = (
-                result["gamma"][particle_idx] * particle_mass * C_MMNS
-            )
+            beta_denominator = result["gamma"][particle_idx] * particle_mass * C_MMNS
             beta_x = (
                 result["Px"][particle_idx] - accumulated_field_x * particle_mass
             ) / beta_denominator
@@ -4830,7 +4827,7 @@ def retarded_equations_of_motion(
             result["by"][particle_idx] = beta_y_limited
             result["bz"][particle_idx] = beta_z_limited
 
-            # Compute gamma from the (possibly limited) beta
+            # Compute gamma from the mechanical proper velocity u = gamma * beta.
             # This is compared against gamma_from_energy for self-consistency
             gamma_from_velocity = float(np.hypot(1.0, np.linalg.norm(predictor_u)))
 
@@ -4846,7 +4843,7 @@ def retarded_equations_of_motion(
                     beta_x_limited**2 + beta_y_limited**2 + beta_z_limited**2
                 )
                 print(
-                    f"      γ_velocity (from β over Δt={coordinate_dt:.15e}) = {gamma_from_velocity:.15e}, "
+                    f"      γ_velocity (from |u|) = {gamma_from_velocity:.15e}, "
                     f"βtot={beta_total:.15e}"
                 )
 

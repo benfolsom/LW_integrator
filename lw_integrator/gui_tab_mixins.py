@@ -2001,7 +2001,7 @@ class IntegratorGUITabMixin:
 
         # Verbosity with help icon
         verbosity_frame = ttk.Frame(sc_frame)
-        verbosity_frame.grid(row=7, column=0, sticky="w", pady=2, padx=(20, 0))
+        verbosity_frame.grid(row=6, column=0, sticky="w", pady=2, padx=(20, 0))
         self.sc_verbosity_label = ttk.Label(verbosity_frame, text="Verbosity:")
         self.sc_verbosity_label.pack(side="left")
         verbosity_help = ttk.Label(
@@ -2038,14 +2038,14 @@ class IntegratorGUITabMixin:
             textvariable=self.self_consistency_verbosity_var,
             width=5,
         )
-        self.sc_verbosity_entry.grid(row=7, column=1, sticky="w", pady=2)
+        self.sc_verbosity_entry.grid(row=6, column=1, sticky="w", pady=2)
 
         # Gamma reconciliation
         gamma_recon_frame = ttk.LabelFrame(
             sc_frame, text="Gamma Reconciliation", padding=8
         )
         gamma_recon_frame.grid(
-            row=12, column=0, columnspan=2, sticky="ew", pady=2, padx=(20, 0)
+            row=7, column=0, columnspan=2, sticky="ew", pady=2, padx=(20, 0)
         )
         gamma_recon_frame.columnconfigure(1, weight=1)
         self.sc_gamma_reconciliation_note = ttk.Label(

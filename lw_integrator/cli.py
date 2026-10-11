@@ -20,8 +20,6 @@ from typing import Any, Dict, Iterable, Mapping, MutableMapping, Optional, Tuple
 
 import numpy as np
 
-from input_output.config_migration import discard_inert_self_consistency_keys
-
 from core.constants import C_MMNS, ELECTRON_MASS_AMU
 from core.integration_runner import AdaptiveTimestepConfig, retarded_integrator
 from core.self_consistency import SelfConsistencyConfig
@@ -50,6 +48,7 @@ from core.types import (
     Trajectory,
 )
 from input_output.bunch_initialization import create_bunch_from_energy
+from input_output.config_migration import discard_inert_self_consistency_keys
 from optimization.plugin_results_helpers import (
     parse_results_payload,
     summarize_result_row,
@@ -1685,8 +1684,9 @@ def run_testbed_config(args: argparse.Namespace) -> int:
             value = getattr(args, argument, None)
             if value is not None:
                 emission[field] = value
-        from core.stochastic_emission import StochasticEmissionConfig
         from dataclasses import asdict
+
+        from core.stochastic_emission import StochasticEmissionConfig
 
         options.stochastic_emission = asdict(
             StochasticEmissionConfig.from_dict(emission)

@@ -19,13 +19,11 @@ from typing import TYPE_CHECKING, Mapping, Sequence
 
 import numpy as np
 
-
 from .accepted_source_state import (
     _accepted_step_start_beta_prime_per_mm,
     _state_scalar,
     _state_vector,
 )
-
 from .causal_c5_source_history import (
     CausalC5HistoryUnavailableError,
     CausalC5SourceHistory,

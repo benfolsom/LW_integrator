@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Restore `SelfConsistencyConfig.chrono_matching_mode` as an inert compatibility
+  field, with its historical `"FAST"` default, alongside `mass_shell_relaxation`.
+  Remove deprecated keys from shipped examples, misleading test patches, and
+  a redundant timestep assignment. Keep the beta-to-gamma helper as a documented
+  diagnostic utility. Correct the proper-velocity debug text, compact the
+  self-consistency GUI grid, and tidy formatting and audit documentation.
+  Solver defaults and arithmetic are unchanged.
 - Remove four unused helpers (`_get_current_particle_gamma_and_beta`,
   `initialize_particle_bunches`,
   `build_field_representative_space_charge_source_charges`, and
@@ -9,11 +16,12 @@
   `save_partial_optimization_results` writer, and `_check_gamma_consistency`.
   Keep live pseudo-grid accounting and cancellation output.
 - Remove inert self-consistency plumbing and the GUI relaxation control. Retain
-  the inert core relaxation field for direct study callers. Saved
+  the inert core relaxation and chrono-mode fields for direct study callers. Saved
   `self_consistency_mass_shell_relaxation`, `self_consistency_tolerance`, and
   `mass_shell_relaxation` keys are deprecated and ignored with one warning per
-  parsed input. Inside a saved `self_consistency` object, `mass_shell_relaxation`
-  and the duplicate `chrono_matching_mode` are also deprecated and ignored.
+  parsed input. Defensive cleanup also drops `mass_shell_relaxation` and the
+  duplicate `chrono_matching_mode` inside evidence summaries' `self_consistency`
+  objects; no configuration loader consumes that nested shape.
   Outer chrono-mode selectors and their aliases retain their solver behavior.
 - Collapse the constant on-shell branch, share identical accepted-source
   numerical helpers, and remove historical repository and dialog absence tests.

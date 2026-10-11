@@ -1313,7 +1313,6 @@ def test_retarded_equations_of_motion_reconciles_gamma_modes(
     state = _make_state(gamma=[2.0], charge=[0.0])
     if method is not GammaReconciliationMethod.USE_VELOCITY:
         state["Px"][0] = np.sqrt(3.0) * C_MMNS
-    monkeypatch.setattr(equations, "_calculate_gamma_from_beta", lambda *args: 1.0)
     _patch_mass_shell_convergence_sequence(
         monkeypatch,
         [(True, 0.0), (False, 0.69)],
@@ -1344,7 +1343,6 @@ def test_gamma_reconciliation_refreshes_kinematics(
 ) -> None:
     state = _make_state(gamma=[2.0], charge=[0.0])
     state["Px"][0] = np.sqrt(3.0) * C_MMNS
-    monkeypatch.setattr(equations, "_calculate_gamma_from_beta", lambda *args: 1.0)
     _patch_mass_shell_convergence_sequence(
         monkeypatch,
         [(True, 0.0), (True, 0.0)],
@@ -1427,7 +1425,6 @@ def test_gamma_reconciliation_preserves_potential_bookkeeping(
         "compute_vectorized_contributions",
         fake_contributions,
     )
-    monkeypatch.setattr(equations, "_calculate_gamma_from_beta", lambda *args: 1.0)
     _patch_mass_shell_convergence_sequence(
         monkeypatch,
         [(True, 0.0), (False, 0.69)],

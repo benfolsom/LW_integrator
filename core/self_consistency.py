@@ -134,6 +134,12 @@ class SelfConsistencyConfig:
         exceeds this value, Pt is clamped to √(P² + (mc)²) as a fallback.
         Should be larger (looser) than target_ms_tolerance.
         Default is 1e-2 (1%).
+    mass_shell_relaxation : float
+        Inert compatibility field for direct Python callers and evidence summaries.
+        Default is 0.7; the solver does not read it.
+    chrono_matching_mode : str
+        Inert compatibility field for direct Python callers and evidence summaries.
+        Default is "FAST"; the solver uses the outer ``chrono_mode`` argument.
     chrono_interpolate : bool
         Enable interpolation in chrono-matching when time residual exceeds tolerance.
         When True, source-particle quantities (velocity, acceleration, gamma) are
@@ -220,6 +226,7 @@ class SelfConsistencyConfig:
 
     chrono_interpolate: bool = False  # Enable chrono-match interpolation
     chrono_tolerance: float = 1e-3  # Time residual tolerance (ns)
+    chrono_matching_mode: str = "FAST"  # Inert compatibility for direct study callers
     chrono_high_precision: bool = False  # Deprecated; ignored by the SOA runner
     chrono_adaptive_tolerance: bool = False  # Auto-set tolerance = 0.1 × timestep
     max_iterations: int = 2  # Maximum SC iterations per particle per step

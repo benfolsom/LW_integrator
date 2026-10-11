@@ -26,13 +26,11 @@ from typing import TYPE_CHECKING, Mapping, Protocol, Sequence, cast
 
 import numpy as np
 
-
 from .accepted_source_state import (
-    _accepted_step_start_beta_prime_per_mm as _accepted_interval_start_beta_prime_per_mm,
+    _accepted_step_start_beta_prime_per_mm,
     _state_scalar,
     _state_vector,
 )
-
 
 if TYPE_CHECKING:
     from .exact_pair_trial import ExactPairStepDoublingTrial
@@ -212,7 +210,7 @@ def accepted_local_source_sample_from_state(
 ) -> AcceptedLocalSourceSample:
     """Extract an endpoint plus the exact acceleration used to begin its step."""
 
-    acceleration = _accepted_interval_start_beta_prime_per_mm(state, particle_index)
+    acceleration = _accepted_step_start_beta_prime_per_mm(state, particle_index)
     return AcceptedLocalSourceSample(
         time_ns=_state_scalar(state, "t", particle_index),
         position_mm=_state_vector(state, ("x", "y", "z"), particle_index),

@@ -17,7 +17,9 @@ def discard_inert_self_consistency_keys(
 
     Outer ``chrono_matching_mode`` and ``self_consistency_chrono_matching_mode``
     still select the actual solver mode. Only the duplicate core setting inside
-    a ``self_consistency`` object is ignored.
+    a ``self_consistency`` object is ignored. This nested cleanup supports
+    evidence summaries containing ``asdict(SelfConsistencyConfig())``; no
+    configuration loader consumes that nested object.
     """
     migrated = dict(payload)
     removed = []
