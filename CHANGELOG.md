@@ -52,6 +52,9 @@ and boundary studies), plus subsequent integration updates.
   CDF. Report a transport energy/four-momentum ledger and per-step scattering
   energy exchange. Treat explicitly disabled settings as absent in testbed
   configurations and when resuming native checkpoints without transport.
+- Trim copied test algorithms and share identical fixtures and runner setup,
+  preserving numerical assertions and strengthening dead-particle retry coverage.
+  Runtime code, numerical defaults, and physics tolerances are unchanged.
 
 - Add a preflight check for `COLD_START` and `APPROXIMATE_BACK_HISTORY`, which
   have no source history before `t0`. For each `BUNCH_TO_BUNCH` observer-source
