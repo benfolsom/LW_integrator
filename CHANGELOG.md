@@ -5,6 +5,16 @@
 Includes the v0.11.0 changes released on 2026-10-10 (exact histories, native PIC,
 and boundary studies), plus subsequent integration updates.
 
+- Evaluate sampled smeared-source fields for the same observer event the
+  children are matched to (the stored start-of-step position, or the trial
+  position under variable-geometry iterations), so a zero-offset smeared source
+  reproduces the point source with self-consistency iterations; variable-geometry
+  iterations after the first now keep per-child matching; and warn once when
+  smearing is enabled but per-child matching is skipped (chrono interpolation,
+  non-fixed refresh policy, pseudo-grid same-bunch sources, or
+  APPROXIMATE_BACK_HISTORY). Longitudinal cloud offsets are applied along z
+  regardless of `momentum_axis`; this is unchanged and documented here. Defaults
+  (smearing off, point sources) are bit-identical.
 - Fix cancellation in distant PIC cell fields and potentials using cell
   quadrature, match sampled retarded histories to the observer's light cone,
   remove the sampled force's silent gamma cutoff, and preserve longitudinal

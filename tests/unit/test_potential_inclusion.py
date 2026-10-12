@@ -330,3 +330,71 @@ def test_cold_start_smeared_gate_keeps_subcharge_identities_when_opened():
     assert np.any(opened["charges"])
     with pytest.raises(ValueError, match="identities changed"):
         sector_change(opened, "retarded", np.ones(1), lambda *_: np.zeros(4))
+
+
+def _moving_history(z0, beta, steps=30, dt=0.02, x=0.0, population=1e8):
+    history = []
+    for k in range(steps):
+        item = state(
+            x=x, z=z0 + beta * C_MMNS * k * dt, beta=beta, source_population=population
+        )
+        item["t"] = np.array([k * dt])
+        # Observer origin and mean velocity, so the COLD_START gate can open.
+        for axis, value in (("x", x), ("y", 0.0), ("z", z0)):
+            item[f"origin_{axis}"] = np.array([value])
+        for axis, value in (("x", 0.0), ("y", 0.0), ("z", beta)):
+            item[f"beta_avg_{axis}"] = np.array([value])
+        history.append(item)
+    return history
+
+
+def _smeared_step(smear, *, iterations=2, mode="fixed_geometry", **kwargs):
+    observer = _moving_history(0.0, 0.4)
+    source = _moving_history(40.0, -0.2, x=1.0, population=1e14)
+    return equations.retarded_equations_of_motion(
+        1e-5,
+        observer,
+        source,
+        len(observer) - 1,
+        aperture_radius=5000,
+        sim_type=SimulationType.BUNCH_TO_BUNCH,
+        startup_mode=kwargs.pop("startup_mode", StartupMode.COLD_START),
+        radiation_reaction_mode="off",
+        self_consistency=SelfConsistencyConfig(
+            enabled=True, max_iterations=iterations, convergence_mode=mode
+        ),
+        macroparticle_smearing=smear,
+        **kwargs,
+    )
+
+
+@pytest.mark.parametrize("mode", ["fixed_geometry", "variable_geometry"])
+def test_zero_offset_smeared_source_equals_point_source_with_iterations(mode):
+    from core.types import MacroparticleSmearingConfig
+
+    zero = MacroparticleSmearingConfig(
+        enabled=True,
+        subcharge_count=4,
+        use_position_errors=False,
+        use_momentum_errors=False,
+        use_centroid_errors=False,
+    )
+    point = _smeared_step(None, iterations=3, mode=mode)
+    smeared = _smeared_step(zero, iterations=3, mode=mode)
+    kick = point["Px"][0]
+    assert abs(kick) > 1e-7  # the source acts on the step
+    np.testing.assert_allclose(smeared["Px"], point["Px"], rtol=1e-10, atol=0)
+    np.testing.assert_allclose(smeared["Pz"], point["Pz"], rtol=1e-12, atol=0)
+
+
+def test_skipped_child_matching_warns_once():
+    from core.types import MacroparticleSmearingConfig
+
+    smear = MacroparticleSmearingConfig(
+        enabled=True, subcharge_count=4, use_momentum_errors=False
+    )
+    equations._CHILD_MATCHING_WARNED.clear()
+    with pytest.warns(RuntimeWarning, match="APPROXIMATE_BACK_HISTORY") as caught:
+        for _ in range(2):
+            _smeared_step(smear, startup_mode=StartupMode.APPROXIMATE_BACK_HISTORY)
+    assert len(caught) == 1
