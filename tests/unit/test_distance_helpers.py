@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 import core.distances as distances
-from core.constants import NUMERICAL_EPSILON
+from core.constants import C_MMNS, NUMERICAL_EPSILON
 from core.types import ChronoMatchingMode, TrajectoryBuilder
 
 
@@ -156,13 +156,9 @@ def test_compute_instantaneous_distance_handles_overlap_and_normalization() -> N
     assert result["nz"][1] == pytest.approx(0.0)
 
 
-def test_chrono_match_indices_returns_linear_interpolation_metadata(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    trajectory = [_make_state(t=[float(step)], x=[10.0]) for step in range(4)]
+def test_chrono_match_indices_returns_linear_interpolation_metadata() -> None:
+    trajectory = [_make_state(t=[float(step)], x=[1.5 * C_MMNS]) for step in range(4)]
     trajectory_ext = [_make_state(t=[float(step)], x=[0.0]) for step in range(4)]
-
-    monkeypatch.setattr(distances, "_compute_delta_t", lambda **_: 1.5)
 
     result = distances.chrono_match_indices(
         trajectory,
@@ -182,13 +178,9 @@ def test_chrono_match_indices_returns_linear_interpolation_metadata(
     assert result.use_cubic is False
 
 
-def test_chrono_match_indices_high_precision_returns_cubic_bracketing(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    trajectory = [_make_state(t=[float(step)], x=[10.0]) for step in range(6)]
+def test_chrono_match_indices_high_precision_returns_cubic_bracketing() -> None:
+    trajectory = [_make_state(t=[float(step)], x=[2.5 * C_MMNS]) for step in range(6)]
     trajectory_ext = [_make_state(t=[float(step)], x=[0.0]) for step in range(6)]
-
-    monkeypatch.setattr(distances, "_compute_delta_t", lambda **_: 2.5)
 
     result = distances.chrono_match_indices(
         trajectory,
@@ -209,13 +201,9 @@ def test_chrono_match_indices_high_precision_returns_cubic_bracketing(
     assert result.use_cubic is True
 
 
-def test_chrono_match_indices_adaptive_tolerance_can_suppress_interpolation(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    trajectory = [_make_state(t=[float(step)], x=[10.0]) for step in range(4)]
+def test_chrono_match_indices_adaptive_tolerance_can_suppress_interpolation() -> None:
+    trajectory = [_make_state(t=[float(step)], x=[1.5 * C_MMNS]) for step in range(4)]
     trajectory_ext = [_make_state(t=[float(step)], x=[0.0]) for step in range(4)]
-
-    monkeypatch.setattr(distances, "_compute_delta_t", lambda **_: 1.5)
 
     result = distances.chrono_match_indices(
         trajectory,
@@ -252,7 +240,12 @@ def test_chrono_match_indices_handles_pruned_source_history_shorter_than_observe
     assert result.tolist() == [0]
 
 
-def test_chrono_match_indices_soa_fast_matches_legacy_path() -> None:
+@pytest.mark.parametrize("soa_cell_limit", [0, 1_000_000])
+def test_chrono_match_indices_soa_fast_matches_legacy_path(
+    soa_cell_limit,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(distances, "_MAX_VECTORIZED_CHRONO_MATCH_CELLS", soa_cell_limit)
     trajectory = [
         _make_state(t=[float(step), float(step)], x=[500.0, 700.0]) for step in range(6)
     ]
@@ -281,6 +274,80 @@ def test_chrono_match_indices_soa_fast_matches_legacy_path() -> None:
     )
 
     np.testing.assert_array_equal(soa, legacy)
+
+    # Independent light-cone checks, including transverse motion and unequal
+    # source/observer clocks. Refining history must remove the sampled error.
+    from scipy.optimize import brentq
+
+    from core.equations import _compute_full_retarded_distance
+
+    for acceleration in (0.0, 500.0):
+        for observer_time in (0.0, 0.002):
+
+            def position(t, a=acceleration):
+                return 0.6 * C_MMNS * t + 0.5 * a * t**2
+
+            root = brentq(
+                lambda t, t_o=observer_time, x=position: (
+                    C_MMNS * (t_o - t) - np.hypot(x(t), 10.0)
+                ),
+                -0.1,
+                0.0,
+                xtol=1e-16,
+            )
+            for count in (1001, 2001):
+                times = np.linspace(-0.1, 0.0, count)
+                source = [
+                    _make_state(
+                        t=[t], x=[position(t)], bx=[0.6 + acceleration * t / C_MMNS]
+                    )
+                    for t in times
+                ]
+                observer = [_make_state(t=[observer_time], y=[10.0])] * count
+                for use_soa in (False, True):
+                    kwargs = (
+                        {
+                            "traj_soa": _make_soa(observer),
+                            "traj_ext_soa": _make_soa(source),
+                        }
+                        if use_soa
+                        else {}
+                    )
+                    geometry, indices, _ = _compute_full_retarded_distance(
+                        observer,
+                        source,
+                        count - 1,
+                        0,
+                        ChronoMatchingMode.FAST,
+                        **kwargs,
+                    )
+                    selected_time = times[indices[0]]
+                    assert 0.0 <= selected_time - root <= times[1] - times[0]
+                    residual = (
+                        C_MMNS * (observer_time - selected_time) - geometry["R"][0]
+                    )
+                    assert abs(residual) <= 1.6 * C_MMNS * (times[1] - times[0])
+                    matcher = (
+                        distances.chrono_match_indices_soa
+                        if use_soa
+                        else distances.chrono_match_indices
+                    )
+                    args = (
+                        (_make_soa(observer), _make_soa(source))
+                        if use_soa
+                        else (observer, source)
+                    )
+                    match = matcher(
+                        *args, count - 1, 0, interpolate=True, tolerance=0.0
+                    )
+                    weight = match.weights[0]
+                    i, j = match.indices[0], match.indices_next[0]
+                    emitted = weight * times[i] + (1 - weight) * times[j]
+                    x = weight * position(times[i]) + (1 - weight) * position(times[j])
+                    assert (
+                        abs(C_MMNS * (observer_time - emitted) - np.hypot(x, 10))
+                        < 1e-11
+                    )
 
 
 def test_chrono_match_indices_soa_fast_matches_legacy_with_varied_time_columns() -> (
