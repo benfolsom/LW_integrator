@@ -207,9 +207,9 @@ simulation, and confirm that the regression tooling works on your machine.
 
    **Other opt-in features:** :doc:`external_fields` describes the smooth
    provider API and recommended exact update. :doc:`boundary` covers
-   experimental material and conformal-wall APIs. Stochastic emission remains
-   off by default and is rejected on the general exact inertial path; see
-   :doc:`stochastic_quantum_emission` before enabling it.
+   experimental material and conformal-wall APIs. Stochastic emission and
+   :doc:`photon_transport` are experimental and off by default; see
+   :doc:`stochastic_quantum_emission` before enabling them.
 
    **Running a parameter sweep from the CLI:**
 

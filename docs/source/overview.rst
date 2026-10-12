@@ -190,7 +190,9 @@ Key ideas to keep in mind
   configurations: conducting wall, switching wall, and bunch-to-bunch.  The enum still accepts the historical integer
   values for compatibility.
 * **Startup modes are configurable.**  ``StartupMode`` switches between
-  ``COLD_START`` (the default, suppressing early retarded forces),
+  ``COLD_START`` (the default, suppressing early retarded forces; valid only
+  where fields are negligible long enough to build history, see
+  :doc:`startup_history`),
   ``INERTIAL_PREHISTORY`` (a finite synthetic coasting prefix that supports
   exact retarded light-cone solves from active time zero), and
   ``APPROXIMATE_BACK_HISTORY`` (reconstructs a constant-velocity history that
@@ -243,10 +245,12 @@ Key ideas to keep in mind
 * **Smooth external fields use a provider.** For energy-loss studies, prefer
   the second-order exact route and verify timestep convergence; see
   :doc:`external_fields`.
-* **Stochastic quantum emission is opt-in.** The general exact
-  ``INERTIAL_PREHISTORY`` path rejects it until velocity jumps can be stored
-  correctly. The sampled diagnostic and guarded native pair routes remain
-  available; see :doc:`stochastic_quantum_emission`.
+* **Stochastic quantum emission is opt-in and experimental.** It runs on the
+  sampled, general exact ``INERTIAL_PREHISTORY`` (recoils stored as split
+  velocity knots) and guarded native pair routes, within documented
+  restrictions; see :doc:`stochastic_quantum_emission`.
+* **Photon transport is opt-in and experimental.** Photons fly at c and scatter
+  or convert on the native lab-time runner only; see :doc:`photon_transport`.
 * **Macroparticle simulation for conducting walls.** The legacy image-source
   multiplier scales generated image charges. The spread prescription uses
   ``macroparticle_sigma_multiplier``, ``macroparticle_use_momentum_errors``,

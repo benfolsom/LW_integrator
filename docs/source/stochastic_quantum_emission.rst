@@ -9,7 +9,7 @@ Stochastic quantum emission (opt-in)
    These reports are not fresh validation or universal accuracy guarantees.
 
 This experimental feature is off by default. The general runner supports
-fixed-step ``BUNCH_TO_BUNCH`` runs on its sampled diagnostic route and its exact
+fixed-step ``BUNCH_TO_BUNCH`` runs on its sampled route and its exact
 ``INERTIAL_PREHISTORY`` route, within the restrictions below. Accepted recoils
 are stored as split velocity knots on the exact source history. The separate
 nonlinear native pair runner supports fixed RK4 with zero intrinsic spin and
@@ -345,7 +345,7 @@ strong laser fields [Formation]_, and is marginal for Coulomb encounters near
 the endpoint. The 20–100 keV electron–carbon cases are diagnostics, not LCFA
 accuracy validation or a reproduction of measured bremsstrahlung cross
 sections. A local model cannot recover nonlocal interference by imposing an
-endpoint cap. The sampled retarded path remains a labelled diagnostic.
+endpoint cap. The sampled retarded path is usable with complete start-up history and convergence checks; see :doc:`startup_history`.
 The cap uses instantaneous kinetic energy; an attractive Coulomb potential can
 raise this above the incident energy. It therefore does not establish the
 incident-energy bremsstrahlung endpoint or solve finite-ion recoil. Photon

@@ -522,7 +522,7 @@ optimization tooling.
 
 ## Startup-mode default
 
-`COLD_START` is the default startup mode for generated configs, CLI/GUI runs, and integration-style tests. Exact retarded endpoint runs require `INERTIAL_PREHISTORY`; see [the exact path](docs/source/exact_path.rst). Use `APPROXIMATE_BACK_HISTORY` only for explicitly labeled diagnostics or for reproducing older examples that require approximate retarded history initialization.
+`COLD_START` is the default startup mode for generated configs, CLI/GUI runs, and integration-style tests. Exact retarded endpoint runs require `INERTIAL_PREHISTORY`; see [the exact path](docs/source/exact_path.rst). `COLD_START` is valid only where fields are negligible long enough to build history (a preflight guard rejects other runs; see [startup history](docs/source/startup_history.rst)); prefer `INERTIAL_PREHISTORY` where available. Use `APPROXIMATE_BACK_HISTORY` only for explicitly labeled diagnostics or for reproducing older examples that require approximate retarded history initialization.
 
 ## Example configurations
 
@@ -534,7 +534,7 @@ Simple example configs live under `configs/`. Load them via the GUI
 | File                                                       | Description                                                                                                                                                                                                                           |
 | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `example_b2b_counter_propagating_proton_bunches.json`      | Two counter-propagating proton-mass bunches with opposite charge signs (proton/H- in the current config; 5+5 particles, 300 M stripped ions each), cold start. Demonstrates bunch-to-bunch energy exchange at non-relativistic energies. |
-| `example_b2b_relativistic_proton_stationary_lead_ion.json` | Ultra-relativistic proton rider (Pz = 1,010,000 amu·mm/ns, γ ≈ 3369) approaching a stationary lead ion driver (1 T stripped ions, m = 207.2 amu). Uses `APPROXIMATE_BACK_HISTORY` startup as a diagnostic legacy history model. |
+| `example_b2b_relativistic_proton_stationary_lead_ion.json` | Ultra-relativistic proton rider (Pz = 1,010,000 amu·mm/ns, γ ≈ 3369) approaching a stationary lead ion driver (1 T stripped ions, m = 207.2 amu). Uses `APPROXIMATE_BACK_HISTORY` startup as a diagnostic legacy history model; auto-duration (600 crossing steps, 1200 steps) makes the run long enough to pass the startup-history guard. |
 
 ### Sweep examples (`configs/sweep_configs/`)
 

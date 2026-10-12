@@ -96,9 +96,11 @@ non-array fallback is not the maintained run path.
 The exact route solves light cones in explicit source history and does not use
 these sampled chrono options. The runner warns for ignored exact-path options
 and for chrono sub-options set without interpolation. See :doc:`exact_path`.
-The sampled retarded route remains a diagnostic: timestep, source-resolution,
-and zero-chirp controls have failed in bounded moderate-speed studies. Enabling
-interpolation alone does not validate it for physics claims.
+The sampled retarded route is valid with complete source history (see
+:doc:`startup_history`) and timestep, source-resolution and smearing
+convergence checks. Its October 2026 failures came from missing start-up
+history and from smeared children sharing the parent's retarded event; both are
+fixed. Enabling interpolation alone does not validate a run.
 
 Migration from older configurations
 -------------------------------------

@@ -13,6 +13,51 @@ claims describe their named revisions, not the current defaults. Use
 :doc:`self_consistency`, :doc:`exact_path`, and :doc:`native_pic` for maintained
 configuration guidance, and ``CHANGELOG.md`` for the consolidated release notes.
 
+.. _release_v0_12_0:
+
+v0.12.0: sampled-path repair, audit fixes, photon transport
+-----------------------------------------------------------
+
+**Sampled retarded path.** Both causes of the October 2026 convergence failures
+are fixed. Missing start-up history is caught by a preflight guard
+(``allow_incomplete_startup_history``, ``startup_history_tolerance``), and each
+smeared child source is matched to its own light cone instead of inheriting the
+parent's retarded event. The sampled path is valid with complete source history
+and convergence checks, and is about ten times faster than the exact path. See
+:doc:`startup_history` for when to use each route. ``COLD_START`` is valid only
+where fields are negligible long enough to build history; prefer
+``INERTIAL_PREHISTORY``. The shipped proton/lead-ion example was rejected by
+the guard and now uses auto-duration.
+
+**Audit fixes and the results they affect.** These change numbers; defaults and
+configuration keys are unchanged. Re-run anything in these classes before
+relying on it.
+
+* Sampled smeared-source results: children were evaluated at the parent's
+  retarded event. Affected: sampled runs with source smearing or macroparticle
+  clouds. Point-source runs are bit-identical.
+* Sampled light-cone matching: histories are matched to the observer's light
+  cone. Affected: sampled runs generally, most where source and observer move
+  at different speeds.
+* PIC far-cell kernel: cell-averaged fields and potentials at large
+  distance-to-cell ratios (beyond 16 cell widths) cancelled catastrophically
+  and now use cell quadrature. Affected: native PIC and K-cloud corrections
+  with distant cells, including long bunches and fine meshes.
+* Forces above gamma 1e6: the sampled force silently dropped particles above
+  this cutoff. It is removed. Affected: very high-gamma sampled runs.
+* Medina radiation bookkeeping above gamma 1e3: the longitudinal acceleration
+  is now evaluated without subtracting beta squared from one, in the LW and PIC
+  callers. Orbits are unchanged; the radiation-reaction terms and energy
+  bookkeeping at these gamma values change.
+* Robustness: non-finite live fields and malformed force history are rejected
+  explicitly, and checkpoint chunk counts are verified against manifests.
+
+**New experimental features.** :doc:`photon_transport` (opt-in photons on the
+native lab-time runner) and the stricter :doc:`external_fields` provider
+documentation (recommended route: exact ``INERTIAL_PREHISTORY`` with the
+second-order endpoint update). Stochastic emission now also runs on the
+general exact path.
+
 v0.11.0: release documentation
 ------------------------------
 
@@ -114,8 +159,9 @@ hysteresis; enabled quantum mode scales continuous reaction below activation,
 and emission intervals are subdivided to respect the probability cap.
 Disabled deterministic behavior is unchanged.
 
-The general exact ``INERTIAL_PREHISTORY`` path rejects stochastic emission
-until recoil kicks can be recorded as split velocity knots. Finite-spin recoil,
+The general exact ``INERTIAL_PREHISTORY`` path initially rejected stochastic
+emission until recoil kicks could be recorded as split velocity knots; v0.12.0
+records them and the guard is gone. Finite-spin recoil,
 closed electron–ion conservation, and material/crystal spectrum validation
 remain open. The emission guide also replaces private validation-note paths
 with descriptions of the notes held outside the repository.

@@ -2,14 +2,41 @@
 
 ## Unreleased
 
+## v0.12.0 — 2026-10-12 — sampled-path repair, audit fixes, photon transport
+
 Includes the v0.11.0 changes released on 2026-10-10 (exact histories, native PIC,
 and boundary studies), plus subsequent integration updates.
 
+### Sampled retarded path
+
+- Add a preflight check for `COLD_START` and `APPROXIMATE_BACK_HISTORY`, which
+  have no source history before `t0`. For each `BUNCH_TO_BUNCH` observer-source
+  pair it bounds the share of the straight-line force impulse that falls in the
+  missing interval `t0 .. t0 + tau_c` (about `R/c`), and whether a visibility
+  gate window meets it. Runs above `startup_history_tolerance` (default `1e-3`)
+  or with an intersecting gate raise `StartupHistoryError`. The explicit override
+  `allow_incomplete_startup_history` (`--allow-incomplete-startup-history`)
+  turns the error into a loud warning for deliberate diagnostics. Runs that pass
+  are unchanged. The sampled path does not gain `INERTIAL_PREHISTORY`; see
+  `docs/source/startup_history.rst`. The shipped proton/lead-ion example now
+  enables auto-duration so that it passes the check.
+- Give each smeared child source on the sampled retarded path its own
+  light-cone index, velocity and acceleration, as for exact persistent clouds,
+  instead of the parent's retarded event plus the offset. Point sources are
+  unchanged bit for bit; interpolated chrono matching, variable-geometry
+  self-consistency and pseudo-grid space charge keep the shared-event expansion.
+- With both October failure causes fixed, the sampled path is valid with
+  complete source history and convergence checks, and is about ten times
+  faster than the exact path. Documentation now explains when to use each route
+  and states the `COLD_START` rule.
+
+### Audit fixes (change affected numerical results; defaults unchanged)
+
 - Fix cancellation in distant PIC cell fields and potentials using cell
   quadrature, match sampled retarded histories to the observer's light cone,
-  remove the sampled force's silent gamma cutoff, and preserve longitudinal
-  Medina acceleration at high gamma in both LW and PIC callers. These fixes
-  change affected numerical results; configuration defaults are unchanged.
+  remove the sampled force's silent gamma cutoff (1e6), and preserve
+  longitudinal Medina acceleration above gamma 1e3 in both LW and PIC callers
+  (orbits unchanged; radiation bookkeeping changes).
 - Reject non-finite live particle fields and malformed accepted force history
   explicitly, and apply the post-step gamma guard to both bunches. Preserve
   unprimed Medina timestamps and established startup behavior.
@@ -23,20 +50,7 @@ and boundary studies), plus subsequent integration updates.
   retain scan behavior for other histories. Numerical defaults and finite-run
   arithmetic remain unchanged; invalid-state handling deliberately becomes stricter.
 
-- Correct documentation against the release-based code: proper-time stepping,
-  mechanical mass-shell reconstruction, CLI overrides, image-source parameters,
-  unit labels, adaptive refinement, and experimental reaction boundaries.
-  Qualify historical evidence gaps, repair API navigation, and add field-provider
-  and boundary construction examples. Existing release restrictions remain
-  historical; later unmerged train-cloud capabilities are not advertised here.
-- Parse single-dollar mathematics in unindented RST prose into Sphinx math nodes,
-  preserving inline literals and indented code. This fixes formulas that were
-  previously plain text or could be parsed as substitutions. Resolve known API
-  aliases to their documented owners without suppressing unrelated warnings.
-  Extend the existing documentation-path test to Markdown and LaTeX sources.
-  Simulation code,
-  numerical defaults, and default outputs remain bit-identical; no numerical
-  defect or merge syntax error was changed.
+### Photon transport (experimental)
 
 - Add opt-in photon transport to fixed-step native pair and many-particle runs:
   photons fly at c, scatter with rest-frame Klein–Nishina target recoil,
@@ -52,27 +66,21 @@ and boundary studies), plus subsequent integration updates.
   CDF. Report a transport energy/four-momentum ledger and per-step scattering
   energy exchange. Treat explicitly disabled settings as absent in testbed
   configurations and when resuming native checkpoints without transport.
+
+### Documentation and tests
+
+- Correct documentation against the release-based code: proper-time stepping,
+  mechanical mass-shell reconstruction, CLI overrides, image-source parameters,
+  unit labels, adaptive refinement, and experimental reaction boundaries.
+  Qualify historical evidence gaps, repair API navigation, and add field-provider
+  and boundary construction examples.
+- Parse single-dollar mathematics in unindented RST prose into Sphinx math nodes,
+  preserving inline literals and indented code. Resolve known API aliases to
+  their documented owners without suppressing unrelated warnings. Extend the
+  existing documentation-path test to Markdown and LaTeX sources.
 - Trim copied test algorithms and share identical fixtures and runner setup,
   preserving numerical assertions and strengthening dead-particle retry coverage.
   Runtime code, numerical defaults, and physics tolerances are unchanged.
-
-- Add a preflight check for `COLD_START` and `APPROXIMATE_BACK_HISTORY`, which
-  have no source history before `t0`. For each `BUNCH_TO_BUNCH` observer-source
-  pair it bounds the share of the straight-line force impulse that falls in the
-  missing interval `t0 .. t0 + tau_c` (about `R/c`), and whether a visibility
-  gate window meets it. Runs above `startup_history_tolerance` (default `1e-3`)
-  or with an intersecting gate raise `StartupHistoryError`. The explicit override
-  `allow_incomplete_startup_history` (`--allow-incomplete-startup-history`)
-  turns the error into a loud warning for deliberate diagnostics. Runs that pass
-  are unchanged. The sampled path does not gain `INERTIAL_PREHISTORY`; see
-  `docs/source/startup_history.rst`.
-
-
-- Give each smeared child source on the sampled retarded path its own
-  light-cone index, velocity and acceleration, as for exact persistent clouds,
-  instead of the parent's retarded event plus the offset. Point sources are
-  unchanged bit for bit; interpolated chrono matching, variable-geometry
-  self-consistency and pseudo-grid space charge keep the shared-event expansion.
 
 ## v0.11.0 — 2026-10-10 — exact histories, native PIC, and boundary studies
 
