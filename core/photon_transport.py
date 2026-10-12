@@ -14,6 +14,7 @@ from typing import Any, Callable
 import numpy as np
 from scipy.integrate import cumulative_trapezoid
 from scipy.special import kv
+from scipy.special import roots_legendre
 
 from .constants import C_MMNS as C, ELECTRON_MASS_AMU as M, ELEMENTARY_CHARGE as Q
 from .magnetic_dipole import HBAR_NATIVE
@@ -241,6 +242,31 @@ def breit_wheeler_spectrum(
     return f, cdf / rate if rate else cdf, rate
 
 
+@lru_cache(maxsize=1)
+def _rate_quadrature() -> tuple[np.ndarray, np.ndarray]:
+    # A cosine change of variable resolves the finite-support endpoint tails.
+    nodes, weights = roots_legendre(128)
+    angle = (nodes + 1) * np.pi / 2
+    return (1 - np.cos(angle)) / 2, weights * np.pi * np.sin(angle) / 4
+
+
+def breit_wheeler_rate(chi: float, energy: float) -> float:
+    """Total finite-energy LCFA rate without constructing a sampling CDF.
+
+    Integrate only 128 nodes per query. Unlike a table of the infinite-energy
+    T(chi), this retains the energy-dependent rest-mass support near threshold.
+    The full 4097-point CDF is constructed only for an accepted conversion.
+    """
+    lower = M * C**2 / energy
+    if lower >= 0.5 or chi <= 0:
+        return 0.0
+    nodes, weights = _rate_quadrature()
+    width = 1 - 2 * lower
+    return float(
+        width * (weights @ breit_wheeler_density(lower + width * nodes, chi, energy))
+    )
+
+
 def pair_kinematics(
     energy: float, direction: np.ndarray, fraction: float
 ) -> dict[str, Any]:
@@ -273,6 +299,23 @@ class PhotonTarget:
     momentum: np.ndarray
     mass: float
     charge: float
+    start_position: np.ndarray | None = None
+    start_time_ns: float | None = None
+    end_time_ns: float | None = None
+
+    def position_at(self, time_ns: float) -> np.ndarray:
+        """Interpolate the accepted charge segment; never extrapolate it."""
+        if self.start_position is None:
+            return self.position
+        if self.start_time_ns is None or self.end_time_ns is None:
+            raise ValueError("Moving photon targets require both accepted times")
+        if not self.start_time_ns <= time_ns <= self.end_time_ns:
+            raise ValueError("Photon time is outside the accepted target segment")
+        duration = self.end_time_ns - self.start_time_ns
+        if duration <= 0:
+            raise ValueError("Photon target segment must have positive duration")
+        fraction = (time_ns - self.start_time_ns) / duration
+        return self.start_position + fraction * (self.position - self.start_position)
 
 
 class PhotonTransportRuntime:
@@ -294,10 +337,34 @@ class PhotonTransportRuntime:
             self.photons = copy.deepcopy(payload["photons"])
             self.events = copy.deepcopy(payload["events"])
             self.emission_cursor = int(payload["emission_cursor"])
+            # Older payloads did not retain birth four-momenta. The first
+            # interaction records them; untouched photons still have them.
+            first = {}
+            for event in self.events:
+                if "photon_before_four_native" in event:
+                    first.setdefault(
+                        event["creation_event_id"], event["photon_before_four_native"]
+                    )
+            for photon in self.photons:
+                photon.setdefault(
+                    "creation_four_native",
+                    first.get(
+                        photon["creation_event_id"],
+                        (
+                            photon["energy_native"]
+                            / C
+                            * np.r_[1.0, photon["direction"]]
+                        ).tolist(),
+                    ),
+                )
 
     def ingest(self, emission_events: list[dict[str, Any]]) -> None:
         if len(emission_events) < self.emission_cursor:
             raise ValueError("Emission event log shrank below transport cursor")
+        for photon in self.photons:
+            if "emitter" not in photon:
+                index = int(photon["creation_event_id"].split(":")[1])
+                photon["emitter"] = emission_events[index].get("particle")
         for index in range(self.emission_cursor, len(emission_events)):
             event = emission_events[index]
             if (
@@ -320,6 +387,8 @@ class PhotonTransportRuntime:
             self.photons.append(
                 dict(
                     creation_event_id=f"emission:{index}",
+                    emitter=event.get("particle"),
+                    creation_four_native=(energy / C * np.r_[1.0, direction]).tolist(),
                     time_ns=time,
                     creation_time_ns=time,
                     position_mm=position.tolist(),
@@ -366,12 +435,13 @@ class PhotonTransportRuntime:
             Callable[[float, np.ndarray], tuple[np.ndarray, np.ndarray]] | None
         ) = None,
     ) -> None:
-        """Bounded Bernoulli W dt, competing channels, and straight flight at c.
+        """Exponential waiting times, competing channels, and flight at c.
 
         Local density is one physical target per top-hat sphere of radius R;
         rate n sigma_rest c (1-beta.n) uses lab density and invariant flux.
-        Positions/fields are sampled at substep starts; target endpoints are
-        frozen by the adapter. max_step_mm also bounds geometry sampling.
+        Target positions interpolate their accepted segment at substep starts.
+        max_step_mm also bounds geometry sampling. Rates remain piecewise
+        constant, and recoil is applied at the accepted charge barrier.
         """
         if not np.isfinite(endpoint_ns):
             raise ValueError("Finite photon endpoint required")
@@ -401,7 +471,11 @@ class PhotonTransportRuntime:
                     for target in targets:
                         if (
                             target.charge == 0
-                            or np.linalg.norm(position - target.position) > radius
+                            or target.key == photon.get("emitter")
+                            or np.linalg.norm(
+                                position - target.position_at(photon["time_ns"])
+                            )
+                            > radius
                         ):
                             continue
                         norm = np.linalg.norm(target.momentum)
@@ -443,7 +517,7 @@ class PhotonTransportRuntime:
                     if not np.isfinite(np.r_[electric, magnetic]).all():
                         raise ValueError("Nonfinite photon field sample")
                     chi = photon_chi(energy, direction, electric, magnetic)
-                    _, _, pair_rate = breit_wheeler_spectrum(chi, energy)
+                    pair_rate = breit_wheeler_rate(chi, energy)
                 total = float(sum(rates) + pair_rate)
                 duration = min(
                     endpoint_ns - photon["time_ns"],
@@ -453,6 +527,11 @@ class PhotonTransportRuntime:
                 )
                 if total > 0:
                     duration = min(duration, self.config.max_probability / total)
+                probability = float(-np.expm1(-total * duration))
+                waiting = -np.log1p(-self.rng.random()) / total if total > 0 else np.inf
+                interaction = waiting < duration
+                if interaction:
+                    duration = waiting
                 new_time = photon["time_ns"] + duration
                 if new_time == photon["time_ns"]:
                     raise RuntimeError(
@@ -472,14 +551,14 @@ class PhotonTransportRuntime:
                         )
                     )
                     break
-                if total <= 0 or self.rng.random() >= total * duration:
+                if not interaction:
                     continue
                 draw = self.rng.random() * total
                 event = dict(
                     creation_event_id=photon["creation_event_id"],
                     time_ns=float(new_time),
                     position_mm=position.tolist(),
-                    probability=float(total * duration),
+                    probability=probability,
                 )
                 if draw < sum(rates):
                     selected = int(
@@ -510,6 +589,54 @@ class PhotonTransportRuntime:
                 if photon["status"] == "converted":
                     break
 
+    def ledger(self) -> dict[str, Any]:
+        """Transport-only four-momentum accounting, including unresolved Q."""
+        initial, remaining, target, pairs, background = (np.zeros(4) for _ in range(5))
+        by_status = {
+            status: 0.0
+            for status in ("alive", "scattered", "escaped", "converted", "absorbed")
+        }
+        for photon in self.photons:
+            initial += photon["creation_four_native"]
+            by_status[photon["status"]] += photon["energy_native"]
+            if photon["status"] in ("alive", "scattered", "escaped"):
+                remaining += (
+                    photon["energy_native"] / C * np.r_[1.0, photon["direction"]]
+                )
+        for event in self.events:
+            if event["event_type"] == "scattering":
+                target += (
+                    np.asarray(event["target_after_four_native"])
+                    - event["target_before_four_native"]
+                )
+            elif event["event_type"] == "pair_conversion":
+                pairs += (
+                    np.asarray(event["electron_four_native"])
+                    + event["positron_four_native"]
+                )
+                background += event["background_impulse_four_native"]
+        residual = remaining + target + pairs - background - initial
+        return dict(
+            photon_energy_by_status_native=by_status,
+            created_photon_energy_native=float(C * initial[0]),
+            remaining_photon_energy_native=float(C * remaining[0]),
+            target_energy_change_native=float(C * target[0]),
+            pair_energy_native=float(C * pairs[0]),
+            background_energy_native=float(C * background[0]),
+            target_four_change_native=target.tolist(),
+            pair_four_native=pairs.tolist(),
+            background_impulse_four_native=background.tolist(),
+            energy_balance_residual_native=float(C * residual[0]),
+            four_balance_residual_native=residual.tolist(),
+            scope="transport_only_physical_particles",
+            unaccounted=[
+                "near_field_energy",
+                "radiated_field_energy",
+                "material_heat",
+                "external_work",
+            ],
+        )
+
     def to_payload(self) -> dict[str, Any]:
         return copy.deepcopy(
             dict(
@@ -519,5 +646,6 @@ class PhotonTransportRuntime:
                 photons=self.photons,
                 events=self.events,
                 emission_cursor=self.emission_cursor,
+                ledger=self.ledger(),
             )
         )

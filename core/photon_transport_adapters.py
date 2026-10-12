@@ -86,121 +86,12 @@ def _pair_photon_response(provider, time, position):
         raise error
 
 
-def _apply_general_recoil(state, index, before, after):
-    from .integration_runner import _clear_medina_force_history
-
-    mass = float(state["m"][index])
-    before_pt = np.hypot(mass * C, np.linalg.norm(before))
-    after_pt = np.hypot(mass * C, np.linalg.norm(after))
-    state["Pt"][index] += after_pt - before_pt
-    state["gamma"][index] = after_pt / (mass * C)
-    proper = after / (mass * C)
-    for j, axis in enumerate("xyz"):
-        state[f"P{axis}"][index] += after[j] - before[j]
-        state[f"b{axis}"][index] = after[j] / after_pt
-        if f"source_u_{axis}" in state:
-            state[f"source_u_{axis}"][index] = proper[j]
-    if "source_speed_deficit" in state:
-        state["source_speed_deficit"][index] = 1 / (
-            state["gamma"][index] * (state["gamma"][index] + np.linalg.norm(proper))
-        )
-    if "source_kinematics_ready" in state:
-        state["source_kinematics_ready"][index] = 1.0
-    _clear_medina_force_history(
-        state, particle_mask=np.arange(len(state["x"])) == index
+def commit_general_transport(*args, **kwargs):
+    """Reject unsynchronised general-runner transport, including direct callers."""
+    raise NotImplementedError(
+        "Photon transport requires the native lab-time pair runner; "
+        "the general runner has unsynchronised particle lab clocks"
     )
-
-
-def _sampled_photon_fields(histories, time, position):
-    """Nearest causal null-time sample, without interpolation or extrapolation.
-
-    Like the sampled charge path, this is a diagnostic field approximation.
-    Missing prehistory contributes zero. Continuous stored bdot excludes kicks.
-    """
-    electric, magnetic = np.zeros(3), np.zeros(3)
-    for history in histories:
-        for j in range(len(history[0]["x"])):
-            candidates = []
-            for row in history:
-                t = float(row["t"][j])
-                if t > time or bool(
-                    row.get("_dead_particles", np.zeros(len(row["x"]), dtype=bool))[j]
-                ):
-                    continue
-                rvec = position - np.array([row[a][j] for a in "xyz"])
-                radius = np.linalg.norm(rvec)
-                residual = time - t - radius / C
-                if radius > 0 and residual >= 0:
-                    candidates.append((residual, row, rvec, radius))
-            if not candidates:
-                continue
-            _, row, rvec, radius = min(candidates, key=lambda item: item[0])
-            n = rvec / radius
-            beta = np.array([row[f"b{a}"][j] for a in "xyz"])
-            bdot = np.array([row[f"bdot{a}"][j] for a in "xyz"])
-            kappa = 1 - n @ beta
-            charge = float(row.get("q_source", row["q"])[j])
-            e = (
-                charge
-                / kappa**3
-                * (
-                    (n - beta) / (row["gamma"][j] ** 2 * radius**2)
-                    + np.cross(n, np.cross(n - beta, bdot)) / radius
-                )
-            )
-            electric += e
-            magnetic += np.cross(n, e)
-    return electric, magnetic
-
-
-def commit_general_transport(
-    runtime, emission, rider_history, driver_history, external_field=None
-):
-    """Transport to latest charge endpoint; targets freeze at accepted endpoints."""
-    runtime.ingest(emission.events)
-    targets, owners, before = [], [], []
-    for role, history in (("rider", rider_history), ("driver", driver_history)):
-        state = history[-1]
-        for i in range(len(state["x"])):
-            if bool(
-                state.get("_dead_particles", np.zeros(len(state["x"]), dtype=bool))[i]
-            ):
-                continue
-            mass = float(state["m"][i])
-            p = (
-                mass
-                * C
-                * state["gamma"][i]
-                * np.array([state[f"b{a}"][i] for a in "xyz"])
-            )
-            targets.append(
-                PhotonTarget(
-                    f"{role}:{i}",
-                    np.array([state[a][i] for a in "xyz"]),
-                    p.copy(),
-                    mass,
-                    float(state.get("q_observer", state["q"])[i]),
-                )
-            )
-            owners.append((state, i))
-            before.append(p)
-
-    def fields(time, position):
-        e, b = _sampled_photon_fields((rider_history, driver_history), time, position)
-        if external_field is not None and external_field.enabled:
-            from .external_fields import evaluate_external_field_native
-
-            ext_e, ext_b, _ = evaluate_external_field_native(
-                external_field, position_mm=tuple(position), time_ns=time
-            )
-            e, b = e + ext_e, b + ext_b
-        return e, b
-
-    endpoint = max(float(np.max(h[-1]["t"])) for h in (rider_history, driver_history))
-    runtime.advance(endpoint, targets, fields)
-    for target, (state, i), original in zip(targets, owners, before):
-        if not np.array_equal(original, target.momentum):
-            _apply_general_recoil(state, i, original, target.momentum)
 
 
 def commit_pair_transport(
@@ -225,6 +116,9 @@ def commit_pair_transport(
             data["kinetic_momentum_native"][1:].copy(),
             particle.mass_amu,
             particle.charge_native,
+            start_position=histories[i].position[-1].copy(),
+            start_time_ns=float(histories[i].time[-1]),
+            end_time_ns=float(trial[0]),
         )
         for i, (trial, data, particle) in enumerate(zip(trials, diagnostics, particles))
     ]
@@ -266,6 +160,11 @@ def commit_pair_transport(
     for i, (target, before, trial, particle) in enumerate(
         zip(targets, originals, trials, particles)
     ):
+        delta_energy = C * (
+            np.hypot(particle.mass_amu * C, np.linalg.norm(target.momentum))
+            - np.hypot(particle.mass_amu * C, np.linalg.norm(before))
+        )
+        diagnostics[i]["photon_scattering_energy_change_native"] = float(delta_energy)
         if np.array_equal(target.momentum, before):
             continue
         mc = particle.mass_amu * C
@@ -297,6 +196,7 @@ def commit_pair_transport(
         )
         if "stochastic_emission" in diagnostics[i]:
             data["stochastic_emission"] = diagnostics[i]["stochastic_emission"]
+        data["photon_scattering_energy_change_native"] = float(delta_energy)
         diagnostics[i] = data
         accepted = candidate_histories[i]
         incoming = np.asarray(

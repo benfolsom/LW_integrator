@@ -566,9 +566,8 @@ class SimulationOptions:
         from core.photon_transport import PhotonTransportConfig
 
         if self.photon_transport is not None:
-            self.photon_transport = asdict(
-                PhotonTransportConfig.from_dict(self.photon_transport)
-            )
+            transport = PhotonTransportConfig.from_dict(self.photon_transport)
+            self.photon_transport = asdict(transport) if transport.enabled else None
         from core.stochastic_emission import StochasticEmissionConfig
 
         self.stochastic_emission = asdict(

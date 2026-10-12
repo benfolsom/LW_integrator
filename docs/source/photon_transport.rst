@@ -8,6 +8,10 @@ Photons as particles
 --------------------------------------------------
 
 Enable the separate ``photon_transport`` object alongside stochastic emission.
+Transport is supported only by the native lab-time pair/many-particle runner.
+The general CLI and testbed runner reject enabled transport: their common
+proper-time steps give different particle lab clocks, so their accepted
+endpoints cannot supply simultaneous photon/target geometry or recoil.
 Each emitted photon becomes a particle with a position, unit direction, energy,
 polarisation, creation time, creation-event identifier, and status. Photons fly
 at the speed of light and never enter the charged-particle arrays or LW source
@@ -18,7 +22,8 @@ Emission events remain unchanged. The identifier ``emission:<index>`` refers to
 the absolute index in the append-only emission log, including activation and
 deactivation entries. Transport ingests each entry once. A separate PCG64
 stream controls interactions, so enabling transport alone does not consume the
-emission generator. Polarisation is carried from emission, currently ``None``;
+emission generator. The default transport seed is zero for reproducibility;
+set distinct explicit seeds for independent runs. Polarisation is carried from emission, currently ``None``;
 interaction kernels average over polarisation and spin. After scattering,
 polarisation is explicitly unavailable.
 
@@ -33,8 +38,11 @@ Scattering and the density model
 --------------------------------------------------
 
 Each charged physical target contributes a lab-frame top-hat density of
-:photon-math:`<span class="math">$1/(4\pi R^3/3)$</span>` within ``interaction_radius_mm`` of its accepted position.
-Targets are frozen at that endpoint during the transport interval. This is a
+:photon-math:`<span class="math">$1/(4\pi R^3/3)$</span>` within ``interaction_radius_mm`` of its position.
+At each photon substep, target positions are linearly interpolated between
+the previous and current accepted charge positions at that photon's lab time.
+No target position is extrapolated. The emitter is excluded from its own
+photon's scattering targets when its identity is available. This is a
 finite-resolution collision model, not a cross-section for literal zero-volume
 point particles. Neither macroparticle weights nor coherent bunch scattering
 are supported. Converge the radius, charge timestep, photon travel step, and
@@ -80,7 +88,10 @@ kernel [PT_Ritus]_ [PT_Review]_ [PT_King]_. With energy fraction :photon-math:`<
 Here
 :photon-math:`<span class="math">$\chi_\gamma=(E_\gamma/mc^2)|\mathbf E_\perp+\hat n\times\mathbf B|/E_S$</span>`
 and :photon-math:`<span class="math">$E_S=m^2c^3/(|e|\hbar)$</span>`. Fields use native Gaussian units. Numerical
-quadrature constructs the rate and an energy-split CDF. A finite-energy cap
+quadrature constructs the rate using 128 Gauss–Legendre nodes with a cosine
+change of variable. The 4097-point energy-split CDF is built only for an accepted
+conversion. Both calculations retain finite-energy support, unlike a rate
+table depending on the field parameter alone. A finite-energy cap
 restricts :photon-math:`<span class="math">$mc^2/E_\gamma&lt;f&lt;1-mc^2/E_\gamma$</span>`; photons at or below twice the
 rest energy cannot convert in this prescription. This is an additional
 high-energy modelling restriction, not a general threshold for field-assisted
@@ -88,6 +99,11 @@ pair production. At high energy the energy fraction approximates the LCFA
 lightfront fraction. Formation-length corrections, non-crossed field invariants,
 spin, polarisation, transverse pair angles, and low-energy validity remain open.
 LCFA in a rapidly varying Coulomb field requires independent justification.
+Numerical accuracy is not uniform at small field parameters: the existing
+Bessel-tail table limits relative accuracy in the exponentially suppressed
+tail. The earlier rate error below :photon-math:`<span class="math">$8\times10^{-7}$</span>`
+applied only to the measured cases at :photon-math:`<span class="math">$\chi_\gamma=1,3,10$</span>`
+and :photon-math:`<span class="math">$E_\gamma=1000mc^2$</span>`, not all field strengths or energies.
 
 The outgoing particles have collinear momenta and exactly on-shell energies.
 This is a collinear LCFA angular prescription, not the exact angular QED kernel.
@@ -110,51 +126,54 @@ does not apply an invented recoil to an ion or close the field-energy budget.
 Stepping, fields, and checkpoints
 --------------------------------------------------
 
-Interaction channels compete through their summed rate. Each substep draws
-one Bernoulli trial with probability :photon-math:`<span class="math">$W\Delta t$</span>`, then selects its channel
-in proportion to the channel rate. Substeps bound this probability by
+Interaction channels compete through their summed rate. Each substep draws an
+exponential waiting time using that rate; an interaction occurs at the sampled
+time if it precedes the substep boundary. Its channel is selected in proportion
+to the channel rate. The substep event probability is
+:photon-math:`<span class="math">$1-e^{-W\Delta t}$</span>`. Substeps bound the optical depth
+:photon-math:`<span class="math">$W\Delta t$</span>` by
 ``max_probability`` and travel by both ``max_step_mm`` and one quarter of the
 interaction radius. Rates are recalculated after each event. No probability
-is clipped. This is first order in the probability cap; decrease that cap to
-converge to exponential survival. Interactions occur at substep endpoints and
-are applied to charged targets at the accepted charge barrier; their orbits
-are not reintegrated within that interval.
+is clipped. Survival is exponential for the piecewise constant rate; spatial
+and field variation still require substep convergence. Recoils are applied to
+charged targets at the accepted charge barrier; their orbits are not
+reintegrated within that interval. Photons are processed in stored order.
+A target recoil from an earlier processed photon is visible to subsequent
+photons throughout the interval, even before that recoil's event time. This
+remaining ordering approximation requires charge-step convergence when several
+photons interact with the same target.
 
 Pair-runner photon fields sum all accepted charged-source providers. The
 unpublished six-knot tail is reconstructed between accepted endpoints with
 cubic positions and the existing split incoming/outgoing velocities, including
 the configured smooth-start potential. This photon-only approximation neither
 publishes charged history nor extrapolates it, and needs timestep convergence.
-The sampled general runner uses the nearest causal stored null-time sample from
-each source, with stored continuous acceleration and no interpolation or
-extrapolation; missing prehistory contributes zero. Both bunches contribute.
-The general runner also samples its configured external field. Field queries
-are taken along the outgoing substep, away from the emitter's singular birth
+Field queries are taken along the outgoing substep, away from the emitter's singular birth
 position. Queries use the geometric substep midpoint before the rate cap is
 applied; field-resolution convergence remains essential. Pair-source queries
-outside available retarded history fail explicitly. The sampled path remains
-a labelled diagnostic with the convergence limitations described on the
-stochastic-emission page; transport does not repair those limitations.
+outside available retarded history fail explicitly. The former sampled
+general-runner field query has been removed; stale samples cannot be used by
+that unsupported path.
 
 ``electric_native`` and ``magnetic_native`` specify an additional uniform
 background seen only by photons. This supports uniform-field rate probes;
 it does not drive the charged particles. Pair-runner photons do not source
 fields themselves, and finite target recoil uses existing split velocity knots.
-General-runner recoil clears Medina force history as emission already does.
 The exact general ``INERTIAL_PREHISTORY`` path retains its emission guard.
 
-Only fixed-step physical-particle runs satisfying the existing stochastic
+Only native fixed-step physical-particle runs satisfying the existing stochastic
 emission restrictions are supported. Checkpoints store all photon rows,
 interaction events, ingestion cursor, settings, and the complete transport RNG
 state beside the emission payload. Resume uses the same accepted-step sequence,
 field samples, and ordered photon traversal. Arbitrarily changing the charge
-step partition does not promise identical Bernoulli draws. General checkpoints
-retain the repository's source/configuration fingerprint guard.
+step partition does not promise identical random draws. Older native photon
+payloads remain readable; enabled trajectories continued with the corrected
+algorithm will differ from those continued with the earlier algorithm.
 
 Configuration and output
 --------------------------------------------------
 
-Direct CLI and testbed single-run JSON accept::
+Native pair and many-particle initial-condition JSON accepts::
 
    {
      "stochastic_emission": {"enabled": true, "seed": 83},
@@ -171,18 +190,26 @@ Direct CLI and testbed single-run JSON accept::
      }
    }
 
-The native pair and many-particle initial-condition format accepts the same
-object. On a fresh native checkpoint, use ``--photon-transport-settings`` with
+On a fresh native checkpoint, use ``--photon-transport-settings`` with
 a JSON file containing that object's fields. Evolved checkpoints retain their
 transport settings and RNG. Python initialisation accepts ``photon_transport``
-as a separate keyword. Disabled transport adds no checkpoint or report payload.
-The CLI report and native checkpoint expose ``photon_transport``; testbed
-trajectory JSON and NPZ output include the payload as well.
+as a separate keyword. Disabled transport adds no checkpoint or report payload;
+explicitly disabled testbed settings are omitted from saved configurations.
+Passing disabled settings when resuming a checkpoint without transport is a no-op.
 
-Validation artifacts, commands, measured errors, and bounded default-off
-parity checks are documented in ``local/task_av/report.md`` for supervisor
-review. They are numerical checks of these prescriptions, not validation of a
-closed-energy device or a complete strong-field cascade.
+Native checkpoints expose a ``photon_transport.ledger`` block with photon energy
+by status, energy transferred to targets by scattering, pair energy, and the
+unresolved background four-impulse. ``converted`` photon energy is shown for
+inspection but excluded from remaining photon energy to avoid counting it twice.
+The transport balance is remaining photon energy plus target energy change plus
+pair energy minus background energy minus created photon energy; the corresponding
+four-momentum residual is also reported. Pair-step particle records include
+``photon_scattering_energy_change_native``, positive for energy gained by the
+target and zero for steps without scattering.
+
+These totals cover physical particles and transport events only. Near-field
+energy, radiated field energy, material heat, and external work remain unaccounted
+for. They do not establish a closed-energy device or a complete strong-field cascade.
 
 References
 --------------------------------------------------

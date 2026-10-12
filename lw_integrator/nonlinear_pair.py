@@ -162,7 +162,9 @@ def configure_checkpoint(
         )
         validate_transport_emission(config, emission)
         previous = payload.get("photon_transport")
-        if payload.get("accepted_steps", 0) > 0:
+        if previous is None and not config.enabled:
+            pass  # Explicitly disabled transport retains an absent runtime.
+        elif payload.get("accepted_steps", 0) > 0:
             if (
                 previous is None
                 or PhotonTransportConfig.from_dict(previous["config"]) != config
