@@ -13,9 +13,9 @@ import copy
 
 import numpy as np
 from numpy.testing import assert_allclose, assert_array_equal
+from tests.particle_states import single_particle_state as _single_particle_state
 
 from core.beamline_geometry import compute_visibility_mask
-from core.constants import C_MMNS, ELEMENTARY_CHARGE
 from core.equations import retarded_equations_of_motion
 from core.types import (
     BeamlineGeometryConfig,
@@ -27,44 +27,6 @@ from core.types import (
 from core.vectorized_interactions import ExternalSampleBatch
 
 
-def _single_particle_state(
-    *,
-    x: float = 0.0,
-    y: float = 0.0,
-    z: float = -1.0,
-    t: float = 0.0,
-    px: float = 0.0,
-    py: float = 0.0,
-    pz: float = 0.0,
-    charge: float = ELEMENTARY_CHARGE,
-    mass: float = 1.0,
-    gamma: float = 1.0,
-    bx: float = 0.0,
-    by: float = 0.0,
-    bz: float = 0.0,
-    char_time: float = 1e-3,
-) -> dict[str, np.ndarray]:
-    arr = np.array
-    return {
-        "x": arr([x], dtype=float),
-        "y": arr([y], dtype=float),
-        "z": arr([z], dtype=float),
-        "t": arr([t], dtype=float),
-        "Px": arr([px], dtype=float),
-        "Py": arr([py], dtype=float),
-        "Pz": arr([pz], dtype=float),
-        "Pt": arr([gamma * mass * C_MMNS], dtype=float),
-        "gamma": arr([gamma], dtype=float),
-        "bx": arr([bx], dtype=float),
-        "by": arr([by], dtype=float),
-        "bz": arr([bz], dtype=float),
-        "bdotx": arr([0.0], dtype=float),
-        "bdoty": arr([0.0], dtype=float),
-        "bdotz": arr([0.0], dtype=float),
-        "q": arr([charge], dtype=float),
-        "m": arr([mass], dtype=float),
-        "char_time": arr([char_time], dtype=float),
-    }
 
 
 def _z_pipe(radius: float = 5.0, length: float = 100.0) -> Occluder:

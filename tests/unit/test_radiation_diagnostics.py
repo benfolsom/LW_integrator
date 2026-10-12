@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+from tests.particle_states import empty_driver_state as _empty_driver_state
 
 from core import diagnostics
 from core import equations
@@ -47,30 +48,6 @@ def _make_integrator_state() -> dict:
     }
 
 
-def _empty_driver_state() -> dict:
-    return {
-        key: np.array([], dtype=float)
-        for key in (
-            "x",
-            "y",
-            "z",
-            "t",
-            "Px",
-            "Py",
-            "Pz",
-            "Pt",
-            "gamma",
-            "bx",
-            "by",
-            "bz",
-            "bdotx",
-            "bdoty",
-            "bdotz",
-            "q",
-            "m",
-            "char_time",
-        )
-    }
 
 
 def test_radiation_mode_defaults_to_off_and_rejects_legacy_bdot() -> None:

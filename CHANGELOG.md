@@ -52,6 +52,9 @@ and boundary studies), plus subsequent integration updates.
   CDF. Report a transport energy/four-momentum ledger and per-step scattering
   energy exchange. Treat explicitly disabled settings as absent in testbed
   configurations and when resuming native checkpoints without transport.
+- Trim copied test algorithms and share identical fixtures and runner setup,
+  preserving numerical assertions and strengthening dead-particle retry coverage.
+  Runtime code, numerical defaults, and physics tolerances are unchanged.
 
 ## v0.11.0 — 2026-10-10 — exact histories, native PIC, and boundary studies
 
