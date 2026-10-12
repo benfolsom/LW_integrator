@@ -1,5 +1,8 @@
 {
-  "steps": 2500,
+  "steps": 1200,
+  "auto_duration_enabled": true,
+  "auto_duration_crossing_steps": 600,
+  "auto_duration_post_factor": 2.0,
   "seed": 1623868464,
   "simulation_type": "BUNCH_TO_BUNCH",
   "energy_display": true,

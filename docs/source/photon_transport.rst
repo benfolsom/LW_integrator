@@ -7,6 +7,12 @@ Photon transport (opt-in)
 Photons as particles
 --------------------------------------------------
 
+.. warning::
+
+   Photon transport is **experimental** and off by default. It is validated
+   only by the bounded regressions in the test suite, not against measured
+   cross sections; see below for scope.
+
 Enable the separate ``photon_transport`` object alongside stochastic emission.
 Transport is supported only by the native lab-time pair/many-particle runner.
 The general CLI and testbed runner reject enabled transport: their common
@@ -86,8 +92,8 @@ kernel [PT_Ritus]_ [PT_Review]_ [PT_King]_. With energy fraction :photon-math:`<
 
 
 Here
-:photon-math:`<span class="math">$\chi_\gamma=(E_\gamma/mc^2)|\mathbf E_\perp+\hat n\times\mathbf B|/E_S$</span>`
-and :photon-math:`<span class="math">$E_S=m^2c^3/(|e|\hbar)$</span>`. Fields use native Gaussian units. Numerical
+:photon-math:`<span class="math">$\chi_\gamma=(E_\gamma/mc^2)\lvert\mathbf E_\perp+\hat n\times\mathbf B\rvert/E_S$</span>`
+and :photon-math:`<span class="math">$E_S=m^2c^3/(\lvert e\rvert\hbar)$</span>`. Fields use native Gaussian units. Numerical
 quadrature constructs the rate using 128 Gauss–Legendre nodes with a cosine
 change of variable. The 4097-point energy-split CDF is built only for an accepted
 conversion. Both calculations retain finite-energy support, unlike a rate

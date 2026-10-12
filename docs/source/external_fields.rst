@@ -7,6 +7,10 @@ The provider replaces the configured base fields and gradient. Combining it
 with nonzero base fields or hard spatial/time windows raises ``ValueError``;
 the provider must implement its own smooth entrances and exits.
 
+The provider hook is **experimental**. For energy-loss and channeling work use
+the exact route below (``INERTIAL_PREHISTORY`` with the second-order endpoint
+update); the ordinary update is first order in timestep.
+
 Provider contract
 -------------------
 

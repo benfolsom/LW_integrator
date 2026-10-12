@@ -387,7 +387,7 @@ representative deposition rewrites historical source charge, as explained in
 every macro cloud; no reduced-source performance claim is made.
 
 Fixed-step audit counterparts (2026-10-06)
------------------------------------------
+------------------------------------------
 
 Persistent transverse charge clouds also support the fixed proper-step
 charge-only exact route with ``INERTIAL_PREHISTORY``. Initial canonical
@@ -567,7 +567,7 @@ Diagnostic values and signed energy increments are preserved in the ledger.
 The floor is a resolution allowance, not a proof of energy conservation.
 
 Fixed reduction for bounded exact references
--------------------------------------------
+--------------------------------------------
 
 ``ExactSourceReductionConfig`` is an opt-in initial discretization under
 ``MagneticDipoleConfig.exact_source_reduction``. It supports charge-only,

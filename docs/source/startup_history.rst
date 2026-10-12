@@ -61,18 +61,68 @@ or ``retarded_integrator`` keyword). The same message is then issued as a
 A run that passes is unchanged: the check reads the initial states and does not
 modify them.
 
-Sampled path and INERTIAL_PREHISTORY
-------------------------------------
+Sampled versus exact retarded path
+----------------------------------
 
-``INERTIAL_PREHISTORY`` is an exact-path mode: it builds an analytic
-straight-line source history for the light-cone root solver. The sampled path
-(default, chrono matching) is not given the same mode. Its source histories are
-index-aligned trajectory lists, so a prehistory would have to be prepended to
-``trajectory_ext`` and every consumer of the step index (chrono matching, the
-``COLD_START`` origin gating, ``APPROXIMATE_BACK_HISTORY`` lookups, checkpoint
-and output trajectories, energy ledgers) would have to skip or offset it. That
-is not a cheap change, and the sampled path is a labelled diagnostic that
-failed timestep, source-resolution and zero-chirp convergence in the October
-2026 benchmarks. Use the exact path with ``INERTIAL_PREHISTORY`` for physical
-claims; use the check above to decide whether a sampled ``COLD_START`` run is
-admissible at all.
+The two retarded routes differ in how they hold source history.
+
+*Exact path.* ``INERTIAL_PREHISTORY`` builds an analytic straight-line source
+history for the light-cone root solver, so the interaction is complete from
+the first step. It needs the exact RFS or retarded-dipole configuration; see
+:doc:`exact_path`.
+
+*Sampled path* (the default for ordinary charge runs, with chrono matching).
+Its source histories are index-aligned trajectory lists, so it has no
+``INERTIAL_PREHISTORY``: a prehistory would have to be prepended to
+``trajectory_ext`` and every consumer of the step index would have to offset
+it. Its start-up modes are ``COLD_START`` and ``APPROXIMATE_BACK_HISTORY``,
+which is what the check above screens.
+
+Both failures found in the October 2026 benchmarks, where the sampled path
+failed timestep, source-resolution and zero-chirp controls, have been fixed:
+
+* Missing start-up history. Runs whose interaction falls inside the missing
+  interval are now rejected by the preflight check above instead of running
+  silently wrong.
+* Smeared children inheriting the parent's retarded event. Each smeared child
+  source is now matched to its own light cone, with its own index, velocity and
+  acceleration, as for exact persistent clouds. Point sources are unchanged
+  bit for bit. Interpolated chrono matching, variable-geometry
+  self-consistency and pseudo-grid space charge keep the shared-event
+  expansion.
+
+The sampled path is therefore a valid method when the source history is
+complete (the check passes) and the usual convergence checks are made:
+timestep, source resolution, smearing and, if used, chrono tolerance. It
+remains the faster route, about ten times faster than the exact path in
+comparable runs. It does not remove the need for those checks; a small
+mass-shell residual is not an accuracy certificate.
+
+When to use which:
+
+* Use the sampled path for parameter scans, sweeps and optimisation, for
+  long runs, and for pairs that start far enough apart that the check passes.
+  Confirm important points on the exact path.
+* Use the exact path with ``INERTIAL_PREHISTORY`` when the bunches interact
+  from the first step (close starts, short runs, visibility gates, driver
+  trains, same-bunch charge fields, intrinsic moments), when the source
+  motion is strongly accelerated or kicked, or for a final reference result.
+
+``COLD_START`` rule
+-------------------
+
+``COLD_START`` is valid only where the fields are negligible for long enough to
+build a source history. That is a physical statement about the initial
+condition, not a numerical convenience: an interaction that has already begun
+cannot be started from an empty history. The preflight check enforces the
+screening version of it. Prefer ``INERTIAL_PREHISTORY`` wherever the exact path
+is available. Use ``COLD_START`` for a genuine turn-on transient or a start
+with a separation large enough that the interaction begins after about ``R/c``.
+``APPROXIMATE_BACK_HISTORY`` is an explicitly labelled diagnostic and legacy
+reproduction mode.
+
+When a sampled-path run mixes species with very different gamma, the check uses
+each observer's own lab time. A stationary heavy driver advances little lab time
+per proper-time step, so the run length needed to pass can be much larger than
+the crossing time. Select ``auto_duration_enabled`` (crossing steps and post
+factor) as in ``configs/run_configs/example_b2b_relativistic_proton_stationary_lead_ion.json``.

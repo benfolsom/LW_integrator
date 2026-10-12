@@ -307,7 +307,9 @@ COLD_START gating mechanism
 ``COLD_START`` suppresses early retarded forces until accumulated observer
 travel exceeds a geometry-dependent threshold. This maintained startup gate
 models a turn-on approximation, chiefly for the legacy source/image geometry.
-It is not a proof of a causal interacting history. Exact source evaluation
+It is not a proof of a causal interacting history, and it is valid only where
+the fields are negligible for long enough to build a source history; a preflight
+check rejects other runs (:doc:`startup_history`). Prefer ``INERTIAL_PREHISTORY``. Exact source evaluation
 separately solves light cones and requires explicit history coverage.
 
 Gating threshold formula
