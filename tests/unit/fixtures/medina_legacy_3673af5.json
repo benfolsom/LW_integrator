@@ -3,5 +3,10 @@
   "description": "SHA256 over all numerical state arrays for 32 proper-time intervals; generated with unmodified baseline equations, no RR validity guard.",
   "67620000000.0:19569.511835591835": "eb16e613ca569eaafbab372f67e71dc5760d2df17b313d88af6cc85299d6c34a",
   "676200000000.0:19569.511835591835": "85e793746bee5a5a8ef72d9eec7ca7f0413d9713cb965edde73c0a4779cce408",
-  "100000.0:2": "50d9d175ad781e3f34320d6387dbc67ce14013a6fa3c2cce1bab2a9501176d42"
+  "100000.0:2": "50d9d175ad781e3f34320d6387dbc67ce14013a6fa3c2cce1bab2a9501176d42",
+  "corrected_high_gamma_force": {
+    "description": "October 2026 physics fix on 3032cb4906e05da72c6f0f31dcf7267a5c5c0eb1: stable longitudinal force projection changes radiation diagnostics. Original snapshot hashes above remain frozen. The base commit already differs from the older strong-field snapshot. Independent validation uses analytic acceleration and power, and Landau-Lifshitz loss.",
+    "67620000000.0:19569.511835591835": "ef7f4a719169893442bd2ca4b65bb3a3e4b1e35c49a4fc78e725fef96b56ad47",
+    "676200000000.0:19569.511835591835": "ca3ebc42a70d88a5325a51d7be017dbab95a6e76388fd20040b70c395bc07548"
+  }
 }

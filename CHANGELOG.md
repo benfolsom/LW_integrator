@@ -5,6 +5,14 @@
 Includes the v0.11.0 changes released on 2026-10-10 (exact histories, native PIC,
 and boundary studies), plus subsequent integration updates.
 
+- Fix cancellation in distant PIC cell fields and potentials using cell
+  quadrature, match sampled retarded histories to the observer's light cone,
+  remove the sampled force's silent gamma cutoff, and preserve longitudinal
+  Medina acceleration at high gamma in both LW and PIC callers. These fixes
+  change affected numerical results; configuration defaults are unchanged.
+
+## v0.11.0 — 2026-10-10 — exact histories, native PIC, and boundary studies
+
 ### Exact retarded fields and source histories
 
 - Add directional visibility gates for exact charge fields, trajectory-based

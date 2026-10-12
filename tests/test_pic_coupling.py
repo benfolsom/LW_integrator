@@ -206,6 +206,27 @@ def test_medina_full_force_derivative_physical_charge_and_population_ledger():
     ):
         assert ledger_many[key] == pytest.approx(7e5 * ledger_one[key], rel=1e-14)
 
+    # The PIC caller must retain longitudinal acceleration when beta rounds
+    # to one. Constant parallel force has gamma-independent Lienard power.
+    for u in (10.0, 1e6, 1e8, 1e9):
+        s = Species(
+            "electron",
+            [[0, 0, 0]],
+            [[u, 0, 0]],
+            -1.602176634e-19,
+            9.1093837015e-31,
+            [7.0],
+        )
+        rr, dt = MedinaPIC(), 1e-13
+        predicted = s.momentum_mc + np.array([[1.0, 0, 0]])
+        rr.apply(s, predicted, 0.5 * dt, dt)
+        _, ledger = rr.apply(s, predicted, 1.5 * dt, dt)
+        force = s.mass_kg * C / dt
+        tau = 2 * COULOMB * s.charge_c**2 / (3 * s.mass_kg * C**3)
+        assert ledger["far_radiated_energy_j"] == pytest.approx(
+            7 * tau * force**2 / s.mass_kg * dt, rel=2e-10, abs=0.0
+        )
+
 
 @pytest.mark.parametrize("change", ["missing", "accepted", "near", "gpu"])
 def test_medina_rejects_paths_without_resolved_cpu_midpoint_correction(change):

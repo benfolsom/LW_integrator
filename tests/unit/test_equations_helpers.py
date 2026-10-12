@@ -803,27 +803,33 @@ def test_beta_helpers_limit_and_recover_gamma() -> None:
     assert equations._calculate_one_minus_beta_squared(1.0, 0.0, 0.0) > 0.0
 
 
-def test_medina_kinematics_preserve_longitudinal_cancellation() -> None:
-    gamma = 10.0
+@pytest.mark.parametrize("gamma", [10.0, 1e3, 1e6, 1e7, 1e8, 1e9])
+@pytest.mark.parametrize("direction", [(0.0, 0.0, 1.0), (1.0, 1.0, 0.0)])
+def test_medina_kinematics_preserve_longitudinal_cancellation(gamma, direction) -> None:
     mass = 1.0
     charge = 1.0
     beta_z = np.sqrt(1.0 - 1.0 / gamma**2)
     force_z = 5.0
+    direction = np.array(direction) / np.linalg.norm(direction)
+    beta = direction * beta_z
+    force = direction * force_z
 
     beta_dot_t, dgamma_dt = equations._derive_relativistic_kinematics_from_force(
-        (0.0, 0.0, force_z),
-        (0.0, 0.0, beta_z),
+        force,
+        beta,
         gamma,
         mass,
     )
 
-    assert beta_dot_t[2] == pytest.approx(force_z / (gamma**3 * mass * C_MMNS))
+    np.testing.assert_allclose(
+        beta_dot_t, force / (gamma**3 * mass * C_MMNS), rtol=5e-10, atol=0.0
+    )
     assert dgamma_dt == pytest.approx(beta_z * force_z / (mass * C_MMNS))
 
     medina_result = equations.compute_medina_radiation_reaction(
-        external_force=(0.0, 0.0, force_z),
+        external_force=force,
         external_force_time_derivative=(0.0, 0.0, 0.0),
-        beta=(0.0, 0.0, beta_z),
+        beta=beta,
         acceleration=tuple(C_MMNS * value for value in beta_dot_t),
         gamma=gamma,
         mass=mass,
@@ -832,17 +838,20 @@ def test_medina_kinematics_preserve_longitudinal_cancellation() -> None:
     )
     impulse, capped = equations._cap_medina_radiation_reaction_impulse(
         impulse=medina_result.radiation_reaction_impulse,
-        external_force=(0.0, 0.0, force_z),
+        external_force=force,
         coordinate_dt=1.0,
         max_impulse_fraction=0.0,
     )
 
     assert capped is False
     assert np.linalg.norm(impulse) == pytest.approx(0.0, abs=1.0e-20)
+    assert medina_result.far_radiated_power == pytest.approx(
+        medina_result.response_time * force_z**2 / mass, rel=5e-10, abs=0.0
+    )
 
 
-def test_medina_kinematics_give_transverse_synchrotron_damping() -> None:
-    gamma = 10.0
+@pytest.mark.parametrize("gamma", [10.0, 1e3, 1e6, 1e9])
+def test_medina_kinematics_give_transverse_synchrotron_damping(gamma: float) -> None:
     mass = 1.0
     charge = 1.0
     beta_z = np.sqrt(1.0 - 1.0 / gamma**2)
