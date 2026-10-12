@@ -57,6 +57,10 @@ from .self_consistency import (
     emit_self_consistency_runtime_warnings,
     self_consistent_step,
 )
+from .startup_history_guard import (
+    DEFAULT_STARTUP_HISTORY_TOLERANCE,
+    check_startup_history,
+)
 from .types import (
     AdaptivePairReturnConfig,
     BeamlineGeometryConfig,
@@ -3345,6 +3349,8 @@ def retarded_integrator(
     checkpoint: Optional[CheckpointConfig] = None,
     adaptive_pair_return: Optional[AdaptivePairReturnConfig] = None,
     source_history_representation: str = "light_cone_quintic",
+    allow_incomplete_startup_history: bool = False,
+    startup_history_tolerance: float = DEFAULT_STARTUP_HISTORY_TOLERANCE,
 ) -> Tuple[
     Trajectory,
     Trajectory,
@@ -3475,6 +3481,15 @@ def retarded_integrator(
         Optional fixed-size particle-loss predicates. Lost particles are marked
         dead, retain their trajectory slot, and stop contributing source charge
         after the loss step.
+    allow_incomplete_startup_history:
+        ``COLD_START`` and ``APPROXIMATE_BACK_HISTORY`` have no source history
+        before ``t0``. A preflight check bounds the force impulse an observer
+        would miss and raises :class:`StartupHistoryError` above
+        ``startup_history_tolerance``, or when a visibility gate window meets
+        the missing region. This flag downgrades the error to a loud warning,
+        for deliberate diagnostics only.
+    startup_history_tolerance:
+        Largest tolerated missing fraction of the estimated total impulse.
 
     Returns
     -------
@@ -4168,6 +4183,20 @@ def retarded_integrator(
     taper_exact_pair_prehistory = bool(
         causal_c5_enabled or (adaptive_pair_return.enabled and not causal_local_enabled)
     )
+    if checkpoint is None or checkpoint.resume_from is None:
+        check_startup_history(
+            init_rider,
+            init_driver,
+            sim_type=sim_type,
+            startup_mode=startup_mode,
+            steps=steps,
+            h_step=h_step,
+            beamline_geometry=beamline_geometry,
+            tolerance=startup_history_tolerance,
+            allow_incomplete=allow_incomplete_startup_history,
+            logger=logger,
+        )
+
     inertial_prehistory_knot_count = _INERTIAL_PREHISTORY_KNOT_COUNT
     inertial_prehistory_time_offsets_ns: np.ndarray | None = None
     initial_causal_c5_source_history = None
@@ -5934,6 +5963,8 @@ def run_integrator(
         stochastic_emission=config.stochastic_emission,
         photon_transport=config.photon_transport,
         source_history_representation=config.source_history_representation,
+        allow_incomplete_startup_history=config.allow_incomplete_startup_history,
+        startup_history_tolerance=config.startup_history_tolerance,
         macroparticle_charge_multiplier=config.macroparticle_charge_multiplier,
         macroparticle_sigma_multiplier=config.macroparticle_sigma_multiplier,
         macroparticle_use_momentum_errors=config.macroparticle_use_momentum_errors,

@@ -691,6 +691,22 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         help="Source interpolation; proper_velocity preserves accepted knots and enforces timelike interpolation.",
     )
     parser.add_argument(
+        "--allow-incomplete-startup-history",
+        dest="allow_incomplete_startup_history",
+        action="store_true",
+        default=None,
+        help="Downgrade the COLD_START/APPROXIMATE_BACK_HISTORY startup-history "
+        "preflight error to a loud warning (deliberate diagnostics only).",
+    )
+    parser.add_argument(
+        "--startup-history-tolerance",
+        dest="startup_history_tolerance",
+        type=float,
+        default=None,
+        help="Largest tolerated missing fraction of the estimated total impulse "
+        "in the startup-history preflight (default 1e-3).",
+    )
+    parser.add_argument(
         "--radiation-reaction-mode",
         dest="radiation_reaction_mode",
         choices=RADIATION_REACTION_MODE_CHOICES,
@@ -1944,6 +1960,8 @@ def _merge_simulation_payload(
         "startup_mode",
         "radiation_reaction_mode",
         "source_history_representation",
+        "allow_incomplete_startup_history",
+        "startup_history_tolerance",
         "image_subcharge_count",
         "use_image_weighting",
     )
@@ -2500,6 +2518,10 @@ def _build_integrator_config(payload: Mapping[str, Any]) -> IntegratorConfig:
         source_history_representation=str(
             payload.get("source_history_representation", "light_cone_quintic")
         ),
+        allow_incomplete_startup_history=_parse_allow_incomplete_startup_history(
+            payload.get("allow_incomplete_startup_history", False)
+        ),
+        startup_history_tolerance=float(payload.get("startup_history_tolerance", 1e-3)),
         radiation_reaction_mode=str(
             payload.get(
                 "radiation_reaction_mode",
@@ -2707,6 +2729,14 @@ def _parse_chrono_mode(value: Any) -> ChronoMatchingMode:
     raise SimulationConfigError(
         "chrono_mode must be a string or ChronoMatchingMode instance"
     )
+
+
+def _parse_allow_incomplete_startup_history(value: Any) -> bool:
+    if not isinstance(value, bool):
+        raise SimulationConfigError(
+            "allow_incomplete_startup_history must be a JSON boolean"
+        )
+    return value
 
 
 def _parse_startup_mode(value: Any) -> StartupMode:
@@ -3613,6 +3643,10 @@ def run_simulation(request: SimulationRequest) -> tuple:
         stochastic_emission=request.config.stochastic_emission,
         photon_transport=request.config.photon_transport,
         source_history_representation=request.config.source_history_representation,
+        allow_incomplete_startup_history=(
+            request.config.allow_incomplete_startup_history
+        ),
+        startup_history_tolerance=request.config.startup_history_tolerance,
         adaptive_timestep=request.adaptive_timestep,
         self_consistency=request.self_consistency,
         space_charge=request.space_charge,

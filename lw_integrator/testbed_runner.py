@@ -496,6 +496,8 @@ class SimulationOptions:
     driver_polarization: float = 1.0
 
     source_history_representation: str = "light_cone_quintic"
+    allow_incomplete_startup_history: bool = False
+    startup_history_tolerance: float = 1e-3
     radiation_reaction_mode: str = "medina_lad"
 
     # Fixed-size physical particle-loss options
@@ -935,6 +937,8 @@ class SimulationOptions:
             ),
             "stochastic_emission": dict(self.stochastic_emission or {}),
             "source_history_representation": self.source_history_representation,
+            "allow_incomplete_startup_history": (self.allow_incomplete_startup_history),
+            "startup_history_tolerance": self.startup_history_tolerance,
             "particle_loss": {
                 "enabled": self.particle_loss_enabled,
                 "loss_radius_mm": self.particle_loss_radius_mm,
@@ -1919,6 +1923,10 @@ class SimulationOptions:
             source_history_representation=_str(
                 "source_history_representation", "light_cone_quintic"
             ),
+            allow_incomplete_startup_history=_strict_bool(
+                "allow_incomplete_startup_history", False
+            ),
+            startup_history_tolerance=_float("startup_history_tolerance", 1e-3),
             radiation_reaction_mode=_str(
                 "radiation_reaction_mode", default_radiation_reaction_mode
             ),
@@ -3747,6 +3755,8 @@ def run_testbed(
             stochastic_emission=options.stochastic_emission,
             photon_transport=options.photon_transport,
             source_history_representation=options.source_history_representation,
+            allow_incomplete_startup_history=options.allow_incomplete_startup_history,
+            startup_history_tolerance=options.startup_history_tolerance,
             pseudo_grid=pseudo_grid_config,
             driver_train=driver_train_config,
             cavity_exit=cavity_exit_config,

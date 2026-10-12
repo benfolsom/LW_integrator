@@ -88,6 +88,7 @@ def _run_neutron(
 ):
     neutron = get_species("neutron")
     return retarded_integrator(
+        allow_incomplete_startup_history=True,
         steps=steps,
         h_step=h_step,
         wall_z=0.0,
@@ -155,6 +156,7 @@ def test_charged_electron_precesses_without_translation_when_at_rest() -> None:
     )
 
     trajectory, _, soa, _, *_ = retarded_integrator(
+        allow_incomplete_startup_history=True,
         steps=11,
         h_step=1.0e-6,
         wall_z=0.0,
@@ -286,6 +288,7 @@ def test_fixed_geometry_keeps_prescribed_gradient_at_start_position(provider) ->
     )
     neutron = get_species("neutron")
     variable, *_ = retarded_integrator(
+        allow_incomplete_startup_history=True,
         steps=2,
         h_step=1.0e-3,
         wall_z=0.0,
@@ -339,6 +342,7 @@ def test_static_rest_gradient_rejects_relativistic_particle() -> None:
 
     with pytest.raises(NotImplementedError, match=r"\|beta\| <= 0.01"):
         retarded_integrator(
+            allow_incomplete_startup_history=True,
             steps=2,
             h_step=1.0e-3,
             wall_z=0.0,
@@ -377,6 +381,7 @@ def test_static_rest_gradient_rejects_step_that_exits_low_beta_domain() -> None:
 
     with pytest.raises(NotImplementedError, match="this step would span"):
         retarded_integrator(
+            allow_incomplete_startup_history=True,
             steps=2,
             h_step=1.0e-3,
             wall_z=0.0,
@@ -452,11 +457,11 @@ def test_magnetic_dipole_path_is_identical_across_forced_python_and_numba_kernel
 
     monkeypatch.setattr(vectorized_interactions, "NUMBA_AVAILABLE", False)
     python_rider, python_driver, *_ = retarded_integrator(
-        init_rider=copy.deepcopy(rider), **common
+        allow_incomplete_startup_history=True, init_rider=copy.deepcopy(rider), **common
     )
     monkeypatch.setattr(vectorized_interactions, "NUMBA_AVAILABLE", True)
     numba_rider, numba_driver, *_ = retarded_integrator(
-        init_rider=copy.deepcopy(rider), **common
+        allow_incomplete_startup_history=True, init_rider=copy.deepcopy(rider), **common
     )
 
     for python_trajectory, numba_trajectory in (
@@ -492,6 +497,7 @@ def test_observer_moment_is_not_scaled_by_macroparticle_population() -> None:
     state["macro_population"] = np.array([population])
 
     trajectory, *_ = retarded_integrator(
+        allow_incomplete_startup_history=True,
         steps=2,
         h_step=1.0e-6,
         wall_z=0.0,
@@ -528,6 +534,7 @@ def test_named_magnetic_species_rejects_mismatched_particle_mass_or_charge() -> 
 
     with pytest.raises(ValueError, match="rider magnetic species 'electron' expects"):
         retarded_integrator(
+            allow_incomplete_startup_history=True,
             steps=2,
             h_step=1.0e-6,
             wall_z=0.0,
@@ -566,6 +573,7 @@ def test_enabled_run_does_not_leak_spin_state_into_reused_disabled_input() -> No
     )
 
     enabled, *_ = retarded_integrator(
+        allow_incomplete_startup_history=True,
         init_rider=state,
         magnetic_dipole=MagneticDipoleConfig(
             enabled=True,
@@ -574,6 +582,7 @@ def test_enabled_run_does_not_leak_spin_state_into_reused_disabled_input() -> No
         **kwargs,
     )
     disabled, *_ = retarded_integrator(
+        allow_incomplete_startup_history=True,
         init_rider=state,
         magnetic_dipole=MagneticDipoleConfig(enabled=False),
         **kwargs,
@@ -605,6 +614,7 @@ def test_disabled_restart_strips_magnetic_state_from_enabled_output() -> None:
         use_numba=False,
     )
     enabled, *_ = retarded_integrator(
+        allow_incomplete_startup_history=True,
         init_rider=_single_particle_state(
             mass_amu=electron.mass_amu, charge_e=electron.charge_e
         ),
@@ -618,6 +628,7 @@ def test_disabled_restart_strips_magnetic_state_from_enabled_output() -> None:
     )
 
     restarted, *_ = retarded_integrator(
+        allow_incomplete_startup_history=True,
         init_rider=enabled[-1],
         magnetic_dipole=MagneticDipoleConfig(enabled=False),
         **common,
@@ -657,6 +668,7 @@ def test_disabled_dipoles_leave_legacy_state_shape_and_values_unchanged() -> Non
 
     baseline, *_ = retarded_integrator(init_rider=copy.deepcopy(state), **kwargs)
     disabled, *_ = retarded_integrator(
+        allow_incomplete_startup_history=True,
         init_rider=copy.deepcopy(state),
         magnetic_dipole=MagneticDipoleConfig(enabled=False),
         **kwargs,
@@ -708,10 +720,16 @@ def test_enabled_stern_gerlach_with_zero_gradient_is_exact_kinematic_noop() -> N
     )
 
     without_sg, *_ = retarded_integrator(
-        init_rider=copy.deepcopy(state), magnetic_dipole=spin_only, **kwargs
+        allow_incomplete_startup_history=True,
+        init_rider=copy.deepcopy(state),
+        magnetic_dipole=spin_only,
+        **kwargs,
     )
     with_sg, *_ = retarded_integrator(
-        init_rider=copy.deepcopy(state), magnetic_dipole=zero_gradient, **kwargs
+        allow_incomplete_startup_history=True,
+        init_rider=copy.deepcopy(state),
+        magnetic_dipole=zero_gradient,
+        **kwargs,
     )
 
     for step_without, step_with in zip(without_sg, with_sg):
@@ -735,6 +753,7 @@ def test_pseudo_grid_rejects_magnetic_spin_reconstruction() -> None:
     neutron = get_species("neutron")
     with pytest.raises(NotImplementedError, match="spin reconstruction"):
         retarded_integrator(
+            allow_incomplete_startup_history=True,
             steps=2,
             h_step=1.0e-3,
             wall_z=0.0,
@@ -754,6 +773,7 @@ def test_integrator_rejects_nonpositive_proper_time_step() -> None:
     neutron = get_species("neutron")
     with pytest.raises(ValueError, match="h_step must be finite and positive"):
         retarded_integrator(
+            allow_incomplete_startup_history=True,
             steps=2,
             h_step=-1.0e-3,
             wall_z=0.0,
@@ -787,6 +807,7 @@ def test_driver_train_prehistory_local_field_matches_each_synthetic_state() -> N
     )
 
     _, driver_trajectory, _, driver_soa, *_ = retarded_integrator(
+        allow_incomplete_startup_history=True,
         steps=2,
         h_step=1.0,
         wall_z=0.0,
