@@ -13,6 +13,7 @@ import pickle
 
 import numpy as np
 import pytest
+from tests.particle_states import distance_state as _make_state
 
 import core.distances as distances
 from core.constants import NUMERICAL_EPSILON
@@ -23,35 +24,6 @@ from core.vectorized_interactions import NUMBA_AVAILABLE, _compute_forces_numba_
 # Shared helpers
 # ---------------------------------------------------------------------------
 
-def _make_state(
-    *,
-    x: list[float] | None = None,
-    y: list[float] | None = None,
-    z: list[float] | None = None,
-    t: list[float] | None = None,
-    bx: list[float] | None = None,
-    by: list[float] | None = None,
-    bz: list[float] | None = None,
-    char_time: list[float] | None = None,
-) -> dict[str, np.ndarray]:
-    x_vals = [0.0] if x is None else x
-    size = len(x_vals)
-
-    def _arr(values: list[float] | None, default: float = 0.0) -> np.ndarray:
-        if values is None:
-            values = [default] * size
-        return np.array(values, dtype=float)
-
-    return {
-        "x": _arr(x),
-        "y": _arr(y),
-        "z": _arr(z),
-        "t": _arr(t),
-        "bx": _arr(bx),
-        "by": _arr(by),
-        "bz": _arr(bz),
-        "char_time": _arr(char_time, 1e-3),
-    }
 
 
 # ---------------------------------------------------------------------------
