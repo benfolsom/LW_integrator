@@ -131,6 +131,7 @@ def _run(
     external_field: ExternalFieldConfig | None = None,
 ) -> Any:
     return retarded_integrator(
+        allow_incomplete_startup_history=True,
         steps=steps,
         h_step=h_step,
         wall_z=0.0,

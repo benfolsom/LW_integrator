@@ -121,6 +121,7 @@ def _run_irregular_layout_case(
     # retarded_integrator also returns diagnostics; the tests need the
     # rider/driver trajectories and their SOA views only.
     return retarded_integrator(
+        allow_incomplete_startup_history=True,
         steps=24,
         h_step=1.0e-4,
         wall_z=0.0,
@@ -171,6 +172,7 @@ def _run_crossing_case(
     # retarded_integrator also returns diagnostics; the tests need the
     # rider/driver trajectories and their SOA views only.
     return retarded_integrator(
+        allow_incomplete_startup_history=True,
         steps=steps,
         h_step=h_step,
         wall_z=0.0,

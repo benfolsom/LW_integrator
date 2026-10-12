@@ -105,6 +105,7 @@ def test_driver_train_zero_charge_smoke_returns_trimmed_active_window():
         z_cutoff=0.0,
         chrono_mode=ChronoMatchingMode.FAST,
         startup_mode=StartupMode.COLD_START,
+        allow_incomplete_startup_history=True,
         radiation_reaction_mode="off",
         driver_train=DriverTrainConfig(
             enabled=True,
@@ -153,6 +154,7 @@ def test_rider_exit_mode_mutes_driver_train_bunches_before_rider_halt():
         z_cutoff=0.0,
         chrono_mode=ChronoMatchingMode.FAST,
         startup_mode=StartupMode.COLD_START,
+        allow_incomplete_startup_history=True,
         radiation_reaction_mode="off",
         driver_train=DriverTrainConfig(
             enabled=True,

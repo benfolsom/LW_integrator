@@ -107,7 +107,9 @@ simulation, and confirm that the regression tooling works on your machine.
    relative closing speed, 1,000 mm prehistory separation, and output every
    100 steps. Start from a maintained config and keep its schema. Use
    ``COLD_START`` for a turn-on model and ``INERTIAL_PREHISTORY`` for the exact
-   endpoint route. Keep ``medina_lad`` unless explicitly running an RR-off
+   endpoint route. A preflight check rejects ``COLD_START`` and
+   ``APPROXIMATE_BACK_HISTORY`` runs whose missing source history matters; see
+   :doc:`startup_history`. Keep ``medina_lad`` unless explicitly running an RR-off
    diagnostic. The LW step is proper time; native PIC uses lab time.
 
    Missing self-consistency keys now select enabled ``fixed_geometry`` with

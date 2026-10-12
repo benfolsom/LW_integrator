@@ -190,6 +190,12 @@ class LienardWiechertIntegrator:
             use_conducting_image_weighting=use_image_weighting,
             driver_train=self.config.driver_train if self.config else None,
             magnetic_dipole=self.config.magnetic_dipole if self.config else None,
+            allow_incomplete_startup_history=(
+                self.config.allow_incomplete_startup_history if self.config else False
+            ),
+            startup_history_tolerance=(
+                self.config.startup_history_tolerance if self.config else 1e-3
+            ),
         )
 
         return trajectory, driver

@@ -101,6 +101,7 @@ def _run(
     h_step: float,
 ):
     return retarded_integrator(
+        allow_incomplete_startup_history=True,
         steps=steps,
         h_step=h_step,
         wall_z=0.0,

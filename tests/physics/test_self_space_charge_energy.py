@@ -131,6 +131,7 @@ def _run_short_self_space_charge(
         ),
         chrono_mode=ChronoMatchingMode.FAST,
         startup_mode=StartupMode.COLD_START,
+        allow_incomplete_startup_history=True,
         space_charge=SpaceChargeConfig(
             enabled=space_charge_enabled,
             retarded=False,

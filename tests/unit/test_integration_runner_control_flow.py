@@ -267,6 +267,7 @@ def test_retarded_integrator_logs_numba_kernel_usage_when_available(
 
     messages: list[str] = []
     trajectory, driver, *_soa_out = retarded_integrator(
+        allow_incomplete_startup_history=True,
         steps=2,
         h_step=1e-3,
         wall_z=0.0,
@@ -325,6 +326,7 @@ def test_retarded_integrator_logs_proximity_transition_zone(
     )
 
     trajectory, driver, *_soa_out = retarded_integrator(
+        allow_incomplete_startup_history=True,
         steps=2,
         h_step=1.0,
         wall_z=0.0,
@@ -394,6 +396,7 @@ def test_adaptive_b2b_step_passes_full_driver_soa_history(
     monkeypatch.setattr(integration_runner, "self_consistent_step", fake_step)
 
     retarded_integrator(
+        allow_incomplete_startup_history=True,
         steps=3,
         h_step=1e-3,
         wall_z=0.0,
@@ -421,6 +424,7 @@ def test_retarded_integrator_logs_when_numba_is_unavailable(
 
     logger = _LoggerRecorder()
     trajectory, driver, *_soa_out = retarded_integrator(
+        allow_incomplete_startup_history=True,
         steps=1,
         h_step=1e-3,
         wall_z=0.0,
@@ -446,6 +450,7 @@ def test_retarded_integrator_logs_when_numba_is_unavailable(
 def test_retarded_integrator_rejects_pseudo_grid_outside_bunch_to_bunch() -> None:
     with pytest.raises(NotImplementedError, match="BUNCH_TO_BUNCH"):
         retarded_integrator(
+            allow_incomplete_startup_history=True,
             steps=1,
             h_step=1e-3,
             wall_z=0.0,
@@ -487,6 +492,7 @@ def test_retarded_integrator_records_pseudo_grid_schedule_metadata_without_chang
     monkeypatch.setattr(integration_runner, "self_consistent_step", fake_step)
 
     base_rider, base_driver, *_base_soa = retarded_integrator(
+        allow_incomplete_startup_history=True,
         steps=2,
         h_step=0.5,
         wall_z=0.0,
@@ -500,6 +506,7 @@ def test_retarded_integrator_records_pseudo_grid_schedule_metadata_without_chang
         use_numba=False,
     )
     pseudo_rider, pseudo_driver, pseudo_rider_soa, *_pseudo_soa = retarded_integrator(
+        allow_incomplete_startup_history=True,
         steps=2,
         h_step=0.5,
         wall_z=0.0,
@@ -586,6 +593,7 @@ def test_retarded_integrator_uses_active_only_histories_and_effective_source_cha
     monkeypatch.setattr(integration_runner, "self_consistent_step", fake_step)
 
     pseudo_rider, pseudo_driver, *_pseudo_soa = retarded_integrator(
+        allow_incomplete_startup_history=True,
         steps=2,
         h_step=0.5,
         wall_z=0.0,
@@ -651,6 +659,7 @@ def test_retarded_integrator_uses_reduced_histories_for_pseudo_grid_when_adaptiv
     monkeypatch.setattr(integration_runner, "self_consistent_step", fake_step)
 
     pseudo_rider, *_pseudo_outputs = retarded_integrator(
+        allow_incomplete_startup_history=True,
         steps=2,
         h_step=0.5,
         wall_z=0.0,
@@ -710,6 +719,7 @@ def test_retarded_integrator_prunes_reduced_source_histories_when_causal_history
     monkeypatch.setattr(integration_runner, "self_consistent_step", fake_step)
 
     pseudo_rider, *_pseudo_outputs = retarded_integrator(
+        allow_incomplete_startup_history=True,
         steps=4,
         h_step=0.5,
         wall_z=0.0,
@@ -794,6 +804,7 @@ def test_retarded_integrator_uses_reduced_histories_and_self_excluded_space_char
     monkeypatch.setattr(integration_runner, "self_consistent_step", fake_step)
 
     pseudo_rider, pseudo_driver, *_pseudo_outputs = retarded_integrator(
+        allow_incomplete_startup_history=True,
         steps=2,
         h_step=0.5,
         wall_z=0.0,
@@ -869,6 +880,7 @@ def test_retarded_integrator_falls_back_to_full_histories_for_pseudo_grid_when_s
     monkeypatch.setattr(integration_runner, "self_consistent_step", fake_step)
 
     pseudo_rider, *_pseudo_outputs = retarded_integrator(
+        allow_incomplete_startup_history=True,
         steps=2,
         h_step=0.5,
         wall_z=0.0,
@@ -900,6 +912,7 @@ def test_retarded_integrator_matches_full_solver_for_pseudo_grid_with_space_char
         pseudo_grid: PseudoGridConfig | None,
     ) -> tuple[list[dict[str, object]], list[dict[str, object]], object, object]:
         return retarded_integrator(
+            allow_incomplete_startup_history=True,
             steps=3,
             h_step=1.0e-3,
             wall_z=0.0,
@@ -973,6 +986,7 @@ def test_retarded_integrator_matches_full_solver_when_pseudo_grid_prunes_causall
         pseudo_grid: PseudoGridConfig | None,
     ) -> tuple[list[dict[str, object]], list[dict[str, object]], object, object]:
         return retarded_integrator(
+            allow_incomplete_startup_history=True,
             steps=4,
             h_step=0.5,
             wall_z=0.0,
@@ -1029,6 +1043,7 @@ def test_retarded_integrator_pseudo_grid_active_subset_tracks_full_solver_for_as
 
     def run_case(pseudo_grid: PseudoGridConfig | None):
         return retarded_integrator(
+            allow_incomplete_startup_history=True,
             steps=5,
             h_step=1.0e-4,
             wall_z=0.0,
@@ -1089,6 +1104,7 @@ def test_retarded_integrator_pseudo_grid_active_subset_tracks_full_solver_with_a
 
     def run_case(pseudo_grid: PseudoGridConfig | None):
         return retarded_integrator(
+            allow_incomplete_startup_history=True,
             steps=5,
             h_step=1.0e-4,
             wall_z=0.0,
@@ -1152,6 +1168,7 @@ def test_retarded_integrator_pseudo_grid_active_subset_tracks_full_solver_with_s
 
     def run_case(pseudo_grid: PseudoGridConfig | None):
         return retarded_integrator(
+            allow_incomplete_startup_history=True,
             steps=5,
             h_step=1.0e-4,
             wall_z=0.0,
@@ -1242,6 +1259,7 @@ def test_retarded_integrator_energy_monitor_raises_on_large_jump(
 
     with pytest.raises(EnergyJumpDetected):
         retarded_integrator(
+            allow_incomplete_startup_history=True,
             steps=3,
             h_step=1.0,
             wall_z=100.0,
@@ -1304,6 +1322,7 @@ def test_retarded_integrator_adaptive_retry_uses_reduced_timestep(
     )
 
     trajectory, _, *_soa_out = retarded_integrator(
+        allow_incomplete_startup_history=True,
         steps=3,
         h_step=1.0,
         wall_z=100.0,
@@ -1367,6 +1386,7 @@ def test_retarded_integrator_accepts_energy_jump_after_max_refinement_attempts(
     )
 
     trajectory, driver, *_soa_out = retarded_integrator(
+        allow_incomplete_startup_history=True,
         steps=3,
         h_step=1.0,
         wall_z=100.0,
@@ -1431,6 +1451,7 @@ def test_retarded_integrator_accepts_energy_jump_at_minimum_timestep(
     )
 
     trajectory, driver, *_soa_out = retarded_integrator(
+        allow_incomplete_startup_history=True,
         steps=3,
         h_step=1.0,
         wall_z=100.0,
@@ -1497,6 +1518,7 @@ def test_retarded_integrator_gamma_blowup_without_adaptive_marks_particle_dead(
     )
 
     trajectory, driver, *_soa_out = retarded_integrator(
+        allow_incomplete_startup_history=True,
         steps=3,
         h_step=1.0,
         wall_z=100.0,
@@ -1556,6 +1578,7 @@ def test_retarded_integrator_gamma_blowup_at_min_timestep_marks_particle_dead(
     )
 
     trajectory, driver, *_soa_out = retarded_integrator(
+        allow_incomplete_startup_history=True,
         steps=3,
         h_step=1.0,
         wall_z=100.0,
@@ -1634,6 +1657,7 @@ def test_retarded_integrator_gamma_blowup_retries_with_reduced_timestep(
     )
 
     trajectory, driver, *_soa_out = retarded_integrator(
+        allow_incomplete_startup_history=True,
         steps=2,
         h_step=1.0,
         wall_z=100.0,
@@ -1699,6 +1723,7 @@ def test_retarded_integrator_gamma_blowup_hits_max_retries(
     )
 
     trajectory, driver, *_soa_out = retarded_integrator(
+        allow_incomplete_startup_history=True,
         steps=2,
         h_step=1.0,
         wall_z=100.0,
@@ -1772,6 +1797,7 @@ def test_retarded_integrator_returns_to_normal_timestep_after_stable_probe(
     )
 
     trajectory, driver, *_soa_out = retarded_integrator(
+        allow_incomplete_startup_history=True,
         steps=4,
         h_step=1.0,
         wall_z=100.0,
@@ -1849,6 +1875,7 @@ def test_retarded_integrator_unstable_probe_restarts_cooldown(
     )
 
     trajectory, driver, *_soa_out = retarded_integrator(
+        allow_incomplete_startup_history=True,
         steps=4,
         h_step=1.0,
         wall_z=100.0,
@@ -1911,6 +1938,7 @@ def test_retarded_integrator_marks_relative_cutoff_early_exit(
     monkeypatch.setattr(integration_runner, "self_consistent_step", fake_step)
 
     trajectory, driver, *_soa_out = retarded_integrator(
+        allow_incomplete_startup_history=True,
         steps=5,
         h_step=1.0,
         wall_z=0.0,
@@ -1959,6 +1987,7 @@ def test_retarded_integrator_halts_when_rider_reaches_cavity_exit(
     monkeypatch.setattr(integration_runner, "self_consistent_step", fake_step)
 
     trajectory, driver, *_soa_out = retarded_integrator(
+        allow_incomplete_startup_history=True,
         steps=5,
         h_step=1.0,
         wall_z=0.0,
@@ -2011,6 +2040,7 @@ def test_retarded_integrator_halts_when_driver_reaches_cavity_exit(
     monkeypatch.setattr(integration_runner, "self_consistent_step", fake_step)
 
     trajectory, driver, *_soa_out = retarded_integrator(
+        allow_incomplete_startup_history=True,
         steps=5,
         h_step=1.0,
         wall_z=0.0,
@@ -2068,6 +2098,7 @@ def test_retarded_integrator_uses_driver_train_leading_edge_for_cavity_exit(
     driver["bz"] = np.array([-0.5], dtype=float)
 
     trajectory, driver, *_soa_out = retarded_integrator(
+        allow_incomplete_startup_history=True,
         steps=5,
         h_step=1.0,
         wall_z=0.0,
@@ -2149,6 +2180,7 @@ def test_retarded_integrator_runs_residual_tail_after_driver_exit(
     )
 
     trajectory, driver_traj, *_soa_out = retarded_integrator(
+        allow_incomplete_startup_history=True,
         steps=5,
         h_step=1.0,
         wall_z=0.0,
@@ -2230,6 +2262,7 @@ def test_retarded_integrator_logs_relative_cutoff_debug_message(
     monkeypatch.setattr(integration_runner, "self_consistent_step", fake_step)
 
     trajectory, driver, *_soa_out = retarded_integrator(
+        allow_incomplete_startup_history=True,
         steps=2,
         h_step=1.0,
         wall_z=0.0,
@@ -2286,6 +2319,7 @@ def test_retarded_integrator_halts_when_all_particles_dead(
     )
 
     trajectory, driver, *_soa_out = retarded_integrator(
+        allow_incomplete_startup_history=True,
         steps=4,
         h_step=1.0,
         wall_z=100.0,
@@ -2341,6 +2375,7 @@ def test_retarded_integrator_applies_proximity_refinement_debug_logging(
     )
 
     retarded_integrator(
+        allow_incomplete_startup_history=True,
         steps=2,
         h_step=1.0,
         wall_z=0.0,
@@ -2412,6 +2447,7 @@ def test_retarded_integrator_switching_wall_advances_cutoff_and_wall(
     )
 
     trajectory, driver, *_soa_out = retarded_integrator(
+        allow_incomplete_startup_history=True,
         steps=3,
         h_step=1.0,
         wall_z=0.0,
@@ -2464,6 +2500,7 @@ def test_retarded_integrator_marks_post_step_gamma_blowup_and_reports_status(
     )
 
     trajectory, _, *_soa_out = retarded_integrator(
+        allow_incomplete_startup_history=True,
         steps=2,
         h_step=1.0,
         wall_z=0.0,
@@ -2517,6 +2554,7 @@ def test_retarded_integrator_energy_monitor_warns_and_debugs_without_halting(
     )
 
     retarded_integrator(
+        allow_incomplete_startup_history=True,
         steps=4,
         h_step=1.0,
         wall_z=0.0,

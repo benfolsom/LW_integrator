@@ -5,6 +5,19 @@
 Includes the v0.11.0 changes released on 2026-10-10 (exact histories, native PIC,
 and boundary studies), plus subsequent integration updates.
 
+### Startup-history preflight
+
+- Add a preflight check for `COLD_START` and `APPROXIMATE_BACK_HISTORY`, which
+  have no source history before `t0`. For each `BUNCH_TO_BUNCH` observer-source
+  pair it bounds the share of the straight-line force impulse that falls in the
+  missing interval `t0 .. t0 + tau_c` (about `R/c`), and whether a visibility
+  gate window meets it. Runs above `startup_history_tolerance` (default `1e-3`)
+  or with an intersecting gate raise `StartupHistoryError`. The explicit override
+  `allow_incomplete_startup_history` (`--allow-incomplete-startup-history`)
+  turns the error into a loud warning for deliberate diagnostics. Runs that pass
+  are unchanged. The sampled path does not gain `INERTIAL_PREHISTORY`; see
+  `docs/source/startup_history.rst`.
+
 ### Exact retarded fields and source histories
 
 - Add directional visibility gates for exact charge fields, trajectory-based

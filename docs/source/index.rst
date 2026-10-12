@@ -61,6 +61,7 @@ The maintained code includes substantial changes since that publication.
    finite_spin_pair
    full_spin_particles
    exact_path
+   startup_history
    exact_macroparticle_sources
    native_pic
    boundary

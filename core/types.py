@@ -1207,6 +1207,15 @@ class IntegratorConfig:
     use_image_weighting:
         Enables radial weighting when distributing conducting-wall subcharges.
         Defaults to ``True`` for improved agreement with the aperture geometry.
+    allow_incomplete_startup_history:
+        Downgrade the preflight startup-history error to a loud warning. By
+        default a ``COLD_START`` or ``APPROXIMATE_BACK_HISTORY`` run whose
+        missing source history carries more than ``startup_history_tolerance``
+        of the estimated total impulse, or meets a visibility-gate window,
+        is rejected. Set it only for deliberate diagnostics.
+    startup_history_tolerance:
+        Largest tolerated missing fraction of the estimated total impulse.
+        Defaults to ``1e-3``.
     radiation_reaction_mode:
         Radiation-reaction handling mode forwarded to the canonical integrator.
         Defaults to ``"medina_lad"`` for user-facing runs.
@@ -1260,6 +1269,8 @@ class IntegratorConfig:
     image_subcharge_count: int = 12
     use_image_weighting: bool = True
     source_history_representation: str = "light_cone_quintic"
+    allow_incomplete_startup_history: bool = False
+    startup_history_tolerance: float = 1e-3
     radiation_reaction_mode: str = "medina_lad"
     macroparticle_charge_multiplier: float = 1.0
     macroparticle_sigma_multiplier: float = 1.0
