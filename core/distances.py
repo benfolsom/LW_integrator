@@ -227,6 +227,88 @@ def _sampled_light_cone_match(
     return lower + (upper - lower) / 2, hi
 
 
+def match_cloud_child_indices(
+    traj: "TrajectoryArraysLike | Trajectory",
+    traj_ext: "TrajectoryArraysLike | Trajectory",
+    index_traj: int,
+    index_part: int,
+    parent_indices: np.ndarray,
+    offsets: np.ndarray,
+) -> np.ndarray:
+    """Give every smeared child its own light-cone index on the sampled path.
+
+    A child follows its parent's stored worldline translated by a constant lab
+    offset, as in the exact persistent clouds. Its retarded sample is the first
+    stored knot at or after the observer's light-cone crossing of that
+    translated worldline, the same rule used for point sources. Children whose
+    translated history does not bracket the crossing keep the parent's index.
+
+    ``offsets`` has shape ``(sources, subcharges, 3)``; the result has shape
+    ``(sources, subcharges)``.
+    """
+
+    offsets = np.asarray(offsets, dtype=float)
+    parents = np.asarray(parent_indices, dtype=int)
+    n_sources, count = offsets.shape[:2]
+    soa = isinstance(traj_ext, (TrajectoryArrays, IndexedTrajectoryArrays))
+    last = min(index_traj, (traj_ext.n_steps if soa else len(traj_ext)) - 1)
+    particles = np.broadcast_to(np.arange(n_sources)[:, None], (n_sources, count))
+
+    if soa:
+
+        def event(steps: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+            pos = np.stack(
+                [_soa_values_at_steps(traj_ext, a, steps, particles) for a in "xyz"],
+                axis=-1,
+            )
+            return _soa_values_at_steps(traj_ext, "t", steps, particles), pos
+
+        def observer(name: str) -> float:
+            return _soa_scalar(traj, name, index_traj, index_part)
+
+    else:
+
+        def event(steps: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+            def at(name: str) -> np.ndarray:
+                return np.array(
+                    [
+                        [traj_ext[s][name][p] for s, p in zip(srow, prow)]
+                        for srow, prow in zip(steps, particles)
+                    ],
+                    dtype=float,
+                )
+
+            return at("t"), np.stack([at(a) for a in "xyz"], axis=-1)
+
+        def observer(name: str) -> float:
+            return float(traj[index_traj][name][index_part])
+
+    obs_time = observer("t")
+    obs_pos = np.array([observer(a) for a in "xyz"])
+
+    def residual(steps: np.ndarray) -> np.ndarray:
+        time, pos = event(steps)
+        return C_MMNS * (obs_time - time) - np.linalg.norm(
+            obs_pos - pos - offsets, axis=-1
+        )
+
+    lo = np.zeros((n_sources, count), dtype=int)
+    hi = np.full((n_sources, count), last, dtype=int)
+    first = residual(lo)
+    final = residual(hi)
+    bracketed = (first >= 0) & (final <= 0)
+    while True:
+        active = bracketed & (hi - lo > 1)
+        if not np.any(active):
+            break
+        mid = (lo + hi) // 2
+        below = residual(mid) > 0
+        lo = np.where(active & below, mid, lo)
+        hi = np.where(active & ~below, mid, hi)
+    matched = np.where(first <= 0, 0, hi)
+    return np.where(bracketed, matched, parents[:, None])
+
+
 def _compute_delta_t(
     *,
     mode: ChronoMatchingMode,

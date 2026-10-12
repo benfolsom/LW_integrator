@@ -64,6 +64,13 @@ and boundary studies), plus subsequent integration updates.
   are unchanged. The sampled path does not gain `INERTIAL_PREHISTORY`; see
   `docs/source/startup_history.rst`.
 
+
+- Give each smeared child source on the sampled retarded path its own
+  light-cone index, velocity and acceleration, as for exact persistent clouds,
+  instead of the parent's retarded event plus the offset. Point sources are
+  unchanged bit for bit; interpolated chrono matching, variable-geometry
+  self-consistency and pseudo-grid space charge keep the shared-event expansion.
+
 ## v0.11.0 — 2026-10-10 — exact histories, native PIC, and boundary studies
 
 ### Exact retarded fields and source histories
