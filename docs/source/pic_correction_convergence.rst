@@ -1,6 +1,13 @@
 K-cloud PIC correction convergence
 ========================================
 
+.. note::
+
+   Numerical results below include historical study reports whose complete
+   inputs and outputs are not distributed with this revision. See
+   :doc:`evidence_status` for the missing artifacts and tracked checks.
+   These reports are not fresh validation or universal accuracy guarantees.
+
 The correction is opt-in and CPU-authoritative. Its configuration defaults
 remain unchanged; see :doc:`native_pic` for the runner and default settings.
 Converge the correction field and the total PIC force

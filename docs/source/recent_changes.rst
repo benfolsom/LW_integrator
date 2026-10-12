@@ -5,6 +5,9 @@ Recent Changes
 
 *Last updated: October 2026*
 
+The historical :doc:`aneutronic_pair_causality` investigation is also retained
+for context; it is not a current feature or validation claim.
+
 This page retains dated implementation history. Older examples and numerical
 claims describe their named revisions, not the current defaults. Use
 :doc:`self_consistency`, :doc:`exact_path`, and :doc:`native_pic` for maintained

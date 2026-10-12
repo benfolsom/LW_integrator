@@ -13,8 +13,11 @@ energy conservation.
 Defaults and configuration
 ----------------------------
 
-API, CLI, GUI/testbed, and sweep entry points use these defaults when keys are
-missing. This is a settings fragment, not a complete run configuration:
+``SimulationOptions``, ``IntegratorConfig``, CLI, GUI/testbed, and sweep
+configuration use these defaults when keys are missing. The low-level
+``retarded_integrator`` function separately defaults radiation reaction to
+``off``; pass ``radiation_reaction_mode="medina_lad"`` explicitly there.
+This is a settings fragment, not a complete run configuration:
 
 .. code-block:: json
 

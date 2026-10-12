@@ -80,9 +80,10 @@ simulation, and confirm that the regression tooling works on your machine.
    configuration through ``SimulationOptions`` and executes ``run_testbed()``,
    preserving the configured 3D particle setup, beamline geometry, source
    smearing, driver train, startup mode, self-consistency, and output settings.
-   The JSON is authoritative for physics settings. Direct-run CLI overrides are
-   not applied, but ``--checkpoint-dir``, ``--resume-from``, and the checkpoint
-   interval flags may be supplied operationally. Use ``--config`` only for the
+   Ordinary direct-run arguments are not a general override layer. Supported
+   overrides include stochastic-emission switches, chi and recoil thresholds,
+   rate model, seed, instantaneous same-bunch clock, source-history representation,
+   checkpoint settings, and exact adaptive-pair controls. Use ``--config`` only for the
    separate native direct-integrator schema. See :doc:`checkpoints` for restart
    commands and the fixed-step and exact-pair checkpoint boundaries.
 
@@ -115,16 +116,18 @@ simulation, and confirm that the regression tooling works on your machine.
    off. See :doc:`self_consistency` for the full defaults and migration effects.
 
    Additional options include ``--chrono-mode``, ``--startup-mode``,
-   ``--image-weighting``, and ``--self-consistency``. Run ``lw-simulate --help``
-   for the complete list.
+   and ``--image-weighting``. Set ``self_consistency_enabled`` in JSON;
+   there is no ``--self-consistency`` flag. Run ``lw-simulate --help`` for
+   the complete list.
 
    Intrinsic magnetic moments are experimental and off by default.  The
    selected RFS model supports guarded ``BUNCH_TO_BUNCH`` runs using
    ``COLD_START`` or ``INERTIAL_PREHISTORY``. Exact same-bunch charge fields
    require inertial prehistory, retarded evaluation, and zero point-charge
    softening. The adaptive shared-lab-time route has separate guards.
-   Dynamic recoil is either off or the explicit charge-only ``medina_lad``
-   hybrid.  For example, add these switches to a
+   Dynamic recoil may use the charge-only ``medina_lad`` or
+   ``medina_lad_validity`` hybrid, or be disabled. See
+   :doc:`radiation_reaction_plan` for their different impulse guards.  For example, add these switches to a
    suitable electron--proton BUNCH_TO_BUNCH run:
 
    .. code-block:: bash
@@ -276,9 +279,15 @@ simulation, and confirm that the regression tooling works on your machine.
           steps=1000,
           macroparticle_enabled=True,
           macroparticle_charge_multiplier=10.0,     # 10× charge scaling
-          macroparticle_position_spread=1e-5,       # 10 μm position σ
-          macroparticle_momentum_spread=1e-6,       # Momentum spread
+          macroparticle_sigma_multiplier=1.0,
+          macroparticle_use_momentum_errors=True,
+          rider_params={
+              **SimulationOptions().rider_params,
+              'transv_dist': 1e-5,  # 0.01 micrometre; legacy wall spread input
+              'transv_mom': 1e-6,   # amu mm/ns
+          },
           core_params={
+              **SimulationOptions().core_params,
               'time_step': 3e-7,
               'wall_z': 100.0,
               'aperture_radius': 0.001,
@@ -287,8 +296,9 @@ simulation, and confirm that the regression tooling works on your machine.
 
       result = run_testbed(options)
 
-   This example demonstrates beam emittance modeling with stochastic errors
-   applied to image subcharges before charge attenuation calculations.
+   This compatibility example demonstrates the legacy wall-image spread
+   prescription. It does not establish emittance evolution. Its manual proper
+   timestep is illustrative; choose and refine it for the intended geometry.
 
 10. Run a full 3D off-axis beam simulation:
 
@@ -316,17 +326,18 @@ simulation, and confirm that the regression tooling works on your machine.
           manual_particle_config_enabled=True,
           rider_params=rider_params,
           core_params={
+              **SimulationOptions().core_params,
               'time_step': 1e-7,
               'wall_z': 100.0,
-              'aperture_radius': 0.0001,  # 100 μm aperture
+              'aperture_radius': 0.0001,  # 0.1 μm aperture
           },
       )
 
       result = run_testbed(options)
 
    This demonstrates the preferred maintained path for off-axis beam
-   positioning. The bunch centroid starts 50 μm off-axis in ``x`` with a full
-   3D spread: transverse disk radius 10 μm and longitudinal span 20 μm along
+   positioning. The bunch centroid starts 0.05 μm off-axis in ``x`` with a full
+   3D spread: transverse disk radius 0.01 μm and longitudinal span 0.02 μm along
    the propagation axis.
 
 Next steps

@@ -16,9 +16,12 @@
 
 \section{Purpose}
 
-This note restates the candidate Medina radiation-reaction model in the
-solver's native unit system and contrasts it with the currently implemented
-\texttt{power\_matched\_damping} mode.
+This historical derivation maps the now-implemented Medina radiation-reaction
+model to the solver's native units and compares it with the separate
+\texttt{power\_matched\_damping} approximation. Higher-level run configurations
+default to \texttt{medina\_lad}; direct \texttt{retarded\_integrator} calls
+default to reaction off. The maintained radiation-reaction guide describes the
+impulse guards and unresolved physical-accounting limits.
 
 \section{Native Units}
 

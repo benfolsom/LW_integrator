@@ -1,6 +1,13 @@
 Stochastic quantum emission (opt-in)
 ======================================
 
+.. note::
+
+   Numerical results below include historical study reports whose complete
+   inputs and outputs are not distributed with this revision. See
+   :doc:`evidence_status` for the missing artifacts and tracked checks.
+   These reports are not fresh validation or universal accuracy guarantees.
+
 This experimental feature is off by default. The general runner supports only
 its guarded sampled ``BUNCH_TO_BUNCH`` diagnostic route; enabling emission
 with ``INERTIAL_PREHISTORY`` raises ``NotImplementedError``. The separate
@@ -118,8 +125,9 @@ approximation). Below this boundary, a classical rest-frame dipole pattern,
 proportional to :math:`1-(\hat{n}\cdot\hat{a})^2`, is sampled and aberrated into the
 lab. This low-energy angular model is an explicit approximation, not the
 energy-dependent quantum angular distribution.
-Polarisation is recorded as unavailable. Neither an angular distribution at
-low energy nor spin-flip transitions are modeled.
+Polarisation is recorded as unavailable. The classical low-energy angular
+approximation is implemented; energy-dependent quantum angular sampling and
+spin-flip transitions remain absent.
 
 Recoil and the remainder
 --------------------------
@@ -343,10 +351,12 @@ provide a sampled spectrum or resolve the incident-energy endpoint question.
 An explicitly selected, reseeded midpoint branch produced one 77.49 keV
 photon, with identical pair resumes. That branch tests recoil and history
 publication, not an unbiased physical emission yield. Scripts, event lists,
-checkpoints, and detailed results are kept in local validation notes.
+checkpoints, and detailed results are not distributed with this revision.
+These counts are historical reports, not reproducible public validation; see
+:doc:`evidence_status`.
 Two approved stochastic regression tests cover independent rate/power
 quadrature and forced-kick checkpoint identity.
-Review-fix scripts and results are kept in local notes. Seeded and resumed
+The historical review scripts and results are also not distributed. Seeded and resumed
 identity includes the sub-interval RNG draws. Public general-runner trajectories
 retain the emission payload only on the final row, including after periodic
 checkpoint writes; intermediate partial event logs are removed.
@@ -358,67 +368,36 @@ well as the event, diagnostic, and RNG payloads. The original 100 keV and
 20 keV Coulomb smoke scripts also completed with zero photons and identical
 JSON resumes, retaining their original numerical guards and tolerances.
 
-Validation against thread C benchmarks
-----------------------------------------
+External spectrum comparisons and remaining limits
+--------------------------------------------------
 
-Thread C's ``strong_field_qed_tev`` study and this module now use one
-spin-averaged local constant-field spectrum definition.  For photon fraction
-:math:`s=k/E`, the shared quantum bracket is
-:math:`[1-s+(1-s)^{-1}]K_{2/3}(z)-\int_z^\infty K_{1/3}(y)dy`, with
-:math:`z=2s/[3\chi(1-s)]`.  The dimensional conversion is
-:math:`dW/ds=\alpha m c^2 B/(\sqrt{3}\pi\hbar\gamma)`: thread C expresses
-it per second as :math:`\alpha c B/(\sqrt{3}\pi\lambda_C\gamma)`, while
-this module expresses it per ns in native units.
+``lcfa_spectral_brackets(s, chi)`` returns the quantum, recoil-only scalar,
+and classical local constant-field brackets. For photon fraction $s=k/E$,
+the quantum bracket is
+$[1-s+(1-s)^{-1}]K_{2/3}(z)-\int_z^\infty K_{1/3}(y)dy$, with
+$z=2s/[3\chi(1-s)]$. Only the quantum bracket is sampled by ``quantum_lcfa``;
+the other two are diagnostic comparisons, not additional runner modes.
 
-``lcfa_spectral_brackets(s, chi)`` is the maintained diagnostic adapter.  Its
-three results map, in order, to thread C's ``quantum``, recoil-only ``scalar``,
-and ``classical`` brackets.  The runner samples only the first for
-``quantum_lcfa``; the two comparison curves do not introduce another runner
-mode.  A shared grid of nine :math:`\chi` values from :math:`10^{-4}` to 10
-and 74 photon fractions found maximum relative differences of
-:math:`6.41\times10^{-6}` in the resolved quantum rate.  Relative differences
-in exponentially negligible high-energy tails reached 0.110 because the two
-independent finite Bessel-integral tables truncate and interpolate differently;
-the maximum absolute bracket difference was :math:`3.28\times10^{-7}`.
-The grid, constants, and exact results are recorded in local validation
-notes.
+An external study reported comparisons on nine chi values and 74 photon
+fractions, but its versioned grid, constants, code, and result tables are not
+shipped here. Previously quoted comparison errors and experimental fit
+statistics therefore cannot be audited from this revision and are not retained
+as validation claims. See :doc:`evidence_status` for the publication gap and
+``tests/unit/test_stochastic_emission.py`` for the inspectable checks.
 
-None of thread C's experimental cases is currently a valid end-to-end
-stochastic-emission validation case for this runner.  The E-146 25 GeV,
-23 micrometre gold foil is thread C's cleanest thin-target result, but its
-observed spectrum depends on screened nuclear scattering, finite formation
-interference, dielectric interfaces, photon transport, and detector response.
-This local-field runner has none of those material models.  The corrected
-NA63 two-foil result has the same nonlocal scattering and formation issue.
+E-146 foil and NA63 crystal spectra require material scattering, formation
+interference, interfaces, photon transport, and detector response. This runner
+does not implement that transport chain. Emission records and photon
+four-momenta alone do not supply material photon transport.
 
-The closest high-field candidate is the 178.2 GeV positron Si
-:math:`\langle111\rangle` NA63 measurement, with :math:`\chi\lesssim1.4`
-and 3.8 mm and 10.0 mm targets [Wistisen2018]_.  Thread C reports that its
-published stochastic-spectrum-plus-RR comparison has reduced
-:math:`\chi^2=47.4`, 28.9, and 38.2 for those two targets and their combined
-fit, respectively, so even that published local model is not a statistically
-adequate detector-spectrum reproduction.  More importantly, LW has no
-continuum-crystal potential, incoherent scattering, dechanneling, photon
-transport, or detector response.
-
-A deliberately limited uniform-magnetic local proxy was prepared at its
-reported peak :math:`\chi=1.4`: 178.2 GeV, 3.8 mm, 17.72 kT, 140146 fixed
-steps, and initial :math:`W\Delta t=0.00200`.  It correctly reproduces the
-local initial rate of :math:`2.2113\times10^4` ns\ :sup:`-1` and mean photon
-fraction 0.13224, but it fails the unchanged two-iteration fixed-geometry
-mass-shell criterion at step 241 (residual :math:`3.09\times10^{-5}`).
-Reducing the interval probability by ten relative to the emission guard did
-not cure it.  We did not loosen the criterion or substitute that proxy for a
-crystal calculation.  It is therefore an unsuccessful interface check, not
-an ensemble result or a comparison with data.  The reproducible attempted
-configuration is kept in local validation notes.
-
-The 50 GeV Si (110) case is not a fallback: thread C found that its
-:math:`\chi<0.042` field changes materially during photon formation and that a
-local quantum cascade fails.  These are model limitations, rather than a
-reason to force a benchmark agreement.  A future validation needs a
-continuum-potential callback or prescribed crystal trajectories, then an
-independent formation-length, material-transport, and detector comparison.
+A historical uniform-magnetic proxy for the 178.2 GeV positron crystal case
+failed the unchanged two-trial mass-shell criterion. It remains an unsuccessful
+interface check, not an ensemble result or a comparison with data. Its complete
+attempted configuration and output are not distributed. No acceptance tolerance
+was relaxed to reinterpret the failure as success. A crystal comparison would
+require a continuum potential or prescribed crystal trajectory and independent
+formation-length, transport, and detector validation; the cited experiment
+[Wistisen2018]_ does not validate this proxy.
 
 Planned follow-up: encounter-based recoil trigger
 ---------------------------------------------------

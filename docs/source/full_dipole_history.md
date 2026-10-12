@@ -1,6 +1,6 @@
 # Experimental full-dipole source history
 
-The [nonlinear reciprocal pair API](momentum_center_pair.md) now owns a
+The [nonlinear reciprocal pair API](https://github.com/benfolsom/LW_integrator/blob/3032cb4906e05da72c6f0f31dcf7267a5c5c0eb1/docs/source/momentum_center_pair.md) now owns a
 whole-stepper checkpoint using this history component. Its experimental
 status and remaining physical validation are separate from interpolation tests.
 

@@ -53,7 +53,10 @@ def test_example_configs_do_not_use_removed_comparison_keys():
 
 def test_tracked_docs_do_not_reference_local_worktree_notes():
     doc_paths = [PROJECT_ROOT / "README.md", PROJECT_ROOT / "CHANGELOG.md"]
-    doc_paths.extend(sorted((PROJECT_ROOT / "docs" / "source").glob("**/*.rst")))
+    for suffix in ("rst", "md", "tex"):
+        doc_paths.extend(
+            sorted((PROJECT_ROOT / "docs" / "source").glob(f"**/*.{suffix}"))
+        )
 
     offenders = [
         str(path.relative_to(PROJECT_ROOT))

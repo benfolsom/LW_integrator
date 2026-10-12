@@ -1,6 +1,13 @@
 Classical limit, bremsstrahlung, and validity
 ==============================================
 
+.. note::
+
+   Numerical results below include historical study reports whose complete
+   inputs and outputs are not distributed with this revision. See
+   :doc:`evidence_status` for the missing artifacts and tracked checks.
+   These reports are not fresh validation or universal accuracy guarantees.
+
 Purpose and scope
 -----------------
 
@@ -308,7 +315,9 @@ For electron--carbon encounters the nucleus barely moves, so its exact
 retarded field is the static Coulomb field. In this comparison LW therefore
 adds no dynamics beyond earlier classical trajectory calculations. What it
 adds is radiation reaction, the intrinsic-moment correction, and a single
-validated code path from QFT benchmarks to measured cross sections. The
+implementation used in the reported benchmark and cross-section studies.
+This is a bounded study claim, not validation of every LW or PIC route;
+the missing study evidence chain is described in :doc:`evidence_status`. The
 retardation of both bodies matters for comparable masses, for example
 electron--electron or electron--positron bremsstrahlung.
 

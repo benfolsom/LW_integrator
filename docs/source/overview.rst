@@ -16,9 +16,11 @@ High-level anatomy
 
 ``core/``
     The maintained implementation of the retarded Liénard–Wiechert solver.
-    ``trajectory_integrator.py`` retains the original algorithm but exposes it
-    through typed helper functions (image charge generators, retarded-distance
-    utilities, and the ``IntegratorConfig`` data class).  Kernel-level Numba
+    ``trajectory_integrator.py`` is a compatibility facade. ``equations.py``
+    performs particle updates, ``integration_runner.py`` manages runs, and
+    ``retarded_fields.py`` evaluates exact sources. Native PIC and boundary
+    solvers live in separate packages; these include substantial developments
+    beyond the historical reference algorithm.  Kernel-level Numba
     acceleration lives in ``vectorized_interactions.py`` and is used by the
     canonical integrator path without changing the underlying physics.
     ``pseudo_grid.py`` contains the experimental active/passive reduced-solver
@@ -28,7 +30,7 @@ High-level anatomy
     Spatial mechanical momentum determines gamma and beta in every radiation
     mode; the check alone does not establish force convergence.  ``images.py`` implements conducting-wall image charge
     generation with optional macroparticle simulation support, applying stochastic
-    position and momentum spread errors to model beam emittance effects.
+    position and momentum spread errors through a legacy image prescription.
 
 ``configs/``
     JSON configuration files for single runs (``run_configs/``) and parameter
@@ -60,7 +62,7 @@ High-level anatomy
     runner (``sweep_runner.py``), testbed runner (``testbed_runner.py``), and the
     optimization GUI plugin (``optimization_plugin.py``).  As of v0.6.0 the CLI
     sweep runner calls the **same** ``run_testbed()`` / ``SimulationOptions``
-    code paths as the GUI, so results are identical between interfaces.  Launch
+    code paths as the GUI for matching settings, seeds, and supported routes.  Launch
     the GUI with ``python -m lw_integrator.gui`` to access three operational
     modes: Single Run (Main tab) for individual simulations with real-time
     visualization, Blind Sweep for parameter space exploration, and Optimization
@@ -174,13 +176,11 @@ or the physical accuracy of the passive approximation.
 Key ideas to keep in mind
 -------------------------
 
-* **Physics parity matters.**  The core code is intentionally close to the
-  validated reference solver, with critical corrections applied in December
-  2025 to fix gamma calculation and scalar potential handling. Recent changes
-  include proper separation of conjugate and kinetic energy, corrected
-  self-consistency convergence tests, and improved numerical precision for
-  extreme relativistic scenarios. Any behavioural change should come with
-  focused regression tests.
+* **Regression boundaries matter.** Existing tests cover specific field,
+  trajectory, configuration, and interface contracts. Historical notebooks
+  explain the project's origin; they do not establish universal numerical
+  lockstep with the current implementation. Adapt the relevant existing tests
+  for behavioral changes, and add tests only when strongly justified.
 * **Particle states are dictionaries of NumPy arrays.**  Whenever you initialize
   particles manually, fill every expected key (``x``, ``Pz``, ``gamma``, ``q``,
   ``char_time`` …) or use
@@ -247,15 +247,11 @@ Key ideas to keep in mind
   ``INERTIAL_PREHISTORY`` path rejects it until velocity jumps can be stored
   correctly. The sampled diagnostic and guarded native pair routes remain
   available; see :doc:`stochastic_quantum_emission`.
-* **Macroparticle simulation for conducting walls.**  The integrator supports
-  macroparticle mode where test particle charges are scaled and image subcharges
-  receive stochastic position/momentum errors. Position spread applies constant
-  Gaussian errors (σ_x), while momentum spread creates cumulative displacement
-  that grows with each timestep. This enables realistic modeling of beam
-  emittance and collective effects. Configure via ``macroparticle_enabled``,
-  ``macroparticle_charge_multiplier``, ``macroparticle_position_spread``, and
-  ``macroparticle_momentum_spread`` parameters. Only active for CONDUCTING_WALL
-  simulation type.
+* **Macroparticle simulation for conducting walls.** The legacy image-source
+  multiplier scales generated image charges. The spread prescription uses
+  ``macroparticle_sigma_multiplier``, ``macroparticle_use_momentum_errors``,
+  and the rider bunch's transverse spread inputs. It does not change the
+  observer charge or establish beam-emittance evolution; see :doc:`api/images`.
 * **Full 3D bunch initialization is the preferred path for new work.**  Use
   ``momentum_axis``, ``starting_position_mm``, ``transverse_distance_mm``, and
   ``longitudinal_span_mm`` when defining new bunches. The CLI accepts these

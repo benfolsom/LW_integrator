@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Correct documentation against the release-based code: proper-time stepping,
+  mechanical mass-shell reconstruction, CLI overrides, image-source parameters,
+  unit labels, adaptive refinement, and experimental reaction boundaries.
+  Qualify historical evidence gaps, repair API navigation, and add field-provider
+  and boundary construction examples. Existing release restrictions remain
+  historical; later unmerged train-cloud capabilities are not advertised here.
+- Parse single-dollar mathematics in unindented RST prose into Sphinx math nodes,
+  preserving inline literals and indented code. This fixes formulas that were
+  previously plain text or could be parsed as substitutions. Resolve known API
+  aliases to their documented owners without suppressing unrelated warnings.
+  Extend the existing documentation-path test to Markdown and LaTeX sources.
+  Simulation code,
+  numerical defaults, and default outputs remain bit-identical; no numerical
+  defect or merge syntax error was changed.
+
 ## v0.11.0 — 2026-10-10 — exact histories, native PIC, and boundary studies
 
 ### Exact retarded fields and source histories
