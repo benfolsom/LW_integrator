@@ -20,7 +20,13 @@ from typing import TYPE_CHECKING, Any, cast
 import numpy as np
 
 from .resolved_knot import RESOLVED_KNOT_FIELDS
-from .types import INERTIAL_CHARGE_BOUNDARY_FIELDS, TrajectoryArrays, TrajectoryBuilder
+from .types import (
+    INERTIAL_CHARGE_BOUNDARY_FIELDS,
+    TrajectoryArrays,
+    TrajectoryBuilder,
+    _EmptySchedule,
+    validate_live_particle_fields,
+)
 
 if TYPE_CHECKING:
     from .causal_c5_dipole_provider import AcceptedPairCausalC5SourceHistory
@@ -97,6 +103,29 @@ def _absent_provider_array(name: str, values: np.ndarray) -> bool:
     return name in TrajectoryBuilder._PROVIDER_FLOAT_FIELDS and (
         values.size == 0 or (values.strides == (0, 0) and float(values.flat[0]) == 0.0)
     )
+
+
+def _validate_checkpoint_rows(
+    arrays: dict[str, np.ndarray],
+    *,
+    start: int,
+    stop: int,
+    role: str,
+    particle_constants: dict[str, np.ndarray] | None = None,
+) -> None:
+    """Check actual payload rows against the manifest, including live values."""
+    for name, values in arrays.items():
+        if values.ndim < 1 or values.shape[0] != stop - start:
+            raise CheckpointError(
+                f"{role} checkpoint field {name} row count does not match "
+                f"chunk boundary {start}:{stop}"
+            )
+    try:
+        validate_live_particle_fields(
+            {**arrays, **(particle_constants or {})}, context=f"{role} checkpoint"
+        )
+    except ValueError as exc:
+        raise CheckpointError(str(exc)) from exc
 
 
 def _utc_now() -> str:
@@ -290,18 +319,20 @@ class IntegrationCheckpointStore:
             raise CheckpointError(
                 f"cannot checkpoint {role} particle failure side-channel state"
             )
-        if any(value is not None for value in trajectory.pseudo_grid_schedule):
+        if not isinstance(trajectory.pseudo_grid_schedule, _EmptySchedule) and any(
+            value is not None for value in trajectory.pseudo_grid_schedule
+        ):
             raise CheckpointError(
                 f"cannot checkpoint {role} pseudo-grid schedule side-channel state"
             )
         if any(value is not None for value in trajectory.halt_reason):
             raise CheckpointError(f"cannot checkpoint halted {role} trajectory state")
 
-    def _write_constants(
+    def _constants_metadata(
         self, rider: TrajectoryArrays, driver: TrajectoryArrays
-    ) -> None:
+    ) -> dict[str, str]:
         if self.manifest.get("constants") is not None:
-            return
+            return dict(self.manifest["constants"])
         arrays: dict[str, np.ndarray] = {}
         for role, trajectory in (("rider", rider), ("driver", driver)):
             for name in _PARTICLE_CONSTANT_FIELDS:
@@ -309,7 +340,7 @@ class IntegrationCheckpointStore:
                     _particle_constant(trajectory, name), copy=True
                 )
         digest = _atomic_npz(self.constants_path, arrays)
-        self.manifest["constants"] = {
+        return {
             "file": self.constants_path.name,
             "sha256": digest,
         }
@@ -326,13 +357,18 @@ class IntegrationCheckpointStore:
         """Commit every accepted row after the previous manifest boundary."""
 
         step_index = int(step_index)
+        normalized_loop_state = AcceptedPairCheckpointStore._json_state(
+            loop_state, "loop_state"
+        )
         start = self.committed_internal_step + 1
         stop = step_index + 1
         if stop <= start:
             if complete and self.manifest.get("status") != "complete":
-                self.manifest["status"] = "complete"
-                self.manifest["updated_utc"] = _utc_now()
-                _atomic_json(self.manifest_path, self.manifest)
+                next_manifest = dict(self.manifest)
+                next_manifest["status"] = "complete"
+                next_manifest["updated_utc"] = _utc_now()
+                _atomic_json(self.manifest_path, next_manifest)
+                self.manifest = next_manifest
             return
         if rider.n_steps < stop or driver.n_steps < stop:
             raise CheckpointError(
@@ -340,7 +376,6 @@ class IntegrationCheckpointStore:
             )
         self._validate_side_channels(rider, "rider")
         self._validate_side_channels(driver, "driver")
-        self._write_constants(rider, driver)
 
         arrays: dict[str, np.ndarray] = {}
         for role, trajectory in (("rider", rider), ("driver", driver)):
@@ -351,10 +386,26 @@ class IntegrationCheckpointStore:
                 if name in RESOLVED_KNOT_FIELDS and values.size == 0:
                     values = np.zeros_like(trajectory.t)
                 arrays[f"{role}__{name}"] = np.array(values[start:stop], copy=True)
+            _validate_checkpoint_rows(
+                {
+                    name.split("__", 1)[1]: value
+                    for name, value in arrays.items()
+                    if name.startswith(f"{role}__")
+                },
+                start=start,
+                stop=stop,
+                role=role,
+                particle_constants={
+                    name: _particle_constant(trajectory, name)
+                    for name in _PARTICLE_CONSTANT_FIELDS
+                },
+            )
+        constants = self._constants_metadata(rider, driver)
         filename = f"rows_{start:09d}_{stop:09d}.npz"
         chunk_path = self.chunks_directory / filename
         digest = _atomic_npz(chunk_path, arrays)
-        self.manifest["chunks"].append(
+        chunks = list(self.manifest["chunks"])
+        chunks.append(
             {
                 "file": str(Path("chunks") / filename),
                 "start": start,
@@ -362,14 +413,18 @@ class IntegrationCheckpointStore:
                 "sha256": digest,
             }
         )
-        self.manifest["committed_internal_step"] = step_index
-        self.manifest["completed_public_steps"] = max(
+        next_manifest = dict(self.manifest)
+        next_manifest["constants"] = constants
+        next_manifest["chunks"] = chunks
+        next_manifest["committed_internal_step"] = step_index
+        next_manifest["completed_public_steps"] = max(
             0, step_index - self.active_start + 1
         )
-        self.manifest["loop_state"] = loop_state
-        self.manifest["status"] = "complete" if complete else "running"
-        self.manifest["updated_utc"] = _utc_now()
-        _atomic_json(self.manifest_path, self.manifest)
+        next_manifest["loop_state"] = normalized_loop_state
+        next_manifest["status"] = "complete" if complete else "running"
+        next_manifest["updated_utc"] = _utc_now()
+        _atomic_json(self.manifest_path, next_manifest)
+        self.manifest = next_manifest
         self._last_write_monotonic = time.monotonic()
 
     def _verified_npz(self, relative_path: str, expected_hash: str) -> Any:
@@ -419,13 +474,23 @@ class IntegrationCheckpointStore:
                     )
                     or f"{role}__{name}" in archive
                 }
+            _validate_checkpoint_rows(
+                row_arrays,
+                start=start,
+                stop=stop,
+                role=role,
+                particle_constants=constants,
+            )
             builder.restore_checkpoint_rows(
                 start,
                 row_arrays,
                 particle_constants=constants if chunk_index == 0 else None,
             )
             expected_start = stop
-        if expected_start != self.next_internal_step:
+        if (
+            expected_start != self.next_internal_step
+            or builder._published_stop != self.next_internal_step
+        ):
             raise CheckpointError(
                 "checkpoint chunk boundary does not match committed step"
             )
@@ -629,7 +694,9 @@ class AcceptedPairCheckpointStore:
             raise CheckpointError(
                 f"cannot checkpoint {role} particle failure side-channel state"
             )
-        if any(value is not None for value in trajectory.pseudo_grid_schedule):
+        if not isinstance(trajectory.pseudo_grid_schedule, _EmptySchedule) and any(
+            value is not None for value in trajectory.pseudo_grid_schedule
+        ):
             raise CheckpointError(
                 f"cannot checkpoint {role} pseudo-grid schedule side-channel state"
             )
@@ -810,6 +877,20 @@ class AcceptedPairCheckpointStore:
                 if name in RESOLVED_KNOT_FIELDS and values.size == 0:
                     values = np.zeros_like(trajectory.t)
                 arrays[f"{role}__{name}"] = np.array(values[start:stop], copy=True)
+            _validate_checkpoint_rows(
+                {
+                    name.split("__", 1)[1]: value
+                    for name, value in arrays.items()
+                    if name.startswith(f"{role}__")
+                },
+                start=start,
+                stop=stop,
+                role=role,
+                particle_constants={
+                    name: _particle_constant(trajectory, name)
+                    for name in _PARTICLE_CONSTANT_FIELDS
+                },
+            )
         c5_metadata = self._append_causal_c5_arrays(
             arrays,
             causal_c5_source_history,
@@ -894,13 +975,23 @@ class AcceptedPairCheckpointStore:
                     )
                     or f"{role}__{name}" in archive
                 }
+            _validate_checkpoint_rows(
+                row_arrays,
+                start=start,
+                stop=stop,
+                role=role,
+                particle_constants=constants,
+            )
             builder.restore_checkpoint_rows(
                 start,
                 row_arrays,
                 particle_constants=constants if chunk_index == 0 else None,
             )
             expected_start = stop
-        if expected_start != self.committed_knots:
+        if (
+            expected_start != self.committed_knots
+            or builder._published_stop != self.committed_knots
+        ):
             raise CheckpointError(
                 "accepted-pair chunk boundary does not match committed knot count"
             )

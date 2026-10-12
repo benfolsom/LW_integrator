@@ -2431,9 +2431,13 @@ def test_retarded_integrator_switching_wall_advances_cutoff_and_wall(
     assert (0.25, 0.75) in image_calls
 
 
+@pytest.mark.parametrize("bad_field", ["gamma", "x", "Py", "radiation_energy"])
+@pytest.mark.parametrize("role", ["rider", "driver"])
 def test_retarded_integrator_marks_post_step_gamma_blowup_and_reports_status(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
+    bad_field,
+    role,
 ) -> None:
     def fake_step(
         step_function: object,
@@ -2450,10 +2454,13 @@ def test_retarded_integrator_marks_post_step_gamma_blowup_and_reports_status(
         cancel_callback: object = None,
         **_kwargs: object,
     ) -> dict[str, object]:
-        state = _clone_state(trajectory[-1])
-        state["t"] = np.array([float(trajectory[-1]["t"][0]) + h_step], dtype=float)
-        state["gamma"] = np.array([1e9], dtype=float)
-        state["Pt"] = np.array([1e9 * integration_runner.C_MMNS], dtype=float)
+        state = _clone_state(trajectory[index_traj])
+        state["t"] = np.array([float(state["t"][0]) + h_step], dtype=float)
+        target = role == "rider" or state["z"][0] > 0.0
+        if target:
+            state[bad_field] = np.array([1e9 if bad_field == "gamma" else np.nan])
+            if bad_field == "gamma":
+                state["Pt"] = np.array([1e9 * integration_runner.C_MMNS], dtype=float)
         return state
 
     monkeypatch.setattr(integration_runner, "self_consistent_step", fake_step)
@@ -2463,24 +2470,37 @@ def test_retarded_integrator_marks_post_step_gamma_blowup_and_reports_status(
         lambda state, *args, **kwargs: _clone_state(state),
     )
 
-    trajectory, _, *_soa_out = retarded_integrator(
-        steps=2,
-        h_step=1.0,
-        wall_z=0.0,
-        aperture_radius=1.0,
-        sim_type=SimulationType.CONDUCTING_WALL,
-        init_rider=_make_particle_state(z=-1.0),
-        init_driver=None,
-        mean=0.0,
-        cav_spacing=0.0,
-        z_cutoff=0.0,
-        use_numba=False,
-    )
+    def run():
+        return retarded_integrator(
+            steps=2,
+            h_step=1.0,
+            wall_z=0.0,
+            aperture_radius=1.0,
+            sim_type=(
+                SimulationType.BUNCH_TO_BUNCH
+                if role == "driver"
+                else SimulationType.CONDUCTING_WALL
+            ),
+            init_rider=_make_particle_state(z=-1.0),
+            init_driver=_make_particle_state(z=1.0) if role == "driver" else None,
+            mean=0.0,
+            cav_spacing=0.0,
+            z_cutoff=0.0,
+            use_numba=False,
+        )
 
+    if bad_field != "gamma":
+        with pytest.raises(
+            ValueError, match=f"{role} step 1: {bad_field} must be finite"
+        ):
+            run()
+        return
+    trajectory, driver, *_soa_out = run()
     output = capsys.readouterr().out
     assert "gamma blowup detected" in output
-    assert "[STATUS] Step 1: 0/1 particles alive, 1/1 dead" in output
-    assert trajectory[-1]["_dead_particles"][0]
+    if role == "rider":
+        assert "[STATUS] Step 1: 0/1 particles alive, 1/1 dead" in output
+    assert (trajectory if role == "rider" else driver)[-1]["_dead_particles"][0]
 
 
 def test_retarded_integrator_energy_monitor_warns_and_debugs_without_halting(

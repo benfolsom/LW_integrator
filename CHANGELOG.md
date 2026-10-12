@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Reject non-finite live particle fields and malformed accepted force history
+  explicitly, and apply the post-step gamma guard to both bunches. Preserve
+  unprimed Medina timestamps and established startup behavior.
+- Verify checkpoint chunk row counts against their manifests, check live fields
+  before writing and restoring, and publish fixed-step manifest changes only
+  after a successful disk write so failed writes can be retried.
+- Bound callable signature caches, reject source mutation during prepared-cache
+  construction, and evict failed rebuilds. Avoid growing schedule-list copies
+  in feature-off partial histories. Use binary retarded-time searches for
+  histories with incrementally verified finite, nondecreasing source times;
+  retain scan behavior for other histories. Numerical defaults and finite-run
+  arithmetic remain unchanged; invalid-state handling deliberately becomes stricter.
+
 ## v0.11.0 — 2026-10-10 — exact histories, native PIC, and boundary studies
 
 ### Exact retarded fields and source histories

@@ -63,16 +63,69 @@ def test_adaptive_timestep_config_guards_invalid_reduction_factor() -> None:
     assert config.max_refinement_attempts == 1
 
 
-def test_compute_total_energy_and_gamma_use_particle_arrays() -> None:
+@pytest.mark.parametrize("bad_value", [None, np.nan, np.inf])
+def test_compute_total_energy_and_gamma_use_particle_arrays(bad_value) -> None:
     state = {
         "gamma": np.array([2.0, 3.0], dtype=float),
         "m": np.array([4.0, 5.0], dtype=float),
     }
 
+    if bad_value is not None:
+        state["gamma"][0] = bad_value
+        with pytest.raises(ValueError, match="energy must be finite"):
+            _compute_total_energy(state)
+        return
     assert _compute_total_energy(state) == np.sum(
         state["gamma"] * state["m"] * C_MMNS**2
     )
     assert _calculate_gamma(state) == 3.0
+
+
+def test_history_helpers_only_fall_back_for_absent_history(monkeypatch) -> None:
+    from core import integration_runner as runner
+    from core.types import TrajectoryBuilder
+
+    assert runner._build_partial_soa([], 0) is None
+    assert runner._indexed_active_history(None, np.array([0])) is None
+    state = _make_particle_state()
+    builder = TrajectoryBuilder(1, 1)
+    builder.set_step(0, state)
+    with pytest.raises(ValueError):
+        runner._indexed_active_history(builder.build(), np.array([0]), start_step=2)
+    with pytest.raises(KeyError, match="x"):
+        runner._build_partial_soa([{"t": np.zeros(1)}], 1)
+
+    def failed_allocation(*args):
+        raise MemoryError("injected allocation failure")
+
+    monkeypatch.setattr(runner, "TrajectoryBuilder", failed_allocation)
+    with pytest.raises(MemoryError, match="injected"):
+        runner._build_partial_soa([state], 1)
+
+
+def test_signature_caches_release_evicted_callables() -> None:
+    import gc
+    import weakref
+    from core.integration_runner import _call_accepts_kw
+    from core.self_consistency import _signature_parameters
+
+    _call_accepts_kw.cache_clear()
+    _signature_parameters.cache_clear()
+    references = []
+    for _ in range(600):
+
+        def step(*, radiation_reaction_mode=None):
+            pass
+
+        references.append(weakref.ref(step))
+        assert _call_accepts_kw(step, "radiation_reaction_mode")
+        assert "radiation_reaction_mode" in _signature_parameters(step)
+    del step
+    gc.collect()
+    assert sum(reference() is not None for reference in references) <= 256
+    assert references[0]() is None
+    _call_accepts_kw.cache_clear()
+    _signature_parameters.cache_clear()
 
 
 def test_ensure_startup_metadata_initializes_and_repairs_arrays() -> None:
@@ -108,8 +161,31 @@ def test_ensure_startup_metadata_ignores_none_and_empty_states() -> None:
     assert list(empty_state.keys()) == ["x"]
 
 
-def test_retarded_integrator_initializes_step_zero_and_reports_progress() -> None:
+@pytest.mark.parametrize("bad_role", [None, "rider", "driver"])
+def test_retarded_integrator_initializes_step_zero_and_reports_progress(
+    bad_role,
+) -> None:
     calls: list[tuple[int, int]] = []
+
+    if bad_role is not None:
+        rider = _make_particle_state()
+        driver = _make_particle_state(z=1.0)
+        (rider if bad_role == "rider" else driver)["x"][0] = np.nan
+        with pytest.raises(ValueError, match=f"initial {bad_role}: x must be finite"):
+            retarded_integrator(
+                steps=1,
+                h_step=1e-3,
+                wall_z=0.0,
+                aperture_radius=0.5,
+                sim_type=SimulationType.BUNCH_TO_BUNCH,
+                init_rider=rider,
+                init_driver=driver,
+                mean=0.0,
+                cav_spacing=0.0,
+                z_cutoff=0.0,
+                use_numba=False,
+            )
+        return
 
     trajectory, trajectory_drv, *_soa_out = retarded_integrator(
         steps=1,

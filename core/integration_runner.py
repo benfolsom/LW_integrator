@@ -80,6 +80,7 @@ from .types import (
     Trajectory,
     TrajectoryArrays,
     TrajectoryBuilder,
+    validate_live_particle_fields,
 )
 
 # A sparse inertial prefix is enough for the exact light-cone interpolants:
@@ -384,14 +385,11 @@ def _build_partial_soa(
     """Build a TrajectoryArrays from trajectory[0:up_to_step]."""
     if up_to_step < 1 or not trajectory[0]:
         return None
-    try:
-        n_p = len(trajectory[0]["x"])
-        builder = TrajectoryBuilder(up_to_step, n_p)
-        for idx in range(up_to_step):
-            builder.set_step(idx, trajectory[idx])
-        return builder.build()
-    except Exception:
-        return None
+    n_p = len(trajectory[0]["x"])
+    builder = TrajectoryBuilder(up_to_step, n_p)
+    for idx in range(up_to_step):
+        builder.set_step(idx, trajectory[idx])
+    return builder.build()
 
 
 def _indexed_active_history(
@@ -403,18 +401,15 @@ def _indexed_active_history(
 ) -> IndexedTrajectoryArrays | None:
     if trajectory_soa is None:
         return None
-    try:
-        return IndexedTrajectoryArrays(
-            trajectory_soa,
-            np.asarray(particle_indices, dtype=int),
-            start_step=int(start_step),
-            q_override=q_override,
-        )
-    except ValueError:
-        return None
+    return IndexedTrajectoryArrays(
+        trajectory_soa,
+        np.asarray(particle_indices, dtype=int),
+        start_step=int(start_step),
+        q_override=q_override,
+    )
 
 
-@lru_cache(maxsize=None)
+@lru_cache(maxsize=256)
 def _call_accepts_kw(callable_obj: Callable, name: str) -> bool:
     """Return whether *callable_obj* accepts a keyword argument."""
     parameters = inspect.signature(callable_obj).parameters
@@ -548,7 +543,10 @@ def _compute_total_energy(state: ParticleState) -> float:
     """
     gamma = np.asarray(state["gamma"])
     mass = np.asarray(state["m"])
-    return float(np.sum(gamma * mass * C_MMNS * C_MMNS))
+    energy = float(np.sum(gamma * mass * C_MMNS * C_MMNS))
+    if not np.isfinite(energy):
+        raise ValueError("total particle energy must be finite")
+    return energy
 
 
 def _calculate_gamma(state: ParticleState) -> float:
@@ -3963,6 +3961,9 @@ def retarded_integrator(
     # Magnetic metadata is integration-local state. Copy caller-owned inputs so
     # an enabled run cannot leave active spin arrays behind for a later disabled
     # run that reuses the same dictionaries.
+    validate_live_particle_fields(init_rider, context="initial rider")
+    if init_driver is not None:
+        validate_live_particle_fields(init_driver, context="initial driver")
     init_rider = _copy_particle_state(init_rider)
     if init_driver is not None:
         init_driver = _copy_particle_state(init_driver)
@@ -5121,6 +5122,7 @@ def retarded_integrator(
                     logger=logger,
                 )
             _mark_post_step_gamma_blowups(trajectory[i], step=i, logger=logger)
+            validate_live_particle_fields(trajectory[i], context=f"rider step {i}")
             if not inertial_prehistory_enabled:
                 _traj_builder.set_step(i, trajectory[i])
 
@@ -5387,6 +5389,8 @@ def retarded_integrator(
                             else {}
                         ),
                     )
+            _mark_post_step_gamma_blowups(trajectory_drv[i], step=i, logger=logger)
+            validate_live_particle_fields(trajectory_drv[i], context=f"driver step {i}")
             _ensure_startup_metadata(trajectory_drv[i])
             _set_pseudo_grid_schedule_metadata(trajectory_drv[i], None)
             if (

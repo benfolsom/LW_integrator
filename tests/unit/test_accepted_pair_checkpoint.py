@@ -13,6 +13,7 @@ from core.integration_checkpoint import (
     AcceptedPairCheckpointStore,
     CheckpointCompatibilityError,
     CheckpointError,
+    IntegrationCheckpointStore,
 )
 from core.types import GrowableTrajectoryBuilder, TrajectoryArrays
 
@@ -504,29 +505,82 @@ def test_pair_checkpoint_rejects_changed_particle_constants(tmp_path: Path) -> N
         )
 
 
+@pytest.mark.parametrize("pair", [False, True])
+@pytest.mark.parametrize("failure", ["json", "publish", "nan", "inf"])
+@pytest.mark.parametrize("already_committed", [False, True])
 def test_pair_checkpoint_json_failure_does_not_advance_manifest(
     tmp_path: Path,
+    monkeypatch,
+    pair,
+    failure,
+    already_committed,
 ) -> None:
-    store = AcceptedPairCheckpointStore(
+    store_class = AcceptedPairCheckpointStore if pair else IntegrationCheckpointStore
+    arguments = (
+        {"interval_knots": 1}
+        if pair
+        else {
+            "total_steps": 3,
+            "requested_steps": 3,
+            "active_start": 0,
+            "interval_steps": 1,
+        }
+    )
+    store = store_class(
         tmp_path / "pair.checkpoint",
         compatibility_payload={"physics": "pair"},
-        interval_knots=1,
+        **arguments,
         interval_seconds=0.0,
         resume=False,
     )
-    rider = _history(0.0, 1).build_current()
-    driver = _history(0.0, 1).build_current()
+    rider = _history(0.0, 2).build_current()
+    driver = _history(0.0, 2).build_current()
+    rider = replace(rider, x=rider.x.copy())
+    if already_committed:
+        initial = _history(0.0, 1).build_current()
+        if pair:
+            store.write(
+                rider=initial,
+                driver=initial,
+                controller_state={},
+                public_output_state={},
+            )
+        else:
+            store.write(step_index=0, rider=initial, driver=initial, loop_state={})
+
+    def write(state):
+        if pair:
+            store.write(
+                rider=rider,
+                driver=driver,
+                controller_state=state,
+                public_output_state={},
+            )
+        else:
+            store.write(step_index=1, rider=rider, driver=driver, loop_state=state)
+
     manifest_before = json.loads(store.manifest_path.read_text(encoding="utf-8"))
+    with monkeypatch.context() as patch:
+        if failure == "publish":
 
-    with pytest.raises(CheckpointError, match="finite JSON-compatible"):
-        store.write(
-            rider=rider,
-            driver=driver,
-            controller_state={"error": np.nan},
-            public_output_state={},
-        )
+            def fail_publish(*args):
+                raise OSError("injected publication failure")
 
-    assert store.committed_knots == 0
+            patch.setattr("core.integration_checkpoint._atomic_json", fail_publish)
+        if failure in {"nan", "inf"}:
+            rider.x[1, 0] = float(failure)
+        with pytest.raises((CheckpointError, OSError)):
+            write({"error": np.nan} if failure == "json" else {})
+
+    assert store.manifest == manifest_before
     assert (
         json.loads(store.manifest_path.read_text(encoding="utf-8")) == manifest_before
     )
+    rider.x[1, 0] = 1.0
+    state = {"accepted": [1, 2]}
+    write(state)
+    state["accepted"].append(3)
+    assert (store.committed_knots if pair else store.next_internal_step) == 2
+    saved = json.loads(store.manifest_path.read_text(encoding="utf-8"))
+    assert saved == store.manifest
+    assert saved["controller_state" if pair else "loop_state"] == {"accepted": [1, 2]}

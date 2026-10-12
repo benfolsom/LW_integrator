@@ -49,7 +49,7 @@ StepFunction = Callable[
 ]
 
 
-@lru_cache(maxsize=None)
+@lru_cache(maxsize=256)
 def _signature_parameters(step_function: StepFunction):
     return inspect.signature(step_function).parameters
 
