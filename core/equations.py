@@ -80,6 +80,7 @@ from .distances import (
     compute_instantaneous_distance,
     compute_retarded_distance,
     compute_retarded_distance_soa,
+    match_cloud_child_indices,
 )
 from .beamline_geometry import compute_directional_visibility_mask
 from .exact_visibility import visibility_history
@@ -1005,6 +1006,55 @@ def _compute_approximate_retarded_distance(
     nhat["R"] = nhat["R"] * numerator / denominator
 
     return nhat, indices_bounded
+
+
+def _smeared_child_samples(
+    config: Optional[MacroparticleSmearingConfig],
+    cloud: Optional[np.ndarray],
+    trajectory: Trajectory,
+    source_trajectory: Trajectory,
+    index_traj: int,
+    observer_idx: int,
+    parent_indices: np.ndarray,
+    *,
+    traj_soa: Optional[TrajectoryArrays] = None,
+    source_soa: Optional[TrajectoryArrays] = None,
+) -> Optional[list]:
+    """Gather each smeared child at its own light-cone index (sampled path).
+
+    Returns None, leaving the legacy shared-event expansion, for point
+    sources and for interpolated matching.
+    """
+    if (
+        config is None
+        or not config.enabled
+        or not (config.apply_to_active_sources or config.apply_to_passive_sources)
+        or int(config.subcharge_count) <= 1
+        or cloud is None
+    ):
+        return None
+    use_soa = traj_soa is not None and source_soa is not None
+    child_indices = match_cloud_child_indices(
+        traj_soa if use_soa else trajectory,
+        source_soa if use_soa else source_trajectory,
+        index_traj,
+        observer_idx,
+        parent_indices,
+        cloud,
+    )
+    if use_soa:
+        return [
+            gather_external_samples_soa(
+                source_soa, child_indices[:, k], include_positions=True
+            )
+            for k in range(child_indices.shape[1])
+        ]
+    return [
+        gather_external_samples(
+            source_trajectory, child_indices[:, k], include_positions=True
+        )
+        for k in range(child_indices.shape[1])
+    ]
 
 
 def _compute_full_retarded_distance(
@@ -2823,6 +2873,26 @@ def retarded_equations_of_motion(
                     config=macroparticle_smearing,
                     step_index=index_traj,
                     fixed_offsets=external_cloud,
+                    child_samples=(
+                        _smeared_child_samples(
+                            macroparticle_smearing,
+                            external_cloud,
+                            trajectory,
+                            trajectory_ext,
+                            index_traj,
+                            particle_idx,
+                            indices_bounded,
+                            traj_soa=traj_soa,
+                            source_soa=traj_ext_soa,
+                        )
+                        if chrono_result is None
+                        and startup_mode is not StartupMode.APPROXIMATE_BACK_HISTORY
+                        and not (
+                            sc_convergence_mode == "variable_geometry"
+                            and sc_iteration > 0
+                        )
+                        else None
+                    ),
                 )
                 if smeared_nhat:
                     nhat = smeared_nhat
@@ -3179,6 +3249,23 @@ def retarded_equations_of_motion(
                             )
                             if pseudo_grid_space_charge_source_trajectory is not None
                             else observer_cloud
+                        ),
+                        child_samples=(
+                            _smeared_child_samples(
+                                macroparticle_smearing,
+                                observer_cloud,
+                                trajectory,
+                                sc_source_trajectory,
+                                index_traj,
+                                particle_idx,
+                                sc_indices,
+                                traj_soa=traj_soa,
+                                source_soa=sc_source_soa,
+                            )
+                            if use_retarded_sc
+                            and sc_chrono_result is None
+                            and pseudo_grid_space_charge_source_trajectory is None
+                            else None
                         ),
                     )
                     if smeared_sc_nhat:

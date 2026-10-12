@@ -10,6 +10,11 @@ and boundary studies), plus subsequent integration updates.
   remove the sampled force's silent gamma cutoff, and preserve longitudinal
   Medina acceleration at high gamma in both LW and PIC callers. These fixes
   change affected numerical results; configuration defaults are unchanged.
+- Give each smeared child source on the sampled retarded path its own
+  light-cone index, velocity and acceleration, as for exact persistent clouds,
+  instead of the parent's retarded event plus the offset. Point sources are
+  unchanged bit for bit; interpolated chrono matching, variable-geometry
+  self-consistency and pseudo-grid space charge keep the shared-event expansion.
 
 ### Exact retarded fields and source histories
 

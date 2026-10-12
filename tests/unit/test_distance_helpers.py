@@ -462,3 +462,50 @@ def test_chrono_match_indices_uses_char_time_fallback_when_denominator_is_singul
     )
 
     assert result.tolist() == [3]
+
+
+def test_cloud_children_match_their_own_translated_light_cone() -> None:
+    """No existing test covers per-child matching of smeared sampled sources.
+
+    A child is its parent's history translated by a constant offset, so its
+    index must equal the ordinary matcher run on that translated history.
+    The shared-event shortcut gives the wrong index when the offset is longitudinal.
+    """
+    steps = 40
+    observer = [_make_state(t=[0.1 * s], x=[400.0], y=[2.0]) for s in range(steps)]
+    base_x = np.array([0.0, 40.0])
+
+    def history(shift: np.ndarray) -> list[dict[str, np.ndarray]]:
+        return [
+            _make_state(
+                t=[0.1 * s, 0.1 * s],
+                x=list(base_x + shift[:, 0] + 5.0 * s),
+                y=list(shift[:, 1]),
+                z=list(shift[:, 2]),
+                bx=[0.5, 0.5],
+            )
+            for s in range(steps)
+        ]
+
+    offsets = np.zeros((2, 3, 3))
+    offsets[:, 1, 0] = 20.0
+    offsets[:, 2] = (-15.0, 4.0, 3.0)
+    parent = distances.chrono_match_indices(
+        observer, history(np.zeros((2, 3))), steps - 1, 0
+    )
+    for use_soa in (False, True):
+        pick = _make_soa if use_soa else (lambda traj: traj)
+        children = distances.match_cloud_child_indices(
+            pick(observer),
+            pick(history(np.zeros((2, 3)))),
+            steps - 1,
+            0,
+            parent,
+            offsets,
+        )
+        for k in range(3):
+            expected = distances.chrono_match_indices(
+                observer, history(offsets[:, k]), steps - 1, 0
+            )
+            np.testing.assert_array_equal(children[:, k], expected)
+    assert np.any(children[:, 1] != parent) and np.any(children[:, 2] != parent)

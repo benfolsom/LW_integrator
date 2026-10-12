@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 from functools import lru_cache
-from typing import Any, cast
+from typing import Any, Sequence, cast
 
 import numpy as np
 
@@ -151,6 +151,7 @@ def smear_source_samples(
     config: MacroparticleSmearingConfig | None,
     step_index: int,
     fixed_offsets: np.ndarray | None = None,
+    child_samples: Sequence[ExternalSampleBatch] | None = None,
 ) -> tuple[ExternalSampleBatch, dict[str, np.ndarray]]:
     """Return source samples expanded into bounded smeared subcharges.
 
@@ -160,6 +161,13 @@ def smear_source_samples(
     ``fixed_cloud_offsets``; these are reused irrespective of event spacing
     and masks. Omitting them constructs an initial cloud or requests legacy
     centroid sampling. Legacy refresh policies are non-conservative.
+
+    ``child_samples`` holds one batch per subcharge index, gathered at that
+    child's own retarded index. Their velocity, acceleration, gamma, and
+    position replace the parent's, so a child is a worldline translated by its
+    offset and not the parent's retarded event plus the offset. Charge, mass,
+    and population stay the parent's. Without them the legacy shared-event
+    expansion is unchanged.
     """
     if (
         config is None
@@ -187,16 +195,42 @@ def smear_source_samples(
     total_count = source_count * subcharge_count
     valid_mask = np.repeat(samples.valid_mask, subcharge_count)
 
-    x = np.repeat(np.asarray(samples.x, dtype=float), subcharge_count)
-    y = np.repeat(np.asarray(samples.y, dtype=float), subcharge_count)
-    z = np.repeat(np.asarray(samples.z, dtype=float), subcharge_count)
-    bx = np.repeat(samples.bx, subcharge_count)
-    by = np.repeat(samples.by, subcharge_count)
-    bz = np.repeat(samples.bz, subcharge_count)
-    bdotx = np.repeat(samples.bdotx, subcharge_count)
-    bdoty = np.repeat(samples.bdoty, subcharge_count)
-    bdotz = np.repeat(samples.bdotz, subcharge_count)
-    gamma = np.repeat(samples.gamma, subcharge_count)
+    if child_samples is None:
+
+        def expand(name: str) -> np.ndarray:
+            return np.repeat(
+                np.asarray(getattr(samples, name), dtype=float), subcharge_count
+            )
+
+    else:
+        if len(child_samples) != subcharge_count:
+            raise ValueError("child_samples must hold one batch per subcharge")
+        for child in child_samples:
+            if child.x is None or child.y is None or child.z is None:
+                return samples, {}
+        valid_mask = valid_mask & np.stack(
+            [child.valid_mask for child in child_samples], axis=1
+        ).reshape(total_count)
+
+        def expand(name: str) -> np.ndarray:
+            return np.stack(
+                [
+                    np.asarray(getattr(child, name), dtype=float)
+                    for child in child_samples
+                ],
+                axis=1,
+            ).reshape(total_count)
+
+    x = expand("x")
+    y = expand("y")
+    z = expand("z")
+    bx = expand("bx")
+    by = expand("by")
+    bz = expand("bz")
+    bdotx = expand("bdotx")
+    bdoty = expand("bdoty")
+    bdotz = expand("bdotz")
+    gamma = expand("gamma")
     charge = np.repeat(samples.charge / subcharge_count, subcharge_count)
     mass = None if samples.m is None else np.repeat(samples.m, subcharge_count)
 
