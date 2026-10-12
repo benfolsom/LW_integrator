@@ -5292,7 +5292,13 @@ def retarded_equations_of_motion(
                         from .external_field_provider import provider_force_derivative
 
                         history = dict(current_state)
-                        for axis in "xyz":
+                        # Unprimed state carries no accepted history at all;
+                        # do not fabricate force keys without a sample time.
+                        for axis in (
+                            "xyz"
+                            if "medina_external_force_sample_time" in current_state
+                            else ""
+                        ):
                             total = current_state.get(
                                 f"medina_external_force_{axis}", np.zeros(num_particles)
                             )
