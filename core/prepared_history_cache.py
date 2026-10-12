@@ -205,6 +205,9 @@ class AppendAwarePreparedHistoryCache(Generic[HistoryT, PreparedT]):
     ``preserve_capacity_growth`` is for providers that own their prepared
     prefix storage. It discounts only certified value-preserving capacity
     replacements, and keeps ordinary rewrites and lazy allocations invalidating.
+
+    A simulation must own its history while preparing and using returned values.
+    The cache lock protects bookkeeping, not builder or nested provider writes.
     """
 
     def __init__(
@@ -267,6 +270,19 @@ class AppendAwarePreparedHistoryCache(Generic[HistoryT, PreparedT]):
 
         with self._lock:
             self._purge_dead_entries()
+            return self._prepare_locked(
+                history, variant=variant, prepare_full=prepare_full, append=append
+            )
+
+    def _prepare_locked(
+        self,
+        history: HistoryT,
+        *,
+        variant: Hashable,
+        prepare_full: Callable[[HistoryT], PreparedT],
+        append: Callable[[PreparedT, HistoryT, int], PreparedT],
+    ) -> PreparedHistoryCacheResult[PreparedT]:
+        """Capture and consume the storage revision under the same cache lock."""
 
         snapshot = history_storage_snapshot(history)
         if snapshot is None:
@@ -276,10 +292,25 @@ class AppendAwarePreparedHistoryCache(Generic[HistoryT, PreparedT]):
             return PreparedHistoryCacheResult(value, "uncached", 0)
 
         key = (snapshot.identity, variant)
+
+        def checked_prepare(operation: Callable[[], PreparedT]) -> PreparedT:
+            try:
+                value = operation()
+                if history_storage_snapshot(history) != snapshot:
+                    raise RuntimeError(
+                        "source history changed during cache preparation"
+                    )
+                return value
+            except BaseException:
+                # Full preparation can also mutate provider-owned buffers or
+                # run callbacks. A failed rebuild must not retain an old entry.
+                self._entries.pop(key, None)
+                raise
+
         with self._lock:
             entry = self._entries.get(key)
             if entry is None:
-                value = prepare_full(history)
+                value = checked_prepare(lambda: prepare_full(history))
                 entry = _CacheEntry(
                     value=value,
                     visible_stop=snapshot.visible_stop,
@@ -311,7 +342,7 @@ class AppendAwarePreparedHistoryCache(Generic[HistoryT, PreparedT]):
                     and snapshot.generation <= entry.generation
                 )
             ):
-                value = prepare_full(history)
+                value = checked_prepare(lambda: prepare_full(history))
                 entry.value = value
                 entry.visible_stop = snapshot.visible_stop
                 entry.generation = snapshot.generation
@@ -323,14 +354,9 @@ class AppendAwarePreparedHistoryCache(Generic[HistoryT, PreparedT]):
                 self._rebuilds += 1
                 disposition = "rebuild"
             elif snapshot.visible_stop > entry.visible_stop:
-                try:
-                    value = append(entry.value, history, entry.visible_stop)
-                except BaseException:
-                    # Provider appenders may update preallocated buffers in
-                    # place. Never retain a possibly partial mutation after a
-                    # validation or numerical failure.
-                    del self._entries[key]
-                    raise
+                value = checked_prepare(
+                    lambda: append(entry.value, history, entry.visible_stop)
+                )
                 entry.value = value
                 entry.visible_stop = snapshot.visible_stop
                 entry.generation = snapshot.generation

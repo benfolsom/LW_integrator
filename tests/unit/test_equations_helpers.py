@@ -888,7 +888,10 @@ def test_medina_kinematics_give_transverse_synchrotron_damping(gamma: float) -> 
     assert impulse[2] < 0.0
 
 
-def test_medina_force_derivative_uses_accepted_midpoint_samples() -> None:
+@pytest.mark.parametrize(
+    "damage", [None, "force", "time", "interval", "index", "missing"]
+)
+def test_medina_force_derivative_uses_accepted_midpoint_samples(damage) -> None:
     accepted_state = {
         "t": np.array([2.0]),
         "medina_external_force_x": np.array([1.0]),
@@ -897,6 +900,23 @@ def test_medina_force_derivative_uses_accepted_midpoint_samples() -> None:
         "medina_external_force_sample_time": np.array([1.5]),
     }
 
+    if damage is not None:
+        if damage == "force":
+            accepted_state["medina_external_force_x"][0] = np.nan
+        elif damage == "time":
+            accepted_state["medina_external_force_sample_time"][0] = np.inf
+        elif damage == "index":
+            accepted_state["medina_external_force_x"] = np.array([])
+        elif damage == "missing":
+            del accepted_state["medina_external_force_x"]
+        with pytest.raises(ValueError, match="Medina"):
+            equations._accepted_medina_force_derivative(
+                current_state=accepted_state,
+                particle_idx=0,
+                current_force=(3.0, 2.0, -2.0),
+                current_sample_time=1.5 if damage == "interval" else 2.5,
+            )
+        return
     derivative, ready = equations._accepted_medina_force_derivative(
         current_state=accepted_state,
         particle_idx=0,
@@ -1094,13 +1114,27 @@ def test_retarded_equations_of_motion_skips_already_dead_particles() -> None:
     assert result["_dead_particles"][0]
 
 
-def test_retarded_equations_of_motion_raises_gamma_blowup_for_sc_runs() -> None:
+@pytest.mark.parametrize(
+    "invalid_field,sc_enabled",
+    [(None, True)]
+    + [
+        (name, enabled)
+        for name in ("x", "t", "Py", "radiation_energy")
+        for enabled in (False, True)
+    ],
+)
+def test_retarded_equations_of_motion_raises_gamma_blowup_for_sc_runs(
+    invalid_field, sc_enabled
+) -> None:
     # A divergent spatial shell must trigger recovery; an inconsistent Pt
     # alone is now retained only as a temporal diagnostic.
     state = _make_state(gamma=[1e9])
     state["Px"] = np.array([1e9 * C_MMNS])
 
-    with pytest.raises(equations.GammaBlowupError):
+    if invalid_field is not None:
+        state = _make_state(gamma=[1.0], charge=[0.0])
+        state[invalid_field] = np.array([np.nan])
+    with pytest.raises(ValueError if invalid_field else equations.GammaBlowupError):
         equations.retarded_equations_of_motion(
             h=1e-3,
             trajectory=[state],
@@ -1108,7 +1142,10 @@ def test_retarded_equations_of_motion_raises_gamma_blowup_for_sc_runs() -> None:
             index_traj=0,
             aperture_radius=1.0,
             sim_type=SimulationType.CONDUCTING_WALL,
-            self_consistency=SelfConsistencyConfig(enabled=True, max_iterations=2),
+            self_consistency=SelfConsistencyConfig(
+                enabled=sc_enabled, max_iterations=2
+            ),
+            radiation_reaction_mode="medina_lad",
             step_idx=3,
         )
 

@@ -80,6 +80,30 @@ def test_locate_retarded_index_soa_matches_strict_chrono_bracket() -> None:
     assert distances._locate_retarded_index_soa(t_col, 3, 1.5) == 2
     assert distances._locate_retarded_index_soa(t_col, 3, 2.0) == 3
     assert distances._locate_retarded_index_soa(t_col, 3, 10.0) == 3
+    for times in (t_col, np.array([-2.0, -1.0, -1.0, 0.0, 1.0])):
+        for side in ("left", "right"):
+            for target in (-3.0, -2.0, -1.0, 0.0, 1.0, 1.5, 2.0, 10.0, np.nan):
+                assert distances._locate_retarded_index_soa(
+                    times, len(times) - 1, target, side=side, monotone=True
+                ) == distances._locate_retarded_index_soa(
+                    times, len(times) - 1, target, side=side
+                )
+
+    class CountedTimes(np.ndarray):
+        cells = 0
+
+        def __getitem__(self, index):
+            value = super().__getitem__(index)
+            if isinstance(index, tuple):
+                type(self).cells += np.size(value)
+            return value
+
+    times = np.broadcast_to(np.arange(4096)[:, None], (4096, 5)).view(CountedTimes)
+    targets = np.array([-1.0, 0.0, 2.0, 4094.0, 5000.0])
+    np.testing.assert_array_equal(
+        distances._batched_time_upper_bound(times, targets), [0, 1, 3, 4095, 4096]
+    )
+    assert CountedTimes.cells <= 5 * 13
 
 
 def test_compute_retarded_distance_uses_per_particle_retarded_indices() -> None:
@@ -350,9 +374,11 @@ def test_chrono_match_indices_soa_fast_matches_legacy_path(
                     )
 
 
-def test_chrono_match_indices_soa_fast_matches_legacy_with_varied_time_columns() -> (
-    None
-):
+@pytest.mark.parametrize("cell_limit", [0, 1_000_000])
+@pytest.mark.parametrize("time_mode", ["ordinary", "negative", "ties", "rewrite"])
+def test_chrono_match_indices_soa_fast_matches_legacy_with_varied_time_columns(
+    monkeypatch, cell_limit, time_mode
+) -> None:
     n_particles = 5
     trajectory = []
     trajectory_ext = []
@@ -381,22 +407,52 @@ def test_chrono_match_indices_soa_fast_matches_legacy_with_varied_time_columns()
             )
         )
 
-    legacy = distances.chrono_match_indices(
-        trajectory,
-        trajectory_ext,
-        index_traj=7,
-        index_part=4,
-        mode=ChronoMatchingMode.FAST,
-    )
-    soa = distances.chrono_match_indices_soa(
-        _make_soa(trajectory),
-        _make_soa(trajectory_ext),
-        index_traj=7,
-        index_part=4,
-        mode=ChronoMatchingMode.FAST,
-    )
-
-    np.testing.assert_array_equal(soa, legacy)
+    if time_mode == "ordinary" and cell_limit == 1_000_000:
+        legacy = distances.chrono_match_indices(
+            trajectory,
+            trajectory_ext,
+            index_traj=7,
+            index_part=4,
+            mode=ChronoMatchingMode.FAST,
+        )
+        soa = distances.chrono_match_indices_soa(
+            _make_soa(trajectory),
+            _make_soa(trajectory_ext),
+            index_traj=7,
+            index_part=4,
+            mode=ChronoMatchingMode.FAST,
+        )
+        np.testing.assert_array_equal(soa, legacy)
+    monkeypatch.setattr(distances, "_MAX_VECTORIZED_CHRONO_MATCH_CELLS", cell_limit)
+    distances._MONOTONE_TIME_CACHE.clear()
+    builder = TrajectoryBuilder(8, n_particles)
+    observer = _make_soa(trajectory)
+    for step, state in enumerate(trajectory_ext):
+        if time_mode == "negative":
+            state["t"] -= 4.0
+        elif time_mode == "ties":
+            state["t"][:] = float(step // 2)
+        builder.set_step(step, state)
+        source = builder.build_partial(step + 1)
+        args = dict(index_traj=step, index_part=4, mode=ChronoMatchingMode.FAST)
+        cached = distances.chrono_match_indices_soa(observer, source, **args)
+        with monkeypatch.context() as patch:
+            patch.setattr(
+                distances,
+                "_monotone_time_columns",
+                lambda history: np.zeros(n_particles, dtype=bool),
+            )
+            scanned = distances.chrono_match_indices_soa(observer, source, **args)
+        np.testing.assert_array_equal(cached, scanned)
+    stats = distances._MONOTONE_TIME_CACHE.stats()
+    assert stats.misses == 1
+    assert stats.appends == 7
+    if time_mode == "rewrite":
+        changed = dict(trajectory_ext[3])
+        changed["t"] = np.full(n_particles, -100.0)
+        builder.set_step(3, changed)
+        assert not np.any(distances._monotone_time_columns(builder.build_partial(8)))
+        assert distances._MONOTONE_TIME_CACHE.stats().rebuilds == 1
 
 
 def test_chrono_match_indices_soa_averaged_matches_legacy_path() -> None:

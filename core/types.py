@@ -14,7 +14,8 @@ import copy
 from dataclasses import dataclass, field, fields
 from enum import Enum, IntEnum, auto
 from itertools import count
-from typing import TYPE_CHECKING, Dict, List, Mapping, Sequence, cast
+from operator import index as sequence_index
+from typing import TYPE_CHECKING, Dict, List, Mapping, Sequence, cast, overload
 
 if TYPE_CHECKING:
     from .external_field_provider import ExternalFieldProvider
@@ -47,6 +48,66 @@ EXACT_SOURCE_REDUCTION_FIELDS = (
 ParticleState = Dict[str, np.ndarray]
 Trajectory = List[ParticleState]
 TrajectoryView = Sequence[ParticleState]
+
+
+def validate_live_particle_fields(
+    state: Mapping[str, np.ndarray], *, context: str
+) -> None:
+    """Reject non-finite live kinematics and diagnostics without changing values.
+
+    Dead rows may retain failure sentinels. An unprimed Medina force timestamp
+    may be NaN, but infinity is never a valid timestamp. Optional fields remain
+    optional; their presence does not imply that every startup channel is ready.
+    """
+    shape = np.asarray(state["x"]).shape
+    dead = np.asarray(
+        state.get("dead", state.get("_dead_particles", np.zeros(shape, dtype=bool))),
+        dtype=bool,
+    )
+    if dead.shape != shape:
+        raise ValueError(f"{context}: dead mask must match particle coordinates")
+    names = (
+        TrajectoryBuilder._KINEMATIC_FIELDS
+        + TrajectoryBuilder._MAGNETIC_KINEMATIC_FIELDS
+        + TrajectoryBuilder._MEDINA_FLOAT_FIELDS
+        + TrajectoryBuilder._PARTICLE_CONST_FIELDS
+    )
+    for name in names:
+        if name not in state:
+            continue
+        values = np.asarray(state[name])
+        if values.size == 0:
+            continue
+        valid = np.isfinite(values)
+        if name == "medina_external_force_sample_time":
+            ready = np.asarray(state.get("medina_force_derivative_ready", False))
+            valid = valid | (np.isnan(values) & ~ready.astype(bool))
+        if not np.all(valid | dead):
+            raise ValueError(f"{context}: {name} must be finite for live particles")
+
+
+class _EmptySchedule(Sequence[None]):
+    """Constant-size snapshot of a feature-off schedule with list-like indexing."""
+
+    def __init__(self, length: int) -> None:
+        self._length = length
+
+    def __len__(self) -> int:
+        return self._length
+
+    @overload
+    def __getitem__(self, index: int) -> None: ...
+
+    @overload
+    def __getitem__(self, index: slice) -> _EmptySchedule: ...
+
+    def __getitem__(self, index: int | slice) -> None | _EmptySchedule:
+        if isinstance(index, slice):
+            return _EmptySchedule(len(range(self._length)[index]))
+        index = sequence_index(index)
+        if not -self._length <= index < self._length:
+            raise IndexError("schedule index out of range")
+        return None
 
 
 _TRAJECTORY_STORAGE_TOKENS = count(1)
@@ -1606,7 +1667,7 @@ class TrajectoryArrays:
     # Non-array side-channels
     halt_reason: list  # length n_steps, str or None
     particle_failure_info: dict  # keyed by (step, particle_idx)
-    pseudo_grid_schedule: list  # length n_steps, object or None
+    pseudo_grid_schedule: Sequence  # length n_steps, object or None
 
     medina_provider_force_x: np.ndarray = field(
         default_factory=lambda: np.zeros((0, 0)), repr=False
@@ -2432,6 +2493,7 @@ class TrajectoryBuilder:
         self._halt_reason: list = [None] * n_steps
         self._particle_failure_info: dict = {}
         self._pseudo_grid_schedule: list = [None] * n_steps
+        self._has_pseudo_grid_schedule = False
 
     def _replace_row_capacity(self, new_capacity: int) -> None:
         """Replace row-shaped storage while preserving every existing value.
@@ -2614,6 +2676,8 @@ class TrajectoryBuilder:
             self._arrays["dead"][step] = dead
 
         self._pseudo_grid_schedule[step] = state.get("_pseudo_grid_schedule")
+        if self._pseudo_grid_schedule[step] is not None:
+            self._has_pseudo_grid_schedule = True
 
         if step == 0:
             for field_name in self._PARTICLE_CONST_FIELDS:
@@ -2698,6 +2762,9 @@ class TrajectoryBuilder:
             raise ValueError("checkpoint row block exceeds trajectory capacity")
         if start != self._published_stop:
             raise ValueError("checkpoint rows must be restored contiguously")
+        validate_live_particle_fields(
+            {**row_arrays, **(particle_constants or {})}, context="checkpoint rows"
+        )
 
         magnetic_fields = set(self._MAGNETIC_KINEMATIC_FIELDS)
         magnetic_bool_fields = set(self._MAGNETIC_BOOL_FIELDS)
@@ -2947,7 +3014,11 @@ class TrajectoryBuilder:
             halt_step=self._halt_step_arr[:s],
             halt_reason=self._halt_reason,
             particle_failure_info=self._particle_failure_info,
-            pseudo_grid_schedule=self._pseudo_grid_schedule[:s],
+            pseudo_grid_schedule=(
+                self._pseudo_grid_schedule[:s]
+                if self._has_pseudo_grid_schedule
+                else _EmptySchedule(s)
+            ),
             potential_inclusion_delta_A_x=self._arrays["potential_inclusion_delta_A_x"][
                 :s
             ],

@@ -444,17 +444,37 @@ class TestPseudoGridScheduleMetadata:
         assert traj.state_at(1)["_pseudo_grid_schedule"] is schedule
         assert "_pseudo_grid_schedule" not in traj.state_at(0)
 
-    def test_build_partial_preserves_schedule_slice(self):
+    @pytest.mark.parametrize("enabled", [False, True])
+    def test_build_partial_preserves_schedule_slice(self, enabled):
         builder = TrajectoryBuilder(N_STEPS, N_PARTICLES)
         schedule = {"step_index": 1}
 
         for step in range(N_STEPS):
             state = _make_state(step, N_PARTICLES)
-            if step == 1:
+            if step == 1 and enabled:
                 state["_pseudo_grid_schedule"] = schedule
             builder.set_step(step, state)
 
+        class CountingList(list):
+            copied = 0
+
+            def __getitem__(self, item):
+                value = super().__getitem__(item)
+                if isinstance(item, slice):
+                    self.copied += len(value)
+                return value
+
+        builder._pseudo_grid_schedule = CountingList(builder._pseudo_grid_schedule)
+        for stop in range(1, N_STEPS + 1):
+            view = builder.build_partial(stop)
+            assert len(view.pseudo_grid_schedule) == stop
         partial = builder.build_partial(2)
 
         assert len(partial.pseudo_grid_schedule) == 2
-        assert partial.pseudo_grid_schedule[1] is schedule
+        assert partial.pseudo_grid_schedule[1] is (schedule if enabled else None)
+        assert partial.pseudo_grid_schedule[-1] is (schedule if enabled else None)
+        assert list(partial.pseudo_grid_schedule[:1]) == [None]
+        with pytest.raises(IndexError):
+            partial.pseudo_grid_schedule[2]
+        if not enabled:
+            assert builder._pseudo_grid_schedule.copied == 0

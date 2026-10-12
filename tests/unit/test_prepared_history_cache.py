@@ -289,7 +289,8 @@ def test_unmanaged_wrapper_is_always_prepared_uncached() -> None:
     assert cache.stats().uncached == 2
 
 
-def test_failed_in_place_append_is_evicted_before_retry() -> None:
+@pytest.mark.parametrize("failure", ["append", "rewrite", "mutation"])
+def test_failed_in_place_append_is_evicted_before_retry(failure) -> None:
     cache = AppendAwarePreparedHistoryCache(max_entries=2)
     builder = TrajectoryBuilder(2, 1)
     builder.set_step(0, _state(0, particles=1))
@@ -307,19 +308,29 @@ def test_failed_in_place_append_is_evicted_before_retry() -> None:
         append=lambda previous, history, old_stop: previous,
     )
     builder.set_step(1, _state(1, particles=1))
+    if failure == "rewrite":
+        builder.set_step(0, _state(0, particles=1, x_shift=1.0))
 
     def fail_after_mutation(previous, history, old_stop):
         del history, old_stop
         previous.append(99)
         raise ValueError("invalid tail")
 
-    with pytest.raises(ValueError, match="invalid tail"):
+    def mutate_source(previous, history, old_stop):
+        builder.set_step(0, _state(0, particles=1, x_shift=2.0))
+        return previous
+
+    def fail_full(history):
+        raise ValueError("invalid rebuild")
+
+    with pytest.raises((ValueError, RuntimeError), match="invalid|changed during"):
         cache.prepare(
             builder.build_partial(2),
             variant="charge",
-            prepare_full=prepare_full,
-            append=fail_after_mutation,
+            prepare_full=fail_full if failure == "rewrite" else prepare_full,
+            append=mutate_source if failure == "mutation" else fail_after_mutation,
         )
+    assert cache.stats().entries == 0
     retry = cache.prepare(
         builder.build_partial(2),
         variant="charge",

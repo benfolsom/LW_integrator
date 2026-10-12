@@ -112,6 +112,7 @@ from .types import (
     StartupMode,
     Trajectory,
     TrajectoryArrays,
+    validate_live_particle_fields,
 )
 from .vectorized_interactions import (
     compute_vectorized_contributions,
@@ -1436,10 +1437,11 @@ def _accepted_medina_force_derivative(
         "medina_external_force_y",
         "medina_external_force_z",
     )
-    if any(key not in current_state for key in force_keys) or (
-        "medina_external_force_sample_time" not in current_state
-    ):
+    history_keys = force_keys + ("medina_external_force_sample_time",)
+    if not any(key in current_state for key in history_keys):
         return (0.0, 0.0, 0.0), False
+    if not all(key in current_state for key in history_keys):
+        raise ValueError("incomplete Medina accepted force history")
 
     try:
         previous_force = np.asarray(
@@ -1450,18 +1452,20 @@ def _accepted_medina_force_derivative(
             current_state["medina_external_force_sample_time"][particle_idx]
         )
         accepted_state_time = float(current_state["t"][particle_idx])
-    except (IndexError, KeyError, TypeError, ValueError):
-        return (0.0, 0.0, 0.0), False
+    except (IndexError, KeyError, TypeError, ValueError) as exc:
+        raise ValueError("malformed Medina accepted force history") from exc
 
     current_force_vector = np.asarray(current_force, dtype=float)
     values_are_finite = bool(
         np.all(np.isfinite(previous_force))
         and np.all(np.isfinite(current_force_vector))
-        and np.isfinite(previous_sample_time)
+        and not np.isinf(previous_sample_time)
         and np.isfinite(current_sample_time)
         and np.isfinite(accepted_state_time)
     )
     if not values_are_finite:
+        raise ValueError("Medina force samples and times must be finite")
+    if np.isnan(previous_sample_time):
         return (0.0, 0.0, 0.0), False
 
     timestamp_tolerance = (
@@ -1478,11 +1482,11 @@ def _accepted_medina_force_derivative(
 
     sample_interval = float(current_sample_time - previous_sample_time)
     if sample_interval <= 0.0 or not np.isfinite(sample_interval):
-        return (0.0, 0.0, 0.0), False
+        raise ValueError("Medina force sample interval must be finite and positive")
 
     derivative = (current_force_vector - previous_force) / sample_interval
     if not np.all(np.isfinite(derivative)):
-        return (0.0, 0.0, 0.0), False
+        raise ValueError("Medina accepted force derivative must be finite")
     return (
         (float(derivative[0]), float(derivative[1]), float(derivative[2])),
         True,
@@ -2059,6 +2063,7 @@ def retarded_equations_of_motion(
 
     # Initialize result state as a copy of current state
     current_state = trajectory[index_traj]
+    validate_live_particle_fields(current_state, context="equation input")
     if _pseudo_grid_potential_context is not None:
         promoted = np.asarray(
             _pseudo_grid_potential_context.get(
@@ -6155,6 +6160,7 @@ def retarded_equations_of_motion(
     result["potential_inclusion_state"] = np.asarray(
         result["potential_inclusion_state"], dtype=str
     )
+    validate_live_particle_fields(result, context="equation result")
     return result
 
 
