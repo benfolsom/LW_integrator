@@ -1080,9 +1080,19 @@ def test_retarded_equations_of_motion_respects_cancellation_callback() -> None:
         )
 
 
-def test_retarded_equations_of_motion_skips_already_dead_particles() -> None:
+@pytest.mark.parametrize("mixed_bunch", [False, True])
+def test_retarded_equations_of_motion_skips_already_dead_particles(
+    mixed_bunch: bool,
+) -> None:
     state = _make_state(x=[1.0], y=[2.0], z=[3.0], gamma=[4.0], charge=[5.0])
-    mark_particle_dead(state, 0, step=5, reason="synthetic")
+    dead_idx = 0
+    if mixed_bunch:
+        state = _make_state(
+            x=[0.0, 1.0, 2.0], gamma=[1.0, 999.0, 1.0], charge=[0.0] * 3
+        )
+        dead_idx = 1
+    original = {key: value.copy() for key, value in state.items()}
+    mark_particle_dead(state, dead_idx, step=5, reason="synthetic")
 
     result = equations.retarded_equations_of_motion(
         h=1e-3,
@@ -1110,8 +1120,16 @@ def test_retarded_equations_of_motion_skips_already_dead_particles() -> None:
         "bdoty",
         "bdotz",
     ]:
-        assert result[key][0] == pytest.approx(state[key][0])
-    assert result["_dead_particles"][0]
+        assert result[key][dead_idx] == pytest.approx(state[key][dead_idx])
+    assert result["_dead_particles"][dead_idx]
+    if mixed_bunch:
+        np.testing.assert_array_equal(result["_dead_particles"], [False, True, False])
+        np.testing.assert_array_equal(result["gamma"], [1.0, 999.0, 1.0])
+        for key in ["x", "gamma"]:
+            np.testing.assert_array_equal(state[key], original[key])
+        assert result["x"] is not state["x"]
+        result["x"][0] = 999.0
+        assert state["x"][0] == 0.0
 
 
 @pytest.mark.parametrize(
@@ -1178,8 +1196,10 @@ def test_retarded_equations_of_motion_applies_final_mass_shell_projection(
     assert result["gamma"][0] == pytest.approx(1.0)
 
 
-def test_final_mass_shell_projection_uses_mechanical_momentum(
+@pytest.mark.parametrize("final_projection", [True, False])
+def test_sc_projection_uses_mechanical_momentum(
     monkeypatch: pytest.MonkeyPatch,
+    final_projection: bool,
 ) -> None:
     state = _make_state(gamma=[1.0], charge=[1.0], mass=[1.0])
     source = _make_state(x=[1.0], charge=[1.0], mass=[1.0])
@@ -1222,73 +1242,11 @@ def test_final_mass_shell_projection_uses_mechanical_momentum(
         "compute_vectorized_contributions",
         fake_contributions,
     )
-    _patch_mass_shell_convergence_sequence(
-        monkeypatch,
-        [(True, 0.0), (False, 0.69)],
-    )
-
-    result = equations.retarded_equations_of_motion(
-        h=1e-3,
-        trajectory=[state],
-        trajectory_ext=[source],
-        index_traj=0,
-        aperture_radius=1.0,
-        sim_type=SimulationType.BUNCH_TO_BUNCH,
-        startup_mode=StartupMode.APPROXIMATE_BACK_HISTORY,
-        self_consistency=SelfConsistencyConfig(
-            enabled=True,
-            max_iterations=2,
-            mass_shell_tolerance=1e-12,
-        ),
-    )
-
-    assert result["Px"][0] == pytest.approx(vector_potential_x)
-    assert result["Pt"][0] == pytest.approx(C_MMNS + scalar_potential_momentum)
-    assert result["gamma"][0] == pytest.approx(1.0)
-
-
-def test_sc_iteration_projection_uses_mechanical_momentum(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    state = _make_state(gamma=[1.0], charge=[1.0], mass=[1.0])
-    source = _make_state(x=[1.0], charge=[1.0], mass=[1.0])
-    vector_potential_x = 0.5 * C_MMNS
-    scalar_potential = 0.25 * C_MMNS
-    scalar_potential_momentum = equations._scalar_potential_momentum_contribution(
-        equations.effective_observer_charge(float(state["q"][0])), scalar_potential
-    )
-
-    monkeypatch.setattr(
-        equations,
-        "_compute_approximate_retarded_distance",
-        lambda *args, **kwargs: (
-            {
-                "R": np.array([1.0]),
-                "nx": np.array([1.0]),
-                "ny": np.array([0.0]),
-                "nz": np.array([0.0]),
-            },
-            np.array([0]),
-        ),
-    )
-    monkeypatch.setattr(equations, "_should_apply_external_forces", lambda *args: True)
-
-    def fake_contributions(**kwargs: object) -> tuple[float, ...]:
-        del kwargs
-        return (
-            vector_potential_x,
-            0.0,
-            0.0,
-            scalar_potential_momentum,
-            vector_potential_x,
-            0.0,
-            0.0,
-            scalar_potential,
+    if final_projection:
+        _patch_mass_shell_convergence_sequence(
+            monkeypatch,
+            [(True, 0.0), (False, 0.69)],
         )
-
-    monkeypatch.setattr(
-        equations, "compute_vectorized_contributions", fake_contributions
-    )
 
     result = equations.retarded_equations_of_motion(
         h=1e-3,
