@@ -95,6 +95,7 @@ from .exact_source_cloud import exact_cloud_history, same_bunch_exclusions
 from .medina_radiation_reaction import (
     MedinaRadiationReactionResult,
     compute_medina_radiation_reaction,
+    project_high_gamma_force,
 )
 from .self_consistency import (
     SelfConsistencyConfig,
@@ -1665,6 +1666,10 @@ def _derive_relativistic_kinematics_from_force(
     beta_dot_t = (force_vec - beta_vec * beta_dot_force) / (
         float(gamma) * float(mass) * C_MMNS
     )
+    if gamma > 1e3:
+        beta_dot_t = project_high_gamma_force(force_vec, beta_vec, gamma) / (
+            float(gamma) * float(mass) * C_MMNS
+        )
     dgamma_dt = beta_dot_force / (float(mass) * C_MMNS)
 
     return (

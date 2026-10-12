@@ -2,14 +2,14 @@
 
 The helpers in this module translate particle positions into geometric
 quantities (distance, direction cosines, retarded indices) that feed the
-covariant equations of motion. They preserve the validated reference behavior
-used by the current solver so historical regression data remains comparable.
+covariant equations of motion. Sampled matching uses stored positions to
+bracket the observer's light cone; it remains a diagnostic field route.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Iterable, Optional
+from typing import Callable, Dict, Iterable, Optional
 
 import numpy as np
 
@@ -118,6 +118,66 @@ def _resolve_external_step_index(
     return min(max(int(observer_index), 0), len(trajectory_ext) - 1)
 
 
+def _sampled_light_cone_match(
+    source_event: Callable[[int], tuple[float, np.ndarray]],
+    last: int,
+    observer_time: float,
+    observer_position: np.ndarray,
+    interpolate: bool,
+) -> tuple[float, int] | None:
+    """Find the light-cone crossing on a piecewise-linear timelike history.
+
+    Return None if the available history does not bracket a crossing
+    (including cold starts), so callers retain their delay fallback. This
+    matcher does not construct prehistory or replace the exact field provider.
+    """
+
+    def residual(time: float, position: np.ndarray) -> float:
+        return C_MMNS * (observer_time - time) - np.linalg.norm(
+            observer_position - position
+        )
+
+    lo, hi = 0, last
+    t_lo, x_lo = source_event(lo)
+    t_hi, x_hi = source_event(hi)
+    first_residual, last_residual = residual(t_lo, x_lo), residual(t_hi, x_hi)
+    if first_residual < 0 or last_residual > 0:
+        return None
+    if first_residual == 0:
+        return t_lo, lo
+    if last_residual == 0:
+        return t_hi, hi
+    while hi - lo > 1:
+        mid = (lo + hi) // 2
+        time, position = source_event(mid)
+        value = residual(time, position)
+        if value == 0:
+            return time, mid
+        if value > 0:
+            lo, t_lo, x_lo = mid, time, position
+        else:
+            hi, t_hi, x_hi = mid, time, position
+    if not interpolate or t_hi <= t_lo:
+        return t_hi, hi
+    # Solve inside this one segment; interpolating the residual itself would
+    # still give the wrong emission time for transverse source motion.
+    lower, upper = t_lo, t_hi
+    for _ in range(64):
+        mid_time = lower + (upper - lower) / 2
+        if mid_time == lower or mid_time == upper:
+            break
+        weight = (mid_time - t_lo) / (t_hi - t_lo)
+        position = x_lo + weight * (x_hi - x_lo)
+        value = residual(mid_time, position)
+        if value == 0:
+            return mid_time, hi
+        if value > 0:
+            lower = mid_time
+        else:
+            upper = mid_time
+    return lower + (upper - lower) / 2, hi
+
+
 def _compute_delta_t(
     *,
     mode: ChronoMatchingMode,
@@ -136,20 +196,13 @@ def _compute_delta_t(
     from the source sample to the observer and ``β`` the source velocity at that
     sample. The factored form is used for numerical stability; the denominator
     is clamped to ``±1e-12``. This is the exact uniform-motion delay only when
-    ``β`` is parallel to ``n̂``; otherwise it is an estimate refined by the
-    history search.
+    ``β`` is parallel to ``n̂``. It supplies only a fallback when the stored
+    history does not bracket the light cone; otherwise the matcher solves
+    against the stored source positions.
 
-    ``FAST`` mode uses the validated single-sample delay by evaluating the causal delay
-    once using the instantaneous line-of-sight projection ``β·n̂``.  ``AVERAGED``
-    samples two physical extremes for the emission time: ``R / c`` (a
-    stationary source particle) and ``2R / c`` (a source moving at the speed of
-    light along ``n̂``).  The averaged projection from those two samples is used
-    to compute ``Δt`` which damps aggressive kicks for ultra-relativistic
-    particles.
-
-    Validated for:
-        - 500 GeV electrons (γ ≈ 978,474, β ≈ 0.9999999999995)
-        - 20 TeV protons (γ ≈ 21,321, β ≈ 0.999999999)
+    ``AVERAGED`` uses the mean line-of-sight velocity from history samples
+    selected at delays ``R / c`` and ``2R / c``. Neither fallback solves the
+    light-cone equation for general source motion.
     """
 
     if mode is ChronoMatchingMode.FAST:
@@ -548,6 +601,23 @@ def chrono_match_indices_soa(
             if np.any(has_match):
                 matched_indices = np.argmax(matches, axis=0)
                 index_traj_new[has_match] = matched_indices[has_match]
+        # Match the actual observer light cone, not the instantaneous delay
+        # estimate. For a timelike history its residual decreases with time.
+        residual = C_MMNS * (_soa_scalar(traj, "t", index_traj, index_part) - t_cols)
+        distance_squared = np.zeros_like(residual)
+        steps = np.arange(current_source_index + 1)[:, None]
+        particles = np.arange(n_particles)[None, :]
+        for axis in ("x", "y", "z"):
+            delta = _soa_scalar(
+                traj, axis, index_traj, index_part
+            ) - _soa_values_at_steps(traj_ext, axis, steps, particles)
+            distance_squared += delta**2
+        residual -= np.sqrt(distance_squared)
+        bracketed = (residual[0] >= 0) & (residual[-1] <= 0)
+        matches = residual <= 0
+        crossing = np.any(matches, axis=0)
+        indices = np.argmax(matches, axis=0)
+        index_traj_new[bracketed & crossing] = indices[bracketed & crossing]
         return index_traj_new
 
     for sample_index in range(n_particles):
@@ -590,20 +660,36 @@ def chrono_match_indices_soa(
         t_ext_new = (
             _soa_scalar(traj_ext, "t", current_source_index, sample_index) - delta_t
         )
+        light_cone_match = _sampled_light_cone_match(
+            lambda step, sample=sample_index: (
+                _soa_scalar(traj_ext, "t", step, sample),
+                np.array(
+                    [_soa_scalar(traj_ext, a, step, sample) for a in ("x", "y", "z")]
+                ),
+            ),
+            current_source_index,
+            _soa_scalar(traj, "t", index_traj, index_part),
+            np.array(
+                [_soa_scalar(traj, a, index_traj, index_part) for a in ("x", "y", "z")]
+            ),
+            interpolate,
+        )
 
         index_traj_new[sample_index] = current_source_index
         if interpolate:
             index_traj_next[sample_index] = current_source_index
 
         t_col = t_cols[:, sample_index]
-        if t_ext_new < 0 and float(t_col[0]) >= 0.0:
+        if light_cone_match is not None:
+            t_ext_new, matched_idx = light_cone_match
+        elif t_ext_new < 0 and float(t_col[0]) >= 0.0:
             continue
-
-        matched_idx = _locate_retarded_index_soa(
-            t_col,
-            current_source_index,
-            t_ext_new,
-        )
+        else:
+            matched_idx = _locate_retarded_index_soa(
+                t_col,
+                current_source_index,
+                t_ext_new,
+            )
         index_traj_new[sample_index] = matched_idx
 
         if interpolate:
@@ -654,7 +740,11 @@ def chrono_match_indices(
     adaptive_tolerance: bool = False,
     timestep_h: Optional[float] = None,
 ) -> np.ndarray | ChronoMatchResult:
-    """Find retarded indices for a particle using chrono-matching.
+    """Find retarded indices by matching the observer's light cone to history.
+
+    A bracketed crossing uses the stored piecewise-linear source positions.
+    With interpolation off, select the first knot at or after the crossing. The
+    FAST/AVERAGED delay estimates remain fallbacks for unbracketed histories.
 
     Parameters
     ----------
@@ -762,20 +852,32 @@ def chrono_match_indices(
             )
 
         t_ext_new = current_source_state["t"][sample_index] - delta_t
+        light_cone_match = _sampled_light_cone_match(
+            lambda step, sample=sample_index: (
+                float(trajectory_ext[step]["t"][sample]),
+                np.array([trajectory_ext[step][a][sample] for a in ("x", "y", "z")]),
+            ),
+            current_source_index,
+            float(trajectory[index_traj]["t"][index_part]),
+            np.array([trajectory[index_traj][a][index_part] for a in ("x", "y", "z")]),
+            interpolate,
+        )
 
         index_traj_new[sample_index] = current_source_index
         if interpolate:
             index_traj_next[sample_index] = current_source_index
 
-        if t_ext_new < 0 and float(trajectory_ext[0]["t"][sample_index]) >= 0.0:
+        if light_cone_match is not None:
+            t_ext_new, matched_idx = light_cone_match
+        elif t_ext_new < 0 and float(trajectory_ext[0]["t"][sample_index]) >= 0.0:
             continue
-
-        matched_idx = _locate_retarded_index(
-            trajectory_ext,
-            current_source_index,
-            sample_index,
-            t_ext_new,
-        )
+        else:
+            matched_idx = _locate_retarded_index(
+                trajectory_ext,
+                current_source_index,
+                sample_index,
+                t_ext_new,
+            )
 
         index_traj_new[sample_index] = matched_idx
 

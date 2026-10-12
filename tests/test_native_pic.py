@@ -7,7 +7,7 @@ import pytest
 from scipy.special import erf
 
 from core.pic import ElectrostaticPIC, Grid, NumpyBackend, Species
-from core.pic.kernels import C, COULOMB
+from core.pic.kernels import C, COULOMB, integrated_green
 from lw_integrator.cli import main
 
 
@@ -134,6 +134,56 @@ def test_boris_magnetic_energy_and_virtual_node_gather():
     e, _ = solver.sample(field, point)
     expected = COULOMB * 1e-10 * point / np.linalg.norm(point) ** 3
     np.testing.assert_allclose(e, expected, rtol=0.008)
+
+    # Independent cell quadrature checks the exterior gather and potential,
+    # including cancellation at the audit's metre-scale observation points.
+    nodes, weights = np.polynomial.legendre.leggauss(18)
+    offsets = np.stack(np.meshgrid(nodes, nodes, nodes, indexing="ij"), axis=-1)
+    weights3 = (
+        np.prod(
+            np.stack(np.meshgrid(weights, weights, weights, indexing="ij"), axis=-1),
+            axis=-1,
+        ).ravel()
+        / 8.0
+    )
+    backend = NumpyBackend()
+    charge = np.zeros((4, 4, 4))
+    charge[1, 1, 1] = 1e-12
+    for spacing in (np.full(3, 1e-4), np.array([1e-4, 2e-4, 4e-4])):
+        field, _ = backend.solve(charge, spacing)
+        for cells in (
+            [8, 8, 8],
+            [16, 0, 0],
+            [17, 1, -2],
+            [100, 200, 300],
+            [10000, 20000, 30000],
+            [100000, 200000, 300000],
+        ):
+            point = np.array(cells) * spacing
+            delta = point - offsets.reshape(-1, 3) * spacing / 2
+            radii = np.linalg.norm(delta, axis=1)
+            reference = (
+                COULOMB
+                * 1e-12
+                * np.sum(weights3[:, None] * delta / radii[:, None] ** 3, axis=0)
+            )
+            gathered = backend.gather_open(
+                (point / spacing + 1)[None, :], field, charge, spacing, 1
+            )[0]
+            assert np.linalg.norm(gathered - reference) < 2e-10 * np.linalg.norm(
+                reference
+            )
+            # GPU geometry calls this array path before its device reduction.
+            green_field = 1e-12 * np.array(
+                [integrated_green(point, spacing, axis) for axis in range(3)]
+            )
+            assert np.linalg.norm(green_field - reference) < 2e-10 * np.linalg.norm(
+                reference
+            )
+            potential = integrated_green(point, spacing, None)
+            assert potential == pytest.approx(
+                COULOMB * np.sum(weights3 / radii), rel=2e-10
+            )
 
 
 def test_pic_cli_round_trip_and_unsupported_modes(tmp_path):
