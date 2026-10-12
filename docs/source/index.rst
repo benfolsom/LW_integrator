@@ -57,6 +57,7 @@ The maintained code includes substantial changes since that publication.
    :caption: Workflows
 
    validation
+   evidence_status
    checkpoints
    finite_spin_pair
    full_spin_particles

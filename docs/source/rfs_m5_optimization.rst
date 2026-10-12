@@ -1,6 +1,13 @@
 RFS exact-field optimization on Apple M5 Pro
 =============================================
 
+.. note::
+
+   Numerical results below include historical study reports whose complete
+   inputs and outputs are not distributed with this revision. See
+   :doc:`evidence_status` for the missing artifacts and tracked checks.
+   These reports are not fresh validation or universal accuracy guarantees.
+
 This page records the performance evidence for the separate
 ``optimize/rfs-m5-pro`` branch.  The physics baseline is native-Gaussian RFS
 commit ``57e6911``.  The optimized result is commit ``ba56c2f``, following the

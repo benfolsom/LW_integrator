@@ -1,15 +1,15 @@
 # Nonlinear reciprocal pair
 
 For current defaults, CLI/GUI setup, fitting spacing, and drift budgets, see
-the [Sphinx user guide](finite_spin_pair.rst). The sections below retain
+the [Sphinx user guide](https://github.com/benfolsom/LW_integrator/blob/3032cb4906e05da72c6f0f31dcf7267a5c5c0eb1/docs/source/finite_spin_pair.rst). The sections below retain
 implementation history; the current guide supersedes older default descriptions.
 
 For preserved-increment DOP853 stepping, adaptive error settings and checkpoint
 resume through the CLI or GUI, see [higher-order stepping and shared-time
-adaptive integration](../higher_order_pair_and_adaptive.md). These are numerical
+adaptive integration](https://github.com/benfolsom/LW_integrator/blob/3032cb4906e05da72c6f0f31dcf7267a5c5c0eb1/docs/higher_order_pair_and_adaptive.md). These are numerical
 controls for the same force model, not a different momentum convention.
 For adaptive integration inside a fixed source-recording interval, use
-[internal error control](../internal_error_control.md); this includes the
+[internal error control](https://github.com/benfolsom/LW_integrator/blob/3032cb4906e05da72c6f0f31dcf7267a5c5c0eb1/docs/internal_error_control.md); this includes the
 explicit one-sided history-join convention used only by that integration mode.
 
 ## Analytical reaction derivatives
@@ -39,20 +39,20 @@ source segment; it rejects nonsmooth source joins rather than claiming a
 unique high derivative. Declared coasting prehistory has uniquely known
 derivatives at its internal knots. This does not establish the accuracy of
 interpolated evolved histories, independent conservation, or unrestricted
-strong-field validity. See [implementation, verification and timing audit](../analytic_reaction_and_controllers.md).
+strong-field validity. See [implementation, verification and timing audit](https://github.com/benfolsom/LW_integrator/blob/3032cb4906e05da72c6f0f31dcf7267a5c5c0eb1/docs/analytic_reaction_and_controllers.md).
 
 ## Working full-spin reaction and interfaces
 
 Use `full_dipole_coupled` for the working full-spin reaction model. It solves
 local motion and self-field together; `full_dipole_rr` is retained for older
-reduced-order comparisons. Read the [integration and option audit](../coupled_integration_and_option_audit.md)
+reduced-order comparisons. Read the [integration and option audit](https://github.com/benfolsom/LW_integrator/blob/3032cb4906e05da72c6f0f31dcf7267a5c5c0eb1/docs/coupled_integration_and_option_audit.md)
 for remaining validation limits, restart rules and the new **Nonlinear pair…**
 GUI checkpoint launcher. Older self-consistency, gamma and chrono controls
 do not apply to this separate pair runner.
 
 An opt-in `full_dipole_rr` mode now applies the full-current regular self-field
 to momentum and spin. Read the [prescription, mass-law change, and accuracy
-limitations](../full_dipole_self_reaction.md) before use. Earlier statements
+limitations](https://github.com/benfolsom/LW_integrator/blob/3032cb4906e05da72c6f0f31dcf7267a5c5c0eb1/docs/full_dipole_self_reaction.md) before use. Earlier statements
 below that full-spin reaction is unavailable describe the preceding version.
 The default remains off and independent conservation validation remains open.
 
@@ -169,25 +169,25 @@ The internal algebra in `core.momentum_center` uses length-time coordinates
 and Gaussian units with $c=1$. Let a tilde denote its variables and let
 $c=299.792458\,\mathrm{mm/ns}$. The adapter uses
 
-$$\widetilde{x}^0=ct,\qquad \widetilde{q}=q/c,\qquad
-\widetilde{P}=P/c,\qquad \widetilde{S}=S/c.$$
+$\widetilde{x}^0=ct,\qquad \widetilde{q}=q/c,\qquad
+\widetilde{P}=P/c,\qquad \widetilde{S}=S/c.$
 
-$$\widetilde{A}=A/c,\qquad \widetilde{F}=F/c,\qquad
-\widetilde{D}=D/c.$$
+$\widetilde{A}=A/c,\qquad \widetilde{F}=F/c,\qquad
+\widetilde{D}=D/c.$
 
 Both charge and potential are rescaled. Rescaling only one would give the
 wrong normalization for a particle that is both source and observer. Mass
 remains in amu; source positions remain in mm. All potential/field derivative
 indices refer to $(ct,x,y,z)$, even though the provider accepts time in ns.
 
-$$\widetilde{p}=\widetilde{P}-\widetilde{q}\widetilde{A},\qquad
+$\widetilde{p}=\widetilde{P}-\widetilde{q}\widetilde{A},\qquad
 \widetilde{p}^{,2}=m_0^2+(g\widetilde{q}/2)
 \widetilde{F}_{\mu\nu}\widetilde{S}^{\mu\nu},\qquad
-\widetilde{S}^{\mu\nu}\widetilde{p}_{\nu}=0.$$
+\widetilde{S}^{\mu\nu}\widetilde{p}_{\nu}=0.$
 
-$$\widetilde{D}^{\mu\nu}=k\widetilde{S}^{\mu\nu},\qquad
+$\widetilde{D}^{\mu\nu}=k\widetilde{S}^{\mu\nu},\qquad
 k=\frac{g\widetilde{q}}{2}
-\frac{\widetilde{p}\cdot\widetilde{u}}{\widetilde{p}^{,2}}.$$
+\frac{\widetilde{p}\cdot\widetilde{u}}{\widetilde{p}^{,2}}.$
 
 The metric is $(+---)$ and $\widetilde{u}^{,2}=1$. The solver rejects a
 non-timelike momentum or velocity branch. It does not project the state,
@@ -255,7 +255,7 @@ preparing states. The checkpoint preserves it, with 5 for legacy missing fields.
 Full-reaction particles use `reaction_derivative_method="centered"` by default;
 old checkpoints missing that field restore `"backward"`. The CLI exposes
 `--reaction-derivatives` without silently changing saved settings. See the
-[full self-reaction model and limits](../full_dipole_self_reaction.md).
+[full self-reaction model and limits](https://github.com/benfolsom/LW_integrator/blob/3032cb4906e05da72c6f0f31dcf7267a5c5c0eb1/docs/full_dipole_self_reaction.md).
 
 Accepted-step records contain per-observer `source_sampling`: total response
 count, `evolved_count` for source intervals starting at or after lab time zero,

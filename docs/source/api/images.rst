@@ -1,135 +1,84 @@
 Image charge generation
 =======================
 
-The ``core.images`` module provides utilities for generating mirror-image
-charges representing conducting-wall boundaries in electromagnetic simulations.
-The primary function ``generate_conducting_image`` creates virtual particle
-bunches that reproduce the boundary conditions of a conducting surface with a
-circular aperture.
+``core.images.generate_conducting_image`` constructs the maintained wall-image
+approximation: mirrored subcharges with geometric suppression, radial weighting,
+and optional stochastic transverse displacements. It does not solve the full
+conducting circular-aperture boundary-value problem. See :doc:`../boundary`
+for the separate experimental boundary solver.
 
-As of January 2025, the module includes macroparticle simulation support,
-allowing stochastic position and momentum spread errors to be applied to image
-subcharges for realistic beam emittance modeling.
+Charge and spread parameters
+----------------------------
 
-Module reference
-----------------
+``macroparticle_charge_multiplier`` multiplies generated image charges only;
+it does not mutate the input particle's observer charge. In the representative
+particle initializer, species charge $q_s$, species mass $m_s$, and population
+$N$ remain separate: source charge is $Nq_s$, observer charge is $q_s$,
+inertia is $m_s$, and diagnostic weight is $N$. The wall-image multiplier is a
+legacy source option, distinct from :doc:`../exact_macroparticle_sources`.
 
-.. automodule:: core.images
-   :members:
-   :undoc-members:
-   :show-inheritance:
+``bunch_transv_dist`` is a transverse half-width in mm, used here as the base
+Gaussian position spread. ``bunch_transv_mom`` is a momentum spread in
+amu mm/ns. ``macroparticle_sigma_multiplier`` scales both spreads (default
+1.0). With ``macroparticle_use_momentum_errors=True`` (the default), the
+image displacement at step $n$ uses
+$\sigma_{\rm total}=\sqrt{\sigma_x^2+(\sigma_p h n/m)^2}$, where $h$ is
+proper time in ns. Both bunch spreads default to zero.
 
-Macroparticle simulation
--------------------------
-
-The ``generate_conducting_image`` function accepts optional macroparticle
-parameters that enable realistic modeling of beam collective effects:
-
-**Charge scaling**
-   The ``macroparticle_charge_multiplier`` parameter scales both the test
-   particle charge and all image subcharge magnitudes by a constant factor.
-   This is used to represent macroparticles (charge bundles) rather than
-   individual particles. Default: 1.0 (no scaling).
-
-**Position spread**
-   The ``macroparticle_position_spread`` parameter (σ_x in mm) applies
-   independent Gaussian errors to the x and y positions of each image
-   subcharge. These errors are drawn from N(0, σ_x²) and represent the
-   transverse spatial extent of the beam. Default: 0.0 (no spread).
-
-**Momentum spread**
-   The ``macroparticle_momentum_spread`` parameter (σ_p) creates cumulative
-   transverse displacement that grows with each integration timestep. At
-   step number *n*, the total spread is:
-
-   .. math::
-
-      \sigma_{\text{total}}(n) = \sqrt{\sigma_x^2 + \left(\frac{\sigma_p}{m} \times h \times n\right)^2}
-
-   where *h* is the timestep size and *m* is the particle mass. This models
-   the divergence of particles with different transverse momenta as they
-   propagate. Default: 0.0 (no momentum spread).
-
-**Error application order**
-   Position and momentum errors are applied to subcharge coordinates **before**
-   the radial weighting and charge attenuation calculations. This ensures that
-   the geometric suppression of charges near the aperture edge accounts for the
-   stochastic displacement of the beam distribution.
+The displacements are drawn independently in x and y before radial weighting;
+the initial solid-angle suppression is computed earlier. This prescription
+does not evolve the full position–angle covariance needed to establish
+normalized emittance evolution. Such a claim requires a separate beam
+phase-space comparison.
 
 Usage example
 -------------
 
-Basic conducting-wall image generation:
+Given an initialized ``rider_state`` in native units:
 
 .. code-block:: python
 
    from core.images import generate_conducting_image
-   from core.types import ParticleState
 
-   # Generate image charges for a particle near a conducting wall
    image_state = generate_conducting_image(
        vector=rider_state,
-       wall_z=100.0,              # Wall at z = 100 mm
-       aperture_radius=0.001,     # 1 mm aperture
-       subcharge_count=12,        # 12 subcharges around aperture rim
-       use_weighting=True,        # Apply radial attenuation
-   )
-
-Macroparticle mode with beam emittance:
-
-.. code-block:: python
-
-   # Simulate 10× charge scaling with position and momentum spread
-   image_state = generate_conducting_image(
-       vector=rider_state,
-       wall_z=100.0,
-       aperture_radius=0.001,
+       wall_z=100.0,                         # mm
+       aperture_radius=0.001,                # 1 micrometre
        subcharge_count=12,
        use_weighting=True,
-       macroparticle_charge_multiplier=10.0,     # 10× charge
-       macroparticle_position_spread=1e-5,       # 10 μm position σ
-       macroparticle_momentum_spread=1e-6,       # Momentum spread
-       timestep=3e-7,                            # Integration timestep (ns)
-       step_number=500,                          # Current step number
+       macroparticle_charge_multiplier=10.0,
+       macroparticle_sigma_multiplier=1.0,
+       macroparticle_use_momentum_errors=True,
+       bunch_transv_dist=1e-5,                # 0.01 micrometre
+       bunch_transv_mom=1e-6,                 # amu mm/ns
+       timestep=3e-7,                        # proper ns; illustrative only
+       step_number=500,
    )
 
-The ``timestep`` and ``step_number`` parameters are required when
-``macroparticle_momentum_spread > 0`` to calculate the cumulative momentum-
-driven displacement.
+The result is a new ``ParticleState`` containing image arrays. Supply
+``timestep`` and ``step_number`` when ``bunch_transv_mom > 0`` and momentum
+errors are enabled; their zero defaults produce no cumulative displacement.
+For an unspread image, omit the spread arguments. Timestep and source-model
+convergence remain necessary for any physical claim.
 
-Physical interpretation
-------------------------
+Module reference
+----------------
 
-The macroparticle simulation parameters correspond to physical beam properties:
+The source docstring's claim that the multiplier also scales the test particle
+is stale: the implementation only scales the returned image charges. The
+reference below exposes signatures without repeating that description.
 
-**Charge multiplier**
-   Represents the effective number of real particles per simulation macroparticle.
-   For example, a value of 100 means each simulated particle represents 100
-   actual particles with the total charge scaled accordingly.
+.. py:currentmodule:: core.images
 
-**Position spread**
-   Models the RMS beam size (geometric emittance) in the transverse plane. For
-   a Gaussian beam with RMS size σ_x, this parameter should be set to σ_x.
+.. py:function:: generate_conducting_image(vector, wall_z, aperture_radius, subcharge_count=12, *, use_weighting=True, macroparticle_charge_multiplier=1.0, macroparticle_sigma_multiplier=1.0, macroparticle_use_momentum_errors=True, bunch_transv_dist=0.0, bunch_transv_mom=0.0, timestep=0.0, step_number=0)
 
-**Momentum spread**
-   Models the angular divergence of the beam. For a beam with RMS divergence
-   σ_x' (radians), the momentum spread is approximately σ_p ≈ p × σ_x' where
-   p is the characteristic momentum scale. The cumulative growth with timesteps
-   reproduces the natural divergence of particles with different angles as they
-   propagate.
+   Return the image ``ParticleState`` described above. The input state is not
+   modified. Distances are mm, masses are amu, and the timestep is proper ns.
 
-The combined effect of position and momentum spread reproduces the normalized
-emittance evolution:
-
-.. math::
-
-   \epsilon_n = \beta \gamma \sqrt{\langle x^2 \rangle \langle x'^2 \rangle - \langle x x' \rangle^2}
-
-where β and γ are the relativistic velocity and Lorentz factor.
+.. autofunction:: core.images.generate_switching_image
 
 See also
 --------
 
-* :doc:`../recent_changes` for implementation details and recent enhancements
-* :doc:`../theory` for the theoretical foundation of image charge methods
-* :doc:`core` for the main integrator functions that consume image states
+* :doc:`../theory` for the field and stepping conventions.
+* :doc:`core` for integrator APIs consuming image states.

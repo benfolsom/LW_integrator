@@ -3,6 +3,13 @@ Optional Metal kernels: first feasibility study
 
 .. note::
 
+   Numerical results below include historical study reports whose complete
+   inputs and outputs are not distributed with this revision. See
+   :doc:`evidence_status` for the missing artifacts and tracked checks.
+   These reports are not fresh validation or universal accuracy guarantees.
+
+.. note::
+
    This page preserves the original August 24 O(N)-scan experiment.  The
    maintained solver now uses a strict compiled O(log N) bracket/root path, so
    these crossover numbers are not the current baseline.  See

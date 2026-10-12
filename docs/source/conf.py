@@ -4,6 +4,7 @@
 # list see the documentation:
 # https://www.sphinx-doc.org/en/master/usage/configuration.html
 
+import re
 import sys
 from pathlib import Path
 from typing import Any, Dict
@@ -73,7 +74,8 @@ autodoc_default_options = {
         "use_image_weighting,radiation_reaction_mode,"
         "macroparticle_charge_multiplier,macroparticle_sigma_multiplier,"
         "macroparticle_use_momentum_errors,bunch_transv_dist,bunch_transv_mom,"
-        "pseudo_grid,particle_loss"
+        "pseudo_grid,particle_loss,generate_conducting_image,IntegratorConfig,"
+        "compute_directional_visibility_mask"
     ),
 }
 
@@ -212,6 +214,53 @@ pygments_style = "sphinx"
 # -- Custom setup function ---------------------------------------------------
 
 
+def _single_dollar_math(app, docname, source):
+    """Parse single-line dollar math in RST prose, preserving literal blocks.
+
+    Indented blocks retain their native RST/code syntax. Inline literals and
+    existing roles are protected so shell examples and API names stay literal.
+    """
+    pattern = re.compile(
+        r"(``[^`]*``|:[\w:]+:`[^`]*`)|(?<![\\$])\$([^$\n]+)\$(?!\$)"
+    )
+    lines = []
+    for line in source[0].splitlines(keepends=True):
+        if not line.startswith(("   ", "\t", ".. ")):
+            line = pattern.sub(
+                lambda match: match[0] if match[1] else ":math:`" + match[2] + "`",
+                line,
+            )
+        lines.append(line)
+    source[0] = "".join(lines)
+
+
+def _resolve_public_alias(app, env, node, content):
+    """Link known imported names to their documented owning modules."""
+    from sphinx.util.nodes import make_refnode
+
+    aliases = {
+        "ParticleState": "core.types.ParticleState",
+        "Trajectory": "core.types.Trajectory",
+        "IntegratorConfig": "core.types.IntegratorConfig",
+        "SimulationType": "core.types.SimulationType",
+        "ChronoMatchingMode": "core.types.ChronoMatchingMode",
+        "StartupMode": "core.types.StartupMode",
+        "SelfConsistencyConfig": "core.self_consistency.SelfConsistencyConfig",
+        "generate_conducting_image": "core.images.generate_conducting_image",
+    }
+    if node.get("refdomain") != "py":
+        return None
+    target = aliases.get(node.get("reftarget"))
+    entry = env.get_domain("py").objects.get(target) if target else None
+    if entry is None:
+        return None
+    return make_refnode(
+        app.builder, node["refdoc"], entry.docname, entry.node_id, content, target
+    )
+
+
 def setup(app):
     """Custom setup function for additional configuration"""
     app.add_css_file("custom.css")
+    app.connect("source-read", _single_dollar_math)
+    app.connect("missing-reference", _resolve_public_alias)
