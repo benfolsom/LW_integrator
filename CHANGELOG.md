@@ -38,6 +38,21 @@ and boundary studies), plus subsequent integration updates.
   numerical defaults, and default outputs remain bit-identical; no numerical
   defect or merge syntax error was changed.
 
+- Add opt-in photon transport to fixed-step native pair and many-particle runs:
+  photons fly at c, scatter with rest-frame Klein–Nishina target recoil,
+  convert through a spin-averaged LCFA rate, and escape a configured domain.
+  Photon state, provenance, interaction ledgers, and a separate seeded RNG
+  survive checkpoints. Pair conversion records on-shell outgoing momenta and
+  unresolved field exchange; dynamic pair insertion remains unsupported.
+  Disabled transport leaves deterministic outputs unchanged.
+  Reject enabled transport on the general runner because its particle lab clocks
+  are not synchronised. Interpolate native target positions through each accepted
+  step, exclude each photon's emitter from scattering, and sample exponential
+  interaction times. Compute conversion rates separately from the energy-split
+  CDF. Report a transport energy/four-momentum ledger and per-step scattering
+  energy exchange. Treat explicitly disabled settings as absent in testbed
+  configurations and when resuming native checkpoints without transport.
+
 ## v0.11.0 — 2026-10-10 — exact histories, native PIC, and boundary studies
 
 ### Exact retarded fields and source histories

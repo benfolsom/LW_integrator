@@ -1344,6 +1344,7 @@ class IntegratorConfig:
     )
 
     stochastic_emission: object = None
+    photon_transport: object = None
 
     def __post_init__(self) -> None:
         from .proper_velocity_history import validate_source_history_representation
@@ -1352,6 +1353,9 @@ class IntegratorConfig:
         self.stochastic_emission = StochasticEmissionConfig.from_dict(
             self.stochastic_emission
         )
+        from .photon_transport import PhotonTransportConfig
+
+        self.photon_transport = PhotonTransportConfig.from_dict(self.photon_transport)
         self.source_history_representation = validate_source_history_representation(
             self.source_history_representation
         )

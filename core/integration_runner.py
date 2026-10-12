@@ -3334,6 +3334,7 @@ def retarded_integrator(
     use_numba: bool = True,
     radiation_reaction_mode: str = "off",
     stochastic_emission: Any = None,
+    photon_transport: Any = None,
     pseudo_grid: Optional[PseudoGridConfig] = None,
     driver_train: Optional[DriverTrainConfig] = None,
     cavity_exit: Optional[CavityExitConfig] = None,
@@ -3541,6 +3542,18 @@ def retarded_integrator(
     from .stochastic_emission import StochasticEmissionConfig
 
     emission_config = StochasticEmissionConfig.from_dict(stochastic_emission)
+    from .photon_transport import PhotonTransportConfig
+    from .photon_transport_adapters import (
+        validate_transport_emission,
+    )
+
+    transport_config = PhotonTransportConfig.from_dict(photon_transport)
+    validate_transport_emission(transport_config, emission_config)
+    if transport_config.enabled:
+        raise NotImplementedError(
+            "Photon transport requires the native lab-time pair runner; "
+            "the general runner has unsynchronised particle lab clocks"
+        )
     emission_runtime = None
     if emission_config.enabled:
         from .stochastic_emission import (
@@ -5919,6 +5932,7 @@ def run_integrator(
         use_conducting_image_weighting=config.use_image_weighting,
         radiation_reaction_mode=config.radiation_reaction_mode,
         stochastic_emission=config.stochastic_emission,
+        photon_transport=config.photon_transport,
         source_history_representation=config.source_history_representation,
         macroparticle_charge_multiplier=config.macroparticle_charge_multiplier,
         macroparticle_sigma_multiplier=config.macroparticle_sigma_multiplier,
