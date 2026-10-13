@@ -57,6 +57,10 @@ from .self_consistency import (
     emit_self_consistency_runtime_warnings,
     self_consistent_step,
 )
+from .startup_history_guard import (
+    DEFAULT_STARTUP_HISTORY_TOLERANCE,
+    check_startup_history,
+)
 from .types import (
     AdaptivePairReturnConfig,
     BeamlineGeometryConfig,
@@ -80,6 +84,7 @@ from .types import (
     Trajectory,
     TrajectoryArrays,
     TrajectoryBuilder,
+    validate_live_particle_fields,
 )
 
 # A sparse inertial prefix is enough for the exact light-cone interpolants:
@@ -117,7 +122,15 @@ def _checkpoint_json_value(value: Any) -> Any:
             descriptor.name: _checkpoint_json_value(getattr(value, descriptor.name))
             for descriptor in fields(value)
             if not (
-                isinstance(value, ExternalFieldConfig) and descriptor.name == "provider"
+                (
+                    isinstance(value, ExternalFieldConfig)
+                    and descriptor.name == "provider"
+                )
+                or (
+                    isinstance(value, MacroparticleSmearingConfig)
+                    and not value.breathing_enabled
+                    and descriptor.name.startswith("breathing_")
+                )
             )
         }
         if isinstance(value, ExternalFieldConfig):
@@ -384,14 +397,11 @@ def _build_partial_soa(
     """Build a TrajectoryArrays from trajectory[0:up_to_step]."""
     if up_to_step < 1 or not trajectory[0]:
         return None
-    try:
-        n_p = len(trajectory[0]["x"])
-        builder = TrajectoryBuilder(up_to_step, n_p)
-        for idx in range(up_to_step):
-            builder.set_step(idx, trajectory[idx])
-        return builder.build()
-    except Exception:
-        return None
+    n_p = len(trajectory[0]["x"])
+    builder = TrajectoryBuilder(up_to_step, n_p)
+    for idx in range(up_to_step):
+        builder.set_step(idx, trajectory[idx])
+    return builder.build()
 
 
 def _indexed_active_history(
@@ -403,18 +413,15 @@ def _indexed_active_history(
 ) -> IndexedTrajectoryArrays | None:
     if trajectory_soa is None:
         return None
-    try:
-        return IndexedTrajectoryArrays(
-            trajectory_soa,
-            np.asarray(particle_indices, dtype=int),
-            start_step=int(start_step),
-            q_override=q_override,
-        )
-    except ValueError:
-        return None
+    return IndexedTrajectoryArrays(
+        trajectory_soa,
+        np.asarray(particle_indices, dtype=int),
+        start_step=int(start_step),
+        q_override=q_override,
+    )
 
 
-@lru_cache(maxsize=None)
+@lru_cache(maxsize=256)
 def _call_accepts_kw(callable_obj: Callable, name: str) -> bool:
     """Return whether *callable_obj* accepts a keyword argument."""
     parameters = inspect.signature(callable_obj).parameters
@@ -548,7 +555,10 @@ def _compute_total_energy(state: ParticleState) -> float:
     """
     gamma = np.asarray(state["gamma"])
     mass = np.asarray(state["m"])
-    return float(np.sum(gamma * mass * C_MMNS * C_MMNS))
+    energy = float(np.sum(gamma * mass * C_MMNS * C_MMNS))
+    if not np.isfinite(energy):
+        raise ValueError("total particle energy must be finite")
+    return energy
 
 
 def _calculate_gamma(state: ParticleState) -> float:
@@ -760,6 +770,8 @@ def _build_driver_train_initial_state(
     init_driver: ParticleState,
     driver_train: DriverTrainConfig,
 ) -> ParticleState:
+    from .types import PARTICLE_STATE_FIELDS
+
     offsets = driver_train.resolved_z_offsets_mm()
     if not driver_train.enabled and len(offsets) == 1 and offsets[0] == 0.0:
         return _copy_particle_state(init_driver)
@@ -767,7 +779,11 @@ def _build_driver_train_initial_state(
     particle_count = len(np.asarray(init_driver["x"]))
     train_state: ParticleState = {}
     for key, value in init_driver.items():
-        if isinstance(value, np.ndarray) and value.shape[:1] == (particle_count,):
+        if (
+            key in PARTICLE_STATE_FIELDS
+            and isinstance(value, np.ndarray)
+            and value.shape[:1] == (particle_count,)
+        ):
             pieces = []
             for z_offset in offsets:
                 piece = np.copy(value)
@@ -954,6 +970,8 @@ def _estimate_inertial_prehistory_duration_ns(
     if not np.isfinite(safety) or safety < 1.0:
         raise ValueError("inertial prehistory safety_factor must be finite and >= 1")
     separation = _maximum_cross_bunch_separation_mm(rider, driver)
+    # Centre-only span is sufficient because persistent children inherit the
+    # analytic inertial boundary, which extends coasting beyond the first knot.
     if same_bunch_fields:
         separation = max(
             separation,
@@ -1522,6 +1540,17 @@ def _slice_trajectory_arrays(
     from .resolved_knot import RESOLVED_KNOT_FIELDS
 
     return TrajectoryArrays(
+        **{
+            name: getattr(arrays, name)
+            for name in (
+                "exact_source_cell_sigma_mm",
+                "exact_source_original_count",
+                "exact_source_cell_xv_mm2_ns",
+                "exact_source_cell_vv_mm2_ns2",
+                "exact_source_cell_epoch_ns",
+                "exact_source_breathing_ready",
+            )
+        },
         **{name: getattr(arrays, name)[start:stop] for name in RESOLVED_KNOT_FIELDS},
         x=arrays.x[start:stop],
         y=arrays.y[start:stop],
@@ -3309,6 +3338,7 @@ def retarded_integrator(
     use_numba: bool = True,
     radiation_reaction_mode: str = "off",
     stochastic_emission: Any = None,
+    photon_transport: Any = None,
     pseudo_grid: Optional[PseudoGridConfig] = None,
     driver_train: Optional[DriverTrainConfig] = None,
     cavity_exit: Optional[CavityExitConfig] = None,
@@ -3319,6 +3349,8 @@ def retarded_integrator(
     checkpoint: Optional[CheckpointConfig] = None,
     adaptive_pair_return: Optional[AdaptivePairReturnConfig] = None,
     source_history_representation: str = "light_cone_quintic",
+    allow_incomplete_startup_history: bool = False,
+    startup_history_tolerance: float = DEFAULT_STARTUP_HISTORY_TOLERANCE,
 ) -> Tuple[
     Trajectory,
     Trajectory,
@@ -3449,6 +3481,15 @@ def retarded_integrator(
         Optional fixed-size particle-loss predicates. Lost particles are marked
         dead, retain their trajectory slot, and stop contributing source charge
         after the loss step.
+    allow_incomplete_startup_history:
+        ``COLD_START`` and ``APPROXIMATE_BACK_HISTORY`` have no source history
+        before ``t0``. A preflight check bounds the force impulse an observer
+        would miss and raises :class:`StartupHistoryError` above
+        ``startup_history_tolerance``, or when a visibility gate window meets
+        the missing region. This flag downgrades the error to a loud warning,
+        for deliberate diagnostics only.
+    startup_history_tolerance:
+        Largest tolerated missing fraction of the estimated total impulse.
 
     Returns
     -------
@@ -3485,7 +3526,11 @@ def retarded_integrator(
         if any(
             cloud is not None
             and cloud.enabled
-            and not (cloud.subcharge_count == 1 and cloud.position_sigma_mm == 0.0)
+            and not (
+                cloud.subcharge_count == 1
+                or cloud.position_sigma_mm == 0.0
+                or cloud.sigma_multiplier == 0.0
+            )
             for cloud in (macroparticle_smearing, magnetic_dipole.exact_charge_cloud)
         ):
             raise ValueError(
@@ -3512,6 +3557,18 @@ def retarded_integrator(
     from .stochastic_emission import StochasticEmissionConfig
 
     emission_config = StochasticEmissionConfig.from_dict(stochastic_emission)
+    from .photon_transport import PhotonTransportConfig
+    from .photon_transport_adapters import (
+        validate_transport_emission,
+    )
+
+    transport_config = PhotonTransportConfig.from_dict(photon_transport)
+    validate_transport_emission(transport_config, emission_config)
+    if transport_config.enabled:
+        raise NotImplementedError(
+            "Photon transport requires the native lab-time pair runner; "
+            "the general runner has unsynchronised particle lab clocks"
+        )
     emission_runtime = None
     if emission_config.enabled:
         from .stochastic_emission import (
@@ -3552,17 +3609,6 @@ def retarded_integrator(
                     "Stochastic emission requires physical particles, "
                     "not macroparticles"
                 )
-        if startup_mode is StartupMode.INERTIAL_PREHISTORY:
-            # A recoil kick is not yet a split velocity knot in the exact
-            # source history, so the kick's classical radiation pulse would
-            # be published on top of the logged photon (double count).
-            raise NotImplementedError(
-                "Stochastic emission is not yet supported on the exact "
-                "INERTIAL_PREHISTORY path: kicks need split velocity knots in "
-                "the exact source history (planned; see "
-                "docs/source/stochastic_quantum_emission.rst, kick histories). "
-                "Use the sampled path or the nonlinear pair runner."
-            )
         emission_runtime = EmissionRuntime(emission_config)
     if (
         magnetic_dipole.intrinsic_spin_self_reaction_mode == "experimental_linear_spin"
@@ -3606,6 +3652,14 @@ def retarded_integrator(
         magnetic_dipole.enabled and magnetic_dipole.source.active
     )
     exact_magnetic_active = bool(rfs_active or dipole_source_active)
+    if (
+        macroparticle_smearing.enabled
+        and macroparticle_smearing.breathing_enabled
+        and not exact_magnetic_active
+    ):
+        raise NotImplementedError(
+            "breathing source widths require the exact charge path"
+        )
     pseudo_grid_space_charge_reduction_supported = not _space_charge_enabled(
         space_charge
     ) or (pseudo_grid.active_rider_count >= 2 and pseudo_grid.active_driver_count >= 2)
@@ -3627,13 +3681,13 @@ def retarded_integrator(
 
         validate_exact_cloud(magnetic_dipole.exact_charge_cloud)
         if (
-            not adaptive_pair_return.enabled
-            or dipole_source_active
+            dipole_source_active
             or not exact_magnetic_active
+            or startup_mode is not StartupMode.INERTIAL_PREHISTORY
         ):
             raise NotImplementedError(
-                "Persistent exact charge clouds require the adaptive charge-only "
-                "shared-lab-time route with INERTIAL_PREHISTORY"
+                "Persistent exact charge clouds require charge-only exact "
+                "dynamics with INERTIAL_PREHISTORY"
             )
 
     if (
@@ -3722,9 +3776,12 @@ def retarded_integrator(
             raise NotImplementedError(
                 "resumable checkpoints do not yet support pseudo-grid schedules"
             )
-        if driver_train.enabled:
+        if driver_train.enabled and (
+            startup_mode is not StartupMode.INERTIAL_PREHISTORY
+            or adaptive_pair_return.enabled
+        ):
             raise NotImplementedError(
-                "resumable checkpoints do not yet support driver trains"
+                "train checkpoints require fixed-step INERTIAL_PREHISTORY"
             )
         if cavity_exit.enabled:
             raise NotImplementedError(
@@ -3877,13 +3934,22 @@ def retarded_integrator(
                 macroparticle_smearing.momentum_sigma_amu_mm_ns,
             )
             if any(value is None or float(value) != 0.0 for value in smearing_widths):
-                if dipole_source_active or not adaptive_pair_return.enabled:
+                if dipole_source_active:
                     raise NotImplementedError(
-                        "Exact fixed-step/dipole dynamics require zero-width point "
-                        "sources; persistent charge clouds require the adaptive "
-                        "shared-lab-time route. See exact_macroparticle_sources.rst."
+                        "Exact dipole sources require zero-width point sources. "
+                        "See exact_macroparticle_sources.rst."
                     )
-            if adaptive_pair_return.enabled and not dipole_source_active:
+            if not dipole_source_active and (
+                adaptive_pair_return.enabled
+                or macroparticle_smearing.breathing_enabled
+                or any(
+                    value is None or float(value) != 0.0 for value in smearing_widths
+                )
+            ):
+                if startup_mode is not StartupMode.INERTIAL_PREHISTORY:
+                    raise NotImplementedError(
+                        "Persistent exact charge clouds require INERTIAL_PREHISTORY"
+                    )
                 from .exact_source_cloud import validate_exact_cloud
 
                 validate_exact_cloud(macroparticle_smearing)
@@ -3963,6 +4029,9 @@ def retarded_integrator(
     # Magnetic metadata is integration-local state. Copy caller-owned inputs so
     # an enabled run cannot leave active spin arrays behind for a later disabled
     # run that reuses the same dictionaries.
+    validate_live_particle_fields(init_rider, context="initial rider")
+    if init_driver is not None:
+        validate_live_particle_fields(init_driver, context="initial driver")
     init_rider = _copy_particle_state(init_rider)
     if init_driver is not None:
         init_driver = _copy_particle_state(init_driver)
@@ -4023,6 +4092,53 @@ def retarded_integrator(
                 len(np.asarray(state.get("x", []))),
                 dtype=bool,
             )
+    reduction = magnetic_dipole.exact_source_reduction
+    if reduction is not None and reduction.enabled:
+        if (
+            not exact_magnetic_active
+            or dipole_source_active
+            or startup_mode is not StartupMode.INERTIAL_PREHISTORY
+            or adaptive_pair_return.enabled
+            or pseudo_grid.enabled
+            or sim_type is not SimulationType.BUNCH_TO_BUNCH
+        ):
+            raise NotImplementedError(
+                "fixed exact source reduction requires charge-only fixed-step "
+                "BUNCH_TO_BUNCH with INERTIAL_PREHISTORY and no rotating pseudo-grid"
+            )
+        from .exact_source_reduction import reduce_exact_initial_state
+
+        init_rider, _ = reduce_exact_initial_state(
+            init_rider, reduction.rider_count, magnetic_dipole.exact_charge_cloud
+        )
+        if init_driver is not None:
+            init_driver, _ = reduce_exact_initial_state(
+                init_driver, reduction.driver_count, magnetic_dipole.exact_charge_cloud
+            )
+
+    cloud = magnetic_dipole.exact_charge_cloud
+    if cloud is not None and cloud.enabled and cloud.breathing_enabled:
+        # Full-count and zero-count reduction requests are identities. Check
+        # actual retained covariance, including explicitly pre-reduced inputs,
+        # before train expansion or any source-history work.
+        for role, state in (("rider", init_rider), ("driver", init_driver)):
+            if state is None:
+                continue
+            count = len(state["x"])
+            original = np.asarray(state.get("exact_source_original_count", []))
+            ready = np.asarray(state.get("exact_source_breathing_ready", []))
+            if (
+                original.shape != (count,)
+                or not np.all(original > 0)
+                or ready.shape != (count,)
+                or not np.all(ready)
+            ):
+                raise NotImplementedError(
+                    f"breathing exact sources require reduced {role} cells with "
+                    "retained velocity covariance; unreduced breathing is "
+                    "unsupported, including driver trains"
+                )
+
     driver_train_bunch_ranges: tuple[slice, ...] = ()
     if driver_train_enabled and init_driver is not None:
         driver_train_bunch_ranges = _driver_train_bunch_slices(
@@ -4067,6 +4183,23 @@ def retarded_integrator(
     taper_exact_pair_prehistory = bool(
         causal_c5_enabled or (adaptive_pair_return.enabled and not causal_local_enabled)
     )
+    if checkpoint is None or checkpoint.resume_from is None:
+        check_startup_history(
+            init_rider,
+            init_driver,
+            sim_type=sim_type,
+            startup_mode=startup_mode,
+            steps=steps,
+            h_step=h_step,
+            beamline_geometry=beamline_geometry,
+            tolerance=startup_history_tolerance,
+            allow_incomplete=allow_incomplete_startup_history,
+            logger=logger,
+            prehistory_steps=(
+                int(driver_train.prehistory_steps) if driver_train_enabled else 0
+            ),
+        )
+
     inertial_prehistory_knot_count = _INERTIAL_PREHISTORY_KNOT_COUNT
     inertial_prehistory_time_offsets_ns: np.ndarray | None = None
     initial_causal_c5_source_history = None
@@ -4779,6 +4912,7 @@ def retarded_integrator(
                 "macroparticle_smearing": macroparticle_smearing,
                 "beamline_geometry": beamline_geometry,
                 "magnetic_dipole": magnetic_dipole,
+                **({"driver_train": driver_train} if driver_train.enabled else {}),
             }
         )
         checkpoint_directory = checkpoint.resume_from or checkpoint.directory
@@ -5121,6 +5255,7 @@ def retarded_integrator(
                     logger=logger,
                 )
             _mark_post_step_gamma_blowups(trajectory[i], step=i, logger=logger)
+            validate_live_particle_fields(trajectory[i], context=f"rider step {i}")
             if not inertial_prehistory_enabled:
                 _traj_builder.set_step(i, trajectory[i])
 
@@ -5387,6 +5522,8 @@ def retarded_integrator(
                             else {}
                         ),
                     )
+            _mark_post_step_gamma_blowups(trajectory_drv[i], step=i, logger=logger)
+            validate_live_particle_fields(trajectory_drv[i], context=f"driver step {i}")
             _ensure_startup_metadata(trajectory_drv[i])
             _set_pseudo_grid_schedule_metadata(trajectory_drv[i], None)
             if (
@@ -5827,7 +5964,10 @@ def run_integrator(
         use_conducting_image_weighting=config.use_image_weighting,
         radiation_reaction_mode=config.radiation_reaction_mode,
         stochastic_emission=config.stochastic_emission,
+        photon_transport=config.photon_transport,
         source_history_representation=config.source_history_representation,
+        allow_incomplete_startup_history=config.allow_incomplete_startup_history,
+        startup_history_tolerance=config.startup_history_tolerance,
         macroparticle_charge_multiplier=config.macroparticle_charge_multiplier,
         macroparticle_sigma_multiplier=config.macroparticle_sigma_multiplier,
         macroparticle_use_momentum_errors=config.macroparticle_use_momentum_errors,

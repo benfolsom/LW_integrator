@@ -743,9 +743,6 @@ class IntegratorGUI(
         self.self_consistency_convergence_mode_var = tk.StringVar(
             value=self.options.self_consistency_convergence_mode
         )
-        self.self_consistency_mass_shell_relaxation_var = tk.DoubleVar(
-            value=self.options.self_consistency_mass_shell_relaxation
-        )
         self.self_consistency_target_ms_tolerance_var = tk.DoubleVar(
             value=self.options.self_consistency_target_ms_tolerance
         )

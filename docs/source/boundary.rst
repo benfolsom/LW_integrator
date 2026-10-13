@@ -71,3 +71,35 @@ whole-system energy closure remain open. Particle work or mechanical ledger
 closure alone does not establish net energy gain. Maintained checks are in
 ``tests/test_boundary_module.py``, ``tests/test_boundary_conformal.py``, and
 ``tests/test_boundary_coupling.py``.
+
+Minimal one-way construction
+----------------------------
+
+This small construction follows the grid-aligned controls in
+``tests/test_boundary_module.py``. Lengths, times, charge, and collision rate
+are normalized boundary quantities, not mm, ns, or SI. It is an API smoke
+example, not a converged wall calculation.
+
+.. code-block:: python
+
+   from core.boundary import (
+       AlignedWall, AxisymmetricGrid, BallisticDrive, BoundarySnapshot,
+       DrudeMedium, DrudeWall, ScatteredFieldSolver,
+   )
+
+   grid = AxisymmetricGrid(dr=0.1, dz=0.1, nr=20, nz=40, z0=-2.0)
+   wall = DrudeWall(grid, AlignedWall(1.0, 1.2, -0.5, 0.5))
+   drive = BallisticDrive(grid, gamma=10.0, q=0.001)
+   solver = ScatteredFieldSolver(grid, DrudeMedium(nu=2.0), 0.01, drive, wall)
+   solver.step()  # Updates the solver in place; returns None.
+   snapshot = BoundarySnapshot(
+       grid, solver.t,
+       (solver.f.er.copy(), solver.f.ez.copy(), solver.f.bt.copy()),
+   )
+
+``snapshot`` is a ``BoundarySnapshot`` of the scattered field. For PIC use,
+``snapshot.pic_consumer(pic_grid, units)`` requires explicit ``BoundaryUnits``
+and matching observer time; see :doc:`api/fields`. Grid faces must align,
+the timestep must satisfy the constructor's mesh bound, and a point drive must
+not cross Drude material. This object is not a resumable LW checkpoint or an
+automatic wall coupling in the PIC runner.

@@ -105,10 +105,11 @@ arithmetic; it does not assert bitwise equality between different backends or
 establish independent physics convergence.
 
 The report is ``codex_report_exact_cpu_speedup.md`` in the
-``LW_integrator-exact-cpu-speedup`` checkout. The maintained reproduction
+``LW_integrator-exact-cpu-speedup`` checkout. The historical reproduction
 harness is ``studies/exact_cpu_speedup/README.md`` in that sibling checkout,
 not in this documentation branch; evidence is under
-``~/compute-data/exact_cpu_speedup/``.
+``~/compute-data/exact_cpu_speedup/``. Those paths are historical locators,
+not a public reproduction route; see :doc:`evidence_status`.
 
 Full-strict backend comparison
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -180,8 +181,11 @@ gates and fixed-step charge driver trains require ``INERTIAL_PREHISTORY``;
 see :doc:`exact_path`.
 Inertial prehistory is an exact RFS/retarded-dipole startup mode, not a general
 replacement for startup handling.  Dynamic recoil is limited to the explicit
-charge-only ``medina_lad`` hybrid; its :math:`q\mu` and :math:`\mu^2`
-self-radiation sectors are absent.  The full-retarded point source is further
+charge-only ``medina_lad`` and ``medina_lad_validity`` hybrids, with the
+separate impulse guards in :doc:`radiation_reaction_plan`. Those charge modes
+do not supply spin recoil. An explicit experimental linear-spin feedback
+route exists under stricter guards; see :doc:`spin_self_force_oracle`.
+Pure intrinsic-dipole self-reaction remains absent on this route.  The full-retarded point source is further
 limited to one physical particle per bunch, without macro moment scaling,
 driver trains, or cavity-exit synthetic coasting tails.  Passing these tests
 does not validate dipole self-reaction, contact or finite-size physics, atomic

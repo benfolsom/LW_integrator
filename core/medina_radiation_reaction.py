@@ -44,9 +44,29 @@ from dataclasses import dataclass
 from math import fsum, isfinite
 from typing import Sequence, Tuple
 
+import numpy as np
+
 from .constants import C_MMNS
 
 Vector3 = Tuple[float, float, float]
+
+
+def project_high_gamma_force(
+    force: np.ndarray, beta: np.ndarray, gamma: float | np.ndarray
+) -> np.ndarray:
+    """Evaluate F_perp + F_parallel/gamma² without subtracting beta² from one.
+
+    Accept vectors or batches with a final Cartesian axis, in either SI or
+    native units. The double cross product preserves an exactly parallel
+    force even when its longitudinal response is below subtraction precision.
+    Callers retain their original arithmetic for gamma <= 1000.
+    """
+    beta_squared = np.sum(beta * beta, axis=-1, keepdims=True)
+    safe_squared = np.where(beta_squared > 0.0, beta_squared, 1.0)
+    parallel = beta * np.sum(beta * force, axis=-1, keepdims=True) / safe_squared
+    perpendicular = np.cross(beta, np.cross(force, beta)) / safe_squared
+    projected = perpendicular + parallel / np.asarray(gamma)[..., None] ** 2
+    return np.where(beta_squared > 0.0, projected, force)
 
 
 @dataclass(frozen=True)

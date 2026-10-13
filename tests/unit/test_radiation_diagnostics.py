@@ -3,8 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from core import diagnostics
-from core import equations
+from core import diagnostics, equations
 from core.constants import C_MMNS, ELECTRON_MASS_AMU, ELEMENTARY_CHARGE
 from core.integration_runner import retarded_integrator
 from core.self_consistency import SelfConsistencyConfig
@@ -16,6 +15,7 @@ from core.types import (
     SimulationType,
     StartupMode,
 )
+from tests.particle_states import empty_driver_state as _empty_driver_state
 
 
 def _make_integrator_state() -> dict:
@@ -44,32 +44,6 @@ def _make_integrator_state() -> dict:
         "q": np.array([ELEMENTARY_CHARGE]),
         "m": np.array([ELECTRON_MASS_AMU]),
         "char_time": np.array([1.0e-3]),
-    }
-
-
-def _empty_driver_state() -> dict:
-    return {
-        key: np.array([], dtype=float)
-        for key in (
-            "x",
-            "y",
-            "z",
-            "t",
-            "Px",
-            "Py",
-            "Pz",
-            "Pt",
-            "gamma",
-            "bx",
-            "by",
-            "bz",
-            "bdotx",
-            "bdoty",
-            "bdotz",
-            "q",
-            "m",
-            "char_time",
-        )
     }
 
 

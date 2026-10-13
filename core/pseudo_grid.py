@@ -750,72 +750,6 @@ def accumulate_effective_source_charges(
     return effective
 
 
-def build_field_representative_space_charge_source_charges(
-    state: ParticleState,
-    active_indices: np.ndarray,
-    field_indices: np.ndarray,
-    field_source_charges: np.ndarray,
-    *,
-    weighting_mode: str = "inverse_distance",
-) -> np.ndarray:
-    """Build observer-specific same-bunch source charges on field reps.
-
-    The returned matrix has shape ``[n_active_observers, n_field_sources]``.
-    Each row starts from the weighted field-representative source charges. If an
-    active observer is also a field representative, its own physical source
-    charge is excluded and any additional charge deposited onto that same
-    representative is redistributed to other field reps for that observer. This
-    avoids placing source charge at zero separation from the active observer.
-    """
-    active = np.asarray(active_indices, dtype=int)
-    field = np.asarray(field_indices, dtype=int)
-    source_charges = np.asarray(field_source_charges, dtype=float)
-    if active.ndim != 1:
-        raise ValueError("active_indices must be a 1-D array")
-    if field.ndim != 1:
-        raise ValueError("field_indices must be a 1-D array")
-    if source_charges.shape != (field.size,):
-        raise ValueError("field_source_charges must match field_indices length")
-
-    charge_matrix = np.broadcast_to(
-        source_charges[np.newaxis, :],
-        (active.size, field.size),
-    ).astype(float, copy=True)
-    if active.size == 0 or field.size == 0:
-        return charge_matrix
-
-    charges = np.asarray(state.get("q_source", state["q"]), dtype=float)
-    field_lookup = {int(particle_idx): idx for idx, particle_idx in enumerate(field)}
-    reference_indices = np.unique(np.concatenate((active, field)))
-    field_coords = _normalized_position_coordinates(
-        state,
-        reference_indices=reference_indices,
-        target_indices=field,
-    )
-    active_coords = _normalized_position_coordinates(
-        state,
-        reference_indices=reference_indices,
-        target_indices=active,
-    )
-    for observer_local_idx, observer_particle_idx in enumerate(active):
-        field_local_idx = field_lookup.get(int(observer_particle_idx))
-        if field_local_idx is None:
-            continue
-        own_charge = float(charges[int(observer_particle_idx)])
-        deposited_charge = float(source_charges[field_local_idx]) - own_charge
-        charge_matrix[observer_local_idx, field_local_idx] = 0.0
-        if abs(deposited_charge) <= 1.0e-30:
-            continue
-        redistribution_weights = _fallback_self_excluded_neighbor_weights(
-            active_coords[observer_local_idx],
-            field_coords,
-            excluded_local_idx=int(field_local_idx),
-            weighting_mode=weighting_mode,
-        )
-        charge_matrix[observer_local_idx] += deposited_charge * redistribution_weights
-    return charge_matrix
-
-
 def build_hybrid_space_charge_sources(
     state: ParticleState,
     alive_indices: np.ndarray,
@@ -2270,7 +2204,6 @@ __all__ = [
     "accumulate_effective_source_charges",
     "accumulate_field_representative_charges",
     "accumulate_field_representative_charges_and_radii",
-    "build_field_representative_space_charge_source_charges",
     "build_hybrid_space_charge_sources",
     "build_self_excluded_space_charge_source_charges",
     "build_passive_neighbor_map",

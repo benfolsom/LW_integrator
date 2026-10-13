@@ -402,8 +402,12 @@ the same C5 potential representation.
 
 This is not a magnetic self-reaction switch.  The live route changes the
 ordinary field one particle receives from the *other* particle's magnetic
-moment.  The linear :math:`q\mu` self-force remains diagnostic-only, and the
-pure :math:`\mu^2` self-reaction remains absent.
+moment.  The passive ``diagnostic`` mode leaves trajectories unchanged. Separately,
+``intrinsic_spin_self_reaction_mode="experimental_linear_spin"`` applies
+linear $q\mu$ feedback on the checkpointed exact adaptive pair route. It
+requires enabled RFS spin precession, Stern–Gerlach force, and
+``second_order_start_taylor_endpoint``. Fixed-step and many-particle feedback
+are rejected. Pure $\mu^2$ self-reaction remains absent on this route.
 
 ``AcceptedIntrinsicSpinReductionHistory`` is the first state-lifecycle layer
 for the boundary route.  It retains only the newest six accepted proper-time
@@ -425,7 +429,7 @@ one-step indexing delay.  A scaled Vandermonde condition number above
 returned.  This threshold is deliberately above the
 :math:`4.9\times10^3`--:math:`5.9\times10^3` range measured in the accepted
 uniform and smooth unequal-step validation and must be rechecked for moving
-sources and close passages before an applied mode exists.
+sources and close passages before claiming validity of the experimental applied mode.
 
 ``AcceptedPairIntrinsicSpinReductionHistory`` now gives the live shared-time
 adaptive controller transactional ownership of one rider and one driver
@@ -435,7 +439,9 @@ It adopts that candidate only after the joint trajectory preflight succeeds.
 Rejected trials never call the callback, and an exception while constructing
 the candidate leaves both trajectory builders unchanged.
 
-Accepted-pair checkpoint schema 3 stores this optional pair history alongside
+The current accepted-pair writer uses outer schema 5, and its loader accepts
+outer schemas 4 and 5. Internal history schemas are versioned separately;
+see :doc:`checkpoints`. The checkpoint stores this optional pair history alongside
 the controller and public-output cursor.  An interrupted/resumed adaptive
 window reproduces both the uninterrupted trajectories and the complete
 diagnostic history exactly.  Runs that do not supply the history and callback
@@ -505,11 +511,13 @@ coefficient is a reason to measure its numerical importance, not permission
 to delete it silently.
 
 The nested result still reports the charge ALD term for comparison, but a
-future production caller must retain the existing Medina charge reaction and
+experimental feedback caller must retain the existing Medina charge reaction and
 apply only the new linear-spin contribution.  Adding both charge terms would
 double count the :math:`q^2` sector.
 
-Production use is intentionally blocked.  The unreduced equation contains
+General production validation remains open; the opt-in experimental feedback
+is implemented in ``core/exact_pair_trial.py`` and
+``core/experimental_spin_reaction.py``. The unreduced equation contains
 four-snap and spin/moment derivatives.  A production model must specify how
 those derivatives are obtained without introducing runaway solutions, and it
 must avoid double counting the charge term already supplied by Medina.  It
@@ -610,8 +618,9 @@ The next milestone is a three-level live refinement with moving, precessing
 sources and unequal accepted steps.  It must measure trajectory differences,
 mass-shell projection, readiness margin, fit conditioning, and restart parity
 before this source-history option is used for a full close pass.  Applying the
-linear :math:`q\mu` self-force remains a later and separately gated change;
-the existing Medina charge term must still enter exactly once.
+linear $q\mu$ self-force is now a separately guarded experimental option;
+its availability does not close those validation gates. The existing Medina
+charge term must still enter exactly once.
 
 References
 ----------

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import copy
 
 import numpy as np
 import pytest
@@ -55,13 +54,14 @@ def run_gate(mode, checkpoint=None, cancel_callback=None, progress_callback=None
         z_cutoff=0,
         sim_type=SimulationType.BUNCH_TO_BUNCH,
         startup_mode=StartupMode.COLD_START,
+        # Deliberately tests the COLD_START gate, so it needs the incomplete start.
+        allow_incomplete_startup_history=True,
         self_consistency=SelfConsistencyConfig(
             enabled=True,
             convergence_mode="fixed_geometry",
             max_iterations=2,
             target_ms_tolerance=1e-6,
             mass_shell_tolerance=0.01,
-            mass_shell_relaxation=0.7,
             chrono_interpolate=False,
         ),
         radiation_reaction_mode=mode,

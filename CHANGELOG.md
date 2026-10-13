@@ -2,6 +2,98 @@
 
 ## Unreleased
 
+## v0.12.0 — 2026-10-12 — sampled-path repair, audit fixes, photon transport
+
+Includes the v0.11.0 changes released on 2026-10-10 (exact histories, native PIC,
+and boundary studies), plus subsequent integration updates.
+
+### Sampled retarded path
+
+- Add a preflight check for `COLD_START`, which has no source history before
+  `t0`. For each `BUNCH_TO_BUNCH` observer-source pair it bounds the share of
+  the straight-line force impulse that falls in the missing interval
+  `t0 .. t0 + tau_c` (about `R/c`), measured against the full straight-line
+  encounter rather than the run window, so a short or truncated run does not
+  fail merely for ending early. Both the `|F|` impulse and each signed component
+  must stay below `startup_history_tolerance` (default `1e-3`, finite in
+  `(0, 1]`), and a kick below an absolute floor cannot fail. A visibility gate
+  that changes inside the missing interval is also an error; a source that is
+  merely visible is not. Driver-train `prehistory_steps` shift the missing
+  window. Violations raise `StartupHistoryError`. The explicit override
+  `allow_incomplete_startup_history` (`--allow-incomplete-startup-history`,
+  also carried through the GUI options) turns the error into a loud warning for
+  deliberate diagnostics. `APPROXIMATE_BACK_HISTORY` has no missing-history
+  window and is exempt. A skipped `COLD_START` check is logged, and a pass is
+  not an energy-accuracy certificate. Runs that pass are unchanged. The sampled
+  path does not gain `INERTIAL_PREHISTORY`; see
+  `docs/source/startup_history.rst`.
+- Give each smeared child source on the sampled retarded path its own
+  light-cone index, velocity and acceleration, as for exact persistent clouds,
+  instead of the parent's retarded event plus the offset. Point sources are
+  unchanged bit for bit. Children are evaluated at the same observer event they
+  are matched to (the stored start-of-step position, or the trial position under
+  variable-geometry iterations), so a zero-offset smeared source reproduces the
+  point source. Interpolated chrono matching, non-fixed refresh policies,
+  pseudo-grid space charge and `APPROXIMATE_BACK_HISTORY` keep the shared-event
+  expansion and warn once. Longitudinal cloud offsets are applied along z
+  regardless of `momentum_axis` (unchanged).
+- With both October failure causes fixed, the sampled path is valid with
+  complete source history and convergence checks, and is about ten times
+  faster than the exact path. Documentation now explains when to use each route
+  and states the `COLD_START` rule.
+
+### Audit fixes (change affected numerical results; defaults unchanged)
+
+- Fix cancellation in distant PIC cell fields and potentials using cell
+  quadrature, match sampled retarded histories to the observer's light cone,
+  remove the sampled force's silent gamma cutoff (1e6), and preserve
+  longitudinal Medina acceleration above gamma 1e3 in both LW and PIC callers
+  (orbits unchanged; radiation bookkeeping changes).
+- Reject non-finite live particle fields and malformed accepted force history
+  explicitly, and apply the post-step gamma guard to both bunches. Preserve
+  unprimed Medina timestamps and established startup behavior.
+- Verify checkpoint chunk row counts against their manifests, check live fields
+  before writing and restoring, and publish fixed-step manifest changes only
+  after a successful disk write so failed writes can be retried.
+- Bound callable signature caches, reject source mutation during prepared-cache
+  construction, and evict failed rebuilds. Avoid growing schedule-list copies
+  in feature-off partial histories. Use binary retarded-time searches for
+  histories with incrementally verified finite, nondecreasing source times;
+  retain scan behavior for other histories. Numerical defaults and finite-run
+  arithmetic remain unchanged; invalid-state handling deliberately becomes stricter.
+
+### Photon transport (experimental)
+
+- Add opt-in photon transport to fixed-step native pair and many-particle runs:
+  photons fly at c, scatter with rest-frame Klein–Nishina target recoil,
+  convert through a spin-averaged LCFA rate, and escape a configured domain.
+  Photon state, provenance, interaction ledgers, and a separate seeded RNG
+  survive checkpoints. Pair conversion records on-shell outgoing momenta and
+  unresolved field exchange; dynamic pair insertion remains unsupported.
+  Disabled transport leaves deterministic outputs unchanged.
+  Reject enabled transport on the general runner because its particle lab clocks
+  are not synchronised. Interpolate native target positions through each accepted
+  step, exclude each photon's emitter from scattering, and sample exponential
+  interaction times. Compute conversion rates separately from the energy-split
+  CDF. Report a transport energy/four-momentum ledger and per-step scattering
+  energy exchange. Treat explicitly disabled settings as absent in testbed
+  configurations and when resuming native checkpoints without transport.
+
+### Documentation and tests
+
+- Correct documentation against the release-based code: proper-time stepping,
+  mechanical mass-shell reconstruction, CLI overrides, image-source parameters,
+  unit labels, adaptive refinement, and experimental reaction boundaries.
+  Qualify historical evidence gaps, repair API navigation, and add field-provider
+  and boundary construction examples.
+- Parse single-dollar mathematics in unindented RST prose into Sphinx math nodes,
+  preserving inline literals and indented code. Resolve known API aliases to
+  their documented owners without suppressing unrelated warnings. Extend the
+  existing documentation-path test to Markdown and LaTeX sources.
+- Trim copied test algorithms and share identical fixtures and runner setup,
+  preserving numerical assertions and strengthening dead-particle retry coverage.
+  Runtime code, numerical defaults, and physics tolerances are unchanged.
+
 ## v0.11.0 — 2026-10-10 — exact histories, native PIC, and boundary studies
 
 ### Exact retarded fields and source histories
@@ -14,9 +106,18 @@
   crossings at accepted endpoints. Gates remain an ideal visibility model;
   material screening, screen heat, and boundary radiation are not included.
 - Support fixed-step charge driver trains with translated `INERTIAL_PREHISTORY`.
-  Expand the train before constructing each particle's causal prefix. Adaptive
-  or resumable trains, intrinsic dipole-source trains, and persistent finite
-  train clouds remain unsupported.
+  Reduce the template when requested, then expand the train before constructing
+  each particle's causal prefix. Support persistent transverse charge clouds
+  and resumable fixed-step train checkpoints with inertial prehistory. Adaptive
+  trains and intrinsic dipole-source trains remain unsupported.
+- Restrict opt-in exact-source breathing to reduced cells with retained velocity
+  covariance, including driver-train templates. Cache accepted breathing widths
+  and child histories so appends and private trials rebuild only a short suffix.
+  Preserve unrelated metadata during source reduction and train expansion, and
+  accept namespaced reduction settings while retaining legacy input aliases.
+  Clarify the floored cell-width model and unresolved internal cell forces.
+  Add an opt-in shared lab-time clock to the light/heavy probe harness; production
+  clocks and disabled-feature defaults remain unchanged.
 - Add exact same-bunch charge fields to force, canonical potentials, prehistory
   preflight, and endpoint reconstruction, excluding self-sources. Require
   inertial prehistory, retarded evaluation, and zero point-charge softening.
@@ -102,16 +203,31 @@
 - Add opt-in electron/positron emission with quantum/recoil thresholds, quantum
   LCFA and capped classical spectra, seeded photon logs, on-shell recoil, a
   background-impulse ledger, and checkpointed random-generator state. Supported
-  entry points are zero-spin fixed-RK4 native pairs and guarded fixed-step
-  sampled `BUNCH_TO_BUNCH` runs. Finite-spin quantum recoil and closed
-  electron–ion conservation remain open. Saved testbed and GUI configs include
-  a disabled settings block; deterministic defaults remain unchanged.
-- Reject emission on the general exact `INERTIAL_PREHISTORY` path with
-  `NotImplementedError` until recoil kicks are stored as split velocity knots.
-  A kick diagnostic found a classical radiation pulse whose peak and fluence
-  grow under timestep refinement. The sampled and native pair kick controls
+  entry points are zero-spin fixed-RK4 native pairs and fixed-step sampled or
+  exact `BUNCH_TO_BUNCH` runs within the documented restrictions. Finite-spin
+  quantum recoil and closed electron–ion conservation remain open. Saved testbed
+  and GUI configs include a disabled settings block; deterministic defaults
+  remain unchanged.
+- Record accepted stochastic recoils as split velocity knots on the general
+  exact `INERTIAL_PREHISTORY` path, and remove its temporary `NotImplementedError`
+  emission guard.
+  Source reconstruction uses incoming and outgoing smooth branches, preserving
+  visibility knots and the masked Medina/LAD restart. This fixes the extra
+  classical radiation pulse whose peak and fluence grew under timestep
+  refinement before the guard. Coasting-kick controls now have zero residual
+  radiation under timestep refinement; sampled and native pair controls also
   avoid that pulse, without establishing general trajectory accuracy. Earlier
-  exact-emission smoke runs predate this guard and are not supported workflows.
+  exact-emission smoke results predate both the guard and this correction.
+  Historical kick diagnostics and the broader source-history fix plan remain
+  documented.
+- Keep gate and recoil knots aligned across a bunch after particle loss, and
+  resume incremental charge and dipole preparation outside the three-knot
+  split window. Decode only appended metadata, copy one source's split
+  derivatives at a time, and preserve instantaneous acceleration for unkicked
+  sources. General-runner recoil metadata uses null derivatives and
+  incoming-state keys that require a reader supporting split kicks; older
+  checkpoints remain readable. Document the provisional ballistic outgoing
+  branch and the remaining cost of frequent split events.
 - In enabled quantum mode, scale continuous classical reaction below activation
   by the LCFA quantum/classical power ratio. Subdivide intervals exceeding the
   probability cap and update momentum after each photon. Keep emission payloads
@@ -140,6 +256,30 @@
   and chrono options. Preserve GUI non-FAST selections, pass CLI adaptive gamma
   thresholds and weights through, and resolve chrono aliases consistently.
   Require JSON booleans and reject unknown gamma-reconciliation names.
+- Remove inert self-consistency plumbing and the GUI relaxation control. Retain
+  `SelfConsistencyConfig.mass_shell_relaxation` for direct study callers, and
+  restore its inert `chrono_matching_mode` field with the historical `"FAST"`
+  default. Saved `self_consistency_mass_shell_relaxation`,
+  `self_consistency_tolerance`, and `mass_shell_relaxation` keys are deprecated
+  and ignored with one warning per parsed input. Defensive cleanup also drops
+  `mass_shell_relaxation` and the duplicate `chrono_matching_mode` inside evidence
+  summaries' `self_consistency` objects; no configuration loader consumes that
+  nested shape. Outer chrono-mode selectors and their aliases retain their
+  solver behavior.
+- Remove four unused helpers (`_get_current_particle_gamma_and_beta`,
+  `initialize_particle_bunches`,
+  `build_field_representative_space_charge_source_charges`, and
+  `_evaluate_cli_stability`), the private `_CliStabilityOutcome` type, the unused
+  `save_partial_optimization_results` writer, and `_check_gamma_consistency`.
+  Keep live pseudo-grid accounting and cancellation output.
+- Collapse the constant on-shell branch, share identical accepted-source
+  numerical helpers, and remove historical repository and dialog absence tests.
+  Retain numerical reference tests and useful configuration validation.
+- Remove deprecated keys from shipped examples, misleading test patches, and
+  a redundant timestep assignment. Keep the beta-to-gamma helper as a documented
+  diagnostic utility. Correct the proper-velocity debug text, compact the
+  self-consistency GUI grid, and tidy formatting and audit documentation.
+  Solver defaults and arithmetic are unchanged.
 - Update the counter-propagating proton-bunch example to the maintained
   two-trial, gamma-disabled, chrono-off, Medina/LAD settings. Remove the unused
   sweep stability-confirmation dialog.
@@ -151,10 +291,17 @@
   quadrature, stale pseudo-grid test unpacking, and missing sweep fixtures.
   Headless sweeps no longer import Tk; Tk-only tests skip when Tk is unavailable.
 - Refresh Sphinx coverage of exact histories and gates, PIC and correction
-  settings, boundary APIs, external fields, and stochastic-emission guards.
+  settings, boundary APIs, external fields, and stochastic-emission restrictions.
   Correct overview, quickstart, self-consistency claims, navigation, and math
-  markup. Add the classical-limit and bremsstrahlung validity discussion and
-  synchronize version metadata to 0.11.0.
+  markup, and synchronize version metadata to 0.11.0.
+- Add the physics discussion "Classical limit, bremsstrahlung, and validity"
+  (`docs/source/classical_limit_bremsstrahlung.rst`, under Physics background).
+  It covers LW as the classical limit of retarded QED and its bounds, benchmarks
+  against QFT-derived classical scattering results, the capture threshold, and
+  emission beyond the bremsstrahlung endpoint. It also covers the classical
+  spinning electron's validity limit (about 0.3 $E_S$), the 165 fm reaction-ledger
+  failure, and impact-parameter-summed cross sections against Li et al. (2021)
+  and Kim and Pratt (1987).
 
 ## v0.10.0 — 2026-09-23 — many-particle full-spin milestone
 

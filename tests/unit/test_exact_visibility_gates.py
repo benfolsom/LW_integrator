@@ -2,6 +2,7 @@
 
 import numpy as np
 import pytest
+from contextlib import nullcontext
 
 from core.constants import C_MMNS
 from core.integration_runner import retarded_integrator
@@ -105,9 +106,52 @@ def crossing_run(
         "numba_analytic_charge_response_serial",
     ],
 )
-def test_always_visible_gate_is_bit_identical_to_no_geometry(backend):
-    ungated = crossing_run(8, None, backend=backend)
-    visible = crossing_run(8, gate(radius=1000.0), backend=backend)
+@pytest.mark.parametrize("clock", ["proper_time", "shared_lab_time"])
+@pytest.mark.parametrize("fast_rider", [False, True])
+def test_always_visible_gate_is_bit_identical_to_no_geometry(
+    backend, clock, fast_rider
+):
+    from core.retarded_fields import RetardedHistoryError
+    from scripts.check_sources2 import shared_lab_clock
+
+    intervals, duration = (80, 0.02) if fast_rider else (8, 0.15)
+
+    def run(geometry):
+        with (
+            shared_lab_clock(duration / intervals)
+            if clock == "shared_lab_time"
+            else nullcontext()
+        ):
+            result = crossing_run(
+                intervals,
+                geometry,
+                backend=backend,
+                duration=duration,
+                rider_state=(
+                    _state(
+                        position_mm=(0, 0, -5),
+                        beta=(0, 0, 0.995),
+                        observer_charge=10.0,
+                        source_charge=0.0,
+                    )
+                    if fast_rider
+                    else None
+                ),
+            )
+        if clock == "shared_lab_time":
+            for rider, driver in zip(*result[:2]):
+                np.testing.assert_array_equal(rider["t"], driver["t"])
+        return result
+
+    if fast_rider and clock == "proper_time":
+        # The unchanged default must still reject a rider that outruns the
+        # slow source's accepted history, even when every source is visible.
+        for geometry in (None, gate(radius=1000.0)):
+            with pytest.raises(RetardedHistoryError):
+                run(geometry)
+        return
+    ungated = run(None)
+    visible = run(gate(radius=1000.0))
     for plain, gated in zip(ungated[:2], visible[:2]):
         for before, after in zip(plain, gated):
             for key, value in before.items():
@@ -515,6 +559,56 @@ np.testing.assert_allclose(charge.light_cone_segments[index].sample(0)[2],
         excluded_source_identities=(),
     ).sources[0]
     assert knot["t"] in dipole.worldline.time_ns
+
+    # A lost particle freezes its clock. An interior gate followed by a live
+    # particle's recoil must append for the whole bunch, not merge just the
+    # dead particle's knot. Also retain the coincident-endpoint merge case.
+    import copy
+
+    from core.exact_visibility_history import _expand, save_visibility_knots
+    from core.resolved_knot import RESOLVED_KNOT_FIELDS
+
+    for gate_time in (0.5, 1.0):
+        endpoint = _merge(
+            _state(position_mm=(0, 0, 0), source_charge=1),
+            _state(position_mm=(1, 0, 0), source_charge=1),
+        )
+        endpoint["t"] = np.array([1.0, 0.0])
+        endpoint["_dead_particles"] = np.array([False, True])
+        gate_row = copy.deepcopy(endpoint)
+        gate_row["t"][0] = gate_time
+        gate_row["_gate_prime_before"] = np.full((2, 3), 0.01)
+        gate_row["_gate_prime_after"] = np.full((2, 3), 0.02)
+        save_visibility_knots(endpoint, [gate_row])
+        kick = dict(endpoint)
+        kick["_kick_mask"] = np.array([True, False])
+        kick["_kick_beta_before"] = np.zeros((2, 3))
+        kick["_kick_resolved_before"] = np.zeros((2, len(RESOLVED_KNOT_FIELDS)))
+        kick["_gate_prime_before"] = np.full((2, 3), np.nan)
+        kick["_gate_prime_after"] = np.full((2, 3), np.nan)
+        save_visibility_knots(endpoint, [kick], append=True)
+        saved = [
+            decode_inclusion_state(str(value))["exact_gate_history"]["knots"]
+            for value in endpoint["potential_inclusion_state"]
+        ]
+        assert [len(entries) for entries in saved] == (
+            [2, 2] if gate_time < 1 else [1, 1]
+        )
+        assert saved[0][-1]["after"] is None
+        assert saved[0][-1]["before"] == (None if gate_time < 1 else [0.01] * 3)
+        expanded = _expand([endpoint])
+        assert len(expanded) == (2 if gate_time < 1 else 1)
+        _prepare_history([endpoint], ())
+        # Later recoils must discard stale metadata for the whole bunch, even
+        # though the lost particle still has the old endpoint's frozen time.
+        endpoint["t"][0] = 2.0
+        save_visibility_knots(endpoint, [kick], append=True)
+        later = [
+            decode_inclusion_state(str(value))["exact_gate_history"]["knots"]
+            for value in endpoint["potential_inclusion_state"]
+        ]
+        assert [len(entries) for entries in later] == [1, 1]
+        _prepare_history([endpoint], ())
 
 
 def test_private_gate_scratch_cannot_override_a_later_state():

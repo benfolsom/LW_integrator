@@ -792,7 +792,7 @@ def compute_vectorized_contributions(
     if not apply_external:
         return 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
 
-    if abs(charge_i) < 1e-20 or gamma_i > 1e6:
+    if abs(charge_i) < 1e-20:
         return 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
 
     if samples.charge.size == 0 or R_separation.size == 0 or not samples.any_valid:
@@ -800,7 +800,6 @@ def compute_vectorized_contributions(
 
     mask = samples.valid_mask.copy()
     mask &= R_separation > 0.0
-    mask &= samples.gamma <= 1e6
     mask &= np.abs(samples.charge) >= 1e-20
 
     if not mask.any():

@@ -1,6 +1,13 @@
 Metal proposals versus strict compiled CPU
 ==========================================
 
+.. note::
+
+   Numerical results below include historical study reports whose complete
+   inputs and outputs are not distributed with this revision. See
+   :doc:`evidence_status` for the missing artifacts and tracked checks.
+   These reports are not fresh validation or universal accuracy guarantees.
+
 Status and scope
 ----------------
 

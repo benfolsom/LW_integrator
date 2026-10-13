@@ -4,14 +4,14 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
+from input_output.config_migration import discard_inert_self_consistency_keys
+
 _PERSISTED_CONFIG_DEFAULTS: dict[str, Any] = {
     "self_consistency_enabled": True,
-    "self_consistency_tolerance": 1e-4,
     "self_consistency_convergence_mode": "fixed_geometry",
     "self_consistency_target_ms_tolerance": 1e-6,
     "self_consistency_max_iterations": 2,
     "self_consistency_mass_shell_tolerance": 1e-2,
-    "self_consistency_mass_shell_relaxation": 0.7,
     "self_consistency_verbosity": 0,
     "chrono_interpolate": False,
     "chrono_tolerance": 1e-3,
@@ -132,6 +132,7 @@ _CHRONO_ALIAS_SUFFIXES = (
 
 def apply_persisted_config_overrides(config: Any, data: Dict[str, Any]) -> Any:
     """Apply persisted config values and defaults onto an OptimizationConfig."""
+    data = discard_inert_self_consistency_keys(data)
     nested_driver_train = data.get("driver_train")
     if isinstance(nested_driver_train, dict):
         data = dict(data)
@@ -224,12 +225,10 @@ def build_saved_config_payload(
         "optimization_convergence_tol": config.optimization_convergence_tol,
         "optimization_convergence_patience": (config.optimization_convergence_patience),
         "self_consistency_enabled": config.self_consistency_enabled,
-        "self_consistency_tolerance": config.self_consistency_tolerance,
         "self_consistency_convergence_mode": config.self_consistency_convergence_mode,
         "self_consistency_target_ms_tolerance": config.self_consistency_target_ms_tolerance,
         "self_consistency_max_iterations": config.self_consistency_max_iterations,
         "self_consistency_mass_shell_tolerance": config.self_consistency_mass_shell_tolerance,
-        "self_consistency_mass_shell_relaxation": config.self_consistency_mass_shell_relaxation,
         "self_consistency_verbosity": config.self_consistency_verbosity,
         "chrono_interpolate": config.chrono_interpolate,
         "chrono_tolerance": config.chrono_tolerance,

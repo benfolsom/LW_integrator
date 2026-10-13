@@ -31,7 +31,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.figure import Figure
 
-from core.constants import C_MMNS
+from core.constants import C_MMNS, DEFAULT_STARTUP_HISTORY_TOLERANCE
 from core.debug_logger import get_current_log_path, initialize_debug_logging
 from core.particle_config import (
     DEFAULT_DRIVER_PARAMS,
@@ -55,6 +55,7 @@ from core.types import (
     SimulationType,
 )
 from input_output.bunch_initialization import create_bunch_from_params
+from input_output.config_migration import discard_inert_self_consistency_keys
 
 from .trajectory_metrics import compute_delta_energy_components, normalize_state
 
@@ -336,12 +337,11 @@ class SimulationOptions:
     macroparticle_smearing_apply_to_passive_updates: bool = False
     macroparticle_smearing_seed: int = 12345
     macroparticle_smearing_refresh_policy: str = "fixed_per_particle"
+    macroparticle_smearing_breathing_enabled: bool = False
+    macroparticle_smearing_breathing_response_time_ns: float = 0.01
 
     # Self-consistency options
     self_consistency_enabled: bool = True
-    self_consistency_tolerance: float = (
-        1e-4  # Legacy parameter for backward compatibility
-    )
     self_consistency_convergence_mode: str = "fixed_geometry"  # or "variable_geometry"
     self_consistency_target_ms_tolerance: float = 1e-6  # Mass-shell loop criterion
     self_consistency_max_iterations: int = (
@@ -349,9 +349,6 @@ class SimulationOptions:
     )
     self_consistency_mass_shell_tolerance: float = (
         1e-2  # Safety net threshold enforced after loop
-    )
-    self_consistency_mass_shell_relaxation: float = (
-        0.7  # Relaxation weight for Pt correction (0.0-1.0, default 0.7)
     )
     self_consistency_verbosity: int = (
         0  # 0=silent, 1=summary, 2=failures, 3=full (console and saved logs)
@@ -455,6 +452,9 @@ class SimulationOptions:
     # Intrinsic magnetic moment / spin options. Preset values are resolved by
     # the core species registry when a run starts.
     magnetic_dipole_enabled: bool = False
+    exact_source_reduction_enabled: bool = False
+    exact_source_reduction_rider_count: int = 0
+    exact_source_reduction_driver_count: int = 0
     magnetic_dipole_spin_precession_enabled: bool = True
     magnetic_dipole_stern_gerlach_force_enabled: bool = False
     magnetic_dipole_spin_model: str = "rfs_minimal_2021"
@@ -496,6 +496,8 @@ class SimulationOptions:
     driver_polarization: float = 1.0
 
     source_history_representation: str = "light_cone_quintic"
+    allow_incomplete_startup_history: bool = False
+    startup_history_tolerance: float = DEFAULT_STARTUP_HISTORY_TOLERANCE
     radiation_reaction_mode: str = "medina_lad"
 
     # Fixed-size physical particle-loss options
@@ -560,8 +562,14 @@ class SimulationOptions:
     log_file_path: Optional[str] = None  # If None, auto-generate in output_dir
 
     stochastic_emission: dict | None = None
+    photon_transport: dict | None = None
 
     def __post_init__(self) -> None:
+        from core.photon_transport import PhotonTransportConfig
+
+        if self.photon_transport is not None:
+            transport = PhotonTransportConfig.from_dict(self.photon_transport)
+            self.photon_transport = asdict(transport) if transport.enabled else None
         from core.stochastic_emission import StochasticEmissionConfig
 
         self.stochastic_emission = asdict(
@@ -752,14 +760,20 @@ class SimulationOptions:
                 "apply_to_passive_updates": self.macroparticle_smearing_apply_to_passive_updates,
                 "seed": self.macroparticle_smearing_seed,
                 "refresh_policy": self.macroparticle_smearing_refresh_policy,
+                **(
+                    {
+                        "breathing_enabled": True,
+                        "breathing_response_time_ns": self.macroparticle_smearing_breathing_response_time_ns,
+                    }
+                    if self.macroparticle_smearing_breathing_enabled
+                    else {}
+                ),
             },
             "self_consistency_enabled": self.self_consistency_enabled,
-            "self_consistency_tolerance": self.self_consistency_tolerance,
             "self_consistency_convergence_mode": self.self_consistency_convergence_mode,
             "self_consistency_target_ms_tolerance": self.self_consistency_target_ms_tolerance,
             "self_consistency_max_iterations": self.self_consistency_max_iterations,
             "self_consistency_mass_shell_tolerance": self.self_consistency_mass_shell_tolerance,
-            "self_consistency_mass_shell_relaxation": self.self_consistency_mass_shell_relaxation,
             "self_consistency_verbosity": self.self_consistency_verbosity,
             "chrono_interpolate": self.chrono_interpolate,
             "chrono_tolerance": self.chrono_tolerance,
@@ -823,6 +837,9 @@ class SimulationOptions:
             "external_field_z_max": self.external_field_z_max,
             "external_field_t_min": self.external_field_t_min,
             "external_field_t_max": self.external_field_t_max,
+            "exact_source_reduction_enabled": self.exact_source_reduction_enabled,
+            "exact_source_reduction_rider_count": self.exact_source_reduction_rider_count,
+            "exact_source_reduction_driver_count": self.exact_source_reduction_driver_count,
             "magnetic_dipole": {
                 "enabled": self.magnetic_dipole_enabled,
                 "spin_precession_enabled": (
@@ -913,8 +930,15 @@ class SimulationOptions:
                 },
             },
             "radiation_reaction_mode": self.radiation_reaction_mode,
+            **(
+                {"photon_transport": dict(self.photon_transport)}
+                if self.photon_transport is not None
+                else {}
+            ),
             "stochastic_emission": dict(self.stochastic_emission or {}),
             "source_history_representation": self.source_history_representation,
+            "allow_incomplete_startup_history": (self.allow_incomplete_startup_history),
+            "startup_history_tolerance": self.startup_history_tolerance,
             "particle_loss": {
                 "enabled": self.particle_loss_enabled,
                 "loss_radius_mm": self.particle_loss_radius_mm,
@@ -973,10 +997,21 @@ class SimulationOptions:
             "save_log_file": self.save_log_file,
             "log_file_path": self.log_file_path,
         }
+        if self.exact_source_reduction_enabled:
+            for suffix in ("enabled", "rider_count", "driver_count"):
+                name = f"exact_source_reduction_{suffix}"
+                payload[f"magnetic_dipole_{name}"] = payload.pop(name)
         return payload
 
     @classmethod
     def from_dict(cls, payload: Dict[str, object]) -> "SimulationOptions":
+        payload = discard_inert_self_consistency_keys(payload)
+        # Prefer the namespaced source-model surface; retain old saved inputs.
+        for suffix in ("enabled", "rider_count", "driver_count"):
+            name = f"exact_source_reduction_{suffix}"
+            canonical = f"magnetic_dipole_{name}"
+            if canonical in payload:
+                payload[name] = payload[canonical]
         sweep_keys = {"sweep_parameters", "energy_min", "energy_max", "energy_points"}
         if (
             "rider_params" not in payload
@@ -1011,6 +1046,12 @@ class SimulationOptions:
                 return int(value)  # type: ignore[arg-type,no-any-return,call-overload]
             except (TypeError, ValueError):
                 return default
+
+        def _source_count(name: str) -> int:
+            value = payload.get(name, 0)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(f"{name} must be a non-negative integer")
+            return value
 
         def _float(name: str, default: float) -> float:
             value = payload.get(name, default)
@@ -1635,8 +1676,13 @@ class SimulationOptions:
             macroparticle_smearing_refresh_policy=str(
                 _smearing_value("refresh_policy", "fixed_per_particle")
             ).replace("-", "_"),
+            macroparticle_smearing_breathing_enabled=_smearing_bool(
+                "breathing_enabled", False
+            ),
+            macroparticle_smearing_breathing_response_time_ns=_smearing_float(
+                "breathing_response_time_ns", 0.01
+            ),
             self_consistency_enabled=_strict_bool("self_consistency_enabled", True),
-            self_consistency_tolerance=_float("self_consistency_tolerance", 1e-4),
             self_consistency_convergence_mode=canonicalize_self_consistency_mode(
                 payload.get("self_consistency_convergence_mode", "fixed_geometry")
             ),
@@ -1646,9 +1692,6 @@ class SimulationOptions:
             self_consistency_max_iterations=_int("self_consistency_max_iterations", 2),
             self_consistency_mass_shell_tolerance=_float(
                 "self_consistency_mass_shell_tolerance", 1e-2
-            ),
-            self_consistency_mass_shell_relaxation=_float(
-                "self_consistency_mass_shell_relaxation", 0.7
             ),
             self_consistency_verbosity=_int("self_consistency_verbosity", 0),
             chrono_interpolate=_strict_bool(
@@ -1761,6 +1804,15 @@ class SimulationOptions:
             external_field_z_max=_optional_float("external_field_z_max"),
             external_field_t_min=_optional_float("external_field_t_min"),
             external_field_t_max=_optional_float("external_field_t_max"),
+            exact_source_reduction_enabled=_bool(
+                "exact_source_reduction_enabled", False
+            ),
+            exact_source_reduction_rider_count=_source_count(
+                "exact_source_reduction_rider_count"
+            ),
+            exact_source_reduction_driver_count=_source_count(
+                "exact_source_reduction_driver_count"
+            ),
             magnetic_dipole_enabled=bool(_magnetic_value("enabled", False)),
             magnetic_dipole_spin_precession_enabled=bool(
                 _magnetic_value("spin_precession_enabled", True)
@@ -1871,10 +1923,17 @@ class SimulationOptions:
             source_history_representation=_str(
                 "source_history_representation", "light_cone_quintic"
             ),
+            allow_incomplete_startup_history=_strict_bool(
+                "allow_incomplete_startup_history", False
+            ),
+            startup_history_tolerance=_float(
+                "startup_history_tolerance", DEFAULT_STARTUP_HISTORY_TOLERANCE
+            ),
             radiation_reaction_mode=_str(
                 "radiation_reaction_mode", default_radiation_reaction_mode
             ),
             stochastic_emission=payload.get("stochastic_emission"),
+            photon_transport=payload.get("photon_transport"),
             particle_loss_enabled=_particle_loss_enabled(True),
             particle_loss_radius_mm=_particle_loss_optional_float(
                 "loss_radius_mm",
@@ -2483,6 +2542,7 @@ class RunResult:
     driver_trajectory: Optional[Dict[str, Any]] = None
     energy_ledger_metrics: Optional[Dict[str, Any]] = None
     stochastic_emission: dict | None = None
+    photon_transport: dict | None = None
     # Beam optics parameters (initial)
     rider_emittance_x_mm_mrad: Optional[float] = None
     rider_emittance_y_mm_mrad: Optional[float] = None
@@ -2904,11 +2964,9 @@ def build_self_consistency_config(options: SimulationOptions) -> Optional[object
         target_ms_tolerance=options.self_consistency_target_ms_tolerance,
         max_iterations=options.self_consistency_max_iterations,
         mass_shell_tolerance=options.self_consistency_mass_shell_tolerance,
-        mass_shell_relaxation=options.self_consistency_mass_shell_relaxation,
         verbosity=options.self_consistency_verbosity,
         chrono_interpolate=chrono_interpolate,
         chrono_tolerance=float(getattr(options, "chrono_tolerance", 1e-3)),
-        chrono_matching_mode=str(getattr(options, "chrono_matching_mode", "FAST")),
         chrono_high_precision=chrono_high_precision,
         chrono_adaptive_tolerance=chrono_adaptive_tolerance,
         gamma_reconciliation_method=gamma_method,
@@ -3063,6 +3121,8 @@ def build_macroparticle_smearing_config(options: SimulationOptions) -> object:
         refresh_policy=str(options.macroparticle_smearing_refresh_policy).replace(
             "-", "_"
         ),
+        breathing_enabled=bool(options.macroparticle_smearing_breathing_enabled),
+        breathing_response_time_ns=options.macroparticle_smearing_breathing_response_time_ns,
     )
 
 
@@ -3173,12 +3233,22 @@ def build_magnetic_dipole_config(options: SimulationOptions) -> object:
     """Build the validated core magnetic-dipole configuration."""
     from core.types import (
         DipoleSourceConfig,
+        ExactSourceReductionConfig,
         MagneticDipoleConfig,
         MagneticDipoleParticleConfig,
     )
 
     return MagneticDipoleConfig(
         enabled=options.magnetic_dipole_enabled,
+        exact_source_reduction=(
+            ExactSourceReductionConfig(
+                enabled=True,
+                rider_count=options.exact_source_reduction_rider_count,
+                driver_count=options.exact_source_reduction_driver_count,
+            )
+            if options.exact_source_reduction_enabled
+            else None
+        ),
         spin_precession_enabled=options.magnetic_dipole_spin_precession_enabled,
         stern_gerlach_force_enabled=(
             options.magnetic_dipole_stern_gerlach_force_enabled
@@ -3442,8 +3512,7 @@ def run_testbed(
     _log(
         f"  Self-consistency: {options.self_consistency_enabled} (mode={options.self_consistency_convergence_mode}, "
         f"ms_tol={options.self_consistency_target_ms_tolerance:.1e}, "
-        f"max_iter={options.self_consistency_max_iterations}, safety_net={options.self_consistency_mass_shell_tolerance:.1e}, "
-        f"relaxation={options.self_consistency_mass_shell_relaxation:.1f})"
+        f"max_iter={options.self_consistency_max_iterations}, safety_net={options.self_consistency_mass_shell_tolerance:.1e})"
     )
     _log(
         f"  Chrono matching: interpolate={options.chrono_interpolate}, "
@@ -3686,7 +3755,10 @@ def run_testbed(
             use_numba=getattr(options, "use_numba", True),
             radiation_reaction_mode=options.radiation_reaction_mode,
             stochastic_emission=options.stochastic_emission,
+            photon_transport=options.photon_transport,
             source_history_representation=options.source_history_representation,
+            allow_incomplete_startup_history=options.allow_incomplete_startup_history,
+            startup_history_tolerance=options.startup_history_tolerance,
             pseudo_grid=pseudo_grid_config,
             driver_train=driver_train_config,
             cavity_exit=cavity_exit_config,
@@ -3722,6 +3794,8 @@ def run_testbed(
 
         if core_traj_rider and "_stochastic_emission" in core_traj_rider[-1]:
             payload["stochastic_emission"] = core_traj_rider[-1]["_stochastic_emission"]
+        if core_traj_rider and "_photon_transport" in core_traj_rider[-1]:
+            payload["photon_transport"] = core_traj_rider[-1]["_photon_transport"]
         result = ({}, payload)  # Empty metrics dict, payload with trajectories
 
     # Store captured stdout/stderr separately for verbose logs button
@@ -5445,6 +5519,8 @@ def run_testbed(
 
             if "stochastic_emission" in payload:
                 traj_data["stochastic_emission"] = payload["stochastic_emission"]
+            if "photon_transport" in payload:
+                traj_data["photon_transport"] = payload["photon_transport"]
             label_prefix = config_label if config_label else "trajectory"
 
             # Save as JSON for the maintained single-run plotting toolchain.
@@ -5508,6 +5584,10 @@ def run_testbed(
             if "stochastic_emission" in payload:
                 npz_payload["stochastic_emission_json"] = np.array(
                     json.dumps(payload["stochastic_emission"])
+                )
+            if "photon_transport" in payload:
+                npz_payload["photon_transport_json"] = np.array(
+                    json.dumps(payload["photon_transport"])
                 )
             np.savez(traj_path_npz, **npz_payload)
             saved_paths["trajectory_npz"] = traj_path_npz
@@ -5582,6 +5662,7 @@ def run_testbed(
         driver_trajectory=driver_trajectory_data,
         energy_ledger_metrics=energy_ledger_metrics,
         stochastic_emission=payload.get("stochastic_emission"),
+        photon_transport=payload.get("photon_transport"),
         pseudo_grid_charge_localization=_pseudo_grid_charge_localization,
         rider_emittance_x_mm_mrad=rider_emittance_x,
         rider_emittance_y_mm_mrad=rider_emittance_y,

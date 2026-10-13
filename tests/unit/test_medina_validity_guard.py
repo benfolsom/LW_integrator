@@ -55,7 +55,6 @@ def uniform_run(
             target_ms_tolerance=1e-6,
             max_iterations=2,
             mass_shell_tolerance=0.01,
-            mass_shell_relaxation=0.7,
             chrono_interpolate=False,
         ),
     )
@@ -77,11 +76,17 @@ def trajectory_digest(trajectory):
 @pytest.mark.parametrize(
     "field_si,gamma", [(FIELD / 10, GAMMA), (FIELD, GAMMA), (1e5, 2)]
 )
-def test_legacy_trajectory_matches_3673af5_snapshot(field_si, gamma):
+def test_trajectory_snapshot_preserves_low_gamma_and_corrects_high_gamma(
+    field_si, gamma
+):
     reference = json.loads(
         (Path(__file__).parent / "fixtures" / "medina_legacy_3673af5.json").read_text()
     )
     result = uniform_run(field_si, gamma=gamma)
+    if gamma > 1e3:
+        # The confirmed acceleration fix changes high-gamma radiation
+        # diagnostics. Keep the historical hashes above this section frozen.
+        reference = reference["corrected_high_gamma_force"]
     assert trajectory_digest(result[0]) == reference[f"{field_si}:{gamma}"]
 
 

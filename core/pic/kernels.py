@@ -180,14 +180,53 @@ def _primitive(x: Any, y: Any, z: Any) -> Any:
     )
 
 
+@njit(cache=True)
+def _far_cell_green(x, y, z, spacing, component):
+    """Four-point Gauss–Legendre cell average, for r >= 16 max(spacing).
+
+    At this separation the integrand is smooth across the whole cell. The
+    degree-seven rule avoids cancellation of corner primitives and retains
+    the finite-cell moments, including those of anisotropic cells.
+    """
+    nodes = (
+        -0.8611363115940526,
+        -0.3399810435848563,
+        0.3399810435848563,
+        0.8611363115940526,
+    )
+    weights = (
+        0.3478548451374538,
+        0.6521451548625461,
+        0.6521451548625461,
+        0.3478548451374538,
+    )
+    total = x * 0.0
+    for a in range(4):
+        for b in range(4):
+            for c in range(4):
+                xx = x + nodes[a] * spacing[0] / 2
+                yy = y + nodes[b] * spacing[1] / 2
+                zz = z + nodes[c] * spacing[2] / 2
+                radius = np.sqrt(xx * xx + yy * yy + zz * zz)
+                value = 1.0 / radius
+                if component >= 0:
+                    coordinate = xx if component == 0 else yy if component == 1 else zz
+                    value = coordinate / radius**3
+                total = total + weights[a] * weights[b] * weights[c] * value / 8.0
+    return COULOMB * total
+
+
 def integrated_green(displacement: Any, spacing: Any, component: int | None) -> Any:
-    """Exact rectangular-cell average of 1/r or r_component/r**3.
+    """Rectangular-cell average of 1/r or r_component/r**3.
 
     Half-cell corner offsets avoid singular corners on the nodal convolution
     lattice. Arbitrary off-grid evaluation uses the same lattice at virtual
     gather nodes, so this routine never evaluates a source-cell face.
+    Far cells use quadrature to avoid cancellation in the analytic primitive.
     """
-    x, y, z = displacement
+    x_all, y_all, z_all = np.broadcast_arrays(*displacement)
+    far = x_all**2 + y_all**2 + z_all**2 >= (16 * np.max(spacing)) ** 2
+    x, y, z = x_all[~far], y_all[~far], z_all[~far]
     hx, hy, hz = np.asarray(spacing) / 2.0
     total = np.zeros(np.broadcast_shapes(np.shape(x), np.shape(y), np.shape(z)))
     for a in (-1, 1):
@@ -203,7 +242,17 @@ def integrated_green(displacement: Any, spacing: Any, component: int | None) -> 
                 else:
                     value = -_surface(zz, xx, yy)
                 total += a * b * c * value
-    return COULOMB * total / np.prod(spacing)
+    result = np.empty(x_all.shape)
+    result[~far] = COULOMB * total / np.prod(spacing)
+    if np.any(far):
+        result[far] = _far_cell_green(
+            x_all[far],
+            y_all[far],
+            z_all[far],
+            np.asarray(spacing),
+            -1 if component is None else component,
+        )
+    return result
 
 
 @njit(cache=True)
@@ -216,6 +265,11 @@ def node_field_kernel(
         for j in range(len(source_charge)):
             r = (nodes[p] - source_indices[j]) * spacing
             for axis in range(3):
+                if np.dot(r, r) >= (16 * np.max(spacing)) ** 2:
+                    result[p, axis] += source_charge[j] * _far_cell_green(
+                        r[0], r[1], r[2], spacing, axis
+                    )
+                    continue
                 value = 0.0
                 for a in (-1, 1):
                     for b in (-1, 1):

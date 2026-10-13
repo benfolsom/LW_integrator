@@ -1,9 +1,17 @@
 Stochastic quantum emission (opt-in)
 ======================================
 
-This experimental feature is off by default. The general runner supports only
-its guarded sampled ``BUNCH_TO_BUNCH`` diagnostic route; enabling emission
-with ``INERTIAL_PREHISTORY`` raises ``NotImplementedError``. The separate
+.. note::
+
+   Numerical results below include historical study reports whose complete
+   inputs and outputs are not distributed with this revision. See
+   :doc:`evidence_status` for the missing artifacts and tracked checks.
+   These reports are not fresh validation or universal accuracy guarantees.
+
+This experimental feature is off by default. The general runner supports
+fixed-step ``BUNCH_TO_BUNCH`` runs on its sampled route and its exact
+``INERTIAL_PREHISTORY`` route, within the restrictions below. Accepted recoils
+are stored as split velocity knots on the exact source history. The separate
 nonlinear native pair runner supports fixed RK4 with zero intrinsic spin and
 split velocity histories. Exact source reconstruction in that pair runner is
 not the general exact endpoint route.
@@ -118,8 +126,9 @@ approximation). Below this boundary, a classical rest-frame dipole pattern,
 proportional to :math:`1-(\hat{n}\cdot\hat{a})^2`, is sampled and aberrated into the
 lab. This low-energy angular model is an explicit approximation, not the
 energy-dependent quantum angular distribution.
-Polarisation is recorded as unavailable. Neither an angular distribution at
-low energy nor spin-flip transitions are modeled.
+Polarisation is recorded as unavailable. The classical low-energy angular
+approximation is implemented; energy-dependent quantum angular sampling and
+spin-flip transitions remain absent.
 
 Recoil and the remainder
 --------------------------
@@ -176,13 +185,6 @@ derivative.
 Kick histories
 ~~~~~~~~~~~~~~~~
 
-.. note::
-
-   Until split velocity knots exist in the exact source history, enabling
-   stochastic emission with ``startup_mode=INERTIAL_PREHISTORY`` (the exact
-   retarded path) raises ``NotImplementedError``. Use the sampled path or
-   the nonlinear pair runner.
-
 The emitted photon represents the discrete radiation loss. Its recoil must
 join incoming and outgoing source velocities without adding a classical
 acceleration pulse from the same jump. Smooth acceleration on either branch
@@ -193,13 +195,46 @@ the outgoing accepted velocity. Version 9 history checkpoints preserve
 that split. Cubic position intervals near a kick use the appropriate one-sided
 endpoint velocities; they do not interpolate velocity across the jump.
 
-The passive-observer kick diagnostic confirms that the general exact runner
-does not yet publish this velocity split. Its default acceleration
-reconstruction differentiates accepted velocities through the kick. Halving
-the source timestep doubles the residual pulse's peak field and radiation
-fluence after subtracting the velocity-field change. The integrated impulse
-and signed work remain nearly constant. This is an additional classical
-radiation contribution from the event already represented by the photon.
+Before split velocities were recorded, the passive-observer kick diagnostic
+found an extra classical radiation contribution from the event already
+represented by the photon. Halving the source timestep doubled the residual
+pulse's peak field and radiation fluence after subtracting the velocity-field
+change, while its integrated impulse and signed work remained nearly constant.
+That finding prompted the temporary exact-path emission guard, which is now
+removed with the split-history correction.
+
+The general exact runner also records incoming and outgoing velocity knots
+in the accepted inclusion metadata. Checkpoints preserve these knots, including
+resolved proper velocities. Acceleration reconstruction and position intervals
+use the matching smooth branch on each side. The next continuous interval
+primes the outgoing acceleration; the velocity jump itself contributes no
+classical acceleration pulse. Earlier visibility knots retain their one-sided
+force data. While the kick is the newest knot, endpoint and trial predictions
+use a ballistic outgoing branch with zero acceleration; the next accepted
+sample reconstructs that provisional one-sided derivative.
+
+The sampled runner also stores these split knots. Its trajectory calculation
+is unchanged, but subsequent exact-field diagnostics on that trajectory use
+the recorded velocity split. General-runner kick metadata contains null
+one-sided derivatives and incoming velocity/resolved-state keys. Older
+readers predating this feature cannot load it; old checkpoints without kicks
+remain readable by the current code.
+
+For managed, append-only histories, charge and dipole preparation returns to
+incremental updates once a split leaves the three-knot derivative window.
+Accepted metadata decoding then touches only newly appended rows. A new
+split and the next three appended rows still rebuild the expanded history,
+as do provisional evaluations while that split remains in the window.
+Thus one isolated kick no longer forces a full rebuild for every later step.
+For N accepted rows and K well-separated split events, full-rebuild work is
+bounded by O(KN), in addition to ordinary incremental preparation. Frequent
+kicks or gate switches can still give O(N²) preparation cost. Unmanaged lists,
+history rewrites, and checkpoint reloads also require full preparation.
+Explicit instantaneous-acceleration histories with split metadata retain full
+reconstruction. Dipole trial preparation retains its existing prefix-copy cost.
+Metadata storage remains proportional to the number of sources times the
+number of split knots. Benchmark the intended source count and emission rate
+before long runs.
 
 For the same isolated kick between coasting branches, the default sampled
 path has exactly zero residual radiation, and the native pair path is at
@@ -207,20 +242,19 @@ roundoff. The sampled path reads stored continuous-interval acceleration,
 which excludes the endpoint recoil. This bounded check does not validate
 sampled trajectory accuracy or interpolation across kicks.
 
-Existing exact visibility knots store two one-sided accelerations but one
-continuous velocity. Correcting the general runner requires split velocities
-and matching resolved kinematics throughout source preparation and sampling.
-That broader history change is planned, not implemented. The Medina/LAD
-restart remains in place, but does not repair source radiation seen by other
-particles. Diagnostic commands, values, and the implementation scope are kept in local
-validation notes outside the repository.
+The corrected general exact path also matches the separate ballistic branches
+at and around the kick's light cone, with zero residual radiation under
+timestep refinement. These coasting controls check that the recoil adds no
+classical pulse; they do not establish accuracy for accelerated trajectories
+or close successive kicks. Historical diagnostic commands and values remain
+in local validation notes outside the repository.
 
 The nonlinear momentum-center runner supports ``charge_ll`` and the
 full-dipole reaction selections for zero intrinsic spin. Finite-spin action
 mass and quantum spin transitions require a separate recoil derivation and
 are rejected explicitly. The general runner supports fixed-step
-``BUNCH_TO_BUNCH`` sampled runs with zero intrinsic moment and spin.
-The general exact path is guarded off, including exact same-bunch runs.
+``BUNCH_TO_BUNCH`` sampled and exact retarded paths with zero intrinsic moment
+and spin, including exact same-bunch charge fields.
 Unsupported adaptive or reduced-history combinations fail explicitly.
 Config and CLI settings remain off by default.
 
@@ -273,14 +307,18 @@ scheme is first order in the orbit timestep, even when the orbit uses RK4.
 The general runner uses the
 field sample from its final deterministic force trial, with the non-reaction
 mechanical momentum. Sampled LW fields use the accepted retarded source
-samples. Prescribed fields are included once. RNG draws occur at the pair acceptance barrier, before exact
+samples; exact fields use the exact provider tensor. Prescribed fields are
+included once. RNG draws occur at the pair acceptance barrier, before exact
 canonical endpoint reconstruction and checkpoint publication.
 
 The general runner rejects walls, adaptive steps, pseudo-grids, driver trains,
 cavity tails, dipole sources, beamline occlusion, sampled same-bunch fields,
-and population-weighted particles in this implementation. The exact
-``INERTIAL_PREHISTORY`` guard is unconditional when emission is enabled;
-zero moments or below-threshold settings do not bypass it.
+and population-weighted particles in this implementation. Exact same-bunch
+charge fields can use the existing fixed-step framework. Exact charge-only
+runs select that framework through the RFS configuration: use custom species
+with an explicit zero moment and unspecified spin quantum number (which
+initialises to zero), while retaining the precession framework switch. This
+is a framework requirement, not physical spin precession.
 
 The pair adapter requires fixed RK4, zero intrinsic spin, and endpoint source
 histories with consecutive derivative sampling. It rejects internal adaptive
@@ -307,7 +345,7 @@ strong laser fields [Formation]_, and is marginal for Coulomb encounters near
 the endpoint. The 20–100 keV electron–carbon cases are diagnostics, not LCFA
 accuracy validation or a reproduction of measured bremsstrahlung cross
 sections. A local model cannot recover nonlocal interference by imposing an
-endpoint cap. The sampled retarded path remains a labelled diagnostic.
+endpoint cap. The sampled retarded path is usable with complete start-up history and convergence checks; see :doc:`startup_history`.
 The cap uses instantaneous kinetic energy; an attractive Coulomb potential can
 raise this above the incident energy. It therefore does not establish the
 incident-energy bremsstrahlung endpoint or solve finite-ion recoil. Photon
@@ -333,8 +371,8 @@ better than :math:`1.64\times10^{-7}` relatively, and with the mean power to
 better than :math:`9.38\times10^{-7}`. At :math:`\chi=10^{-4}`, mean quantum
 power was 0.999405 of the classical value.
 
-Historical checks before the exact-path guard was added used
-uniform-magnetic-field runs at initial :math:`\gamma=100` and :math:`\chi=0.1`
+Historical uniform-magnetic-field checks before the temporary exact-path guard
+and split-history correction, at initial :math:`\gamma=100` and :math:`\chi=0.1`,
 produced 25 photons on the sampled path and five on the exact path, with seeded
 and checkpoint-resumed identity in both cases. Single-seed 100 keV and 20 keV
 carbon encounters at :math:`b/b_{\rm crit}=8` produced zero photons; integrated
@@ -343,82 +381,55 @@ provide a sampled spectrum or resolve the incident-energy endpoint question.
 An explicitly selected, reseeded midpoint branch produced one 77.49 keV
 photon, with identical pair resumes. That branch tests recoil and history
 publication, not an unbiased physical emission yield. Scripts, event lists,
-checkpoints, and detailed results are kept in local validation notes.
-Two approved stochastic regression tests cover independent rate/power
-quadrature and forced-kick checkpoint identity.
-Review-fix scripts and results are kept in local notes. Seeded and resumed
+checkpoints, and detailed results are not distributed with this revision.
+These counts are historical reports, not reproducible public validation; see
+:doc:`evidence_status`.
+Stochastic regression tests cover independent rate/power quadrature, forced-kick
+checkpoint identity in both runners, and the coasting-kick field under timestep
+refinement. General exact checkpoint tests exercise Python, compiled, and
+proper-velocity source reconstruction while preserving smooth acceleration
+on both sides of a kick.
+The historical review scripts and results are also not distributed. Seeded and resumed
 identity includes the sub-interval RNG draws. Public general-runner trajectories
 retain the emission payload only on the final row, including after periodic
 checkpoint writes; intermediate partial event logs are removed.
-Before that guard, with ``max_probability=0.0005``, sampled and exact
-1,200-step magnetic
-checks emitted 14 and four photons, respectively. Both seeded repeats and
-checkpoint resumes matched all 182 SOA trajectory arrays byte for byte, as
-well as the event, diagnostic, and RNG payloads. The original 100 keV and
-20 keV Coulomb smoke scripts also completed with zero photons and identical
+Before that temporary guard, with ``max_probability=0.0005``, sampled and exact
+1,200-step magnetic checks emitted 14 and four photons, respectively. Both
+seeded repeats and checkpoint resumes matched all 182 SOA trajectory arrays
+byte for byte, as well as the event, diagnostic, and RNG payloads. The original
+100 keV and 20 keV Coulomb smoke scripts also completed with zero photons and identical
 JSON resumes, retaining their original numerical guards and tolerances.
 
-Validation against thread C benchmarks
-----------------------------------------
+External spectrum comparisons and remaining limits
+--------------------------------------------------
 
-Thread C's ``strong_field_qed_tev`` study and this module now use one
-spin-averaged local constant-field spectrum definition.  For photon fraction
-:math:`s=k/E`, the shared quantum bracket is
-:math:`[1-s+(1-s)^{-1}]K_{2/3}(z)-\int_z^\infty K_{1/3}(y)dy`, with
-:math:`z=2s/[3\chi(1-s)]`.  The dimensional conversion is
-:math:`dW/ds=\alpha m c^2 B/(\sqrt{3}\pi\hbar\gamma)`: thread C expresses
-it per second as :math:`\alpha c B/(\sqrt{3}\pi\lambda_C\gamma)`, while
-this module expresses it per ns in native units.
+``lcfa_spectral_brackets(s, chi)`` returns the quantum, recoil-only scalar,
+and classical local constant-field brackets. For photon fraction $s=k/E$,
+the quantum bracket is
+$[1-s+(1-s)^{-1}]K_{2/3}(z)-\int_z^\infty K_{1/3}(y)dy$, with
+$z=2s/[3\chi(1-s)]$. Only the quantum bracket is sampled by ``quantum_lcfa``;
+the other two are diagnostic comparisons, not additional runner modes.
 
-``lcfa_spectral_brackets(s, chi)`` is the maintained diagnostic adapter.  Its
-three results map, in order, to thread C's ``quantum``, recoil-only ``scalar``,
-and ``classical`` brackets.  The runner samples only the first for
-``quantum_lcfa``; the two comparison curves do not introduce another runner
-mode.  A shared grid of nine :math:`\chi` values from :math:`10^{-4}` to 10
-and 74 photon fractions found maximum relative differences of
-:math:`6.41\times10^{-6}` in the resolved quantum rate.  Relative differences
-in exponentially negligible high-energy tails reached 0.110 because the two
-independent finite Bessel-integral tables truncate and interpolate differently;
-the maximum absolute bracket difference was :math:`3.28\times10^{-7}`.
-The grid, constants, and exact results are recorded in local validation
-notes.
+An external study reported comparisons on nine chi values and 74 photon
+fractions, but its versioned grid, constants, code, and result tables are not
+shipped here. Previously quoted comparison errors and experimental fit
+statistics therefore cannot be audited from this revision and are not retained
+as validation claims. See :doc:`evidence_status` for the publication gap and
+``tests/unit/test_stochastic_emission.py`` for the inspectable checks.
 
-None of thread C's experimental cases is currently a valid end-to-end
-stochastic-emission validation case for this runner.  The E-146 25 GeV,
-23 micrometre gold foil is thread C's cleanest thin-target result, but its
-observed spectrum depends on screened nuclear scattering, finite formation
-interference, dielectric interfaces, photon transport, and detector response.
-This local-field runner has none of those material models.  The corrected
-NA63 two-foil result has the same nonlocal scattering and formation issue.
+E-146 foil and NA63 crystal spectra require material scattering, formation
+interference, interfaces, photon transport, and detector response. This runner
+does not implement that transport chain. Emission records and photon
+four-momenta alone do not supply material photon transport.
 
-The closest high-field candidate is the 178.2 GeV positron Si
-:math:`\langle111\rangle` NA63 measurement, with :math:`\chi\lesssim1.4`
-and 3.8 mm and 10.0 mm targets [Wistisen2018]_.  Thread C reports that its
-published stochastic-spectrum-plus-RR comparison has reduced
-:math:`\chi^2=47.4`, 28.9, and 38.2 for those two targets and their combined
-fit, respectively, so even that published local model is not a statistically
-adequate detector-spectrum reproduction.  More importantly, LW has no
-continuum-crystal potential, incoherent scattering, dechanneling, photon
-transport, or detector response.
-
-A deliberately limited uniform-magnetic local proxy was prepared at its
-reported peak :math:`\chi=1.4`: 178.2 GeV, 3.8 mm, 17.72 kT, 140146 fixed
-steps, and initial :math:`W\Delta t=0.00200`.  It correctly reproduces the
-local initial rate of :math:`2.2113\times10^4` ns\ :sup:`-1` and mean photon
-fraction 0.13224, but it fails the unchanged two-iteration fixed-geometry
-mass-shell criterion at step 241 (residual :math:`3.09\times10^{-5}`).
-Reducing the interval probability by ten relative to the emission guard did
-not cure it.  We did not loosen the criterion or substitute that proxy for a
-crystal calculation.  It is therefore an unsuccessful interface check, not
-an ensemble result or a comparison with data.  The reproducible attempted
-configuration is kept in local validation notes.
-
-The 50 GeV Si (110) case is not a fallback: thread C found that its
-:math:`\chi<0.042` field changes materially during photon formation and that a
-local quantum cascade fails.  These are model limitations, rather than a
-reason to force a benchmark agreement.  A future validation needs a
-continuum-potential callback or prescribed crystal trajectories, then an
-independent formation-length, material-transport, and detector comparison.
+A historical uniform-magnetic proxy for the 178.2 GeV positron crystal case
+failed the unchanged two-trial mass-shell criterion. It remains an unsuccessful
+interface check, not an ensemble result or a comparison with data. Its complete
+attempted configuration and output are not distributed. No acceptance tolerance
+was relaxed to reinterpret the failure as success. A crystal comparison would
+require a continuum potential or prescribed crystal trajectory and independent
+formation-length, transport, and detector validation; the cited experiment
+[Wistisen2018]_ does not validate this proxy.
 
 Planned follow-up: encounter-based recoil trigger
 ---------------------------------------------------

@@ -708,10 +708,14 @@ def test_enabled_stern_gerlach_with_zero_gradient_is_exact_kinematic_noop() -> N
     )
 
     without_sg, *_ = retarded_integrator(
-        init_rider=copy.deepcopy(state), magnetic_dipole=spin_only, **kwargs
+        init_rider=copy.deepcopy(state),
+        magnetic_dipole=spin_only,
+        **kwargs,
     )
     with_sg, *_ = retarded_integrator(
-        init_rider=copy.deepcopy(state), magnetic_dipole=zero_gradient, **kwargs
+        init_rider=copy.deepcopy(state),
+        magnetic_dipole=zero_gradient,
+        **kwargs,
     )
 
     for step_without, step_with in zip(without_sg, with_sg):

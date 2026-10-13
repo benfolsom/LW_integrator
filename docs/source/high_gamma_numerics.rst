@@ -1,6 +1,13 @@
 High-gamma retarded-field numerics
 ==================================
 
+.. note::
+
+   Numerical results below include historical study reports whose complete
+   inputs and outputs are not distributed with this revision. See
+   :doc:`evidence_status` for the missing artifacts and tracked checks.
+   These reports are not fresh validation or universal accuracy guarantees.
+
 Audit of ``8d42ba6`` on ``feature/high-gamma-numerics``, 2026-10-02.
 The initial audit below records the design-decision boundary. Ben's
 2026-10-02 decision retains the production quintic position, beta, and
@@ -268,16 +275,16 @@ Stored charge worldlines (stage 2)
 ----------------------------------
 
 Each charge-source segment stores the existing quintic Hermite worldline in a
-local frame as $w=c(t-t_0)-\\hat e\\cdot(x-x_0)$ and two transverse displacements.
+local frame as $w=c(t-t_0)-\hat e\cdot(x-x_0)$ and two transverse displacements.
 The direction is the normalized sum of the endpoint mechanical proper
 velocities when available, otherwise the sum of their velocities. The fixed
 $x$ axis is used when the velocity sum has norm below $10^{-12}$ or the endpoint
 velocities have a negative dot product. The transverse basis starts with the
 coordinate axis least aligned with this direction.
 
-For proper velocity $u=\\gamma\\beta$, the knot speed deficit is evaluated as
-$\\delta=1/[\\gamma(\\gamma+\|u\|)]$, with $\\gamma=\\sqrt{1+\|u\|^2}$. The exact identity
-$dw/d(ct)=\\delta+(1-\\delta)\|\\hat e-\\hat\\beta\|^2/2$ avoids subtracting nearly
+For proper velocity $u=\gamma\beta$, the knot speed deficit is evaluated as
+$\delta=1/[\gamma(\gamma+\|u\|)]$, with $\gamma=\sqrt{1+\|u\|^2}$. The exact identity
+$dw/d(ct)=\delta+(1-\delta)\|\hat e-\hat\beta\|^2/2$ avoids subtracting nearly
 unit velocities. Decimal arithmetic with 80 digits prepares the frame and
 knot transformations; interpolation and strict compiled kernels use binary64.
 This changes the coordinates of the quintic, rather than its polynomial degree
@@ -288,7 +295,7 @@ Accepted knots carry mechanical proper velocity after removal of the
 canonical field term, the speed deficit, and two coordinate remainders beside
 each rounded position and coordinate time. The second remainder is needed to
 resolve a deficit of order $10^{-25}$ after macroscopic drift at
-$\\gamma=10^{12}$. Decimal arithmetic with 90 digits preserves the same drift
+$\gamma=10^{12}$. Decimal arithmetic with 90 digits preserves the same drift
 update before its coordinate accumulation discards this information. Public
 rounded positions remain the integrator's accepted positions.
 
@@ -296,7 +303,7 @@ Retarded roots are solved in normalized segment time. The unrounded root
 fraction supplies the source derivatives and resolved separation to the
 precise charge potential, field, and response kernels. Acceleration, jerk,
 and the fourth position derivative come from the same quintic. The root test
-uses the light-cone residual divided by $\\kappa$, and stops at adjacent
+uses the light-cone residual divided by $\kappa$, and stops at adjacent
 representable fractions if a tighter location is unavailable. An absolute
 binary64 retarded time is a diagnostic; it must not be used to resample an
 ultrarelativistic root and discard its fraction.
@@ -315,7 +322,7 @@ different signs to the same knot. The reanchored solve therefore starts from
 the scan's identical shared-knot residual and evaluates its change within the
 selected frame. This avoids a sign gap without enlarging the root interval.
 
-The Bernstein proof bounds $1-\|\\beta\|^2$ directly in null coordinates,
+The Bernstein proof bounds $1-\|\beta\|^2$ directly in null coordinates,
 rather than subtracting a rounded velocity bound from one. Resolved knot scans
 use both coordinate remainders. Accelerator candidate certification retains a
 complete CPU scan when a rounded chord cannot prove monotonicity. Managed
@@ -339,18 +346,18 @@ IntegratorConfig, GUI configuration, sweep conversion, and native checkpoints.
 Sweeps retain the selected mode, so unsupported sweep runner combinations raise
 the exact-path configuration error rather than discarding the choice.
 
-The interpolant is $u(\\tau)=u_H(\\tau)+a\\tau^2(1-\\tau)^2$, where $u_H$ is the
+The interpolant is $u(\tau)=u_H(\tau)+a\tau^2(1-\tau)^2$, where $u_H$ is the
 cubic Hermite interpolant through endpoint mechanical proper velocities and
 $du/d(ct)$. The vector $a$ supplies one extra coefficient per component without
 changing either endpoint derivative. Newton iteration solves the three
-constraints $c\\Delta t\\int_0^1 u/\\sqrt{1+\|u\|^2}\\,d\\tau=\\Delta x$.
+constraints $c\Delta t\int_0^1 u/\sqrt{1+\|u\|^2}\,d\tau=\Delta x$.
 Accepted endpoint positions and their coordinate remainders are authoritative;
 history preparation, trial overlays, and append never rewrite them.
 
 The integral is evaluated in the same resolved null frame as the default
 mode, with fixed 128-point Gauss–Legendre quadrature. A separate 256-point
 integral must agree at the endpoint. Each component's tolerance is
-$64\\epsilon\\max(\|D_i\|,\\int\|v_i\|\\,d(ct),c\\Delta t\\,10^{-300})$, with the
+$64\epsilon\max(\|D_i\|,\int\|v_i\|\,d(ct),c\Delta t\,10^{-300})$, with the
 smallest positive binary64 value as an underflow floor. Here $D$ and $v$ are
 the null displacement and its derivative. The longitudinal component is the
 small light-cone displacement, so its check never uses a large lab-position
@@ -360,9 +367,9 @@ quadrature raise a clear error with source and segment context; there is no
 fallback to the default representation.
 
 Position accuracy holds at the accepted knots to this roundoff tolerance.
-Between them, $\\beta=u/\\sqrt{1+\|u\|^2}$ is mathematically subluminal by
+Between them, $\beta=u/\sqrt{1+\|u\|^2}$ is mathematically subluminal by
 construction. Binary64 beta can still round to one; the positive invariant
-$1/\\gamma^2$, speed deficit, and resolved coordinates remain authoritative.
+$1/\gamma^2$, speed deficit, and resolved coordinates remain authoritative.
 Velocity, acceleration, jerk, and snap are analytic derivatives of this same
 interpolant. The resulting light-cone function is strictly monotone. A
 Bernstein bound on the quartic proper velocity supplies a conservative positive
@@ -389,24 +396,28 @@ Validation and limits
 ---------------------
 
 Both representations pass stored accepted-history tests at every decade from
-$\\gamma=10^3$ to $10^{12}$, for head-on and $\\theta=1/\\gamma$ coasting rays,
-and counter-propagating crossings. Field values use a $2\\times10^{-13}$
+$\gamma=10^3$ to $10^{12}$, for head-on and $\theta=1/\gamma$ coasting rays,
+and counter-propagating crossings. Field values use a $2\times10^{-13}$
 relative tolerance against immutable Decimal references; Python/Numba agreement
-uses $5\\times10^{-15}$. Integrated finite-window transverse impulses use
-$2\\times10^{-6}$ relative tolerance, with $6\\times10^{-5}$ against the
+uses $5\times10^{-15}$. Integrated finite-window transverse impulses use
+$2\times10^{-6}$ relative tolerance, with $6\times10^{-5}$ against the
 infinite-window closed form. Normalized net longitudinal work uses
-$2\\times10^{-6}$. These are first-order force/work integrals along actual
+$2\times10^{-6}$. These are first-order force/work integrals along actual
 accepted coasting paths, rather than nonlinear coupled radiation-reaction
 validation. The largest tested gamma is $10^{12}$.
 
 A smooth independently integrated worldline shows local position convergence
 of approximately sixth order for both modes over step lengths 1–0.125 mm.
-The constrained mode's errors decrease from $7.75\\times10^{-6}$ mm to
-$7.43\\times10^{-12}$ mm, with measured orders 6.52–6.76. Differences from the
+The constrained mode's errors decrease from $7.75\times10^{-6}$ mm to
+$7.43\times10^{-12}$ mm, with measured orders 6.52–6.76. Differences from the
 default decrease at the same scale as interpolation error. This does not
 change the accepted integrator's global order. The 1,200-step moderate-speed
 exact-path comparison agrees at roundoff; runtime results and complete checks
-are recorded in ``codex_report_stage2.md``.
+were attributed to ``codex_report_stage2.md``, which is not distributed here.
+The inspectable controls are ``tests/unit/test_high_gamma_precise_charge.py``
+and ``tests/unit/test_high_gamma_stored_history.py`` with fixture
+``tests/unit/data/high_gamma_uniform_charge.json``. They describe their own
+configurations and tolerances, not a replacement for the missing run report.
 
 Stage 2 reproduces the original Fig. 3 centered-stencil coverage failure.
 A short-window variant passes initialization with the existing analytic charge

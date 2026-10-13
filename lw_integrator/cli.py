@@ -20,7 +20,11 @@ from typing import Any, Dict, Iterable, Mapping, MutableMapping, Optional, Tuple
 
 import numpy as np
 
-from core.constants import C_MMNS, ELECTRON_MASS_AMU
+from core.constants import (
+    C_MMNS,
+    DEFAULT_STARTUP_HISTORY_TOLERANCE,
+    ELECTRON_MASS_AMU,
+)
 from core.integration_runner import AdaptiveTimestepConfig, retarded_integrator
 from core.self_consistency import SelfConsistencyConfig
 from core.species import SPECIES, resolve_species
@@ -48,6 +52,7 @@ from core.types import (
     Trajectory,
 )
 from input_output.bunch_initialization import create_bunch_from_energy
+from input_output.config_migration import discard_inert_self_consistency_keys
 from optimization.plugin_results_helpers import (
     parse_results_payload,
     summarize_result_row,
@@ -688,6 +693,22 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         choices=("light_cone_quintic", "proper_velocity"),
         default=None,
         help="Source interpolation; proper_velocity preserves accepted knots and enforces timelike interpolation.",
+    )
+    parser.add_argument(
+        "--allow-incomplete-startup-history",
+        dest="allow_incomplete_startup_history",
+        action="store_true",
+        default=None,
+        help="Downgrade the COLD_START startup-history "
+        "preflight error to a loud warning (deliberate diagnostics only).",
+    )
+    parser.add_argument(
+        "--startup-history-tolerance",
+        dest="startup_history_tolerance",
+        type=float,
+        default=None,
+        help="Largest tolerated missing fraction of the full-encounter impulse "
+        "in the startup-history preflight, in (0, 1] (default 1e-3).",
     )
     parser.add_argument(
         "--radiation-reaction-mode",
@@ -1564,6 +1585,8 @@ def _build_testbed_report(
             else {}
         ),
     }
+    if getattr(result, "photon_transport", None) is not None:
+        payload["photon_transport"] = result.photon_transport
     if options is not None:
         source_report: dict[str, Any] = {
             "model": str(options.magnetic_dipole_source_model),
@@ -1683,8 +1706,9 @@ def run_testbed_config(args: argparse.Namespace) -> int:
             value = getattr(args, argument, None)
             if value is not None:
                 emission[field] = value
-        from core.stochastic_emission import StochasticEmissionConfig
         from dataclasses import asdict
+
+        from core.stochastic_emission import StochasticEmissionConfig
 
         options.stochastic_emission = asdict(
             StochasticEmissionConfig.from_dict(emission)
@@ -1756,6 +1780,7 @@ def run_testbed_config(args: argparse.Namespace) -> int:
 def _merge_simulation_payload(
     file_payload: Mapping[str, Any], args: argparse.Namespace
 ) -> Dict[str, Any]:
+    file_payload = discard_inert_self_consistency_keys(file_payload)
     result = dict(DEFAULT_SIMULATION)
     result["particle_loss"] = dict(DEFAULT_PARTICLE_LOSS)
     result["pseudo_grid"] = dict(DEFAULT_PSEUDO_GRID)
@@ -1776,7 +1801,12 @@ def _merge_simulation_payload(
             result[key] = file_payload[key]
     # These newer nested settings are not members of DEFAULT_SIMULATION.
     # Preserve file values before applying the explicit CLI overrides below.
-    for key in ("checkpoint", "adaptive_pair_return", "stochastic_emission"):
+    for key in (
+        "checkpoint",
+        "adaptive_pair_return",
+        "stochastic_emission",
+        "photon_transport",
+    ):
         if key in file_payload:
             value = file_payload[key]
             if value is not None and not isinstance(value, Mapping):
@@ -1877,7 +1907,6 @@ def _merge_simulation_payload(
         "self_consistency_target_ms_tolerance",
         "self_consistency_max_iterations",
         "self_consistency_mass_shell_tolerance",
-        "self_consistency_mass_shell_relaxation",
         "self_consistency_verbosity",
         "self_consistency_gamma_reconciliation_method",
         "self_consistency_gamma_reconciliation_fixed_weight",
@@ -1935,6 +1964,8 @@ def _merge_simulation_payload(
         "startup_mode",
         "radiation_reaction_mode",
         "source_history_representation",
+        "allow_incomplete_startup_history",
+        "startup_history_tolerance",
         "image_subcharge_count",
         "use_image_weighting",
     )
@@ -1951,8 +1982,7 @@ def _merge_simulation_payload(
     ):
         if getattr(args, key, None) is not None:
             result[key] = getattr(args, key)
-    # The runtime retardation mode is chrono_mode; keep the carried aliases
-    # (SelfConsistencyConfig.chrono_matching_mode) consistent with it.
+    # Keep the input aliases consistent with the actual solver mode.
     resolved_chrono_mode = _parse_chrono_mode(result["chrono_mode"]).name
     result["chrono_matching_mode"] = resolved_chrono_mode
     result["self_consistency_chrono_matching_mode"] = resolved_chrono_mode
@@ -2405,6 +2435,17 @@ def _build_stochastic_emission_config(payload: Any) -> Any:
         ) from exc
 
 
+def _build_photon_transport_config(payload: Any) -> Any:
+    from core.photon_transport import PhotonTransportConfig
+
+    try:
+        return PhotonTransportConfig.from_dict(payload)
+    except (TypeError, ValueError) as exc:
+        raise SimulationConfigError(
+            f"Invalid photon_transport settings: {exc}"
+        ) from exc
+
+
 def _build_integrator_config(payload: Mapping[str, Any]) -> IntegratorConfig:
     try:
         simulation_type = _parse_simulation_type(payload["simulation_type"])
@@ -2481,11 +2522,20 @@ def _build_integrator_config(payload: Mapping[str, Any]) -> IntegratorConfig:
         source_history_representation=str(
             payload.get("source_history_representation", "light_cone_quintic")
         ),
+        allow_incomplete_startup_history=_parse_allow_incomplete_startup_history(
+            payload.get("allow_incomplete_startup_history", False)
+        ),
+        startup_history_tolerance=float(
+            payload.get("startup_history_tolerance", DEFAULT_STARTUP_HISTORY_TOLERANCE)
+        ),
         radiation_reaction_mode=str(
             payload.get(
                 "radiation_reaction_mode",
                 DEFAULT_SIMULATION["radiation_reaction_mode"],
             )
+        ),
+        photon_transport=_build_photon_transport_config(
+            payload.get("photon_transport")
         ),
         stochastic_emission=_build_stochastic_emission_config(
             payload.get("stochastic_emission")
@@ -2685,6 +2735,14 @@ def _parse_chrono_mode(value: Any) -> ChronoMatchingMode:
     raise SimulationConfigError(
         "chrono_mode must be a string or ChronoMatchingMode instance"
     )
+
+
+def _parse_allow_incomplete_startup_history(value: Any) -> bool:
+    if not isinstance(value, bool):
+        raise SimulationConfigError(
+            "allow_incomplete_startup_history must be a JSON boolean"
+        )
+    return value
 
 
 def _parse_startup_mode(value: Any) -> StartupMode:
@@ -3202,6 +3260,7 @@ def _strict_bool_with_alias(
 def _build_self_consistency_config(
     payload: Mapping[str, Any],
 ) -> Optional[SelfConsistencyConfig]:
+    payload = discard_inert_self_consistency_keys(payload)
     chrono_interpolate = _strict_bool_with_alias(
         payload, "chrono_interpolate", "self_consistency_chrono_interpolate", False
     )
@@ -3247,9 +3306,6 @@ def _build_self_consistency_config(
             mass_shell_tolerance=float(
                 payload.get("self_consistency_mass_shell_tolerance", 1e-2)
             ),
-            mass_shell_relaxation=float(
-                payload.get("self_consistency_mass_shell_relaxation", 0.7)
-            ),
             max_iterations=int(
                 payload.get(
                     "self_consistency_max_iterations",
@@ -3264,12 +3320,6 @@ def _build_self_consistency_config(
                     payload.get("self_consistency_chrono_tolerance", 1e-3),
                 )
             ),
-            chrono_matching_mode=_parse_chrono_mode(
-                payload.get(
-                    "chrono_matching_mode",
-                    payload.get("self_consistency_chrono_matching_mode", "FAST"),
-                )
-            ).name,
             chrono_high_precision=chrono_high_precision,
             chrono_adaptive_tolerance=chrono_adaptive_tolerance,
             gamma_reconciliation_method=gamma_method,
@@ -3597,7 +3647,12 @@ def run_simulation(request: SimulationRequest) -> tuple:
         use_conducting_image_weighting=request.config.use_image_weighting,
         radiation_reaction_mode=request.config.radiation_reaction_mode,
         stochastic_emission=request.config.stochastic_emission,
+        photon_transport=request.config.photon_transport,
         source_history_representation=request.config.source_history_representation,
+        allow_incomplete_startup_history=(
+            request.config.allow_incomplete_startup_history
+        ),
+        startup_history_tolerance=request.config.startup_history_tolerance,
         adaptive_timestep=request.adaptive_timestep,
         self_consistency=request.self_consistency,
         space_charge=request.space_charge,
@@ -3704,6 +3759,8 @@ def build_report(
             report["adaptive_pair_return"] = dict(adaptive_summary)
     if trajectory and "_stochastic_emission" in trajectory[-1]:
         report["stochastic_emission"] = trajectory[-1]["_stochastic_emission"]
+    if trajectory and "_photon_transport" in trajectory[-1]:
+        report["photon_transport"] = trajectory[-1]["_photon_transport"]
     if driver is not None:
         report["driver_summary"] = summarise_trajectory(driver)
     if magnetic_dipole is not None:

@@ -45,9 +45,10 @@ from typing import Any, Callable, Dict, List, Mapping, Optional
 
 import numpy as np
 
+from input_output.config_migration import discard_inert_self_consistency_keys
+
 from core.constants import C_MMNS
 from core.debug_logger import initialize_debug_logging
-from core.smoothness_analyzer import SmoothnessConfig, analyze_trajectory_smoothness
 from core.types import SimulationType
 from lw_integrator.testbed_runner import run_testbed
 from optimization.config import (
@@ -121,13 +122,6 @@ class _CliTimestepSetup:
     timestep: float
     gamma: float
     beta: float
-
-
-@dataclass(frozen=True)
-class _CliStabilityOutcome:
-    log_lines: list[str]
-    metrics_updates: dict[str, Any]
-    rejection_record: dict[str, Any] | None
 
 
 class _PerRunTimeoutError(TimeoutError):
@@ -415,99 +409,6 @@ def _build_cli_start_log_lines(
             f"h={timestep:.4e}ns, N={steps}"
         ),
     ]
-
-
-def _evaluate_cli_stability(
-    config: Any,
-    result: Any,
-    metrics: Mapping[str, Any],
-    *,
-    rider_m_particle: float,
-    run_num: int,
-    aperture: float,
-    energy_gev: float,
-    start_z: float,
-    transv_offset: float,
-) -> _CliStabilityOutcome:
-    log_lines = [
-        f"[OPTIMIZATION]   [DEBUG] Processing trajectory data for Run {run_num}..."
-    ]
-    metrics_updates: dict[str, Any] = {}
-
-    if result.rider_trajectory is not None and config.smoothness_enabled:
-        log_lines.append(
-            f"[OPTIMIZATION]   [DEBUG] Performing stability analysis for Run {run_num}..."
-        )
-        smoothness_config = SmoothnessConfig(
-            enabled=True,
-            window_size=config.smoothness_window_size,
-            oscillation_threshold=config.smoothness_oscillation_threshold,
-            trend_smoothness_threshold=config.smoothness_trend_threshold,
-            reject_on_violation=config.smoothness_reject_on_violation,
-            max_allowed_violations=config.smoothness_max_violations,
-        )
-        smoothness_result = analyze_trajectory_smoothness(
-            result.rider_trajectory,
-            smoothness_config,
-            particle_mass_amu=rider_m_particle,
-        )
-        metrics_updates = {
-            "smoothness_passed": smoothness_result.passed,
-            "smoothness_violations": len(smoothness_result.violations),
-        }
-
-        if not smoothness_result.passed:
-            log_lines.extend(
-                [
-                    (
-                        f"[OPTIMIZATION]   [WARNING] Stability check FAILED "
-                        f"for Run {run_num}"
-                    ),
-                    f"[OPTIMIZATION]     Quality: {smoothness_result.quality_summary}",
-                ]
-            )
-            if config.smoothness_reject_on_violation:
-                log_lines.append(
-                    f"[OPTIMIZATION]   [REJECT] Run {run_num} rejected due to numerical instability"
-                )
-                rejected_metrics = {**metrics, **metrics_updates}
-                return _CliStabilityOutcome(
-                    log_lines=log_lines,
-                    metrics_updates=metrics_updates,
-                    rejection_record={
-                        "success": False,
-                        "error": (
-                            "Smoothness violation: "
-                            f"{len(smoothness_result.violations)} violations"
-                        ),
-                        "parameters": {
-                            "aperture": aperture,
-                            "energy_gev": energy_gev,
-                            "start_z": start_z,
-                            "transv_offset": transv_offset,
-                        },
-                        "metrics": rejected_metrics,
-                    },
-                )
-        else:
-            log_lines.append(
-                f"[OPTIMIZATION]   [OK] Stability check PASSED for Run {run_num}: "
-                f"{smoothness_result.quality_summary}"
-            )
-    elif result.rider_trajectory is None:
-        log_lines.append(
-            f"[OPTIMIZATION]   [WARNING] No trajectory data for Run {run_num}"
-        )
-    elif not config.smoothness_enabled:
-        log_lines.append(
-            f"[OPTIMIZATION]   [INFO] Stability analysis DISABLED for Run {run_num}"
-        )
-
-    return _CliStabilityOutcome(
-        log_lines=log_lines,
-        metrics_updates=metrics_updates,
-        rejection_record=None,
-    )
 
 
 def _build_cli_sweep_start_log_lines(
@@ -1405,7 +1306,7 @@ def _convert_json_config_to_dataclass(config_dict: Dict[str, Any]) -> Dict[str, 
     OptimizationConfig scalar fields so that the CLI sweep runner uses the
     correct particle parameters instead of hard-coded defaults.
     """
-    converted = dict(config_dict)
+    converted = discard_inert_self_consistency_keys(config_dict)
     if "mode" in converted:
         converted["mode"] = normalize_sweep_or_optimization_mode(converted["mode"])
 

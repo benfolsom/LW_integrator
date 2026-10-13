@@ -9,8 +9,10 @@ Overview
 ========
 
 The adaptive timestep system automatically refines integration timesteps when
-energy jumps or gamma blowups are detected, preventing numerical instabilities
-while maintaining computational efficiency.
+energy jumps or gamma failures are detected. It can help resolve difficult
+steps, but neither completion nor accuracy is guaranteed. This page covers
+supported legacy/image routes. Exact histories reject these adaptive substeps;
+use the separate shared-lab-time controller in :doc:`multirate_return`.
 
 As of **February 2026**, the system uses **auto-calculated parameters** to
 ensure mathematical consistency and prevent configuration errors.
@@ -19,7 +21,7 @@ Key Features
 ------------
 
 * **Energy jump detection** - Monitors relative energy changes between steps
-* **Gamma blowup protection** - Catches unphysical gamma values (γ > 10⁷ or γ < 1)
+* **Gamma failure handling** - Retries failures reported by the stepping kernel
 * **Automatic refinement** - Reduces timestep by configurable factor when issues detected
 * **Hysteresis logic** - Stays at reduced timestep for stability before attempting recovery
 * **Proximity-based refinement** - Reduces timestep near walls/apertures proactively
@@ -35,7 +37,7 @@ At each integration step, the adaptive timestep system:
 
 1. **Executes step** with current timestep ``h``
 2. **Checks energy change**: ``|ΔE/E| < threshold`` (default: 10%)
-3. **Checks gamma validity**: ``1 ≤ γ ≤ 10⁷``
+3. **Handles kernel gamma failures**; this dataclass has no configurable gamma bounds
 4. If violation detected:
 
    a. Reduce timestep: ``h_new = h / reduction_factor``
@@ -67,9 +69,12 @@ Proximity-Based Refinement
 When particles approach walls or apertures, timestep is reduced **proactively**
 to improve accuracy in high-field regions:
 
-* **Full reduction zone**: distance < 0.5 aperture radii
-* **Transition zone**: 0.5-1.0 aperture radii (linear ramp)
-* **Normal zone**: distance > 1.0 aperture radii
+* **Full reduction zone**: inside 8 aperture radii, with reduction factor 5
+* **Transition zone**: 8–10 aperture radii, with a linear ramp back to one
+* **Normal zone**: beyond 10 aperture radii
+
+The distance setting (10) is the outer boundary; the transition width (2)
+is subtracted from it to obtain the full-reduction boundary.
 
 Configuration
 =============
@@ -77,7 +82,7 @@ Configuration
 Auto-Calculated Parameters (February 2026)
 -------------------------------------------
 
-As of February 2026, you only configure **2 independent parameters**:
+As of February 2026, the refinement limits derive from **2 independent parameters**:
 
 .. code-block:: python
 
@@ -120,7 +125,7 @@ Example Calculations
 +-----------------+---------------+------------------+------------------+
 | 10              | 1e-4          | 4                | 11,000           |
 +-----------------+---------------+------------------+------------------+
-| 3               | 1e-3          | 6                | 1,100            |
+| 3               | 1e-3          | 7                | 1,100            |
 +-----------------+---------------+------------------+------------------+
 | 10              | 1e-3          | 3                | 1,100            |
 +-----------------+---------------+------------------+------------------+
@@ -138,8 +143,6 @@ Full Configuration Options
 
        # === Detection thresholds ===
        energy_jump_threshold=0.10,           # Relative energy change (10%)
-       gamma_max_threshold=1e7,              # Maximum allowed gamma
-       gamma_min_threshold=1.0,              # Minimum allowed gamma
 
        # === Refinement parameters ===
        timestep_reduction_factor=3,          # Reduce timestep by this factor
@@ -153,9 +156,9 @@ Full Configuration Options
 
        # === Proximity refinement ===
        proximity_refinement_enabled=True,
-       proximity_distance_aperture_radii=0.5,  # Start full reduction
-       proximity_transition_aperture_radii=1.0, # End reduction ramp
-       proximity_reduction_factor=10.0,      # Timestep reduction in proximity
+       proximity_distance_aperture_radii=10.0,  # Outer refinement boundary
+       proximity_transition_zone=2.0,          # Inward ramp width
+       proximity_reduction_factor=5,           # Reduction divisor
 
        # === Particle death handling ===
        skip_cooldown_on_particle_death=False,  # Keep survivors in cooldown
@@ -170,13 +173,17 @@ Usage Examples
 Basic Configuration
 -------------------
 
+The following constructor examples preserve the required core defaults and
+set an illustrative proper-time step in ns inside ``core_params``. They are
+configuration examples, not convergence-tested physical runs.
+
 .. code-block:: python
 
    from lw_integrator.testbed_runner import SimulationOptions
 
    options = SimulationOptions(
        steps=1000,
-       time_step=1e-6,  # Base timestep in ns
+       core_params={**SimulationOptions().core_params, "time_step": 1e-6},
 
        # Enable adaptive timestep with defaults
        adaptive_timestep_enabled=True,
@@ -195,7 +202,7 @@ For challenging simulations (narrow apertures, high energies):
 
    options = SimulationOptions(
        steps=1000,
-       time_step=1e-6,
+       core_params={**SimulationOptions().core_params, "time_step": 1e-6},
 
        adaptive_timestep_enabled=True,
        adaptive_timestep_threshold=0.05,        # More sensitive (5%)
@@ -214,7 +221,7 @@ For well-behaved simulations where speed matters:
 
    options = SimulationOptions(
        steps=1000,
-       time_step=1e-6,
+       core_params={**SimulationOptions().core_params, "time_step": 1e-6},
 
        adaptive_timestep_enabled=True,
        adaptive_timestep_threshold=0.20,        # Less sensitive (20%)
@@ -231,6 +238,7 @@ Direct API Usage
 
    from core.integration_runner import retarded_integrator, AdaptiveTimestepConfig
    from core.self_consistency import SelfConsistencyConfig
+   from core.types import SimulationType
 
    # Create configs
    adaptive_config = AdaptiveTimestepConfig(
@@ -242,13 +250,18 @@ Direct API Usage
 
    sc_config = SelfConsistencyConfig(enabled=True)
 
-   # Run integrator
-   trajectory, trajectory_ext = retarded_integrator(
+   # Given initialized native-unit init_rider and init_driver states:
+   trajectory, trajectory_ext, rider_arrays, driver_arrays, timings = retarded_integrator(
        init_rider=init_rider,
        init_driver=init_driver,
        h_step=1e-6,
        steps=1000,
+       wall_z=100.0,
        aperture_radius=0.05,
+       mean=0.0,
+       cav_spacing=0.0,
+       z_cutoff=0.0,
+       radiation_reaction_mode="medina_lad",
        sim_type=SimulationType.CONDUCTING_WALL,
        self_consistency=sc_config,
        adaptive_timestep=adaptive_config,
@@ -276,35 +289,14 @@ Performance Considerations
 Computational Cost
 ------------------
 
-Adaptive timestep adds overhead:
+Runtime depends on detection checks, rejected trials, and accepted substeps.
+Measure it for the intended route and workload. Smaller steps can improve
+resolution but may still fail, and passing an energy-jump check is not an
+energy-conservation or trajectory-accuracy certificate.
 
-* **Detection checks**: ~1-2% per step (negligible)
-* **Refinement retries**: Depends on problem difficulty
-* **Sub-stepping**: Linear cost in number of substeps
-
-**Typical overhead**:
-
-* Well-behaved simulations: < 5%
-* Challenging regions: 10-50% (but prevents failures)
-* Pathological cases: Can increase runtime 2-10× (but enables completion)
-
-When to Enable
---------------
-
-**Always enable for**:
-
-* High-energy particles (γ > 100)
-* Small apertures (< 0.1 mm)
-* Close approaches to conducting walls
-* Long integration runs (> 1000 steps)
-* Production simulations
-
-**Consider disabling for**:
-
-* Benchmarking (compare with/without)
-* Legacy validation runs
-* Very well-behaved test cases
-* Quick parameter scans where failures are acceptable
+Enable this scheduler only on supported legacy/image paths after comparing
+against a refined baseline. Exact histories require their own controller;
+see :doc:`multirate_return`. Retain finite-state and particle-loss checks.
 
 Tuning Guidelines
 =================
@@ -346,7 +338,7 @@ Controls how small timestep can become:
 
 **min_factor = 1e-5** (tight)
    * Minimum = 0.00001 × base timestep
-   * Very conservative, handles extreme cases
+   * Permits smaller steps at additional cost; convergence still needs checking
    * Can be slow in challenging regions
 
 Energy Jump Threshold
@@ -356,7 +348,7 @@ Controls sensitivity to energy changes:
 
 **threshold = 0.05** (5%)
    * Very sensitive, triggers often
-   * Good for strict energy conservation
+   * Detects smaller changes; does not certify energy conservation
    * May be overly conservative
 
 **threshold = 0.10** (10%, default)
@@ -406,18 +398,21 @@ For GUI applications, use batched logging to prevent unresponsiveness:
 
    # Create batched logger
    logger = BatchedLogger(
-       target_logger=my_gui_logger.log,
+       gui_callback=my_gui_logger.log,
        batch_size=50  # Flush every 50 messages
    )
 
    # Pass to integrator
-   trajectory, trajectory_ext = retarded_integrator(
-       ...,
+   trajectory, trajectory_ext, rider_arrays, driver_arrays, timings = retarded_integrator(
+       **run_kwargs,  # Required run arguments as in the direct API example
        adaptive_timestep=AdaptiveTimestepConfig(debug=True),
        logger=logger.log  # Use batched logger
    )
 
-This reduces GUI updates by ~100× while preserving all messages.
+Batching reduces callback frequency according to workload and flush settings.
+The queue is bounded (10,000 messages by default); overflow drops the oldest
+messages and increments the dropped-message statistic. Flush or shut down the
+logger when the run ends.
 
 Common Issues
 -------------
@@ -435,7 +430,7 @@ Common Issues
 
 **Solutions**:
 
-1. Increase ``min_timestep_factor`` (e.g., 1e-5)
+1. Decrease ``min_timestep_factor`` (e.g., from 1e-4 to 1e-5) to permit smaller steps at additional cost
 2. Increase ``timestep_reduction_factor`` (e.g., 10)
 3. Check physics: may indicate particle hitting wall (should be marked dead)
 
@@ -444,7 +439,7 @@ Common Issues
 
 **Cause**: Base timestep too large for problem
 
-**Solution**: Reduce base timestep or relax ``energy_jump_threshold``
+**Solution**: Reduce the base timestep and check trajectory convergence; do not relax acceptance thresholds merely to obtain completion.
 
 
 **Issue**: Particle marked dead unexpectedly

@@ -24,9 +24,10 @@ With the virtual environment activated, run:
 
    pytest
 
-CI runs ``pytest`` with a pinned random seed to keep the stochastic benchmarks
-stable.  When diagnosing failures locally, re-run the same subset as CI and
-attach the pytest output when raising an issue.
+The tracked workflow builds documentation; it does not run pytest or impose a
+suite-wide seed. Set seeds explicitly in stochastic tests and configurations.
+Run the subset relevant to a change and attach its command and output when
+raising an issue. Adapt existing tests before adding new ones.
 
 Pre-commit hooks
 ----------------
@@ -37,6 +38,6 @@ Install the project’s hooks once:
 
    pre-commit install
 
-The configuration formats Python files with ``black``, sorts imports via
-``isort``, and runs ``ruff`` for linting.  Execute ``pre-commit run --all-files``
-if you would like to mirror the CI checks manually.
+The configuration runs Black, Ruff, mypy, and file-format checks; it has no
+isort hook. Execute ``pre-commit run --all-files`` for these local checks.
+The tracked docs workflow does not run them.

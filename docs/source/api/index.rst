@@ -11,6 +11,7 @@ material for the main modules.
    core
    input_output
    images
+   fields
 
 Additional interfaces
 ---------------------
@@ -19,7 +20,10 @@ Additional interfaces
 the separate solver and provider contracts. Exact route guards are in
 :doc:`../exact_path`.
 
-The following detailed design notes remain available as Markdown downloads:
+The following detailed design notes remain available as Markdown downloads.
+Their cross-links open revision-pinned repository sources, so they remain usable
+from Sphinx's separate download directories. For the rendered current guide,
+see :doc:`../finite_spin_pair`.
 
 * :download:`Nonlinear reciprocal pair API <../momentum_center_pair.md>`
 * :download:`Full-dipole histories <../full_dipole_history.md>`

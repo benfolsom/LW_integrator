@@ -6,6 +6,7 @@ status, and computing metrics with dead particles excluded.
 """
 
 import numpy as np
+import pytest
 
 from core.particle_status import (
     all_particles_dead,
@@ -54,10 +55,14 @@ def create_test_state(num_particles: int = 5) -> ParticleState:
 class TestMarkParticleDead:
     """Test marking particles as dead."""
 
-    def test_mark_single_particle(self):
+    @pytest.mark.parametrize("charge_key", ["stripped_ions", "q"])
+    def test_mark_single_particle(self, charge_key):
         """Test marking a single particle as dead."""
         state = create_test_state(5)
-        original_charge = state["stripped_ions"][2]
+        if charge_key == "q":
+            state["q"] = state.pop("stripped_ions")
+            state["q_source"] = 10.0 * state["q"]
+        original_charge = state[charge_key][2]
 
         mark_particle_dead(state, 2, 100, "gamma_blowup", gamma_value=1e9)
 
@@ -67,8 +72,8 @@ class TestMarkParticleDead:
         assert np.sum(state["_dead_particles"]) == 1
 
         # Check charge zeroed
-        assert state["stripped_ions"][2] == 0.0
-        assert state["stripped_ions"][0] == original_charge  # Others unchanged
+        assert state[charge_key][2] == 0.0
+        assert state[charge_key][0] == original_charge  # Others unchanged
 
         # Check failure info recorded
         assert "_particle_failure_info" in state
@@ -76,6 +81,17 @@ class TestMarkParticleDead:
         assert state["_particle_failure_info"][2]["step"] == 100
         assert state["_particle_failure_info"][2]["reason"] == "gamma_blowup"
         assert state["_particle_failure_info"][2]["gamma_value"] == 1e9
+
+        mark_particle_dead(state, 2, 101, "gamma_blowup_hard", gamma_value=1e26)
+        assert state["_dead_particles"][2]
+        assert np.sum(state["_dead_particles"]) == 1
+        assert state[charge_key][2] == 0.0
+        assert state["_particle_failure_info"][2]["step"] == 101
+        assert state["_particle_failure_info"][2]["reason"] == "gamma_blowup_hard"
+        assert state["_particle_failure_info"][2]["gamma_value"] == 1e26
+        if charge_key == "q":
+            assert state["q_source"][2] == 0.0
+            assert state["q_source"][0] == 10.0 * original_charge
 
     def test_mark_multiple_particles(self):
         """Test marking multiple particles as dead."""
@@ -97,12 +113,18 @@ class TestMarkParticleDead:
 class TestPropagateDeadStatus:
     """Test propagating dead particle status."""
 
-    def test_propagate_to_next_step(self):
+    @pytest.mark.parametrize("charge_key", ["stripped_ions", "q"])
+    def test_propagate_to_next_step(self, charge_key):
         """Test propagating dead status from one step to next."""
         prev_state = create_test_state(5)
+        if charge_key == "q":
+            prev_state["q"] = prev_state.pop("stripped_ions")
         mark_particle_dead(prev_state, 2, 100, "gamma_blowup")
 
         current_state = create_test_state(5)
+        if charge_key == "q":
+            current_state["q"] = current_state.pop("stripped_ions")
+            current_state["q_source"] = 10.0 * current_state["q"]
         propagate_dead_particle_status(current_state, prev_state)
 
         # Check status copied
@@ -111,11 +133,20 @@ class TestPropagateDeadStatus:
         assert np.sum(current_state["_dead_particles"]) == 1
 
         # Check charge zeroed
-        assert current_state["stripped_ions"][2] == 0.0
+        assert current_state[charge_key][2] == 0.0
+        assert not current_state["_dead_particles"][0]
+        assert not current_state["_dead_particles"][4]
+        if charge_key == "q":
+            assert current_state["q_source"][2] == 0.0
 
         # Check failure info copied
         assert 2 in current_state["_particle_failure_info"]
         assert current_state["_particle_failure_info"][2]["step"] == 100
+        assert current_state["_particle_failure_info"][2]["reason"] == "gamma_blowup"
+        current_state["_particle_failure_info"][2]["step"] = 999
+        current_state["_dead_particles"][0] = True
+        assert prev_state["_particle_failure_info"][2]["step"] == 100
+        assert not prev_state["_dead_particles"][0]
 
     def test_propagate_no_failures(self):
         """Test propagating when no particles are dead."""

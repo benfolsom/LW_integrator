@@ -49,7 +49,7 @@ StepFunction = Callable[
 ]
 
 
-@lru_cache(maxsize=None)
+@lru_cache(maxsize=256)
 def _signature_parameters(step_function: StepFunction):
     return inspect.signature(step_function).parameters
 
@@ -135,12 +135,11 @@ class SelfConsistencyConfig:
         Should be larger (looser) than target_ms_tolerance.
         Default is 1e-2 (1%).
     mass_shell_relaxation : float
-        Relaxation weight applied after Pt correction (used in both modes).
-        Pt_final = α*Pt_corrected + (1-α)*Pt_old where α = mass_shell_relaxation.
-        - 1.0 = full correction (aggressive, fastest convergence)
-        - 0.7 = recommended (good balance, default)
-        - 0.5 = conservative (more stable, slower)
-        Default is 0.7.
+        Inert compatibility field for direct Python callers and evidence summaries.
+        Default is 0.7; the solver does not read it.
+    chrono_matching_mode : str
+        Inert compatibility field for direct Python callers and evidence summaries.
+        Default is "FAST"; the solver uses the outer ``chrono_mode`` argument.
     chrono_interpolate : bool
         Enable interpolation in chrono-matching when time residual exceeds tolerance.
         When True, source-particle quantities (velocity, acceleration, gamma) are
@@ -151,12 +150,6 @@ class SelfConsistencyConfig:
         If ``|t_matched - t_target|`` > chrono_tolerance, interpolation is applied
         (if chrono_interpolate=True) or a warning is issued (if verbosity >= 2).
         Default is 1e-3 ns (1 picosecond).
-    chrono_matching_mode : str
-        Recorded for configuration round-trips only; the solver does not read
-        it. The retardation mode actually used is the separate ``chrono_mode``
-        argument of :func:`core.integration_runner.retarded_integrator`
-        (CLI ``chrono_mode``; testbed/GUI ``chrono_matching_mode`` option).
-        Options: "FAST" (default) or "AVERAGED" (diagnostic).
     chrono_high_precision : bool
         Deprecated; accepted for saved configs but has no effect in the
         maintained runner, which always uses the structure-of-arrays chrono
@@ -189,14 +182,13 @@ class SelfConsistencyConfig:
         config = SelfConsistencyConfig()
         # enabled=True, convergence_mode="fixed_geometry"
         # Pt projection with fixed geometry (fast)
-        # target_ms_tolerance=1e-6, mass_shell_relaxation=0.7, max_iterations=2
+        # target_ms_tolerance=1e-6, max_iterations=2
 
     Variable geometry mode (high accuracy, updates geometry)::
 
         config = SelfConsistencyConfig(
             convergence_mode="variable_geometry",
             target_ms_tolerance=1e-6,
-            mass_shell_relaxation=0.7,
             max_iterations=20,
         )
 
@@ -206,7 +198,6 @@ class SelfConsistencyConfig:
             convergence_mode="variable_geometry",
             target_ms_tolerance=1e-8,
             mass_shell_tolerance=1e-3,
-            mass_shell_relaxation=1.0,
             max_iterations=20,
             verbosity=2,
         )
@@ -220,7 +211,7 @@ class SelfConsistencyConfig:
     convergence_mode: str = "fixed_geometry"  # "fixed_geometry" or "variable_geometry"
     target_ms_tolerance: float = 1e-6  # Mass-shell loop convergence criterion
     mass_shell_tolerance: float = 1e-2  # Safety net after loop
-    mass_shell_relaxation: float = 0.7  # Relaxation weight applied after correction
+    mass_shell_relaxation: float = 0.7  # Inert compatibility for direct study callers
 
     # Gamma reconciliation parameters
     gamma_reconciliation_method: GammaReconciliationMethod = (
@@ -235,9 +226,7 @@ class SelfConsistencyConfig:
 
     chrono_interpolate: bool = False  # Enable chrono-match interpolation
     chrono_tolerance: float = 1e-3  # Time residual tolerance (ns)
-    chrono_matching_mode: str = (
-        "FAST"  # "FAST" or "AVERAGED" (AVERAGED for APPROXIMATE_BACK_HISTORY only)
-    )
+    chrono_matching_mode: str = "FAST"  # Inert compatibility for direct study callers
     chrono_high_precision: bool = False  # Deprecated; ignored by the SOA runner
     chrono_adaptive_tolerance: bool = False  # Auto-set tolerance = 0.1 × timestep
     max_iterations: int = 2  # Maximum SC iterations per particle per step
@@ -278,7 +267,6 @@ class SelfConsistencyConfig:
             convergence_mode="fixed_geometry",
             target_ms_tolerance=1e-6,
             mass_shell_tolerance=1e-2,
-            mass_shell_relaxation=0.7,
             max_iterations=2,
         )
 
@@ -306,7 +294,6 @@ class SelfConsistencyConfig:
             convergence_mode="variable_geometry",
             target_ms_tolerance=1e-8,
             mass_shell_tolerance=1e-3,
-            mass_shell_relaxation=1.0,  # Full projection for aggressive mode
             max_iterations=20,
             verbosity=0,
         )
@@ -334,7 +321,6 @@ class SelfConsistencyConfig:
             convergence_mode="variable_geometry",
             target_ms_tolerance=tolerance,
             mass_shell_tolerance=1e-2,
-            mass_shell_relaxation=0.7,
             max_iterations=20,
             verbosity=0,
         )
