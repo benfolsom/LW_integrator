@@ -2,6 +2,43 @@
 
 ## Unreleased
 
+### Sampled retarded path
+
+- Replace the `COLD_START` external-force gate by per-source light-cone
+  admission. A source is admitted at the observer's step-start event when
+  `c (t_obs - t_j0) >= |x_obs - x_j0|`, with `(t_j0, x_j0)` the source's first
+  stored sample. The old gate compared the observer's travel distance with the
+  maximum over sources of `beta_avg R / (1 - beta_avg . n)`, which (1) held the
+  nearest source back until the farthest one was reached, (2) opened before the
+  light from a source's initial position had arrived, and (3) closed again after
+  a crossing and never reopened. The new mask is per source, stateless and
+  monotone, applies to wall and image sources, and is the same interval as the
+  startup-history guard's per-pair `tau_c`. The two early skips no longer use
+  the farthest source. Same-bunch space charge, the exact path
+  (`INERTIAL_PREHISTORY`) and `APPROXIMATE_BACK_HISTORY` are bit-identical.
+  Sources admitted at an event take their ordinary vector-potential change from
+  the observer's motion alone, so the mechanical energy stays continuous there.
+- **Earlier `COLD_START` `BUNCH_TO_BUNCH` results that were affected:**
+  - Extended source trains whose span is comparable to the distance to the
+    nearest source. In the audit, an observer 1 mm off axis facing protons 50 mm
+    apart from 50 mm received no transverse impulse for 3 or more drivers,
+    against 3.8e-3 amu mm/ns for 41 on the exact path. Two drivers 100 mm apart
+    at 50 mm lost 100% of the impulse. Co-moving trains had the whole bunch
+    missing until the farthest source's threshold was met.
+  - Crossings with `beta_r (2 + beta_s) > 1` (rider as observer; swap roles for
+    the driver). The gate closed after the pass, so net-energy and longitudinal
+    ledgers were wrong; for a rider at beta 0.9 past a stationary driver the sign
+    of the net energy change flipped. Transverse kicks were barely affected.
+  - Single-source head-on runs also change slightly: forces from before the
+    source's light had arrived are gone.
+  A 5-driver train from 1000 mm passed the startup-history guard yet lost about
+  22% of its impulse relative to the exact path. Re-run affected sampled
+  `COLD_START` results; the October defaults audit is not among those re-run
+  here. The sampled path still differs from the exact path for a lone driver
+  (factor 2 at 1 mm in the audit); that is separate from the gate.
+- A stationary observer is no longer admitted instantly; it waits for the light
+  from each source's first sample (previously threshold zero for `beta = 0`).
+
 ## v0.12.0 — 2026-10-12 — sampled-path repair, audit fixes, photon transport
 
 Includes the v0.11.0 changes released on 2026-10-10 (exact histories, native PIC,
