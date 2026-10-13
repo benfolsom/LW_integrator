@@ -344,14 +344,28 @@ Properties:
 Admission is applied to the gathered external samples: a source that is not
 admitted contributes no charge to the force, the radiation fields or the
 canonical potential ledger. With smearing, each subcharge inherits its parent's
-admission. When no source is admitted the retarded solve is skipped. Wall and
-image sources use the same rule, so an observer at rest next to an image is
-admitted when light from the image's first sample arrives, not at once.
+admission. When no source is admitted the retarded solve is skipped.
 
-Sources admitted at an event had no retarded point at the preceding event. The
-canonical bookkeeping takes their ordinary change of vector potential over that
-step from the observer's motion alone, with the source's sampled retarded point
-held, so the mechanical energy stays continuous across admission.
+The first event :math:`(t_{j0}, \mathbf{x}_{j0})` is carried explicitly with the
+source history, so a windowed history does not change the test. Wall runs
+regenerate the image every step and pass it as a one-sample history; there the
+first event of each image is that of the image of the observer's first stored
+state. A conducting-wall image at distance :math:`2d` is therefore admitted at
+:math:`t = 2d / ((1 + \beta) c)` for an observer moving toward it, and an
+observer at rest next to an image is admitted when light from that first image
+arrives, not at once.
+
+Sources whose admission flipped between the previous and the current event had
+no retarded point at the preceding event. The canonical bookkeeping takes their
+ordinary change of vector potential over that step from the observer's motion
+alone, with the source's sampled retarded point held, so the mechanical energy
+stays continuous across admission. Sources that merely change membership of the
+active set (pseudo-grid rotation, field-source reselection, visibility
+re-entry) were admitted earlier and are handled as before.
+
+``COLD_START`` runs with the RFS/dipole configuration are on the sampled path,
+not the exact one (that needs ``INERTIAL_PREHISTORY``), so they change with the
+admission rule.
 
 Same-bunch space charge has its own startup rule and is not gated by this
 mask. The exact path (``INERTIAL_PREHISTORY``) does not use it.
