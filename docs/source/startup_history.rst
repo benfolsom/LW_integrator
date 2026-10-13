@@ -1,62 +1,105 @@
 Startup-history preflight check
 ===============================
 
-``COLD_START`` and ``APPROXIMATE_BACK_HISTORY`` begin with no source states
-before the initial time ``t0``. At ``t0`` an observer at distance ``R`` needs
-the source at about ``t0 - R/c``. During the first ``tau_c`` of observer time
-(the root of ``|x_obs(t) - x_src(t0)| = c (t - t0)``) that part of the source
-worldline does not exist, so the field is suppressed or approximated. If a
-significant part of the interaction falls in that window, for example a close
-approach or a visibility gate that opens soon after ``t0``, the result is wrong
-without any error. ``COLD_START`` is valid only where no strongly affecting
-field acts for long enough to build a history.
+``COLD_START`` begins with no source states before the initial time ``t0``. At
+``t0`` an observer at distance ``R`` needs the source at about ``t0 - R/c``.
+During the first ``tau_c`` of observer time (the root of
+``|x_obs(t) - x_src(t0)| = c (t - t0)``) that part of the source worldline does
+not exist, so the field is suppressed. If a significant part of the interaction
+falls in that window, for example a close approach or a visibility gate that
+changes soon after ``t0``, the result is wrong without any error.
+``COLD_START`` is valid only where no strongly affecting field acts for long
+enough to build a history.
 
 What is checked
 ---------------
 
 Before integration, ``retarded_integrator`` evaluates every ``BUNCH_TO_BUNCH``
-rider/driver observer-source pair in both directions, for every start-up mode
-other than ``INERTIAL_PREHISTORY``. Large bunches use a deterministic subset:
-at most 24 observers, each against up to 24 evenly strided sources plus its 8
-nearest sources. Same-bunch space charge (explicit start-up handling) and
-conducting-wall image sources are not point worldlines and are not estimated.
-A checkpoint resume skips the check because history already exists.
+rider/driver observer-source pair in both directions for ``COLD_START``. Large
+bunches use a deterministic subset: at most 24 observers, each against up to 24
+evenly strided sources plus its 8 nearest sources. Same-bunch space charge
+(explicit start-up handling) and conducting-wall image sources are not point
+worldlines, so for them the check is skipped and a line is logged. External,
+cavity and dipole fields and bound or orbiting motion are not modelled either:
+sources and observers follow straight lines, so the estimate can be wrong when
+the motion is steered. A checkpoint resume skips the check because history
+already exists.
+
+``APPROXIMATE_BACK_HISTORY`` is exempt. It has no missing-history window: on
+every step it uses the current source state with a constant-velocity
+retarded-distance correction, which is the same inertial-extrapolation
+assumption that ``INERTIAL_PREHISTORY`` makes. Its error is spread over the whole
+run, and the integral below does not measure it. It remains an explicitly
+labelled diagnostic and legacy mode.
 
 Each source worldline is the straight-line extrapolation of its initial state,
 and each observer is extrapolated the same way over the nominal run,
 ``(steps - 1) * h_step * gamma`` of lab time. The force is the
 acceleration-free Lienard-Wiechert field at the analytic retarded point. For
-each observer the check forms
+each observer the check forms two measures, summed over sources with their
+charges:
 
 .. math::
 
    \varepsilon = \frac{\sum_j |q_j| \int_{t_0}^{t_c} |F_j|\,dt}
-                      {\sum_j |q_j| \int_{t_0}^{t_0+T} |F_j|\,dt},
+                      {\sum_j |q_j| I_j},
+   \qquad
+   \varepsilon_k = \frac{\left|\sum_j q_j \int_{t_0}^{t_c} F_{j,k}\,dt\right|}
+                        {\max\left(\left|\sum_j q_j I_{j,k}\right|,\;
+                                    0.1 \sum_j |q_j| I_j\right)}.
 
-the fraction of the time integral of the force magnitude (a conservative
-impulse measure that cannot cancel by sign) that falls in the missing-history
-interval. The worst observer is reported with its largest contributing pair.
-Integration-time effects such as adaptive stepping and radiation reaction are
-not modelled, so the estimate is a screen, not a correction.
+Here ``I_j`` is the ``|F|`` impulse of the full straight-line encounter,
+integrated over all time rather than the run window (or the run-window impulse
+if that is larger, for pairs with no relative motion), and ``I_{j,k}`` is the
+signed impulse of component ``k``. The scale is therefore independent of how
+long the run is: a short run is not rejected merely because it ends before
+``t_c``, and a large impact parameter does not inflate the missing fraction. The
+signed measure matters because the net impulse of a crossing is a small residual
+of large opposite-sign halves, which ``COLD_START`` truncates; the ``0.1`` bound
+in the denominator keeps a component that cancels by symmetry from being divided
+by round-off. A run fails if ``epsilon`` or any ``epsilon_k`` exceeds the
+tolerance. The worst observer is reported with its largest contributing pair.
 
-If a beamline geometry is enabled, the directional visibility mask is applied
-at the retarded source point, as in the integrator. Any visible, non-zero field
-at a retarded time before the source history exists means a gate window
-intersects the missing region and is an error regardless of ``epsilon``.
+Two further rules apply. A kick ``|q_obs| I / (gamma m c)`` below ``1e-15`` (the
+resolution of the momentum) cannot fail, so a run whose total interaction is
+negligible is not rejected. And if a beamline geometry is enabled, the
+directional visibility mask is applied at the retarded source point, as in the
+integrator; a gate counts only when visibility *changes* inside the missing
+interval (or between it and the time after ``t_c``) and the unmasked missing
+contribution exceeds the tolerance. A source that is merely visible throughout,
+for example a pipe enclosing both bunches, is not flagged.
+
+Driver-train ``prehistory_steps`` already prepend an inertial coasting history
+to both bunches (lab time ``gamma * h_step`` per step). The check shifts the
+first available source state back by that time, so a prehistory that covers
+``R/c`` removes the missing window.
+
+Integration-time effects such as adaptive stepping, early exits, particle loss
+and radiation reaction are not modelled; an early exit shortens the run, so the
+estimate is a screen, not a correction. **A pass is not an energy-accuracy
+certificate**: it says that little of the encounter impulse is missing, not that
+the energy ledger is converged. The check also does not model the integrator's
+own per-observer start-up gate, which opens for all sources at once from the
+farthest one; an extended source bunch can therefore lose more interaction than
+the per-pair estimate shows (this is under investigation).
 
 Failure and override
 --------------------
 
 By default the run is rejected with ``StartupHistoryError`` (a ``ValueError``)
-when ``epsilon > 1e-3`` or a gate window intersects the missing region. The
-message names the pair, the missing interval, the run length and the missing
-fraction, and recommends ``INERTIAL_PREHISTORY`` (exact path) or a larger
-starting separation. For a deliberate diagnostic set
+when ``epsilon`` or ``epsilon_k`` exceeds ``startup_history_tolerance``
+(default ``1e-3``, finite and in ``(0, 1]``; anything else is a ``ValueError``)
+or a gate changes inside the missing region. The message names the pair, the
+missing interval, the run length and the missing fraction. It recommends
+``INERTIAL_PREHISTORY`` (exact path) or, for co-moving and bound configurations
+where a larger separation only lengthens ``R0/c``, a driver-train prehistory;
+otherwise a larger starting separation. For a deliberate diagnostic set
 ``allow_incomplete_startup_history`` (testbed and run-config JSON key,
 ``--allow-incomplete-startup-history`` on the CLI, ``IntegratorConfig`` field,
-or ``retarded_integrator`` keyword). The same message is then issued as a
-``RuntimeWarning`` and logged as ``STARTUP-HISTORY OVERRIDE``. The tolerance is
-``startup_history_tolerance`` (``--startup-history-tolerance``).
+``retarded_integrator`` keyword; the GUI keeps it from a loaded configuration).
+The same message is then issued as a ``RuntimeWarning`` and logged as
+``STARTUP-HISTORY OVERRIDE``. The tolerance is ``startup_history_tolerance``
+(``--startup-history-tolerance``).
 
 A run that passes is unchanged: the check reads the initial states and does not
 modify them.
@@ -73,10 +116,12 @@ the first step. It needs the exact RFS or retarded-dipole configuration; see
 
 *Sampled path* (the default for ordinary charge runs, with chrono matching).
 Its source histories are index-aligned trajectory lists, so it has no
-``INERTIAL_PREHISTORY``: a prehistory would have to be prepended to
+``INERTIAL_PREHISTORY``: a general prehistory would have to be prepended to
 ``trajectory_ext`` and every consumer of the step index would have to offset
-it. Its start-up modes are ``COLD_START`` and ``APPROXIMATE_BACK_HISTORY``,
-which is what the check above screens.
+it. Driver trains already do exactly that for their coasting prehistory
+(``prehistory_steps``), and the check accounts for it. Its start-up modes are
+``COLD_START`` and ``APPROXIMATE_BACK_HISTORY``; the check above screens
+``COLD_START``.
 
 Both failures found in the October 2026 benchmarks, where the sampled path
 failed timestep, source-resolution and zero-chirp controls, have been fixed:
@@ -104,8 +149,8 @@ When to use which:
   long runs, and for pairs that start far enough apart that the check passes.
   Confirm important points on the exact path.
 * Use the exact path with ``INERTIAL_PREHISTORY`` when the bunches interact
-  from the first step (close starts, short runs, visibility gates, driver
-  trains, same-bunch charge fields, intrinsic moments), when the source
+  from the first step (close starts, visibility gates, driver
+  trains with too little prehistory, same-bunch charge fields, intrinsic moments), when the source
   motion is strongly accelerated or kicked, or for a final reference result.
 
 ``COLD_START`` rule
@@ -122,7 +167,7 @@ with a separation large enough that the interaction begins after about ``R/c``.
 reproduction mode.
 
 When a sampled-path run mixes species with very different gamma, the check uses
-each observer's own lab time. A stationary heavy driver advances little lab time
-per proper-time step, so the run length needed to pass can be much larger than
-the crossing time. Select ``auto_duration_enabled`` (crossing steps and post
-factor) as in ``configs/run_configs/example_b2b_relativistic_proton_stationary_lead_ion.json``.
+each observer's own lab time, and the full-encounter scale does not depend on
+the run length, so a short run no longer fails merely for ending early. Choose
+``auto_duration_enabled`` (crossing steps and post factor) when the run should
+cover the whole crossing.

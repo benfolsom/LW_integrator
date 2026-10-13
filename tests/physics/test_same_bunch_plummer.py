@@ -60,7 +60,6 @@ def run_symmetric(count=2, close=False, intervals=640, mode="medina_lad"):
             z_cutoff=100000,
             z_cutoff_mode="absolute",
             startup_mode=StartupMode.COLD_START,
-            allow_incomplete_startup_history=True,
             self_consistency=SelfConsistencyConfig(
                 enabled=True,
                 max_iterations=2,

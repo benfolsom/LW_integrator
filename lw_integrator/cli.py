@@ -20,7 +20,11 @@ from typing import Any, Dict, Iterable, Mapping, MutableMapping, Optional, Tuple
 
 import numpy as np
 
-from core.constants import C_MMNS, ELECTRON_MASS_AMU
+from core.constants import (
+    C_MMNS,
+    DEFAULT_STARTUP_HISTORY_TOLERANCE,
+    ELECTRON_MASS_AMU,
+)
 from core.integration_runner import AdaptiveTimestepConfig, retarded_integrator
 from core.self_consistency import SelfConsistencyConfig
 from core.species import SPECIES, resolve_species
@@ -695,7 +699,7 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         dest="allow_incomplete_startup_history",
         action="store_true",
         default=None,
-        help="Downgrade the COLD_START/APPROXIMATE_BACK_HISTORY startup-history "
+        help="Downgrade the COLD_START startup-history "
         "preflight error to a loud warning (deliberate diagnostics only).",
     )
     parser.add_argument(
@@ -703,8 +707,8 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         dest="startup_history_tolerance",
         type=float,
         default=None,
-        help="Largest tolerated missing fraction of the estimated total impulse "
-        "in the startup-history preflight (default 1e-3).",
+        help="Largest tolerated missing fraction of the full-encounter impulse "
+        "in the startup-history preflight, in (0, 1] (default 1e-3).",
     )
     parser.add_argument(
         "--radiation-reaction-mode",
@@ -2521,7 +2525,9 @@ def _build_integrator_config(payload: Mapping[str, Any]) -> IntegratorConfig:
         allow_incomplete_startup_history=_parse_allow_incomplete_startup_history(
             payload.get("allow_incomplete_startup_history", False)
         ),
-        startup_history_tolerance=float(payload.get("startup_history_tolerance", 1e-3)),
+        startup_history_tolerance=float(
+            payload.get("startup_history_tolerance", DEFAULT_STARTUP_HISTORY_TOLERANCE)
+        ),
         radiation_reaction_mode=str(
             payload.get(
                 "radiation_reaction_mode",

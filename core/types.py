@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
 import numpy as np
 
-from .constants import C_MMNS
+from .constants import C_MMNS, DEFAULT_STARTUP_HISTORY_TOLERANCE
 
 INERTIAL_CHARGE_BOUNDARY_FIELDS = (
     "inertial_charge_boundary_ready",
@@ -1270,12 +1270,13 @@ class IntegratorConfig:
         Defaults to ``True`` for improved agreement with the aperture geometry.
     allow_incomplete_startup_history:
         Downgrade the preflight startup-history error to a loud warning. By
-        default a ``COLD_START`` or ``APPROXIMATE_BACK_HISTORY`` run whose
-        missing source history carries more than ``startup_history_tolerance``
-        of the estimated total impulse, or meets a visibility-gate window,
-        is rejected. Set it only for deliberate diagnostics.
+        default a ``COLD_START`` run whose missing source history carries
+        more than ``startup_history_tolerance`` of the full-encounter impulse,
+        or in which a visibility gate changes inside the missing window,
+        is rejected. ``APPROXIMATE_BACK_HISTORY`` is not checked. Set it only for deliberate diagnostics.
     startup_history_tolerance:
-        Largest tolerated missing fraction of the estimated total impulse.
+        Largest tolerated missing fraction of the full-encounter impulse, in
+        magnitude and per signed component; finite and in ``(0, 1]``.
         Defaults to ``1e-3``.
     radiation_reaction_mode:
         Radiation-reaction handling mode forwarded to the canonical integrator.
@@ -1331,7 +1332,7 @@ class IntegratorConfig:
     use_image_weighting: bool = True
     source_history_representation: str = "light_cone_quintic"
     allow_incomplete_startup_history: bool = False
-    startup_history_tolerance: float = 1e-3
+    startup_history_tolerance: float = DEFAULT_STARTUP_HISTORY_TOLERANCE
     radiation_reaction_mode: str = "medina_lad"
     macroparticle_charge_multiplier: float = 1.0
     macroparticle_sigma_multiplier: float = 1.0
