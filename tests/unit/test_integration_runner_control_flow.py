@@ -7,9 +7,7 @@ import pytest
 
 import core.integration_runner as integration_runner
 from core.equations import GammaBlowupError
-from core.particle_status import mark_particle_dead, propagate_dead_particle_status
 from core.external_fields import ExternalFieldConfig, evaluate_external_field_si
-from core.pseudo_grid import PseudoGridStepSchedule
 from core.integration_runner import (
     AdaptiveTimestepConfig,
     EnergyJumpDetected,
@@ -18,6 +16,8 @@ from core.integration_runner import (
     retarded_integrator,
     run_integrator,
 )
+from core.particle_status import mark_particle_dead, propagate_dead_particle_status
+from core.pseudo_grid import PseudoGridStepSchedule
 from core.types import (
     CavityExitConfig,
     DriverTrainConfig,
@@ -1393,7 +1393,8 @@ def test_retarded_integrator_adaptive_retry_uses_reduced_timestep(
         assert np.count_nonzero(final["_dead_particles"]) == len(losses)
         assert set(final["_particle_failure_info"]) == set(losses)
         assert retry_alive[0] == [
-            idx for idx in range(particle_count)
+            idx
+            for idx in range(particle_count)
             if idx not in previous_deaths + first_deaths
         ]
         for idx in losses:
@@ -1402,7 +1403,8 @@ def test_retarded_integrator_adaptive_retry_uses_reduced_timestep(
                 0 if idx in previous_deaths else 2
             )
             assert final["_particle_failure_info"][idx]["reason"] == (
-                "previous_loss" if idx in previous_deaths
+                "previous_loss"
+                if idx in previous_deaths
                 else "retry_loss" if idx in retry_deaths else "gamma_blowup_hard"
             )
         for key, value in initial_rider.items():
@@ -1420,11 +1422,14 @@ def test_retarded_integrator_adaptive_retry_uses_reduced_timestep(
     "min_factor, gamma_values, expected_message",
     [
         pytest.param(
-            0.5, [1.0, 2.0, 2.0, 2.0],
-            "Max refinement attempts (1) reached", id="max_refinement",
+            0.5,
+            [1.0, 2.0, 2.0, 2.0],
+            "Max refinement attempts (1) reached",
+            id="max_refinement",
         ),
         pytest.param(
-            0.9, [1.0, 2.0],
+            0.9,
+            [1.0, 2.0],
             "Minimum timestep reached. Accepting remaining substeps",
             id="minimum_timestep",
         ),
