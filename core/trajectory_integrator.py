@@ -13,7 +13,7 @@ from typing import Any, MutableMapping, Optional, overload
 
 import numpy as np
 
-from .constants import C_MMNS
+from .constants import C_MMNS, DEFAULT_STARTUP_HISTORY_TOLERANCE
 from .distances import (
     DistanceResult,
     chrono_match_indices,
@@ -194,7 +194,9 @@ class LienardWiechertIntegrator:
                 self.config.allow_incomplete_startup_history if self.config else False
             ),
             startup_history_tolerance=(
-                self.config.startup_history_tolerance if self.config else 1e-3
+                self.config.startup_history_tolerance
+                if self.config
+                else DEFAULT_STARTUP_HISTORY_TOLERANCE
             ),
         )
 
