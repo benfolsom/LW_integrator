@@ -477,6 +477,7 @@ def _small_b2b_run(self_consistency, *, radiation_reaction_mode="diagnostic_only
         self_consistency=self_consistency,
         chrono_mode=ChronoMatchingMode.FAST,
         startup_mode=StartupMode.COLD_START,
+        # Option-handling test with a close start; the missing history is not what it checks.
         allow_incomplete_startup_history=True,
         space_charge=SpaceChargeConfig(
             enabled=True,

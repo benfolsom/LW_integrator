@@ -54,6 +54,7 @@ def run_gate(mode, checkpoint=None, cancel_callback=None, progress_callback=None
         z_cutoff=0,
         sim_type=SimulationType.BUNCH_TO_BUNCH,
         startup_mode=StartupMode.COLD_START,
+        # Deliberately tests the COLD_START gate, so it needs the incomplete start.
         allow_incomplete_startup_history=True,
         self_consistency=SelfConsistencyConfig(
             enabled=True,
