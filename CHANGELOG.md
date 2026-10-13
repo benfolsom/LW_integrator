@@ -23,8 +23,13 @@ and boundary studies), plus subsequent integration updates.
 - Give each smeared child source on the sampled retarded path its own
   light-cone index, velocity and acceleration, as for exact persistent clouds,
   instead of the parent's retarded event plus the offset. Point sources are
-  unchanged bit for bit; interpolated chrono matching, variable-geometry
-  self-consistency and pseudo-grid space charge keep the shared-event expansion.
+  unchanged bit for bit. Children are evaluated at the same observer event they
+  are matched to (the stored start-of-step position, or the trial position under
+  variable-geometry iterations), so a zero-offset smeared source reproduces the
+  point source. Interpolated chrono matching, non-fixed refresh policies,
+  pseudo-grid space charge and `APPROXIMATE_BACK_HISTORY` keep the shared-event
+  expansion and warn once. Longitudinal cloud offsets are applied along z
+  regardless of `momentum_axis` (unchanged).
 - With both October failure causes fixed, the sampled path is valid with
   complete source history and convergence checks, and is about ten times
   faster than the exact path. Documentation now explains when to use each route

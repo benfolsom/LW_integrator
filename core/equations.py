@@ -63,6 +63,8 @@ from typing import TYPE_CHECKING, Any, Optional, Sequence
 if TYPE_CHECKING:
     from .external_field_provider import ExternalFieldSample
 
+import warnings
+
 import numpy as np
 from math import fsum
 
@@ -1007,6 +1009,36 @@ def _compute_approximate_retarded_distance(
     nhat["R"] = nhat["R"] * numerator / denominator
 
     return nhat, indices_bounded
+
+
+_CHILD_MATCHING_WARNED: set[str] = set()
+
+
+def _warn_child_matching_skipped(
+    config: Optional[MacroparticleSmearingConfig],
+    cloud: Optional[np.ndarray],
+    reasons: dict[str, bool],
+) -> None:
+    """Warn once per reason that smeared children share the parent's event."""
+    if (
+        config is None
+        or not config.enabled
+        or not (config.apply_to_active_sources or config.apply_to_passive_sources)
+        or int(config.subcharge_count) <= 1
+    ):
+        return
+    active = dict(reasons)
+    active["a refresh policy other than fixed_per_particle"] = cloud is None
+    for reason, hit in active.items():
+        if hit and reason not in _CHILD_MATCHING_WARNED:
+            _CHILD_MATCHING_WARNED.add(reason)
+            warnings.warn(
+                "Macroparticle smearing is enabled but per-child light-cone "
+                f"matching is skipped because of {reason}; smeared children "
+                "share the parent's retarded event.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
 
 
 def _smeared_child_samples(
@@ -2868,12 +2900,29 @@ def retarded_equations_of_motion(
                         include_positions=_external_include_positions,
                     )
 
+                # Children are matched to, and their fields evaluated for, the
+                # same observer event as the parent's retarded match.
+                _match_variable = (
+                    sc_convergence_mode == "variable_geometry"
+                    and sc_iteration > 0
+                    and startup_mode is not StartupMode.APPROXIMATE_BACK_HISTORY
+                )
+                _warn_child_matching_skipped(
+                    macroparticle_smearing,
+                    external_cloud,
+                    {
+                        "chrono_interpolate": chrono_result is not None,
+                        "APPROXIMATE_BACK_HISTORY": (
+                            startup_mode is StartupMode.APPROXIMATE_BACK_HISTORY
+                        ),
+                    },
+                )
                 external_samples, smeared_nhat = smear_source_samples(
                     samples=external_samples,
                     observer_position=(
-                        float(working_x),
-                        float(working_y),
-                        float(working_z),
+                        float(observer_state["x"][observer_particle_idx]),
+                        float(observer_state["y"][observer_particle_idx]),
+                        float(observer_state["z"][observer_particle_idx]),
                     ),
                     config=macroparticle_smearing,
                     step_index=index_traj,
@@ -2882,20 +2931,16 @@ def retarded_equations_of_motion(
                         _smeared_child_samples(
                             macroparticle_smearing,
                             external_cloud,
-                            trajectory,
+                            temp_trajectory if _match_variable else trajectory,
                             trajectory_ext,
                             index_traj,
-                            particle_idx,
+                            observer_particle_idx if _match_variable else particle_idx,
                             indices_bounded,
                             traj_soa=traj_soa,
                             source_soa=traj_ext_soa,
                         )
                         if chrono_result is None
                         and startup_mode is not StartupMode.APPROXIMATE_BACK_HISTORY
-                        and not (
-                            sc_convergence_mode == "variable_geometry"
-                            and sc_iteration > 0
-                        )
                         else None
                     ),
                 )
@@ -3235,6 +3280,17 @@ def retarded_equations_of_motion(
                         sc_start_positions = np.column_stack(
                             [getattr(sc_samples, axis) for axis in "xyz"]
                         )
+                    _warn_child_matching_skipped(
+                        macroparticle_smearing,
+                        observer_cloud,
+                        {
+                            "chrono_interpolate": use_retarded_sc
+                            and sc_chrono_result is not None,
+                            "pseudo-grid same-bunch sources": (
+                                pseudo_grid_space_charge_source_trajectory is not None
+                            ),
+                        },
+                    )
                     sc_samples, smeared_sc_nhat = smear_source_samples(
                         samples=sc_samples,
                         observer_position=(
