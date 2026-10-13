@@ -6,7 +6,6 @@ import copy
 
 import numpy as np
 import pytest
-from tests.particle_states import single_particle_state as _single_particle_state
 
 from core.constants import ELEMENTARY_CHARGE
 from core.distances import compute_instantaneous_distance
@@ -14,14 +13,13 @@ from core.equations import retarded_equations_of_motion
 from core.images import generate_conducting_image
 from core.integration_runner import retarded_integrator
 from core.types import ChronoMatchingMode, IntegratorConfig, SimulationType, StartupMode
+from tests.particle_states import single_particle_state as _single_particle_state
 from tests.test_config import (
     BASIC_TWO_PARTICLE,
     PROTON,
     create_bunch_uniform_distribution,
     validate_physics_conservation,
 )
-
-
 
 
 @pytest.mark.physics

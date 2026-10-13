@@ -6,6 +6,7 @@ import numpy as np
 
 from core.constants import C_MMNS, ELEMENTARY_CHARGE
 
+
 def distance_state(
     *,
     x: list[float] | None = None,
