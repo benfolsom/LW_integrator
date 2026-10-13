@@ -12,8 +12,9 @@
   nearest source back until the farthest one was reached, (2) opened before the
   light from a source's initial position had arrived, and (3) closed again after
   a crossing and never reopened. The new mask is per source, stateless and
-  monotone, applies to wall and image sources, and is the same interval as the
-  startup-history guard's per-pair `tau_c`. The two early skips no longer use
+  monotone, applies to wall and image sources (each image's first event is the
+  image of the observer's first stored state, carried explicitly), and is the
+  same interval as the startup-history guard's per-pair `tau_c`. The two early skips no longer use
   the farthest source. Same-bunch space charge, the exact path
   (`INERTIAL_PREHISTORY`) and `APPROXIMATE_BACK_HISTORY` are bit-identical.
   Sources admitted at an event take their ordinary vector-potential change from
@@ -29,8 +30,21 @@
     the driver). The gate closed after the pass, so net-energy and longitudinal
     ledgers were wrong; for a rider at beta 0.9 past a stationary driver the sign
     of the net energy change flipped. Transverse kicks were barely affected.
-  - Single-source head-on runs also change slightly: forces from before the
-    source's light had arrived are gone.
+  - Single-source head-on runs: transverse kicks change little, but net-energy
+    ledgers can change by order 100%. The repo's `run_gate` regression (one
+    driver at 1000 mm, beta 0.4 head-on, 1200 steps) goes from a rider net
+    energy change of -0.192 eV to -0.0086 eV: the old gate opened 0.87 ns before
+    the light arrived and applied a clamped first-sample field.
+  - `CONDUCTING_WALL` and `SWITCHING_WALL` runs under `COLD_START`: a stationary
+    or approaching observer is no longer admitted to its image at t0, so image
+    forces start when light from the first image arrives (2d/((1+beta)c) for a
+    conducting wall). Late-time image forces match the earlier behaviour (a
+    proton at 0.5 mm, wall 200 mm, beta 0.5: dPx -1.195e-7 against -1.197e-7).
+  - Pseudo-grid `COLD_START` runs: reduced solves apply the same per-source
+    admission, so a whole train that was previously held back now kicks.
+  - `COLD_START` runs with the RFS/dipole configuration are on the sampled path,
+    not the exact one (`INERTIAL_PREHISTORY` is required), and change; they are
+    not among the bit-identical cases.
   A 5-driver train from 1000 mm passed the startup-history guard yet lost about
   22% of its impulse relative to the exact path. Re-run affected sampled
   `COLD_START` results; the October defaults audit is not among those re-run
