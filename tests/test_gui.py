@@ -1362,7 +1362,7 @@ def test_apply_options_to_ui_auto_enables_manual_mode_for_3d_payloads():
         root.destroy()
 
 
-def test_source_history_representation_round_trips_through_gui_options():
+def test_source_history_and_startup_guard_round_trip_through_gui_options():
     try:
         root = tk.Tk()
     except tk.TclError as exc:
@@ -1371,10 +1371,17 @@ def test_source_history_representation_round_trips_through_gui_options():
     try:
         app = gui.IntegratorGUI(root)
         app._apply_options_to_ui(
-            SimulationOptions(source_history_representation="proper_velocity"),
+            SimulationOptions(
+                source_history_representation="proper_velocity",
+                allow_incomplete_startup_history=True,
+                startup_history_tolerance=0.05,
+            ),
             preserve_directories=True,
         )
         assert app.source_history_representation_var.get() == "proper_velocity"
+        rebuilt = app._build_options_from_ui()
+        assert rebuilt.allow_incomplete_startup_history is True
+        assert rebuilt.startup_history_tolerance == 0.05
         assert (
             app._build_options_from_ui().source_history_representation
             == "proper_velocity"
