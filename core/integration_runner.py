@@ -4195,6 +4195,9 @@ def retarded_integrator(
             tolerance=startup_history_tolerance,
             allow_incomplete=allow_incomplete_startup_history,
             logger=logger,
+            prehistory_steps=(
+                int(driver_train.prehistory_steps) if driver_train_enabled else 0
+            ),
         )
 
     inertial_prehistory_knot_count = _INERTIAL_PREHISTORY_KNOT_COUNT

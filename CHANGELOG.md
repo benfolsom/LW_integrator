@@ -9,17 +9,24 @@ and boundary studies), plus subsequent integration updates.
 
 ### Sampled retarded path
 
-- Add a preflight check for `COLD_START` and `APPROXIMATE_BACK_HISTORY`, which
-  have no source history before `t0`. For each `BUNCH_TO_BUNCH` observer-source
-  pair it bounds the share of the straight-line force impulse that falls in the
-  missing interval `t0 .. t0 + tau_c` (about `R/c`), and whether a visibility
-  gate window meets it. Runs above `startup_history_tolerance` (default `1e-3`)
-  or with an intersecting gate raise `StartupHistoryError`. The explicit override
-  `allow_incomplete_startup_history` (`--allow-incomplete-startup-history`)
-  turns the error into a loud warning for deliberate diagnostics. Runs that pass
-  are unchanged. The sampled path does not gain `INERTIAL_PREHISTORY`; see
-  `docs/source/startup_history.rst`. The shipped proton/lead-ion example now
-  enables auto-duration so that it passes the check.
+- Add a preflight check for `COLD_START`, which has no source history before
+  `t0`. For each `BUNCH_TO_BUNCH` observer-source pair it bounds the share of
+  the straight-line force impulse that falls in the missing interval
+  `t0 .. t0 + tau_c` (about `R/c`), measured against the full straight-line
+  encounter rather than the run window, so a short or truncated run does not
+  fail merely for ending early. Both the `|F|` impulse and each signed component
+  must stay below `startup_history_tolerance` (default `1e-3`, finite in
+  `(0, 1]`), and a kick below an absolute floor cannot fail. A visibility gate
+  that changes inside the missing interval is also an error; a source that is
+  merely visible is not. Driver-train `prehistory_steps` shift the missing
+  window. Violations raise `StartupHistoryError`. The explicit override
+  `allow_incomplete_startup_history` (`--allow-incomplete-startup-history`,
+  also carried through the GUI options) turns the error into a loud warning for
+  deliberate diagnostics. `APPROXIMATE_BACK_HISTORY` has no missing-history
+  window and is exempt. A skipped `COLD_START` check is logged, and a pass is
+  not an energy-accuracy certificate. Runs that pass are unchanged. The sampled
+  path does not gain `INERTIAL_PREHISTORY`; see
+  `docs/source/startup_history.rst`.
 - Give each smeared child source on the sampled retarded path its own
   light-cone index, velocity and acceleration, as for exact persistent clouds,
   instead of the parent's retarded event plus the offset. Point sources are

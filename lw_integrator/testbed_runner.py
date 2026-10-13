@@ -31,7 +31,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.figure import Figure
 
-from core.constants import C_MMNS
+from core.constants import C_MMNS, DEFAULT_STARTUP_HISTORY_TOLERANCE
 from core.debug_logger import get_current_log_path, initialize_debug_logging
 from core.particle_config import (
     DEFAULT_DRIVER_PARAMS,
@@ -497,7 +497,7 @@ class SimulationOptions:
 
     source_history_representation: str = "light_cone_quintic"
     allow_incomplete_startup_history: bool = False
-    startup_history_tolerance: float = 1e-3
+    startup_history_tolerance: float = DEFAULT_STARTUP_HISTORY_TOLERANCE
     radiation_reaction_mode: str = "medina_lad"
 
     # Fixed-size physical particle-loss options
@@ -1926,7 +1926,9 @@ class SimulationOptions:
             allow_incomplete_startup_history=_strict_bool(
                 "allow_incomplete_startup_history", False
             ),
-            startup_history_tolerance=_float("startup_history_tolerance", 1e-3),
+            startup_history_tolerance=_float(
+                "startup_history_tolerance", DEFAULT_STARTUP_HISTORY_TOLERANCE
+            ),
             radiation_reaction_mode=_str(
                 "radiation_reaction_mode", default_radiation_reaction_mode
             ),
