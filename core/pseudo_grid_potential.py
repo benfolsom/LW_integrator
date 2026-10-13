@@ -48,7 +48,9 @@ class ReducedPotentialEvaluator:
         space_charge,
         macroparticle_smearing,
         beamline_geometry,
+        source_first_event=None,
     ):
+        self.source_first_event = source_first_event
         self.observer_history = observer_history
         self.source_history = source_history
         self.observer_soa = observer_soa
@@ -97,6 +99,43 @@ class ReducedPotentialEvaluator:
                 )
             self._histories[key] = subset, subset_soa
         return self._histories[key]
+
+    def _first_event(self, ids):
+        """True first events of the external sources ``ids``, or ``None``."""
+        event = self.source_first_event
+        if event is None:
+            return None
+        soa = self.source_soa
+        indices = np.asarray(ids, dtype=int)
+        if isinstance(soa, IndexedTrajectoryArrays):
+            indices = soa.particle_indices[indices]
+        if len(indices) and indices.max() >= len(event["x"]):
+            return None
+        return {axis: np.asarray(event[axis])[indices] for axis in ("t", "x", "y", "z")}
+
+    def admission(self, sector, ids, state, particle):
+        """COLD_START admission of sources ``ids`` at ``state`` (``None``: ungated)."""
+        if sector != "external":
+            return None
+        from . import equations as eq
+
+        sources, _ = self._sources(sector, ids)
+        return eq._cold_start_admission_mask(
+            self.startup_mode, sources, state, particle, self._first_event(ids)
+        )
+
+    def newly_admitted(self, observer_history, particle, ids):
+        """Sources ``ids`` admitted between the last two observer events.
+
+        Only these lacked a retarded point at the preceding event. Active-set
+        rotation, field-source reselection and visibility re-entry change the
+        source set without a light-cone admission and are not included.
+        """
+        now = self.admission("external", ids, observer_history[-1], particle)
+        before = self.admission("external", ids, observer_history[-2], particle)
+        if now is None or before is None:
+            return np.zeros(len(ids), dtype=bool)
+        return now & ~before
 
     def _event(
         self,
@@ -160,11 +199,7 @@ class ReducedPotentialEvaluator:
                     for name in ("x", "y", "z", "t")
                 },
             )
-        admitted_sources = (
-            eq._cold_start_admission_mask(self.startup_mode, sources, state, particle)
-            if sector == "external"
-            else None
-        )
+        admitted_sources = self.admission(sector, ids, state, particle)
         chrono = None
         if model == "stationary":
             indices = np.full(len(ids), source_index, dtype=int)

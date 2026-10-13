@@ -1186,21 +1186,60 @@ def _compute_full_retarded_distance(
     return nhat, indices_bounded, chrono_match_result
 
 
+COLD_START_FIRST_EVENT_KEY = "cold_start_first_event"
+
+
+def snapshot_first_event(state: Optional[ParticleState]) -> Optional[dict]:
+    """Copy the ``(t, x, y, z)`` of each source in ``state`` (a first sample)."""
+    if state is None or "x" not in state or np.asarray(state["x"]).size == 0:
+        return None
+    return {
+        axis: np.array(state[axis], dtype=float, copy=True)
+        for axis in ("t", "x", "y", "z")
+    }
+
+
+def with_first_event(
+    history: Sequence[ParticleState], first_event: Optional[dict]
+) -> Sequence[ParticleState]:
+    """Return ``history`` with its first sample tagged with the true first event.
+
+    Windowed or regenerated histories (for example a wall's one-sample image
+    history) cannot otherwise tell the admission test where each source began.
+    The tagged sample is a shallow copy; stored trajectories are unchanged.
+    """
+    if first_event is None or len(history) == 0:
+        return history
+    head = history[0]
+    if "x" not in head or np.asarray(head["x"]).shape != first_event["x"].shape:
+        return history
+    tagged = dict(head)
+    tagged[COLD_START_FIRST_EVENT_KEY] = first_event
+    return [tagged, *history[1:]]
+
+
 def _cold_start_admission_mask(
     startup_mode: StartupMode,
     trajectory_ext: Sequence[ParticleState],
     observer_state: ParticleState,
     particle_idx: int,
+    first_event: Optional[dict] = None,
 ) -> Optional[np.ndarray]:
     """Per-source light-cone admission for ``COLD_START``, or ``None`` if ungated.
 
-    ``COLD_START`` has no source history before the first stored sample. Source
-    ``j`` is admitted at the observer's step-start event when light from its
-    first stored sample, at ``(t_j0, x_j0)``, has reached the observer:
+    ``COLD_START`` has no source history before each source's first event
+    ``(t_j0, x_j0)``. Source ``j`` is admitted at the observer's step-start
+    event when light from that event has reached the observer:
     ``c (t_obs - t_j0) >= |x_obs - x_j0|``. For a subluminal observer the
     difference only grows, so an admitted source stays admitted. The mask is
     stateless, depends on no velocity average or direction, and holds back no
-    source because of another. Wall and image sources use the same test.
+    source because of another.
+
+    The first event is ``first_event`` if given, else the one tagged on
+    ``trajectory_ext[0]`` (see :func:`with_first_event`), else that sample
+    itself, which is correct only for a full history. Wall images use the image
+    of the observer's first stored state, so the one-sample image history a
+    wall run passes does not reset the clock.
 
     Returns a boolean array with one entry per source in ``trajectory_ext[0]``,
     (empty when there are no sources), or ``None`` for every other startup mode
@@ -1210,16 +1249,27 @@ def _cold_start_admission_mask(
         return None
     if len(trajectory_ext) == 0 or "x" not in trajectory_ext[0]:
         return np.zeros(0, dtype=bool)
-    first = trajectory_ext[0]
-    if np.asarray(first["x"]).size == 0:
+    head = trajectory_ext[0]
+    count = np.asarray(head["x"]).size
+    if count == 0:
         return np.zeros(0, dtype=bool)
+    if first_event is None:
+        try:
+            first_event = head[COLD_START_FIRST_EVENT_KEY]
+        except (KeyError, TypeError):
+            first_event = None
+    if first_event is None or any(
+        np.asarray(first_event[axis]).size != count for axis in ("t", "x", "y", "z")
+    ):
+        first_event = head
     separation = np.sqrt(
         sum(
-            (float(observer_state[axis][particle_idx]) - np.asarray(first[axis])) ** 2
+            (float(observer_state[axis][particle_idx]) - np.asarray(first_event[axis]))
+            ** 2
             for axis in "xyz"
         )
     )
-    elapsed = float(observer_state["t"][particle_idx]) - np.asarray(first["t"])
+    elapsed = float(observer_state["t"][particle_idx]) - np.asarray(first_event["t"])
     return np.asarray(C_MMNS * elapsed >= separation, dtype=bool)
 
 
@@ -2459,6 +2509,15 @@ def retarded_equations_of_motion(
             result["potential_inclusion_state"][particle_idx] = inclusion_state
             result["sampled_source_canonical_ready"][particle_idx] = True
 
+        # COLD_START light-cone admission depends only on the accepted
+        # step-start event and each source's first event, so it needs no
+        # retarded solve and is the same for every self-consistency iteration.
+        # With nothing admitted, the retarded distances are skipped entirely.
+        admission = _cold_start_admission_mask(
+            startup_mode, trajectory_ext, current_state, particle_idx
+        )
+        skip_external_forces = admission is not None and not admission.any()
+
         # Self-consistency loop: iterate until gamma converges
         converged = False
         last_mass_shell_error = float("inf")
@@ -2525,18 +2584,6 @@ def retarded_equations_of_motion(
                 # Use current_state position (start of timestep)
                 observer_state = current_state
                 observer_particle_idx = particle_idx
-
-            # ================================================================
-            # STEP 2: COLD_START light-cone admission
-            # ================================================================
-            # Admission depends only on the accepted step-start event and each
-            # source's first stored sample, so it needs no retarded solve and
-            # is the same for every self-consistency iteration. With nothing
-            # admitted, skip the retarded distances entirely.
-            admission = _cold_start_admission_mask(
-                startup_mode, trajectory_ext, current_state, particle_idx
-            )
-            skip_external_forces = admission is not None and not admission.any()
 
             # ================================================================
             # STEP 3: Compute retarded distances to external sources
