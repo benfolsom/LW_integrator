@@ -14,6 +14,7 @@ from core.external_fields import (
 )
 from core.particle_config import DEFAULT_DRIVER_PARAMS, DEFAULT_RIDER_PARAMS
 from core.species import get_species
+from core.constants import DEFAULT_STARTUP_HISTORY_TOLERANCE
 from core.types import SimulationType
 from optimization.mode_helpers import SWEEP_OR_OPTIMIZATION_MODES
 
@@ -1176,9 +1177,6 @@ class IntegratorGUIConfigMixin:
         self.self_consistency_convergence_mode_var.set(
             options.self_consistency_convergence_mode
         )
-        self.self_consistency_mass_shell_relaxation_var.set(
-            options.self_consistency_mass_shell_relaxation
-        )
         self.self_consistency_target_ms_tolerance_var.set(
             options.self_consistency_target_ms_tolerance
         )
@@ -1753,9 +1751,6 @@ class IntegratorGUIConfigMixin:
             self_consistency_convergence_mode=str(
                 self.self_consistency_convergence_mode_var.get()
             ),
-            self_consistency_mass_shell_relaxation=float(
-                self.self_consistency_mass_shell_relaxation_var.get()
-            ),
             self_consistency_target_ms_tolerance=float(
                 self.self_consistency_target_ms_tolerance_var.get()
             ),
@@ -1861,6 +1856,16 @@ class IntegratorGUIConfigMixin:
                 str(self.source_history_representation_var.get())
                 if hasattr(self, "source_history_representation_var")
                 else self.options.source_history_representation
+            ),
+            allow_incomplete_startup_history=getattr(
+                getattr(self, "options", None),
+                "allow_incomplete_startup_history",
+                False,
+            ),
+            startup_history_tolerance=getattr(
+                getattr(self, "options", None),
+                "startup_history_tolerance",
+                DEFAULT_STARTUP_HISTORY_TOLERANCE,
             ),
             radiation_reaction_mode=(
                 str(self.radiation_reaction_mode_var.get())

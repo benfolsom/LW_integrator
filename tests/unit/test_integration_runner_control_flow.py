@@ -8,7 +8,6 @@ import pytest
 import core.integration_runner as integration_runner
 from core.equations import GammaBlowupError
 from core.external_fields import ExternalFieldConfig, evaluate_external_field_si
-from core.pseudo_grid import PseudoGridStepSchedule
 from core.integration_runner import (
     AdaptiveTimestepConfig,
     EnergyJumpDetected,
@@ -17,6 +16,8 @@ from core.integration_runner import (
     retarded_integrator,
     run_integrator,
 )
+from core.particle_status import mark_particle_dead, propagate_dead_particle_status
+from core.pseudo_grid import PseudoGridStepSchedule
 from core.types import (
     CavityExitConfig,
     DriverTrainConfig,
@@ -394,6 +395,8 @@ def test_adaptive_b2b_step_passes_full_driver_soa_history(
     monkeypatch.setattr(integration_runner, "self_consistent_step", fake_step)
 
     retarded_integrator(
+        # Control-flow test with a close, short COLD_START; the interaction history is not asserted.
+        allow_incomplete_startup_history=True,
         steps=3,
         h_step=1e-3,
         wall_z=0.0,
@@ -487,6 +490,8 @@ def test_retarded_integrator_records_pseudo_grid_schedule_metadata_without_chang
     monkeypatch.setattr(integration_runner, "self_consistent_step", fake_step)
 
     base_rider, base_driver, *_base_soa = retarded_integrator(
+        # Control-flow test with a close, short COLD_START; the interaction history is not asserted.
+        allow_incomplete_startup_history=True,
         steps=2,
         h_step=0.5,
         wall_z=0.0,
@@ -500,6 +505,8 @@ def test_retarded_integrator_records_pseudo_grid_schedule_metadata_without_chang
         use_numba=False,
     )
     pseudo_rider, pseudo_driver, pseudo_rider_soa, *_pseudo_soa = retarded_integrator(
+        # Control-flow test with a close, short COLD_START; the interaction history is not asserted.
+        allow_incomplete_startup_history=True,
         steps=2,
         h_step=0.5,
         wall_z=0.0,
@@ -586,6 +593,8 @@ def test_retarded_integrator_uses_active_only_histories_and_effective_source_cha
     monkeypatch.setattr(integration_runner, "self_consistent_step", fake_step)
 
     pseudo_rider, pseudo_driver, *_pseudo_soa = retarded_integrator(
+        # Control-flow test with a close, short COLD_START; the interaction history is not asserted.
+        allow_incomplete_startup_history=True,
         steps=2,
         h_step=0.5,
         wall_z=0.0,
@@ -651,6 +660,8 @@ def test_retarded_integrator_uses_reduced_histories_for_pseudo_grid_when_adaptiv
     monkeypatch.setattr(integration_runner, "self_consistent_step", fake_step)
 
     pseudo_rider, *_pseudo_outputs = retarded_integrator(
+        # Control-flow test with a close, short COLD_START; the interaction history is not asserted.
+        allow_incomplete_startup_history=True,
         steps=2,
         h_step=0.5,
         wall_z=0.0,
@@ -710,6 +721,8 @@ def test_retarded_integrator_prunes_reduced_source_histories_when_causal_history
     monkeypatch.setattr(integration_runner, "self_consistent_step", fake_step)
 
     pseudo_rider, *_pseudo_outputs = retarded_integrator(
+        # Control-flow test with a close, short COLD_START; the interaction history is not asserted.
+        allow_incomplete_startup_history=True,
         steps=4,
         h_step=0.5,
         wall_z=0.0,
@@ -794,6 +807,8 @@ def test_retarded_integrator_uses_reduced_histories_and_self_excluded_space_char
     monkeypatch.setattr(integration_runner, "self_consistent_step", fake_step)
 
     pseudo_rider, pseudo_driver, *_pseudo_outputs = retarded_integrator(
+        # Control-flow test with a close, short COLD_START; the interaction history is not asserted.
+        allow_incomplete_startup_history=True,
         steps=2,
         h_step=0.5,
         wall_z=0.0,
@@ -869,6 +884,8 @@ def test_retarded_integrator_falls_back_to_full_histories_for_pseudo_grid_when_s
     monkeypatch.setattr(integration_runner, "self_consistent_step", fake_step)
 
     pseudo_rider, *_pseudo_outputs = retarded_integrator(
+        # Control-flow test with a close, short COLD_START; the interaction history is not asserted.
+        allow_incomplete_startup_history=True,
         steps=2,
         h_step=0.5,
         wall_z=0.0,
@@ -900,6 +917,8 @@ def test_retarded_integrator_matches_full_solver_for_pseudo_grid_with_space_char
         pseudo_grid: PseudoGridConfig | None,
     ) -> tuple[list[dict[str, object]], list[dict[str, object]], object, object]:
         return retarded_integrator(
+            # Control-flow test with a close, short COLD_START; the interaction history is not asserted.
+            allow_incomplete_startup_history=True,
             steps=3,
             h_step=1.0e-3,
             wall_z=0.0,
@@ -973,6 +992,8 @@ def test_retarded_integrator_matches_full_solver_when_pseudo_grid_prunes_causall
         pseudo_grid: PseudoGridConfig | None,
     ) -> tuple[list[dict[str, object]], list[dict[str, object]], object, object]:
         return retarded_integrator(
+            # Control-flow test with a close, short COLD_START; the interaction history is not asserted.
+            allow_incomplete_startup_history=True,
             steps=4,
             h_step=0.5,
             wall_z=0.0,
@@ -1029,6 +1050,8 @@ def test_retarded_integrator_pseudo_grid_active_subset_tracks_full_solver_for_as
 
     def run_case(pseudo_grid: PseudoGridConfig | None):
         return retarded_integrator(
+            # Control-flow test with a close, short COLD_START; the interaction history is not asserted.
+            allow_incomplete_startup_history=True,
             steps=5,
             h_step=1.0e-4,
             wall_z=0.0,
@@ -1089,6 +1112,8 @@ def test_retarded_integrator_pseudo_grid_active_subset_tracks_full_solver_with_a
 
     def run_case(pseudo_grid: PseudoGridConfig | None):
         return retarded_integrator(
+            # Control-flow test with a close, short COLD_START; the interaction history is not asserted.
+            allow_incomplete_startup_history=True,
             steps=5,
             h_step=1.0e-4,
             wall_z=0.0,
@@ -1152,6 +1177,8 @@ def test_retarded_integrator_pseudo_grid_active_subset_tracks_full_solver_with_s
 
     def run_case(pseudo_grid: PseudoGridConfig | None):
         return retarded_integrator(
+            # Control-flow test with a close, short COLD_START; the interaction history is not asserted.
+            allow_incomplete_startup_history=True,
             steps=5,
             h_step=1.0e-4,
             wall_z=0.0,
@@ -1261,10 +1288,27 @@ def test_retarded_integrator_energy_monitor_raises_on_large_jump(
         )
 
 
+@pytest.mark.parametrize(
+    "particle_count, previous_deaths, first_deaths, retry_deaths",
+    [
+        pytest.param(1, [], [], [], id="original"),
+        pytest.param(10, [2, 7], [1, 4, 5, 6, 8, 9], [], id="multiple_losses"),
+        pytest.param(5, [], [1, 2, 3], [4], id="additional_retry_loss"),
+    ],
+)
 def test_retarded_integrator_adaptive_retry_uses_reduced_timestep(
     monkeypatch: pytest.MonkeyPatch,
+    particle_count: int,
+    previous_deaths: list[int],
+    first_deaths: list[int],
+    retry_deaths: list[int],
 ) -> None:
     h_calls: list[tuple[int | None, float]] = []
+    retry_alive: list[list[int]] = []
+    rider = _make_bunch_state(x=list(range(particle_count)), z=-1.0)
+    for idx in previous_deaths:
+        mark_particle_dead(rider, idx, step=0, reason="previous_loss")
+    initial_rider = _clone_state(rider)
 
     def fake_step(
         step_function: object,
@@ -1283,7 +1327,9 @@ def test_retarded_integrator_adaptive_retry_uses_reduced_timestep(
     ) -> dict[str, object]:
         h_calls.append((step_idx, h_step))
         state = _clone_state(trajectory[-1])
-        state["t"] = np.array([float(trajectory[-1]["t"][0]) + h_step], dtype=float)
+        state["t"] = np.full(
+            particle_count, float(trajectory[-1]["t"][0]) + h_step, dtype=float
+        )
 
         if step_idx == 1:
             gamma = 10.0
@@ -1292,8 +1338,24 @@ def test_retarded_integrator_adaptive_retry_uses_reduced_timestep(
         else:
             gamma = 10.5
 
-        state["gamma"] = np.array([gamma], dtype=float)
-        state["Pt"] = np.array([gamma * integration_runner.C_MMNS], dtype=float)
+        state["gamma"] = np.full(particle_count, gamma, dtype=float)
+        state["Pt"] = np.full(
+            particle_count, gamma * integration_runner.C_MMNS, dtype=float
+        )
+        if step_idx == 2:
+            # Supply failures at the force-step boundary; the real runner must
+            # carry them across a rejected energy-jump attempt.
+            if h_step >= 1.0:
+                for idx in first_deaths:
+                    mark_particle_dead(state, idx, step=2, reason="gamma_blowup_hard")
+            else:
+                dead = state.get("_dead_particles", np.zeros(particle_count, bool))
+                retry_alive.append(np.flatnonzero(~dead).tolist())
+                assert all(dead[idx] for idx in previous_deaths + first_deaths)
+                for idx in retry_deaths:
+                    if not dead[idx]:
+                        mark_particle_dead(state, idx, step=2, reason="retry_loss")
+        propagate_dead_particle_status(state, state)
         return state
 
     monkeypatch.setattr(integration_runner, "self_consistent_step", fake_step)
@@ -1309,7 +1371,7 @@ def test_retarded_integrator_adaptive_retry_uses_reduced_timestep(
         wall_z=100.0,
         aperture_radius=1.0,
         sim_type=SimulationType.CONDUCTING_WALL,
-        init_rider=_make_particle_state(z=-1.0, gamma=1.0),
+        init_rider=rider,
         init_driver=None,
         mean=0.0,
         cav_spacing=0.0,
@@ -1330,12 +1392,64 @@ def test_retarded_integrator_adaptive_retry_uses_reduced_timestep(
     assert trajectory[-1]["t"][0] == pytest.approx(2.0)
     assert trajectory[-1]["gamma"][0] == pytest.approx(10.5)
 
+    if previous_deaths or first_deaths or retry_deaths:
+        losses = previous_deaths + first_deaths + retry_deaths
+        expected_dead = np.isin(np.arange(particle_count), losses)
+        final = trajectory[-1]
+        np.testing.assert_array_equal(final["_dead_particles"], expected_dead)
+        assert np.count_nonzero(final["_dead_particles"]) == len(losses)
+        assert set(final["_particle_failure_info"]) == set(losses)
+        assert retry_alive[0] == [
+            idx
+            for idx in range(particle_count)
+            if idx not in previous_deaths + first_deaths
+        ]
+        for idx in losses:
+            assert final["q"][idx] == 0.0
+            assert final["_particle_failure_info"][idx]["step"] == (
+                0 if idx in previous_deaths else 2
+            )
+            assert final["_particle_failure_info"][idx]["reason"] == (
+                "previous_loss"
+                if idx in previous_deaths
+                else "retry_loss" if idx in retry_deaths else "gamma_blowup_hard"
+            )
+        for key, value in initial_rider.items():
+            if isinstance(value, np.ndarray):
+                np.testing.assert_array_equal(rider[key], value)
+        assert rider.get("_particle_failure_info", {}) == initial_rider.get(
+            "_particle_failure_info", {}
+        )
+        assert trajectory[0]["x"] is not trajectory[-1]["x"]
+        trajectory[-1]["x"][0] = 999.0
+        assert trajectory[0]["x"][0] == 0.0
 
-def test_retarded_integrator_accepts_energy_jump_after_max_refinement_attempts(
+
+@pytest.mark.parametrize(
+    "min_factor, gamma_values, expected_message",
+    [
+        pytest.param(
+            0.5,
+            [1.0, 2.0, 2.0, 2.0],
+            "Max refinement attempts (1) reached",
+            id="max_refinement",
+        ),
+        pytest.param(
+            0.9,
+            [1.0, 2.0],
+            "Minimum timestep reached. Accepting remaining substeps",
+            id="minimum_timestep",
+        ),
+    ],
+)
+def test_retarded_integrator_accepts_energy_jump_at_refinement_limit(
     monkeypatch: pytest.MonkeyPatch,
+    min_factor: float,
+    gamma_values: list[float],
+    expected_message: str,
 ) -> None:
     messages: list[str] = []
-    gammas = iter([1.0, 2.0, 2.0, 2.0])
+    gammas = iter(gamma_values)
 
     def fake_step(
         step_function: object,
@@ -1382,7 +1496,7 @@ def test_retarded_integrator_accepts_energy_jump_after_max_refinement_attempts(
             debug=True,
             energy_jump_threshold=0.5,
             timestep_reduction_factor=2,
-            min_timestep_factor=0.5,
+            min_timestep_factor=min_factor,
             proximity_refinement_enabled=False,
         ),
         logger=messages.append,
@@ -1392,74 +1506,7 @@ def test_retarded_integrator_accepts_energy_jump_after_max_refinement_attempts(
     assert len(trajectory) == 3
     assert len(driver) == 3
     assert trajectory[-1]["gamma"][0] == pytest.approx(2.0)
-    assert any("Max refinement attempts (1) reached" in message for message in messages)
-
-
-def test_retarded_integrator_accepts_energy_jump_at_minimum_timestep(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    messages: list[str] = []
-    gammas = iter([1.0, 2.0])
-
-    def fake_step(
-        step_function: object,
-        h_step: float,
-        trajectory: list[dict[str, object]],
-        trajectory_ext: list[dict[str, object]],
-        index_traj: int,
-        aperture_radius: float,
-        sim_type: object,
-        config: object,
-        chrono_mode: object,
-        startup_mode: object,
-        step_idx: int | None = None,
-        cancel_callback: object = None,
-        **_kwargs: object,
-    ) -> dict[str, object]:
-        gamma = next(gammas)
-        state = _clone_state(trajectory[-1])
-        state["t"] = np.array([float(trajectory[-1]["t"][0]) + h_step], dtype=float)
-        state["gamma"] = np.array([gamma], dtype=float)
-        state["Pt"] = np.array([gamma * integration_runner.C_MMNS], dtype=float)
-        return state
-
-    monkeypatch.setattr(integration_runner, "self_consistent_step", fake_step)
-    monkeypatch.setattr(
-        integration_runner,
-        "generate_conducting_image",
-        lambda state, *args, **kwargs: _clone_state(state),
-    )
-
-    trajectory, driver, *_soa_out = retarded_integrator(
-        steps=3,
-        h_step=1.0,
-        wall_z=100.0,
-        aperture_radius=1.0,
-        sim_type=SimulationType.CONDUCTING_WALL,
-        init_rider=_make_particle_state(z=-1.0, gamma=1.0),
-        init_driver=None,
-        mean=0.0,
-        cav_spacing=0.0,
-        z_cutoff=0.0,
-        adaptive_timestep=AdaptiveTimestepConfig(
-            enabled=True,
-            debug=True,
-            energy_jump_threshold=0.5,
-            timestep_reduction_factor=2,
-            min_timestep_factor=0.9,
-            proximity_refinement_enabled=False,
-        ),
-        logger=messages.append,
-        use_numba=False,
-    )
-
-    assert len(trajectory) == 3
-    assert len(driver) == 3
-    assert trajectory[-1]["gamma"][0] == pytest.approx(2.0)
-    assert any(
-        "Minimum timestep reached. Accepting remaining substeps" in message
-        for message in messages
-    )
+    assert any(expected_message in message for message in messages)
 
 
 def test_retarded_integrator_gamma_blowup_without_adaptive_marks_particle_dead(
@@ -1733,13 +1780,23 @@ def test_retarded_integrator_gamma_blowup_hits_max_retries(
     )
 
 
-def test_retarded_integrator_returns_to_normal_timestep_after_stable_probe(
+@pytest.mark.parametrize(
+    "gamma_values, cooldown_steps, stable",
+    [
+        pytest.param([1.0, 2.0, 1.05, 1.05, 1.05], 0, True, id="stable"),
+        pytest.param([1.0, 2.0, 1.3, 1.3, 1.45, 1.45], 1, False, id="unstable"),
+    ],
+)
+def test_retarded_integrator_probe_controls_cooldown(
     monkeypatch: pytest.MonkeyPatch,
+    gamma_values: list[float],
+    cooldown_steps: int,
+    stable: bool,
 ) -> None:
     h_calls: list[tuple[int | None, float]] = []
     messages: list[str] = []
 
-    gammas = iter([1.0, 2.0, 1.05, 1.05, 1.05])
+    gammas = iter(gamma_values)
 
     def fake_step(
         step_function: object,
@@ -1787,7 +1844,7 @@ def test_retarded_integrator_returns_to_normal_timestep_after_stable_probe(
             debug=True,
             energy_jump_threshold=0.5,
             probe_threshold=0.1,
-            cooldown_steps=0,
+            cooldown_steps=cooldown_steps,
             max_probe_steps=1,
             timestep_reduction_factor=2,
             min_timestep_factor=0.1,
@@ -1799,87 +1856,21 @@ def test_retarded_integrator_returns_to_normal_timestep_after_stable_probe(
 
     assert len(trajectory) == 4
     assert len(driver) == 4
-    assert h_calls == [
-        (1, 1.0),
-        (2, 1.0),
-        (2, 0.5),
-        (2, 0.5),
-        (3, 1.0),
-    ]
-    assert any("Stable (" in message for message in messages)
-    assert any("Returning to normal timestep" in message for message in messages)
-
-
-def test_retarded_integrator_unstable_probe_restarts_cooldown(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    h_calls: list[tuple[int | None, float]] = []
-    messages: list[str] = []
-
-    gammas = iter([1.0, 2.0, 1.3, 1.3, 1.45, 1.45])
-
-    def fake_step(
-        step_function: object,
-        h_step: float,
-        trajectory: list[dict[str, object]],
-        trajectory_ext: list[dict[str, object]],
-        index_traj: int,
-        aperture_radius: float,
-        sim_type: object,
-        config: object,
-        chrono_mode: object,
-        startup_mode: object,
-        step_idx: int | None = None,
-        cancel_callback: object = None,
-        **_kwargs: object,
-    ) -> dict[str, object]:
-        h_calls.append((step_idx, h_step))
-        gamma = next(gammas)
-        state = _clone_state(trajectory[-1])
-        state["t"] = np.array([float(trajectory[-1]["t"][0]) + h_step], dtype=float)
-        state["gamma"] = np.array([gamma], dtype=float)
-        state["Pt"] = np.array([gamma * integration_runner.C_MMNS], dtype=float)
-        return state
-
-    monkeypatch.setattr(integration_runner, "self_consistent_step", fake_step)
-    monkeypatch.setattr(
-        integration_runner,
-        "generate_conducting_image",
-        lambda state, *args, **kwargs: _clone_state(state),
-    )
-
-    trajectory, driver, *_soa_out = retarded_integrator(
-        steps=4,
-        h_step=1.0,
-        wall_z=100.0,
-        aperture_radius=1.0,
-        sim_type=SimulationType.CONDUCTING_WALL,
-        init_rider=_make_particle_state(z=-1.0, gamma=1.0),
-        init_driver=None,
-        mean=0.0,
-        cav_spacing=0.0,
-        z_cutoff=0.0,
-        adaptive_timestep=AdaptiveTimestepConfig(
-            enabled=True,
-            debug=True,
-            energy_jump_threshold=0.5,
-            probe_threshold=0.1,
-            cooldown_steps=1,
-            max_probe_steps=1,
-            timestep_reduction_factor=2,
-            min_timestep_factor=0.1,
-            proximity_refinement_enabled=False,
-        ),
-        logger=messages.append,
-        use_numba=False,
-    )
-
-    assert len(trajectory) == 4
-    assert len(driver) == 4
-    step_3_calls = [h for step, h in h_calls if step == 3]
-    assert step_3_calls == [0.5, 0.5]
-    assert any("Unstable during probing" in message for message in messages)
-    assert any("Cooldown mode" in message for message in messages)
+    if stable:
+        assert h_calls == [
+            (1, 1.0),
+            (2, 1.0),
+            (2, 0.5),
+            (2, 0.5),
+            (3, 1.0),
+        ]
+        assert any("Stable (" in message for message in messages)
+        assert any("Returning to normal timestep" in message for message in messages)
+    else:
+        step_3_calls = [h for step, h in h_calls if step == 3]
+        assert step_3_calls == [0.5, 0.5]
+        assert any("Unstable during probing" in message for message in messages)
+        assert any("Cooldown mode" in message for message in messages)
 
 
 def test_retarded_integrator_marks_relative_cutoff_early_exit(
@@ -1911,6 +1902,8 @@ def test_retarded_integrator_marks_relative_cutoff_early_exit(
     monkeypatch.setattr(integration_runner, "self_consistent_step", fake_step)
 
     trajectory, driver, *_soa_out = retarded_integrator(
+        # Control-flow test with a close, short COLD_START; the interaction history is not asserted.
+        allow_incomplete_startup_history=True,
         steps=5,
         h_step=1.0,
         wall_z=0.0,
@@ -1959,6 +1952,8 @@ def test_retarded_integrator_halts_when_rider_reaches_cavity_exit(
     monkeypatch.setattr(integration_runner, "self_consistent_step", fake_step)
 
     trajectory, driver, *_soa_out = retarded_integrator(
+        # Control-flow test with a close, short COLD_START; the interaction history is not asserted.
+        allow_incomplete_startup_history=True,
         steps=5,
         h_step=1.0,
         wall_z=0.0,
@@ -1982,35 +1977,38 @@ def test_retarded_integrator_halts_when_rider_reaches_cavity_exit(
     assert "cavity_exit_reached species=rider" in trajectory[-1]["_halt_reason"]
 
 
+def _driver_exit_step(
+    step_function: object,
+    h_step: float,
+    trajectory: list[dict[str, object]],
+    trajectory_ext: list[dict[str, object]],
+    index_traj: int,
+    aperture_radius: float,
+    sim_type: object,
+    config: object,
+    chrono_mode: object,
+    startup_mode: object,
+    step_idx: int | None = None,
+    cancel_callback: object = None,
+    **_kwargs: object,
+) -> dict[str, object]:
+    source_state = _clone_state(trajectory[index_traj])
+    z_value = float(source_state["z"][0])
+    other_initial_z = float(trajectory_ext[0]["z"][0])
+    is_rider_update = other_initial_z > z_value
+    source_state["z"] = np.array([z_value + (1.0 if is_rider_update else -3.0)])
+    source_state["t"] = np.array([float(source_state["t"][0]) + h_step])
+    return source_state
+
+
 def test_retarded_integrator_halts_when_driver_reaches_cavity_exit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def fake_step(
-        step_function: object,
-        h_step: float,
-        trajectory: list[dict[str, object]],
-        trajectory_ext: list[dict[str, object]],
-        index_traj: int,
-        aperture_radius: float,
-        sim_type: object,
-        config: object,
-        chrono_mode: object,
-        startup_mode: object,
-        step_idx: int | None = None,
-        cancel_callback: object = None,
-        **_kwargs: object,
-    ) -> dict[str, object]:
-        source_state = _clone_state(trajectory[index_traj])
-        z_value = float(source_state["z"][0])
-        other_initial_z = float(trajectory_ext[0]["z"][0])
-        is_rider_update = other_initial_z > z_value
-        source_state["z"] = np.array([z_value + (1.0 if is_rider_update else -3.0)])
-        source_state["t"] = np.array([float(source_state["t"][0]) + h_step])
-        return source_state
-
-    monkeypatch.setattr(integration_runner, "self_consistent_step", fake_step)
+    monkeypatch.setattr(integration_runner, "self_consistent_step", _driver_exit_step)
 
     trajectory, driver, *_soa_out = retarded_integrator(
+        # Control-flow test with a close, short COLD_START; the interaction history is not asserted.
+        allow_incomplete_startup_history=True,
         steps=5,
         h_step=1.0,
         wall_z=0.0,
@@ -2068,6 +2066,8 @@ def test_retarded_integrator_uses_driver_train_leading_edge_for_cavity_exit(
     driver["bz"] = np.array([-0.5], dtype=float)
 
     trajectory, driver, *_soa_out = retarded_integrator(
+        # Control-flow test with a close, short COLD_START; the interaction history is not asserted.
+        allow_incomplete_startup_history=True,
         steps=5,
         h_step=1.0,
         wall_z=0.0,
@@ -2104,30 +2104,7 @@ def test_retarded_integrator_uses_driver_train_leading_edge_for_cavity_exit(
 def test_retarded_integrator_runs_residual_tail_after_driver_exit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def fake_step(
-        step_function: object,
-        h_step: float,
-        trajectory: list[dict[str, object]],
-        trajectory_ext: list[dict[str, object]],
-        index_traj: int,
-        aperture_radius: float,
-        sim_type: object,
-        config: object,
-        chrono_mode: object,
-        startup_mode: object,
-        step_idx: int | None = None,
-        cancel_callback: object = None,
-        **_kwargs: object,
-    ) -> dict[str, object]:
-        source_state = _clone_state(trajectory[index_traj])
-        z_value = float(source_state["z"][0])
-        other_initial_z = float(trajectory_ext[0]["z"][0])
-        is_rider_update = other_initial_z > z_value
-        source_state["z"] = np.array([z_value + (1.0 if is_rider_update else -3.0)])
-        source_state["t"] = np.array([float(source_state["t"][0]) + h_step])
-        return source_state
-
-    monkeypatch.setattr(integration_runner, "self_consistent_step", fake_step)
+    monkeypatch.setattr(integration_runner, "self_consistent_step", _driver_exit_step)
 
     rider = _make_particle_state(z=0.0)
     rider["bz"] = np.array([0.2], dtype=float)
@@ -2149,6 +2126,8 @@ def test_retarded_integrator_runs_residual_tail_after_driver_exit(
     )
 
     trajectory, driver_traj, *_soa_out = retarded_integrator(
+        # Control-flow test with a close, short COLD_START; the interaction history is not asserted.
+        allow_incomplete_startup_history=True,
         steps=5,
         h_step=1.0,
         wall_z=0.0,
@@ -2230,6 +2209,8 @@ def test_retarded_integrator_logs_relative_cutoff_debug_message(
     monkeypatch.setattr(integration_runner, "self_consistent_step", fake_step)
 
     trajectory, driver, *_soa_out = retarded_integrator(
+        # Control-flow test with a close, short COLD_START; the interaction history is not asserted.
+        allow_incomplete_startup_history=True,
         steps=2,
         h_step=1.0,
         wall_z=0.0,
@@ -2431,9 +2412,13 @@ def test_retarded_integrator_switching_wall_advances_cutoff_and_wall(
     assert (0.25, 0.75) in image_calls
 
 
+@pytest.mark.parametrize("bad_field", ["gamma", "x", "Py", "radiation_energy"])
+@pytest.mark.parametrize("role", ["rider", "driver"])
 def test_retarded_integrator_marks_post_step_gamma_blowup_and_reports_status(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
+    bad_field,
+    role,
 ) -> None:
     def fake_step(
         step_function: object,
@@ -2450,10 +2435,13 @@ def test_retarded_integrator_marks_post_step_gamma_blowup_and_reports_status(
         cancel_callback: object = None,
         **_kwargs: object,
     ) -> dict[str, object]:
-        state = _clone_state(trajectory[-1])
-        state["t"] = np.array([float(trajectory[-1]["t"][0]) + h_step], dtype=float)
-        state["gamma"] = np.array([1e9], dtype=float)
-        state["Pt"] = np.array([1e9 * integration_runner.C_MMNS], dtype=float)
+        state = _clone_state(trajectory[index_traj])
+        state["t"] = np.array([float(state["t"][0]) + h_step], dtype=float)
+        target = role == "rider" or state["z"][0] > 0.0
+        if target:
+            state[bad_field] = np.array([1e9 if bad_field == "gamma" else np.nan])
+            if bad_field == "gamma":
+                state["Pt"] = np.array([1e9 * integration_runner.C_MMNS], dtype=float)
         return state
 
     monkeypatch.setattr(integration_runner, "self_consistent_step", fake_step)
@@ -2463,24 +2451,39 @@ def test_retarded_integrator_marks_post_step_gamma_blowup_and_reports_status(
         lambda state, *args, **kwargs: _clone_state(state),
     )
 
-    trajectory, _, *_soa_out = retarded_integrator(
-        steps=2,
-        h_step=1.0,
-        wall_z=0.0,
-        aperture_radius=1.0,
-        sim_type=SimulationType.CONDUCTING_WALL,
-        init_rider=_make_particle_state(z=-1.0),
-        init_driver=None,
-        mean=0.0,
-        cav_spacing=0.0,
-        z_cutoff=0.0,
-        use_numba=False,
-    )
+    def run():
+        return retarded_integrator(
+            # Control-flow test with a close, short COLD_START; the interaction history is not asserted.
+            allow_incomplete_startup_history=True,
+            steps=2,
+            h_step=1.0,
+            wall_z=0.0,
+            aperture_radius=1.0,
+            sim_type=(
+                SimulationType.BUNCH_TO_BUNCH
+                if role == "driver"
+                else SimulationType.CONDUCTING_WALL
+            ),
+            init_rider=_make_particle_state(z=-1.0),
+            init_driver=_make_particle_state(z=1.0) if role == "driver" else None,
+            mean=0.0,
+            cav_spacing=0.0,
+            z_cutoff=0.0,
+            use_numba=False,
+        )
 
+    if bad_field != "gamma":
+        with pytest.raises(
+            ValueError, match=f"{role} step 1: {bad_field} must be finite"
+        ):
+            run()
+        return
+    trajectory, driver, *_soa_out = run()
     output = capsys.readouterr().out
     assert "gamma blowup detected" in output
-    assert "[STATUS] Step 1: 0/1 particles alive, 1/1 dead" in output
-    assert trajectory[-1]["_dead_particles"][0]
+    if role == "rider":
+        assert "[STATUS] Step 1: 0/1 particles alive, 1/1 dead" in output
+    assert (trajectory if role == "rider" else driver)[-1]["_dead_particles"][0]
 
 
 def test_retarded_integrator_energy_monitor_warns_and_debugs_without_halting(

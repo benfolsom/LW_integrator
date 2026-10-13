@@ -1,6 +1,13 @@
 K-cloud coupling and Medina radiation reaction
 ==============================================
 
+.. note::
+
+   Numerical results below include historical study reports whose complete
+   inputs and outputs are not distributed with this revision. See
+   :doc:`evidence_status` for the missing artifacts and tracked checks.
+   These reports are not fresh validation or universal accuracy guarantees.
+
 The correction remains opt-in and CPU-authoritative. Its configuration
 defaults and RR-off particle trajectories are unchanged.
 

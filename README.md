@@ -87,21 +87,21 @@ residual-wake acceleration with a covariant retarded-potential integrator_
 
 ## Project overview
 
-- **Physics focus.** The code integrates particle trajectories using
-  retarded-vector potentials and conjugate-momentum dynamics. The `core`
-  package is a faithful transcription of the validated reference implementation and is kept in
-  numerical lockstep by an integration test suite.
-- **Self-consistency and energy conservation.** The integrator enforces the
-  relativistic mass-shell constraint Pt² = P² + (mc)² through iterative
-  projection during each timestep. Two modes are available:
-  - **fixed_geometry (default)**: Fast iteration with fixed geometry—retarded
-    distances computed once per step. Suitable for most simulations.
-  - **variable_geometry**: Updates particle positions and recomputes retarded
-    distances each iteration for maximum accuracy when particles move
-    significantly (|Δx| ~ 0.1×R_separation). Computationally expensive but
-    accounts for geometric changes during the timestep.
-    Self-consistency is enabled by default and critical for energy conservation
-    in high-energy simulations (γ > 10⁴). Implemented December 2025.
+- **Physics focus.** The project began with a covariant retarded-potential
+  solver. `core/trajectory_integrator.py` is now a compatibility facade;
+  `core/equations.py` advances particles, and `core/integration_runner.py`
+  manages runs. Exact source histories, native PIC, and boundary solvers have
+  their own implementations and regression checks. Historical notebooks are
+  reference material, not a universal numerical-parity baseline.
+- **Self-consistency and the mass shell.** Force-updated mechanical spatial
+  momentum determines on-shell gamma and beta in every radiation mode:
+  $(E/c)^2=|\mathbf p|^2+(mc)^2$, with $\mathbf p=\mathbf P-q\mathbf A/c$.
+  Two `fixed_geometry` force trials remain the default. The stopping check
+  measures the mass shell, not successive-force convergence. `variable_geometry`
+  recomputes trial geometry and is unsupported on the exact inertial endpoint
+  route. A small mass-shell residual does not establish trajectory accuracy,
+  timestep convergence, or a closed energy ledger. See
+  [self-consistency](docs/source/self_consistency.rst).
 - **Gamma reconciliation.** The integrator computes the Lorentz factor γ in two
   ways: from conjugate momentum (γ_energy) and from velocity (γ_velocity).
   Numerical differences between these can cause energy jumps. Five reconciliation
@@ -118,11 +118,12 @@ residual-wake acceleration with a covariant retarded-potential integrator_
     parameters) and GUI (Stability → Self-Consistency → Gamma Reconciliation).
 - **Adaptive timestep and beta clamping.** The integrator includes numerical
   safety features for extreme relativistic regimes (γ > 10⁶):
-  - **Beta clamping** prevents particle velocities from reaching the speed of
-    light (β ≥ 1), ensuring the Lorentz factor remains finite even at extreme
-    energies. Velocities are automatically limited to β < 0.99999999999999999
-    (17 decimal places, near the float64 precision limit) corresponding to
-    ~34 TeV for electrons.
+  - **Beta clamping** on the legacy path uses
+    `float64(1.0) - float64(1e-16)`, approximately `0.9999999999999999`.
+    The proper-velocity-aware path uses a separate consistency check; this
+    clamp is not a universal energy ceiling. See
+    [high-gamma numerics](docs/source/high_gamma_numerics.rst) for the exact
+    history representation and the limits of its validation.
   - **Adaptive timestep refinement** detects energy jumps during integration
     and automatically retries problematic steps with smaller timesteps. This
     is configurable via `AdaptiveTimestepConfig` and particularly useful for
@@ -138,16 +139,15 @@ residual-wake acceleration with a covariant retarded-potential integrator_
   runs. Configured via `SmoothnessConfig` with presets for strict,
   balanced, and permissive validation. See `core/smoothness_analyzer.py`
   for implementation details.
-- **Macroparticle simulation.** For conducting-wall simulations, the integrator
-  supports macroparticle mode where test particle charges are scaled by a
-  configurable multiplier and image subcharge positions receive stochastic errors
-  based on transverse position and momentum spreads. Position spread applies
-  constant Gaussian errors (σ_x), while momentum spread creates cumulative
-  displacement that grows with each timestep: σ_total(step) = sqrt(σ_x² +
-  (σ_p × h × step / m)²). These errors are applied before charge attenuation
-  calculations to accurately model beam emittance effects. Configured via GUI
-  controls in the Particles tab (single runs) and optimization/sweep parameter
-  sections. Only active for CONDUCTING_WALL simulation type.
+- **Macroparticle simulation.** Representative particles keep species charge
+  $q_s$ as observer charge and species mass $m_s$ as inertia; population $N$
+  weights source charge as $Nq_s$ and diagnostics as $N$. The legacy wall-image
+  multiplier scales generated image charges, not the input observer charge.
+  Its stochastic transverse displacement uses bunch position and momentum
+  spreads before radial weighting. This is a spread prescription, not a
+  demonstrated model of emittance evolution or an exact aperture boundary
+  solution. See [image sources](docs/source/api/images.rst) and the separate
+  [persistent exact clouds](docs/source/exact_macroparticle_sources.rst).
 - **GUI and CLI entry points.** The GUI (`python -m lw_integrator.gui`) provides
   an interactive interface for single runs, parameter sweeps, and optimization,
   with real-time logging and an initial-state summary panel. For new particle
@@ -219,14 +219,24 @@ brew install python-tk@3.11  # adjust version as needed
 
 ### Python Environment
 
-1. **Create and activate a virtual environment** (Python 3.8–3.13 are supported).
+1. **Choose an existing compatible environment first.** In the synchronized
+   workspace, check `~/work/environment-specs/maxiv-dev` and its `tango-dev`
+   or `sardana-dev` profiles. Run from the checkout; do not install this project
+   as editable into a shared environment. The docs workflow selects Python 3.11,
+   and the documentation checks have also run on Python 3.12. The source uses
+   annotation syntax incompatible with Python 3.8 and 3.9; package metadata
+   alone does not establish support for those versions.
+
+   If a project-specific environment is needed, keep it and package caches
+   outside the synchronized work tree, for example:
 
    ```bash
-   python -m venv .venv
-   source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+   python3 -m venv "$HOME/.venvs/lw-integrator"
+   source "$HOME/.venvs/lw-integrator/bin/activate"
    ```
 
-2. **Install the package in editable mode** with commonly used extras.
+2. **Install into a project-specific environment** with commonly used extras.
+   Editable installation is suitable only for that isolated environment.
 
    **For general usage (simulation + GUI):**
 
@@ -253,7 +263,7 @@ brew install python-tk@3.11  # adjust version as needed
 3. **(Optional) register the kernel for Jupyter usage.**
 
    ```bash
-   python -m ipykernel install --user --name lw-integrator --display-name "LW Integrator (.venv)"
+   python -m ipykernel install --user --name lw-integrator --display-name "LW Integrator"
    ```
 
 ### Troubleshooting
@@ -295,9 +305,10 @@ The project includes a Tkinter-based GUI for single runs, parameter sweeps, and 
 python -m lw_integrator.gui
 ```
 
-> **Note:** The GUI and CLI now share the same core integration code paths
-> (`run_testbed()` / `SimulationOptions`), so results are identical regardless
-> of which interface you use.
+> **Note:** CLI testbed/sweep runs and the GUI share `run_testbed()` and
+> `SimulationOptions`. Parity checks cover matching configurations, seeds, and
+> supported routes. The native direct-integrator CLI and native PIC are separate
+> paths; PIC has no GUI parity claim.
 
 The GUI provides three operational modes:
 
@@ -343,9 +354,11 @@ The GUI provides three operational modes:
 
 **Performance Notes:**
 
-- Early stopping can reduce runtime by 40-70% when convergence occurs
-- For radiation reaction physics (stripped_ions > 10), use timestep ≤ 3e-7 ns with self-consistency enabled
-- Nelder-Mead is fastest for local optimization (~15-50 min), GA/DE are thorough but slower (~1-3 hours)
+Runtime depends on the workload, hardware, solver route, and convergence settings.
+Early stopping may reduce evaluations, but an optimizer does not determine a
+universal runtime or accurate timestep. Start with automatic step calculation
+from relative closing speed, then check route-specific timestep convergence.
+The LW runner uses proper time; native PIC uses lab time.
 
 Results are saved to `results/sweeps/YYYYMMDD_HHMMSS_configname/` with convergence history, best parameters, and optional trajectory data.
 
@@ -392,8 +405,11 @@ lw-simulate --testbed-config configs/run_configs/study_config.json \
 testbed loader and runs `run_testbed()` directly, preserving configured 3D
 particles, beamline geometry, driver trains, source smearing, cold-start and
 self-consistency settings, and trajectory output. The JSON is authoritative:
-use only `--output` or `--quiet` alongside it; direct-run CLI overrides are not
-applied. Use `--config` only for the separate native direct-integrator schema.
+ordinary direct-run arguments are not a general override layer. Supported
+exceptions include stochastic-emission enable/disable, chi and recoil thresholds,
+rate model, seed, instantaneous same-bunch clock, source-history representation,
+checkpoint controls, and exact adaptive-pair controls. `--output` and `--quiet`
+control reporting. Use `--config` only for the separate native direct-integrator schema.
 
 **Run a parameter sweep from a sweep configuration:**
 
@@ -427,17 +443,21 @@ parameters, particle bunches, and physics options. Example structure:
 Additional CLI options include:
 
 - `--chrono-mode`: Retardation sampling strategy (`averaged` or `fast`)
-- `--startup-mode`: Early-step handling (`cold-start` or `approximate-back-history`)
-- `--radiation-reaction-mode`: Single-run radiation-reaction handling (`off`, `diagnostic_only`, `power_matched_damping`, or `medina_lad`)
+- `--startup-mode`: Early-step handling (`cold-start`, `approximate-back-history`, or `inertial-prehistory`)
+- `--radiation-reaction-mode`: Single-run radiation-reaction handling (`off`, `diagnostic_only`, `power_matched_damping`, `medina_lad`, or `medina_lad_validity`)
 - `--image-weighting` / `--no-image-weighting`: Control image charge distribution
-- `--self-consistency`: Enable self-consistency iterations for ultra-relativistic particles
+- Configure `self_consistency_enabled` in JSON; there is no `--self-consistency` flag
 - `--sweep-config`: Path to a JSON sweep configuration (runs a full parameter sweep)
 - `-j/--workers`: Parallel worker-process count for sweeps (start with a modest value)
 - `--log-verbosity`: Override sweep log verbosity (`none`, `truncated`, or `full`)
 - `--sc-verbosity`: Override self-consistency verbosity (0–3)
 - `--adaptive-debug` / `--no-adaptive-debug`: Toggle adaptive timestep debug output
 
-Run `lw-simulate --help` for complete option listing.
+Run `lw-simulate --help` for complete option listing. See
+[exact startup restrictions](docs/source/exact_path.rst) and
+[Medina impulse guards](docs/source/radiation_reaction_plan.rst): `medina_lad`
+caps the reaction impulse, while `medina_lad_validity` applies a validity guard
+and retains the complete accepted impulse.
 
 Conducting-wall runs apply radial weighting to image subcharges by default for
 better agreement with the aperture geometry. Pass `--no-image-weighting` to
@@ -502,7 +522,7 @@ optimization tooling.
 
 ## Startup-mode default
 
-`COLD_START` is the default startup mode for generated configs, CLI/GUI runs, and integration-style tests. Use `APPROXIMATE_BACK_HISTORY` only for explicitly labeled diagnostics or for reproducing older examples that require approximate retarded history initialization.
+`COLD_START` is the default startup mode for generated configs, CLI/GUI runs, and integration-style tests. Exact retarded endpoint runs require `INERTIAL_PREHISTORY`; see [the exact path](docs/source/exact_path.rst). `COLD_START` is valid only where fields are negligible long enough to build history (a preflight guard rejects other runs; see [startup history](docs/source/startup_history.rst)); prefer `INERTIAL_PREHISTORY` where available. Use `APPROXIMATE_BACK_HISTORY` only for explicitly labeled diagnostics or for reproducing older examples that require approximate retarded history initialization.
 
 ## Example configurations
 
@@ -514,7 +534,7 @@ Simple example configs live under `configs/`. Load them via the GUI
 | File                                                       | Description                                                                                                                                                                                                                           |
 | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `example_b2b_counter_propagating_proton_bunches.json`      | Two counter-propagating proton-mass bunches with opposite charge signs (proton/H- in the current config; 5+5 particles, 300 M stripped ions each), cold start. Demonstrates bunch-to-bunch energy exchange at non-relativistic energies. |
-| `example_b2b_relativistic_proton_stationary_lead_ion.json` | Ultra-relativistic proton rider (Pz = 1,010,000 amu·mm/ns, γ ≈ 3369) approaching a stationary lead ion driver (1 T stripped ions, m = 207.2 amu). Uses `APPROXIMATE_BACK_HISTORY` startup for accurate retarded-field initialisation. |
+| `example_b2b_relativistic_proton_stationary_lead_ion.json` | Ultra-relativistic proton rider (Pz = 1,010,000 amu·mm/ns, γ ≈ 3369) approaching a stationary lead ion driver (1 T stripped ions, m = 207.2 amu). Uses `APPROXIMATE_BACK_HISTORY` startup as a diagnostic legacy history model. |
 
 ### Sweep examples (`configs/sweep_configs/`)
 
@@ -524,20 +544,14 @@ screen at distance $R$ from the rider, leaving the energy gained during its
 approach. Each driver macroparticle supplies the source charge $N e$, while the
 rider has observer charge $e$ and the proton mass.
 
-For the README population $N = 5\times10^7$, a 1 mm cut gives about 130 eV at
-low energy: roughly $10^{-5}$% of a 1 GeV rider. Spot averaging reduces the
-high-energy off-axis result to about $10^{-10}$% at 3 TeV. A 10 T bend cut at
-$R = 2.8$ m gives gains of roughly $10^{-11}$% to $10^{-7}$% across the map.
-The relative gain is therefore largest at low GeV energies and small cut
-distances. Hatching marks regions where the first-order model is invalid or the
-driver is not point-like at the cut.
+The figure is a historical ideal prescribed-screen illustration. Its generating
+calculation, exact-field comparison inputs, and result table are not distributed
+with this revision, so its numerical gains and comparison tolerances are not
+reproducible validation claims. A representative-observer gain is not a closed
+population-weighted energy result: field energy, radiation, screen work, and
+material losses must also be accounted for.
 
 ![Ideal-screening proton/H- energy-gain maps](docs/assets/b2b_ideal_screening_gain_maps.png)
-
-The closed-form result was checked against LW_integrator's exact retarded field:
-on axis it agrees to $3\times10^{-7}$ at 1, 100, and 3000 GeV; off axis it
-agrees to $4\times10^{-6}$ at 1 GeV and $4\times10^{-4}$ at 100 GeV. The
-high-energy off-axis corner uses the closed form.
 
 The existing sweep configs are retained as historical examples:
 **`example_b2b_linked_energy_vs_driver_distance.json`** uses 1 µm rider and

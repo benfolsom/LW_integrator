@@ -3,10 +3,11 @@ Radiation Reaction Plan
 
 .. note::
 
-   This is a development-branch planning document. It can be committed on the
-   ``development`` branch, but should not be promoted to ``main`` or release
-   documentation until the implementation and validation tasks below are
-   complete.
+   This page retains the model derivation and remaining validation plan.
+   Medina/LAD and smooth external providers are implemented. Higher-level
+   ``SimulationOptions`` and ``IntegratorConfig`` default to ``medina_lad``;
+   low-level ``retarded_integrator`` calls default to ``off``. Implementation
+   does not close the outstanding field-energy or boundary accounting.
 
 This plan tracks the remaining work needed to make radiation reaction in the
 integrator physically auditable. The current code should be treated as having
@@ -45,7 +46,9 @@ The first term is the complete derivative
 
 Dropping :math:`\gamma\,dF_{ext}/dt` is not the Medina equation and severely
 underestimates reaction during a Coulomb flyby.  The maintained implementation
-uses accepted force samples to approximate this complete derivative.  The
+uses accepted force samples on sampled-force routes. Smooth external providers
+supply analytic field derivatives for the complete force derivative; see
+:doc:`external_fields`.  The
 model is applied to mechanical momentum rather than being added directly to
 the canonical accumulator:
 
@@ -321,46 +324,29 @@ Ordered Tasks
 
    Remaining work before treating this as physics evidence:
 
-   * add timestep convergence tests for ``medina_lad`` itself,
+   * extend the magnetic-bend refinement control in
+     ``tests/unit/test_external_fields.py`` from ``diagnostic_only`` radiated
+     energy to active ``medina_lad`` trajectories, including prescribed-field,
+     retarded-source, and boundary encounters,
    * evaluate whether the mechanical-force estimator is adequate for retarded
      image/source forces or whether those contributions need a more explicit
      force-decomposition API.
 
 7. Add prescribed external-field support for controlled benchmarks. **Status:
-   complete for uniform fields.**
+   implemented for uniform fields and smooth Python providers.**
 
-   Radiation-reaction validation needs clean external accelerators that do not
-   depend on image-charge or point-source artifacts. Start with uniform fields
-   in native solver units, including the static longitudinal ``E_z`` case
-   discussed around Eq. 21 of the foundational paper. Required guardrails:
+   ``ExternalFieldConfig`` accepts uniform native fields, SI conversion helpers,
+   and simple windows, or a pure provider returning potentials, fields, and
+   analytic spacetime derivatives. The provider implements its own smooth
+   entrances and exits and cannot be combined with hard config windows.
+   ``tests/unit/test_external_fields.py`` covers provider parity and derivatives.
+   See :doc:`external_fields` for a construction example and route guards.
 
-   * provide explicit SI-to-native conversion helpers for electric fields,
-   * keep field configs compatible with the canonical SoA/Numba integrator path,
-   * support simple spatial and temporal windows, and
-   * document that the first implementation is a mechanical Lorentz-force
-     impulse, not yet a full external potential/map system.
-
-   Later extensions can add field maps, callable fields, and explicit
-   vector/scalar-potential providers for fully covariant canonical updates.
-
-   Time-dependent fields need their own model boundary. The static Eq. 21
-   longitudinal field used in the paper can be written as
-   ``E_z = partial^z A^0 - partial^0 A^z`` with the time derivative set to
-   zero. For any time-dependent extension, do not implement this as a scalar
-   field amplitude toggle alone. Add a potential-provider interface that can
-   evaluate ``A^0``, ``A^i``, and their derivatives at ``(x, y, z, t)`` so the
-   ``-partial^0 A^i`` contribution is represented explicitly and canonical
-   momentum can be recomposed from the same potentials used to compute the
-   mechanical Lorentz-force impulse.
-
-   Current implementation:
-
-   * uniform electric and magnetic fields in native solver units,
-   * SI-to-native conversion helper for electric fields,
-   * spatial and temporal field windows,
-   * canonical integrator, SoA/Numba, CLI, GUI, and config plumbing, and
-   * explicit documentation that this is not yet a full external-potential or
-     time-dependent field-map system.
+   These fields drive mechanical momentum. Provider potentials are diagnostic;
+   they do not add an external canonical gauge offset. Arbitrary providers have
+   no JSON factory, and checkpoint fingerprinting requires a serializable
+   dataclass callable. A general external canonical-potential coupling remains
+   separate work.
 
 8. Benchmark self-force candidates against controlled systems. **Status: in
    progress.**
@@ -386,7 +372,9 @@ Ordered Tasks
 
    Remaining coverage gap:
 
-   * active-mode timestep convergence for ``medina_lad``,
+   * active-mode trajectory and reaction-work timestep convergence for
+     prescribed fields, retarded sources, and boundaries; the existing
+     magnetic-bend refinement test measures ``diagnostic_only`` radiation,
    * mixed longitudinal/transverse prescribed fields, and
    * low-energy negligible-reaction and ultra-relativistic visible-reaction
      brackets with explicit acceptance thresholds.
@@ -417,8 +405,9 @@ The immediate low-risk work is now validation rather than another force model:
 
 * keep the corrected complete force derivative and native-unit mapping under
   review,
-* add active-mode timestep convergence tests for ``medina_lad`` under known
-  prescribed external forces,
+* extend the existing diagnostic-only magnetic-bend timestep control to active
+  Medina trajectory and reaction-work checks before generalizing to coupled
+  retarded sources and boundary encounters,
 * add mixed-field and low/high-energy benchmark brackets with explicit
   tolerances, and
 * refine the mechanical-force extraction API before using ``medina_lad`` as

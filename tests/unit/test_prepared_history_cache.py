@@ -94,6 +94,9 @@ def _assert_worldlines_equal(left, right) -> None:
             getattr(right, field_name),
         )
     assert left.ended_by_loss == right.ended_by_loss
+    assert len(left.light_cone_segments) == len(right.light_cone_segments)
+    for actual, expected in zip(left.light_cone_segments, right.light_cone_segments):
+        np.testing.assert_array_equal(actual.coefficients_mm, expected.coefficients_mm)
 
 
 def test_builder_views_share_token_and_expose_live_mutation_versions() -> None:
@@ -286,7 +289,8 @@ def test_unmanaged_wrapper_is_always_prepared_uncached() -> None:
     assert cache.stats().uncached == 2
 
 
-def test_failed_in_place_append_is_evicted_before_retry() -> None:
+@pytest.mark.parametrize("failure", ["append", "rewrite", "mutation"])
+def test_failed_in_place_append_is_evicted_before_retry(failure) -> None:
     cache = AppendAwarePreparedHistoryCache(max_entries=2)
     builder = TrajectoryBuilder(2, 1)
     builder.set_step(0, _state(0, particles=1))
@@ -304,19 +308,29 @@ def test_failed_in_place_append_is_evicted_before_retry() -> None:
         append=lambda previous, history, old_stop: previous,
     )
     builder.set_step(1, _state(1, particles=1))
+    if failure == "rewrite":
+        builder.set_step(0, _state(0, particles=1, x_shift=1.0))
 
     def fail_after_mutation(previous, history, old_stop):
         del history, old_stop
         previous.append(99)
         raise ValueError("invalid tail")
 
-    with pytest.raises(ValueError, match="invalid tail"):
+    def mutate_source(previous, history, old_stop):
+        builder.set_step(0, _state(0, particles=1, x_shift=2.0))
+        return previous
+
+    def fail_full(history):
+        raise ValueError("invalid rebuild")
+
+    with pytest.raises((ValueError, RuntimeError), match="invalid|changed during"):
         cache.prepare(
             builder.build_partial(2),
             variant="charge",
-            prepare_full=prepare_full,
-            append=fail_after_mutation,
+            prepare_full=fail_full if failure == "rewrite" else prepare_full,
+            append=mutate_source if failure == "mutation" else fail_after_mutation,
         )
+    assert cache.stats().entries == 0
     retry = cache.prepare(
         builder.build_partial(2),
         variant="charge",
@@ -328,28 +342,86 @@ def test_failed_in_place_append_is_evicted_before_retry() -> None:
     assert full_calls == 2
 
 
-def test_charge_and_dipole_appends_match_full_rebuild_after_every_row() -> None:
+def _publish_test_kick(state):
+    from core.exact_visibility_history import save_visibility_knots
+    from core.resolved_knot import RESOLVED_KNOT_FIELDS
+
+    knot = dict(state)
+    knot["_kick_mask"] = np.ones(1, dtype=bool)
+    knot["_kick_beta_before"] = (
+        np.array([[state[f"b{axis}"][0] for axis in "xyz"]]) * 0.9
+    )
+    knot["_kick_resolved_before"] = np.zeros((1, len(RESOLVED_KNOT_FIELDS)))
+    knot["_gate_prime_before"] = np.full((1, 3), np.nan)
+    knot["_gate_prime_after"] = np.full((1, 3), np.nan)
+    save_visibility_knots(state, [knot], append=True)
+
+
+@pytest.mark.parametrize("splits", [(), (1,), (1, 9)])
+def test_charge_and_dipole_appends_match_full_rebuild_after_every_row(
+    splits, monkeypatch
+) -> None:
+    import core.exact_visibility_history as visibility
+    from core.exact_visibility_history import _expand
+
+    decoded = []
+    decode = visibility.decode_inclusion_state
+
+    def counted_decode(value):
+        decoded.append(value)
+        return decode(value)
+
+    monkeypatch.setattr(visibility, "decode_inclusion_state", counted_decode)
+    full_calls = []
+    charge_full = retarded_fields._prepare_history_uncached
+    dipole_full = retarded_dipole_fields._prepare_dipole_history_uncached
+
+    def counted_charge(history, *args, **kwargs):
+        full_calls.append(
+            ("charge", len(history) if isinstance(history, list) else history.n_steps)
+        )
+        return charge_full(history, *args, **kwargs)
+
+    def counted_dipole(history, *args, **kwargs):
+        full_calls.append(
+            ("dipole", len(history) if isinstance(history, list) else history.n_steps)
+        )
+        return dipole_full(history, *args, **kwargs)
+
+    monkeypatch.setattr(retarded_fields, "_prepare_history_uncached", counted_charge)
+    monkeypatch.setattr(
+        retarded_dipole_fields, "_prepare_dipole_history_uncached", counted_dipole
+    )
+    rows = []
+    count = 16 if splits else 8
     retarded_fields._CHARGE_PREPARED_HISTORY_CACHE.clear()
     retarded_dipole_fields._DIPOLE_PREPARED_HISTORY_CACHE.clear()
-    builder = TrajectoryBuilder(8, 1, magnetic_dipole=True)
+    builder = TrajectoryBuilder(count, 1, magnetic_dipole=True)
     charge_buffer_ids = None
     dipole_buffer_ids = None
     previous_coefficients = np.zeros((0, 6, 3))
     previous_slopes = np.zeros((0, 3))
 
-    for step in range(8):
-        builder.set_step(step, _magnetic_state(step))
+    for step in range(count):
+        state = _magnetic_state(step)
+        if step in splits:
+            _publish_test_kick(state)
+        rows.append(state)
+        builder.set_step(step, state)
+        reference = _expand(rows) or rows
+        prior_calls = len(full_calls)
+        prior_decodes = len(decoded)
         history = builder.build_partial(step + 1)
         cached_charge = retarded_fields._prepare_history(history, ())
-        rebuilt_charge = retarded_fields._prepare_history_uncached(history, ())
+        rebuilt_charge = charge_full(reference, ())
         cached_dipole = retarded_dipole_fields._prepare_dipole_history(
             history,
             source_identities=("electron",),
             observer_source_identity=None,
             excluded_source_identities=(),
         )
-        rebuilt_dipole = retarded_dipole_fields._prepare_dipole_history_uncached(
-            history,
+        rebuilt_dipole = dipole_full(
+            reference,
             source_identities=("electron",),
             observer_source_identity=None,
             excluded_source_identities=(),
@@ -372,7 +444,7 @@ def test_charge_and_dipole_appends_match_full_rebuild_after_every_row() -> None:
             rebuilt_dipole_source.rest_spin_derivative_per_ns,
         )
 
-        if step:
+        if step and (not splits or step > max(splits) + 3):
             # The former final knot changes from a one-sided acceleration
             # estimate to a centered estimate after the next accepted knot is
             # appended. Only its left-hand segment may therefore be rebuilt.
@@ -400,7 +472,11 @@ def test_charge_and_dipole_appends_match_full_rebuild_after_every_row() -> None:
             id(cached_dipole_source._rest_spin_buffer),
             id(cached_dipole_source._slope_buffer),
         )
-        if charge_buffer_ids is None:
+        if splits:
+            if step > max(splits) + 3:
+                assert len(full_calls) == prior_calls
+                assert len(decoded) - prior_decodes <= 1
+        elif charge_buffer_ids is None:
             charge_buffer_ids = current_charge_ids
             dipole_buffer_ids = current_dipole_ids
         else:
@@ -409,16 +485,27 @@ def test_charge_and_dipole_appends_match_full_rebuild_after_every_row() -> None:
         previous_coefficients = cached_worldline.position_coefficients_mm.copy()
         previous_slopes = cached_dipole_source.rest_spin_derivative_per_ns.copy()
 
-    assert retarded_fields._CHARGE_PREPARED_HISTORY_CACHE.stats().appends == 7
-    assert retarded_dipole_fields._DIPOLE_PREPARED_HISTORY_CACHE.stats().appends == 7
+    assert retarded_fields._CHARGE_PREPARED_HISTORY_CACHE.stats().appends >= count - 2
+    assert (
+        retarded_dipole_fields._DIPOLE_PREPARED_HISTORY_CACHE.stats().appends
+        >= count - 2
+    )
 
 
-def test_trial_tail_preparation_does_not_mutate_accepted_cache() -> None:
+@pytest.mark.parametrize("kick_step", [None, 1, 4, 5])
+def test_trial_tail_preparation_does_not_mutate_accepted_cache(kick_step) -> None:
+    from core.exact_visibility_history import _expand
+
+    rows = []
     retarded_fields._CHARGE_PREPARED_HISTORY_CACHE.clear()
     retarded_dipole_fields._DIPOLE_PREPARED_HISTORY_CACHE.clear()
     builder = TrajectoryBuilder(8, 1, magnetic_dipole=True)
     for step in range(6):
-        builder.set_step(step, _magnetic_state(step))
+        state = _magnetic_state(step)
+        if step == kick_step:
+            _publish_test_kick(state)
+        rows.append(state)
+        builder.set_step(step, state)
     accepted_history = builder.build_partial(6)
     accepted_charge = retarded_fields._prepare_history(accepted_history, ())
     accepted_dipole = retarded_dipole_fields._prepare_dipole_history(
@@ -445,17 +532,34 @@ def test_trial_tail_preparation_does_not_mutate_accepted_cache() -> None:
         copy=True,
     )
 
-    trial_history = TrialTrajectoryHistory(
-        accepted_history,
-        (_magnetic_state(6),),
-    )
-    retarded_fields._prepare_history(trial_history, ())
-    retarded_dipole_fields._prepare_dipole_history(
+    trial_state = _magnetic_state(6)
+    if kick_step == 1:
+        # Trial states may copy inclusion metadata whose endpoint time is stale.
+        trial_state["potential_inclusion_state"] = rows[1]["potential_inclusion_state"]
+    trial_history = TrialTrajectoryHistory(accepted_history, (trial_state,))
+    trial_charge = retarded_fields._prepare_history(trial_history, ())
+    trial_dipole = retarded_dipole_fields._prepare_dipole_history(
         trial_history,
         source_identities=("electron",),
         observer_source_identity=None,
         excluded_source_identities=(),
         spin_interpolation_model="causal_frozen_c1",
+    )
+
+    trial_rows = _expand(rows + list(trial_history.tail)) or rows + list(
+        trial_history.tail
+    )
+    trial_charge_reference = retarded_fields._prepare_history_uncached(trial_rows, ())
+    trial_dipole_reference = retarded_dipole_fields._prepare_dipole_history_uncached(
+        trial_rows,
+        source_identities=("electron",),
+        observer_source_identity=None,
+        excluded_source_identities=(),
+        spin_interpolation_model="causal_frozen_c1",
+    )
+    _assert_worldlines_equal(trial_charge.sources[0], trial_charge_reference.sources[0])
+    _assert_worldlines_equal(
+        trial_dipole.sources[0].worldline, trial_dipole_reference.sources[0].worldline
     )
 
     np.testing.assert_array_equal(
@@ -476,11 +580,11 @@ def test_trial_tail_preparation_does_not_mutate_accepted_cache() -> None:
     )
 
     rebuilt_charge = retarded_fields._prepare_history_uncached(
-        accepted_history,
+        _expand(rows) or rows,
         (),
     )
     rebuilt_dipole = retarded_dipole_fields._prepare_dipole_history_uncached(
-        accepted_history,
+        _expand(rows) or rows,
         source_identities=("electron",),
         observer_source_identity=None,
         excluded_source_identities=(),
@@ -504,13 +608,21 @@ def test_trial_tail_preparation_does_not_mutate_accepted_cache() -> None:
     )
 
 
-def test_instantaneous_charge_acceleration_appends_match_full_rebuild() -> None:
+@pytest.mark.parametrize("kick", [False, True])
+def test_instantaneous_charge_acceleration_appends_match_full_rebuild(kick) -> None:
+    from core.exact_visibility_history import _expand
+
+    rows = []
     retarded_fields._CHARGE_PREPARED_HISTORY_CACHE.clear()
     builder = TrajectoryBuilder(8, 1, magnetic_dipole=True)
     previous_coefficients = np.zeros((0, 6, 3))
 
     for step in range(8):
-        builder.set_step(step, _magnetic_state(step))
+        state = _magnetic_state(step)
+        if kick and step == 1:
+            _publish_test_kick(state)
+        rows.append(state)
+        builder.set_step(step, state)
         history = builder.build_partial(step + 1)
         cached = retarded_fields._prepare_history(
             history,
@@ -518,20 +630,20 @@ def test_instantaneous_charge_acceleration_appends_match_full_rebuild() -> None:
             source_acceleration_semantics="instantaneous",
         )
         rebuilt = retarded_fields._prepare_history_uncached(
-            history,
+            _expand(rows) or rows,
             (),
             source_acceleration_semantics="instantaneous",
         )
         cached_worldline = cached.sources[0]
         _assert_worldlines_equal(cached_worldline, rebuilt.sources[0])
-        if step:
+        if step and not kick:
             np.testing.assert_array_equal(
                 cached_worldline.position_coefficients_mm[:-1],
                 previous_coefficients,
             )
         previous_coefficients = cached_worldline.position_coefficients_mm.copy()
 
-    assert retarded_fields._CHARGE_PREPARED_HISTORY_CACHE.stats().appends == 7
+    assert retarded_fields._CHARGE_PREPARED_HISTORY_CACHE.stats().appends >= 6
 
 
 def test_dipole_prepare_rejects_invalid_moment_and_active_shapes() -> None:

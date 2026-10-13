@@ -12,10 +12,13 @@ from __future__ import annotations
 import numpy as np
 
 from ..external_fields import AMU_KG, NATIVE_FORCE_UNIT_NEWTON
-from ..medina_radiation_reaction import compute_medina_radiation_reaction
+from ..medina_radiation_reaction import (
+    compute_medina_radiation_reaction,
+    project_high_gamma_force,
+)
 from .coupling import kinetic_change
 from .grid import Species
-from .kernels import C, COULOMB
+from .kernels import COULOMB, C
 
 NATIVE_ENERGY_J = AMU_KG * 1e12
 NATIVE_MOMENTUM_KG_M_S = AMU_KG * 1e6
@@ -51,6 +54,11 @@ class MedinaPIC:
         acceleration = (force - beta * np.sum(beta * force, axis=1)[:, None]) / (
             species.mass_kg * gamma[:, None]
         )
+        high_gamma = gamma > 1e3
+        if np.any(high_gamma):
+            acceleration[high_gamma] = project_high_gamma_force(
+                force[high_gamma], beta[high_gamma], gamma[high_gamma]
+            ) / (species.mass_kg * gamma[high_gamma, None])
         rr_force = np.zeros_like(force)
         radiated_impulse = np.zeros_like(force)
         cross_impulse = np.zeros_like(force)

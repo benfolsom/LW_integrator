@@ -39,7 +39,6 @@
   "optimization_convergence_tol": 1e-06,
   "optimization_convergence_patience": 10,
   "self_consistency_enabled": true,
-  "self_consistency_tolerance": 1e-07,
   "self_consistency_max_iterations": 10,
   "self_consistency_verbosity": 2,
   "self_consistency_chrono_interpolate": true,

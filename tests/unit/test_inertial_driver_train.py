@@ -5,14 +5,25 @@ import pytest
 
 from core.types import DriverTrainConfig
 from core.types import SpaceChargeConfig
+from tests.unit.test_exact_source_cloud import cloud_config
 from tests.unit.test_exact_visibility_gates import crossing_run
 from tests.unit.test_exact_same_bunch_fields import _merge
 from tests.unit.test_inertial_prehistory import _state
 
 
-@pytest.mark.parametrize("prehistory_steps", [0, 20])
-@pytest.mark.parametrize("particles", [1, 2])
-def test_one_bunch_train_is_bit_identical_to_single_driver(prehistory_steps, particles):
+@pytest.mark.parametrize(
+    "prehistory_steps,particles,cloud",
+    [
+        (0, 1, False),
+        (20, 1, False),
+        (0, 2, False),
+        (20, 2, False),
+        (0, 2, True),
+    ],
+)
+def test_one_bunch_train_is_bit_identical_to_single_driver(
+    prehistory_steps, particles, cloud
+):
     driver = _merge(
         *[
             _state(
@@ -26,6 +37,7 @@ def test_one_bunch_train_is_bit_identical_to_single_driver(prehistory_steps, par
     )
     options = dict(
         driver_state=driver,
+        macroparticle_smearing=cloud_config(4, 0.02) if cloud else None,
         space_charge=SpaceChargeConfig(enabled=True, retarded=True, softening_mm=0),
     )
     single = crossing_run(8, None, **options)
@@ -47,8 +59,10 @@ def test_one_bunch_train_is_bit_identical_to_single_driver(prehistory_steps, par
                     assert values.tobytes() == after[key].tobytes(), key
 
 
+@pytest.mark.parametrize("cloud", [False, True])
 def test_charged_multibunch_train_excludes_other_bunches_in_preflight_and_steps(
     monkeypatch,
+    cloud,
 ):
     import core.charge_source_interactions as interactions
     import core.integration_runner as runner
@@ -88,6 +102,7 @@ def test_charged_multibunch_train_excludes_other_bunches_in_preflight_and_steps(
     options = dict(
         rider_state=rider,
         driver_state=driver,
+        macroparticle_smearing=cloud_config(4, 0.02) if cloud else None,
         space_charge=SpaceChargeConfig(enabled=True, retarded=True, softening_mm=0),
     )
     train = crossing_run(

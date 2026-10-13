@@ -14,9 +14,14 @@ Start with :doc:`overview` and :doc:`quickstart`. For exact charge histories,
 visibility gates, and driver trains, see :doc:`exact_path`. For NumPy, MLX,
 and CuPy PIC and the opt-in K-cloud correction, see :doc:`native_pic`.
 Experimental material and conformal-wall studies use :doc:`boundary`.
-Smooth prescribed fields use :doc:`external_fields`. Stochastic emission is
-opt-in and currently rejected on the general exact inertial-prehistory path;
-see :doc:`stochastic_quantum_emission` for the supported alternatives.
+Smooth prescribed fields use :doc:`external_fields`. Stochastic emission
+and :doc:`photon_transport` are experimental, opt-in features; see
+:doc:`stochastic_quantum_emission` for the supported routes.
+
+The sampled retarded path is valid when its source history is complete, which
+a preflight guard checks, and when convergence is checked; it is about ten times
+faster than the exact path. See :doc:`startup_history` for when to use each, and
+:doc:`recent_changes` for the October audit fixes and the results they affect.
 
 Spatial mechanical momentum determines gamma and velocity. The default two
 self-consistency trials check the mass shell; they do not certify force
@@ -43,6 +48,7 @@ The maintained code includes substantial changes since that publication.
    theory
    classical_limit_bremsstrahlung
    stochastic_quantum_emission
+   photon_transport
    magnetic_dipole_moments
    radiation_reaction_plan
    radiation_flux_oracle
@@ -57,10 +63,12 @@ The maintained code includes substantial changes since that publication.
    :caption: Workflows
 
    validation
+   evidence_status
    checkpoints
    finite_spin_pair
    full_spin_particles
    exact_path
+   startup_history
    exact_macroparticle_sources
    native_pic
    boundary

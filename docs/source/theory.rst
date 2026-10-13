@@ -37,7 +37,7 @@ where :math:`\kappa = 1 - \boldsymbol{\beta} \cdot \mathbf{n}`, :math:`R` is the
 retarded source–observer separation, :math:`\boldsymbol{\beta} = \mathbf{v}/c`,
 and :math:`\gamma = (1-\beta^{2})^{-1/2}`.  Each quantity is evaluated at the
 retarded time :math:`t - R/c`.  The implementation samples these terms inside
-:func:`core.trajectory_integrator.retarded_integrator`, looping over all
+:func:`core.integration_runner.retarded_integrator`, looping over all
 available source trajectories.
 
 A key limit for the benchmark problems is the near head-on configuration where
@@ -47,11 +47,12 @@ components yields
 .. math::
    :label: eq-headon-limit
 
-   \mathbf{E}_{\parallel} \approx e\,\frac{1-\beta}{(1+\beta) R^{2}}\,\mathbf{n},
+   \mathbf{E}_{\parallel} \approx e\,\frac{1+\beta}{(1-\beta) R^{2}}\,\mathbf{n},
 
-which explains the asymptotic growth of the longitudinal field as
-:math:`\beta \rightarrow 1`.  This is the regime probed by the aperture-loss
-studies and the recoil-reduction scenarios in ``examples/validation``.
+The growth as $\beta\rightarrow1$ is at fixed retarded separation $R$.
+The inverse factor applies when the directions are opposite. A comparison at
+fixed simultaneous separation requires converting the retarded distance first;
+it does not inherit this growth statement.
 
 Covariant potentials
 --------------------
@@ -92,13 +93,11 @@ force law used inside the stepping kernel:
 
    \frac{d\mathcal{P}^{\alpha}}{d\tau} = \frac{e}{c} V_{\beta} \, \partial^{\alpha} A^{\beta}.
 
-Expanding :math:`\partial^{\alpha} A^{\beta}` in terms of
-:math:`V^{\alpha}`, :math:`R^{\alpha}`, :math:`\dot{V}^{\alpha}`, and
-:math:`\kappa` yields the component-wise form implemented in
-``core.trajectory_integrator._update_conjugate_momentum``.  The spatial
-components couple velocity, acceleration, and retarded distance, ensuring that
-head-on image-charge interactions reproduce the steep gradients reported in the
-reference study.
+The historical potential equation motivates the canonical representation.
+The current momentum update is implemented by
+:func:`core.equations.retarded_equations_of_motion`, re-exported by the facade.
+The corrected path updates mechanical momentum, reconstructs on-shell energy,
+and recomposes canonical momentum with the applicable potentials.
 
 Position updates follow directly from the Hamiltonian identity
 
@@ -108,9 +107,8 @@ Position updates follow directly from the Hamiltonian identity
    \frac{d x^{\alpha}}{d\tau} = \frac{1}{m}\left( \mathcal{P}^{\alpha} - \frac{e}{c} A^{\alpha} \right),
 
 which the solver evaluates after each momentum update to keep particle states in
-sync.  Proper-time stepping avoids runaway behaviour at high :math:`\gamma`
-while keeping the integration scheme close to the historical reference
-implementation.
+sync. Proper-time stepping alone does not exclude runaway behavior; the force
+model, history coverage, and trajectory convergence require separate checks.
 
 Intrinsic magnetic-moment response
 ----------------------------------
@@ -173,30 +171,19 @@ dipole self-recoil or charge--dipole radiation-interference recoil.  The
 equations, configuration modes, primary references, and current validation
 boundary are given in :doc:`magnetic_dipole_moments`.
 
-Relativistic position updates in coordinate time
-------------------------------------------------
+Relativistic position updates in proper time
+--------------------------------------------
 
-While the covariant formulation uses proper time :math:`d\tau`, the numerical
-implementation steps forward in coordinate time with interval :math:`h = \Delta t`.
-The spatial position update relates proper-time and coordinate-time derivatives:
+The LW runner takes $h=\Delta\tau$ in nanoseconds. For a short step,
+$\Delta t\simeq\gamma h$ and $\Delta\mathbf x\simeq h\mathbf p/m$, where
+$\mathbf p=\mathbf P-q\mathbf A/c$ is mechanical spatial momentum.
+Coordinate velocity is $\boldsymbol\beta=\mathbf p/(\gamma m c)$; dividing
+proper-time displacement by $ch$ alone would miss the factor $\gamma$.
 
-.. math::
-
-   \Delta \mathbf{x} = \mathbf{v} \, \Delta t = \frac{\mathbf{P}_{\text{kinetic}}}{\gamma m} \, h,
-
-where :math:`\mathbf{P}_{\text{kinetic}} = \mathcal{P} - (e/c)\mathbf{A}` is the
-kinetic (mechanical) momentum. The crucial :math:`1/\gamma` factor ensures that
-velocity :math:`\mathbf{v} = \mathbf{P}_{\text{kinetic}}/(\gamma m)` remains
-subluminal even as momentum grows with :math:`\gamma`.
-
-The corresponding velocity is then computed from the coordinate-time displacement:
-
-.. math::
-
-   \boldsymbol{\beta} = \frac{\mathbf{v}}{c} = \frac{\Delta \mathbf{x}}{c \, h}.
-
-Note that this formula does **not** include a :math:`\gamma` factor in the
-denominator—the time dilation is already accounted for in the position update.
+The second-order exact update uses the average of start and endpoint mechanical
+momenta in its displacement. On the corrected path, gamma and beta come from
+the same on-shell mechanical momentum. Native PIC is a separate solver that
+steps in lab time; its timestep must not be substituted for this proper step.
 
 Self-consistency iterations
 ---------------------------
@@ -245,8 +232,9 @@ reported configurations:
      =\gamma\frac{d\mathbf{F}_{\text{ext}}}{dt}
      +\frac{d\gamma}{dt}\mathbf{F}_{\text{ext}}.
 
-  This mode is opt-in and currently validated only against controlled
-  prescribed-field cases.  Longitudinal acceleration should show the expected
+  ``SimulationOptions`` and ``IntegratorConfig`` default to ``medina_lad``;
+  direct ``retarded_integrator`` calls default to ``off`` and require explicit
+  selection. Existing checks cover controlled prescribed-field cases.  Longitudinal acceleration should show the expected
   near-cancellation of the Medina terms, while transverse bending gives the
   synchrotron-style recoil mostly opposite the particle velocity.  Conducting
   boundary cases still require dedicated convergence checks before
@@ -316,11 +304,13 @@ turn-on transient.
 COLD_START gating mechanism
 ---------------------------
 
-The COLD_START startup mode suppresses retarded forces during the initial phase
-of a simulation until particles have traveled far enough from their origin for
-light from external sources to have causally reached them. This ensures physical
-causality is respected and avoids applying forces based on incomplete or
-unphysical retarded histories.
+``COLD_START`` suppresses early retarded forces until accumulated observer
+travel exceeds a geometry-dependent threshold. This maintained startup gate
+models a turn-on approximation, chiefly for the legacy source/image geometry.
+It is not a proof of a causal interacting history, and it is valid only where
+the fields are negligible for long enough to build a source history; a preflight
+check rejects other runs (:doc:`startup_history`). Prefer ``INERTIAL_PREHISTORY``. Exact source evaluation
+separately solves light cones and requires explicit history coverage.
 
 Gating threshold formula
 ~~~~~~~~~~~~~~~~~~~~~~~~
@@ -364,7 +354,7 @@ Dynamic threshold calculation
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The threshold is **recalculated every integration step** using current values of
-:math:`R` and :math:`\boldsymbol{\beta}`. This ensures causality is respected
+:math:`R` and :math:`\boldsymbol{\beta}`. This updates the startup approximation
 as geometry evolves:
 
 1. Distance :math:`R` changes as particles move and images reposition
@@ -432,9 +422,9 @@ Implementation
 
 The gating mechanism is implemented in ``core/equations.py``:
 
-- :func:`_compute_gating_threshold` computes per-source thresholds
-- :func:`_should_apply_external_forces` performs the Stage 2 check
-- Early conservative check embedded in :func:`retarded_equations_of_motion`
+- ``_compute_gating_threshold`` computes per-source thresholds
+- ``_should_apply_external_forces`` performs the Stage 2 check
+- Early conservative check embedded in :func:`core.equations.retarded_equations_of_motion`
 
 For conducting walls, the distance :math:`R` is computed to image charges (not
 the wall itself), ensuring correct handling of virtual source positions.
@@ -444,11 +434,11 @@ Bridging back to the code
 
 The mathematical relationships above surface in the codebase as follows:
 
-- :class:`core.trajectory_integrator.IntegratorConfig` captures the physical
+- :class:`core.types.IntegratorConfig` captures the physical
   parameters (:math:`\Delta\tau`, aperture radius, wall position) implied by the
   analytical terms.
-- :func:`core.trajectory_integrator.generate_conducting_image` and
-  :func:`core.trajectory_integrator.generate_switching_image` encode the
+- :func:`core.images.generate_conducting_image` and
+  :func:`core.images.generate_switching_image` encode the
   boundary conditions assumed when taking the head-on limit to model conducting
   apertures and switching walls.
 - The reference notebooks under ``examples/validation/`` document historical

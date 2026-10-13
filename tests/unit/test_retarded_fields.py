@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 import core.retarded_fields as retarded_fields
+from core import vectorized_interactions
 from core.constants import C_MMNS, ELEMENTARY_CHARGE
 from core.magnetic_dipole import (
     ELECTRIC_FIELD_NATIVE_TO_V_PER_M,
@@ -157,6 +158,18 @@ def test_prepared_analytic_history_can_declare_instantaneous_acceleration() -> N
         supplied_endpoint_derivative,
     )
 
+    # Kick metadata on a different source must not replace this source's
+    # explicitly instantaneous bdot with finite-difference reconstruction.
+    arrays.gate_prime_before = np.full((len(times_ns), 1, 3), np.nan)
+    arrays.gate_prime_after = np.full((len(times_ns), 1, 3), np.nan)
+    arrays.kick_beta_before = np.full((len(times_ns), 1, 3), np.nan)
+    bystander = retarded_fields._prepare_source_history(
+        arrays, 0, source_acceleration_semantics="instantaneous"
+    )
+    np.testing.assert_array_equal(
+        bystander.beta_prime_per_mm, supplied_endpoint_derivative
+    )
+
 
 def _reference_full_scan_knot_bracket(
     source: retarded_fields._PreparedSourceHistory,
@@ -304,7 +317,15 @@ def test_stationary_source_uses_q_native_directly_without_renormalization() -> N
     np.testing.assert_allclose(field.magnetic_field_native, 0.0, atol=0.0)
 
 
-def test_native_static_field_matches_legacy_charge_force_normalization() -> None:
+@pytest.mark.parametrize("observer_gamma", [1.0, 1e6, 1e6 + 1, 1e9])
+@pytest.mark.parametrize("compiled", [False, True])
+def test_native_static_field_matches_legacy_charge_force_normalization(
+    observer_gamma: float,
+    compiled: bool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if not compiled:
+        monkeypatch.setattr(vectorized_interactions, "NUMBA_AVAILABLE", False)
     radius_mm = 1.7
     source_charge = 1.25 * ELEMENTARY_CHARGE
     observer_charge = -0.8 * ELEMENTARY_CHARGE
@@ -328,6 +349,28 @@ def test_native_static_field_matches_legacy_charge_force_normalization() -> None
         h=h_step,
         charge_i=observer_charge,
         mass_i=1.0,
+        gamma_i=observer_gamma,
+        beta_vec=(0.0, np.sqrt(1.0 - 1.0 / observer_gamma**2), 0.0),
+        nhat_nx=np.array([1.0]),
+        nhat_ny=np.array([0.0]),
+        nhat_nz=np.array([0.0]),
+        R_separation=np.array([radius_mm]),
+        samples=samples,
+        apply_external=True,
+    )
+    expected_impulse_x = (
+        h_step * observer_gamma * observer_charge * field.electric_field_native[0]
+    )
+    assert legacy[0] == pytest.approx(expected_impulse_x, rel=3.0e-15, abs=0.0)
+
+    # A source moving transverse to the retarded line of sight has kappa=1.
+    # Its velocity field is the static field divided by source gamma squared.
+    samples.gamma[:] = observer_gamma
+    samples.by[:] = np.sqrt(1.0 - 1.0 / observer_gamma**2)
+    moving_source = compute_vectorized_contributions(
+        h=h_step,
+        charge_i=observer_charge,
+        mass_i=1.0,
         gamma_i=1.0,
         beta_vec=(0.0, 0.0, 0.0),
         nhat_nx=np.array([1.0]),
@@ -337,8 +380,11 @@ def test_native_static_field_matches_legacy_charge_force_normalization() -> None
         samples=samples,
         apply_external=True,
     )
-    expected_impulse_x = h_step * observer_charge * field.electric_field_native[0]
-    assert legacy[0] == pytest.approx(expected_impulse_x, rel=3.0e-15)
+    assert moving_source[0] == pytest.approx(
+        h_step * observer_charge * field.electric_field_native[0] / observer_gamma**2,
+        rel=3e-15,
+        abs=0.0,
+    )
 
 
 def test_uniform_motion_light_cone_root_matches_analytic_solution() -> None:

@@ -164,7 +164,7 @@ def _forced_pair_payload() -> tuple[dict, float]:
 
 
 def test_pair_checkpoint_resume_is_bit_identical_after_forced_photon_kick() -> None:
-    """Protect v9 velocity jumps, event/RNG persistence, and pair restart identity."""
+    """Protect pair velocity splits, event/RNG persistence, and restart identity."""
     payload, width = _forced_pair_payload()
     uninterrupted, _ = advance_pair(copy.deepcopy(payload), width, 2)
     after_kick, _ = advance_pair(copy.deepcopy(payload), width, 1)
@@ -178,3 +178,183 @@ def test_pair_checkpoint_resume_is_bit_identical_after_forced_photon_kick() -> N
     ]
     assert emission["particles"]["0"]["test_forced_emission_used"] is True
     assert len(uninterrupted["histories"][0]["velocity_jumps"]) == 1
+
+
+@pytest.mark.parametrize(
+    "runner", ["general_exact", "general_exact_proper", "general_exact_compiled"]
+)
+def test_general_exact_checkpoint_resume_is_bit_identical_after_photon_kick(
+    tmp_path, runner
+):
+    from dataclasses import fields
+
+    from core.integration_runner import IntegrationCancelled
+    from core.potential_inclusion import decode_inclusion_state
+    from core.retarded_fields import _prepare_history
+    from core.types import CheckpointConfig, ExternalFieldConfig
+    from tests.unit.test_exact_visibility_gates import crossing_run
+    from tests.unit.test_inertial_prehistory import _state
+
+    rider = _state(
+        position_mm=(0.1, 0, -0.5),
+        beta=(0, 0, np.sqrt(0.75)),
+        mass_amu=ELECTRON_MASS,
+        observer_charge=-ELEMENTARY_CHARGE,
+    )
+    driver = _state(
+        position_mm=(0, 0, 0.5),
+        beta=(0, 0, -0.2),
+        mass_amu=12,
+        observer_charge=ELEMENTARY_CHARGE,
+    )
+    options = dict(
+        backend=(
+            "numba_analytic_charge_response_serial"
+            if runner == "general_exact_compiled"
+            else "python"
+        ),
+        source_history_representation=(
+            "proper_velocity"
+            if runner == "general_exact_proper"
+            else "light_cone_quintic"
+        ),
+        rider_state=rider,
+        driver_state=driver,
+        duration=1e-6,
+        stochastic_emission=StochasticEmissionConfig(
+            enabled=True,
+            seed=73,
+            chi_threshold=1e-30,
+            recoil_threshold=1e-30,
+            test_force_next_emission_fraction=0.01,
+        ),
+        external_field=ExternalFieldConfig(magnetic_field_native=(0, 100, 0)),
+    )
+    baseline = crossing_run(5, None, **options)
+    cancelled = False
+
+    def progress(current, total):
+        nonlocal cancelled
+        cancelled |= current >= 3
+
+    directory = str(tmp_path / "kick-checkpoint")
+    with pytest.raises(IntegrationCancelled):
+        crossing_run(
+            5,
+            None,
+            **options,
+            checkpoint=CheckpointConfig(
+                enabled=True,
+                directory=directory,
+                interval_steps=1,
+                interval_seconds=0,
+            ),
+            progress_callback=progress,
+            cancel_callback=lambda: cancelled,
+        )
+    resumed = crossing_run(
+        5,
+        None,
+        **options,
+        checkpoint=CheckpointConfig(
+            resume_from=directory,
+            interval_steps=1,
+            interval_seconds=0,
+        ),
+    )
+    for plain, restored in zip(baseline[2:4], resumed[2:4]):
+        for descriptor in fields(type(plain)):
+            value = getattr(plain, descriptor.name)
+            if isinstance(value, np.ndarray):
+                assert (
+                    value.tobytes() == getattr(restored, descriptor.name).tobytes()
+                ), descriptor.name
+    assert (
+        baseline[0][-1]["_stochastic_emission"]
+        == resumed[0][-1]["_stochastic_emission"]
+    )
+    rows = baseline[0]
+    knots = [
+        knot
+        for row in rows
+        for knot in decode_inclusion_state(
+            str(row.get("potential_inclusion_state", [""])[0])
+        )
+        .get("exact_gate_history", {})
+        .get("knots", [])
+        if "velocity_before" in knot and knot["t"] == float(row["t"][0])
+    ]
+    assert len(knots) == 1
+    source = _prepare_history(baseline[2], ()).sources[0]
+    index = np.flatnonzero(source.time_ns == knots[0]["t"])[0]
+    np.testing.assert_allclose(
+        source.light_cone_segments[index - 1].sample(1)[1],
+        knots[0]["velocity_before"],
+        rtol=0,
+        atol=1e-15,
+    )
+    assert not np.array_equal(
+        source.light_cone_segments[index - 1].sample(1)[1],
+        source.light_cone_segments[index].sample(0)[1],
+    )
+    # Smooth background acceleration survives the split, on both branches.
+    assert np.linalg.norm(source.light_cone_segments[index - 1].sample(1)[2]) > 0
+    assert np.linalg.norm(source.light_cone_segments[index].sample(0)[2]) > 0
+
+
+@pytest.mark.parametrize("dt", [0.1, 0.05])
+@pytest.mark.parametrize(
+    "backend",
+    ["python", "numba_full_strict_serial", "numba_analytic_charge_response_serial"],
+)
+def test_coasting_kick_field_matches_ballistic_branches(dt, backend):
+    """A recoil must not create a classical pulse, including on its light cone."""
+    from core.exact_visibility_history import save_visibility_knots
+    from core.retarded_fields import (
+        ObserverEvent,
+        _extract_history,
+        evaluate_retarded_charge_field_native,
+    )
+    from tests.unit.test_inertial_prehistory import _state
+
+    incoming = np.array([0.0, 0.0, 0.8])
+    outgoing = np.array([0.0, 0.02, 0.7])
+    knot_position = np.array([0.0, 0.0, C * 0.8])
+    times = np.arange(round(2 / dt) + 1) * dt
+
+    def branch(velocity):
+        rows = []
+        for t in times:
+            state = _state(
+                position_mm=tuple(knot_position + C * (t - 1) * velocity),
+                beta=tuple(velocity),
+                source_charge=1.0,
+            )
+            state["t"][:] = t
+            rows.append(state)
+        return rows
+
+    before, after = branch(incoming), branch(outgoing)
+    index = round(1 / dt)
+    rows = copy.deepcopy(before[:index] + after[index:])
+    knot = dict(rows[index])
+    knot["_kick_mask"] = np.ones(1, dtype=bool)
+    knot["_kick_beta_before"] = incoming[None, :]
+    knot["_kick_resolved_before"] = _extract_history([before[index]]).resolved_knots[0]
+    knot["_gate_prime_before"] = np.full((1, 3), np.nan)
+    knot["_gate_prime_after"] = np.full((1, 3), np.nan)
+    save_visibility_knots(rows[index], [knot], append=True)
+    observer = np.array([30.0, 0.0, 120.0])
+    cone_time = 1.0 + np.linalg.norm(observer - knot_position) / C
+    for offset in (-0.2, -0.05, 0.0, 0.05, 0.2):
+        event = ObserverEvent(cone_time + offset, tuple(observer))
+        actual = evaluate_retarded_charge_field_native(rows, event, backend=backend)
+        expected = evaluate_retarded_charge_field_native(
+            before if offset < 0 else after, event, backend=backend
+        )
+        np.testing.assert_array_equal(
+            actual.electric_field_native, expected.electric_field_native
+        )
+        np.testing.assert_array_equal(
+            actual.magnetic_field_native, expected.magnetic_field_native
+        )

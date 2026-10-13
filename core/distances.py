@@ -2,18 +2,22 @@
 
 The helpers in this module translate particle positions into geometric
 quantities (distance, direction cosines, retarded indices) that feed the
-covariant equations of motion. They preserve the validated reference behavior
-used by the current solver so historical regression data remains comparable.
+covariant equations of motion. Sampled matching uses stored positions to
+bracket the observer's light cone; it remains a diagnostic field route.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Iterable, Optional
+from typing import Callable, Dict, Iterable, Optional, cast
 
 import numpy as np
 
 from .constants import C_MMNS, NUMERICAL_EPSILON
+from .prepared_history_cache import (
+    AppendAwarePreparedHistoryCache,
+    history_storage_snapshot,
+)
 from .types import (
     ChronoMatchingMode,
     IndexedTrajectoryArrays,
@@ -25,6 +29,9 @@ from .types import (
 DistanceResult = Dict[str, np.ndarray]
 TrajectoryArraysLike = TrajectoryArrays | IndexedTrajectoryArrays
 _MAX_VECTORIZED_CHRONO_MATCH_CELLS = 1_000_000
+_MONOTONE_TIME_CACHE: AppendAwarePreparedHistoryCache[
+    TrajectoryArraysLike, np.ndarray
+] = AppendAwarePreparedHistoryCache(max_entries=16)
 
 
 def _soa_row(traj: TrajectoryArraysLike, field_name: str, step: int) -> np.ndarray:
@@ -62,6 +69,48 @@ def _soa_time_columns(
     if isinstance(traj, IndexedTrajectoryArrays):
         return traj.time_columns(up_to_step)
     return np.asarray(traj.t)[: up_to_step + 1, :]
+
+
+def _monotone_time_columns(traj: TrajectoryArraysLike) -> np.ndarray:
+    """Certify finite, nondecreasing times once per accepted append or rewrite.
+
+    Unmanaged histories retain the scan because their mutations are untracked.
+    Only the certificate is cached; no growing time array is copied or retained.
+    """
+
+    if history_storage_snapshot(traj) is None:
+        return np.zeros(traj.n_particles, dtype=bool)
+
+    def check(history: TrajectoryArraysLike, start: int = 0) -> np.ndarray:
+        times = _soa_time_columns(history, history.n_steps - 1)[start:]
+        return cast(
+            np.ndarray,
+            np.all(np.isfinite(times), axis=0)
+            & np.all(times[1:] >= times[:-1], axis=0),
+        )
+
+    return _MONOTONE_TIME_CACHE.prepare(
+        traj,
+        variant="finite_nondecreasing_times",
+        prepare_full=check,
+        append=lambda previous, history, old_stop: (
+            previous & check(history, max(0, old_stop - 1))
+        ),
+    ).value
+
+
+def _batched_time_upper_bound(times: np.ndarray, targets: np.ndarray) -> np.ndarray:
+    """First strictly later row per certified column, or the row count."""
+    low = np.zeros(targets.size, dtype=int)
+    high = np.full(targets.size, times.shape[0], dtype=int)
+    columns = np.arange(targets.size)
+    while np.any(low < high):
+        active = low < high
+        middle = (low + high) // 2
+        later = times[np.minimum(middle, times.shape[0] - 1), columns] > targets
+        high = np.where(active & later, middle, high)
+        low = np.where(active & ~later, middle + 1, low)
+    return low
 
 
 def _soa_constant(traj: TrajectoryArraysLike, field_name: str) -> np.ndarray:
@@ -118,6 +167,148 @@ def _resolve_external_step_index(
     return min(max(int(observer_index), 0), len(trajectory_ext) - 1)
 
 
+def _sampled_light_cone_match(
+    source_event: Callable[[int], tuple[float, np.ndarray]],
+    last: int,
+    observer_time: float,
+    observer_position: np.ndarray,
+    interpolate: bool,
+) -> tuple[float, int] | None:
+    """Find the light-cone crossing on a piecewise-linear timelike history.
+
+    Return None if the available history does not bracket a crossing
+    (including cold starts), so callers retain their delay fallback. This
+    matcher does not construct prehistory or replace the exact field provider.
+    """
+
+    def residual(time: float, position: np.ndarray) -> float:
+        return C_MMNS * (observer_time - time) - np.linalg.norm(
+            observer_position - position
+        )
+
+    lo, hi = 0, last
+    t_lo, x_lo = source_event(lo)
+    t_hi, x_hi = source_event(hi)
+    first_residual, last_residual = residual(t_lo, x_lo), residual(t_hi, x_hi)
+    if first_residual < 0 or last_residual > 0:
+        return None
+    if first_residual == 0:
+        return t_lo, lo
+    if last_residual == 0:
+        return t_hi, hi
+    while hi - lo > 1:
+        mid = (lo + hi) // 2
+        time, position = source_event(mid)
+        value = residual(time, position)
+        if value == 0:
+            return time, mid
+        if value > 0:
+            lo, t_lo, x_lo = mid, time, position
+        else:
+            hi, t_hi, x_hi = mid, time, position
+    if not interpolate or t_hi <= t_lo:
+        return t_hi, hi
+    # Solve inside this one segment; interpolating the residual itself would
+    # still give the wrong emission time for transverse source motion.
+    lower, upper = t_lo, t_hi
+    for _ in range(64):
+        mid_time = lower + (upper - lower) / 2
+        if mid_time == lower or mid_time == upper:
+            break
+        weight = (mid_time - t_lo) / (t_hi - t_lo)
+        position = x_lo + weight * (x_hi - x_lo)
+        value = residual(mid_time, position)
+        if value == 0:
+            return mid_time, hi
+        if value > 0:
+            lower = mid_time
+        else:
+            upper = mid_time
+    return lower + (upper - lower) / 2, hi
+
+
+def match_cloud_child_indices(
+    traj: "TrajectoryArraysLike | Trajectory",
+    traj_ext: "TrajectoryArraysLike | Trajectory",
+    index_traj: int,
+    index_part: int,
+    parent_indices: np.ndarray,
+    offsets: np.ndarray,
+) -> np.ndarray:
+    """Give every smeared child its own light-cone index on the sampled path.
+
+    A child follows its parent's stored worldline translated by a constant lab
+    offset, as in the exact persistent clouds. Its retarded sample is the first
+    stored knot at or after the observer's light-cone crossing of that
+    translated worldline, the same rule used for point sources. Children whose
+    translated history does not bracket the crossing keep the parent's index.
+
+    ``offsets`` has shape ``(sources, subcharges, 3)``; the result has shape
+    ``(sources, subcharges)``.
+    """
+
+    offsets = np.asarray(offsets, dtype=float)
+    parents = np.asarray(parent_indices, dtype=int)
+    n_sources, count = offsets.shape[:2]
+    soa = isinstance(traj_ext, (TrajectoryArrays, IndexedTrajectoryArrays))
+    last = min(index_traj, (traj_ext.n_steps if soa else len(traj_ext)) - 1)
+    particles = np.broadcast_to(np.arange(n_sources)[:, None], (n_sources, count))
+
+    if soa:
+
+        def event(steps: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+            pos = np.stack(
+                [_soa_values_at_steps(traj_ext, a, steps, particles) for a in "xyz"],
+                axis=-1,
+            )
+            return _soa_values_at_steps(traj_ext, "t", steps, particles), pos
+
+        def observer(name: str) -> float:
+            return _soa_scalar(traj, name, index_traj, index_part)
+
+    else:
+
+        def event(steps: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+            def at(name: str) -> np.ndarray:
+                return np.array(
+                    [
+                        [traj_ext[s][name][p] for s, p in zip(srow, prow)]
+                        for srow, prow in zip(steps, particles)
+                    ],
+                    dtype=float,
+                )
+
+            return at("t"), np.stack([at(a) for a in "xyz"], axis=-1)
+
+        def observer(name: str) -> float:
+            return float(traj[index_traj][name][index_part])
+
+    obs_time = observer("t")
+    obs_pos = np.array([observer(a) for a in "xyz"])
+
+    def residual(steps: np.ndarray) -> np.ndarray:
+        time, pos = event(steps)
+        return C_MMNS * (obs_time - time) - np.linalg.norm(
+            obs_pos - pos - offsets, axis=-1
+        )
+
+    lo = np.zeros((n_sources, count), dtype=int)
+    hi = np.full((n_sources, count), last, dtype=int)
+    first = residual(lo)
+    final = residual(hi)
+    bracketed = (first >= 0) & (final <= 0)
+    while True:
+        active = bracketed & (hi - lo > 1)
+        if not np.any(active):
+            break
+        mid = (lo + hi) // 2
+        below = residual(mid) > 0
+        lo = np.where(active & below, mid, lo)
+        hi = np.where(active & ~below, mid, hi)
+    matched = np.where(first <= 0, 0, hi)
+    return np.where(bracketed, matched, parents[:, None])
+
+
 def _compute_delta_t(
     *,
     mode: ChronoMatchingMode,
@@ -136,20 +327,13 @@ def _compute_delta_t(
     from the source sample to the observer and ``β`` the source velocity at that
     sample. The factored form is used for numerical stability; the denominator
     is clamped to ``±1e-12``. This is the exact uniform-motion delay only when
-    ``β`` is parallel to ``n̂``; otherwise it is an estimate refined by the
-    history search.
+    ``β`` is parallel to ``n̂``. It supplies only a fallback when the stored
+    history does not bracket the light cone; otherwise the matcher solves
+    against the stored source positions.
 
-    ``FAST`` mode uses the validated single-sample delay by evaluating the causal delay
-    once using the instantaneous line-of-sight projection ``β·n̂``.  ``AVERAGED``
-    samples two physical extremes for the emission time: ``R / c`` (a
-    stationary source particle) and ``2R / c`` (a source moving at the speed of
-    light along ``n̂``).  The averaged projection from those two samples is used
-    to compute ``Δt`` which damps aggressive kicks for ultra-relativistic
-    particles.
-
-    Validated for:
-        - 500 GeV electrons (γ ≈ 978,474, β ≈ 0.9999999999995)
-        - 20 TeV protons (γ ≈ 21,321, β ≈ 0.999999999)
+    ``AVERAGED`` uses the mean line-of-sight velocity from history samples
+    selected at delays ``R / c`` and ``2R / c``. Neither fallback solves the
+    light-cone equation for general source motion.
     """
 
     if mode is ChronoMatchingMode.FAST:
@@ -214,11 +398,12 @@ def _locate_retarded_index_soa(
     target_time: float,
     *,
     side: str = "right",
+    monotone: bool = False,
 ) -> int:
     """SOA fast path on a pre-sliced time column.
 
-    For the short history windows used in the reduced pseudo-grid path, a tight
-    in-Python scan is faster than dispatching ``np.searchsorted`` per particle.
+    Certified finite, nondecreasing columns use binary search. Other columns
+    keep the original first-match scan, including nonmonotone histories.
     """
     bounded_index_traj = min(index_traj, len(t_col) - 1)
     if len(t_col) == 0:
@@ -228,6 +413,17 @@ def _locate_retarded_index_soa(
         return bounded_index_traj
     if target_time <= earliest_time:
         return 0
+    if monotone:
+        return min(
+            int(
+                np.searchsorted(
+                    t_col[: bounded_index_traj + 1],
+                    target_time,
+                    side="left" if side == "left" else "right",
+                )
+            ),
+            bounded_index_traj,
+        )
 
     matched_idx = bounded_index_traj
     if side == "left":
@@ -506,6 +702,7 @@ def chrono_match_indices_soa(
     # Pre-extract time columns — key SOA win: avoids per-step dict walk
     # shape [current_source_index+1, n_particles]
     t_cols = _soa_time_columns(traj_ext, current_source_index)
+    monotone_columns = _monotone_time_columns(traj_ext)
 
     if (
         mode is ChronoMatchingMode.FAST
@@ -543,11 +740,34 @@ def chrono_match_indices_soa(
         if np.any(before_earliest):
             index_traj_new[before_earliest] = 0
         if np.any(searchable_target):
-            matches = t_cols > t_ext_new[np.newaxis, :]
-            has_match = searchable_target & np.any(matches, axis=0)
-            if np.any(has_match):
-                matched_indices = np.argmax(matches, axis=0)
+            if np.all(monotone_columns):
+                matched_indices = _batched_time_upper_bound(t_cols, t_ext_new)
+                has_match = searchable_target & (matched_indices < t_cols.shape[0])
                 index_traj_new[has_match] = matched_indices[has_match]
+            else:
+                # Keep first-match semantics for nonmonotone or untracked data.
+                matches = t_cols > t_ext_new[np.newaxis, :]
+                has_match = searchable_target & np.any(matches, axis=0)
+                if np.any(has_match):
+                    matched_indices = np.argmax(matches, axis=0)
+                    index_traj_new[has_match] = matched_indices[has_match]
+        # Match the actual observer light cone, not the instantaneous delay
+        # estimate. For a timelike history its residual decreases with time.
+        residual = C_MMNS * (_soa_scalar(traj, "t", index_traj, index_part) - t_cols)
+        distance_squared = np.zeros_like(residual)
+        steps = np.arange(current_source_index + 1)[:, None]
+        particles = np.arange(n_particles)[None, :]
+        for axis in ("x", "y", "z"):
+            delta = _soa_scalar(
+                traj, axis, index_traj, index_part
+            ) - _soa_values_at_steps(traj_ext, axis, steps, particles)
+            distance_squared += delta**2
+        residual -= np.sqrt(distance_squared)
+        bracketed = (residual[0] >= 0) & (residual[-1] <= 0)
+        matches = residual <= 0
+        crossing = np.any(matches, axis=0)
+        indices = np.argmax(matches, axis=0)
+        index_traj_new[bracketed & crossing] = indices[bracketed & crossing]
         return index_traj_new
 
     for sample_index in range(n_particles):
@@ -590,20 +810,37 @@ def chrono_match_indices_soa(
         t_ext_new = (
             _soa_scalar(traj_ext, "t", current_source_index, sample_index) - delta_t
         )
+        light_cone_match = _sampled_light_cone_match(
+            lambda step, sample=sample_index: (
+                _soa_scalar(traj_ext, "t", step, sample),
+                np.array(
+                    [_soa_scalar(traj_ext, a, step, sample) for a in ("x", "y", "z")]
+                ),
+            ),
+            current_source_index,
+            _soa_scalar(traj, "t", index_traj, index_part),
+            np.array(
+                [_soa_scalar(traj, a, index_traj, index_part) for a in ("x", "y", "z")]
+            ),
+            interpolate,
+        )
 
         index_traj_new[sample_index] = current_source_index
         if interpolate:
             index_traj_next[sample_index] = current_source_index
 
         t_col = t_cols[:, sample_index]
-        if t_ext_new < 0 and float(t_col[0]) >= 0.0:
+        if light_cone_match is not None:
+            t_ext_new, matched_idx = light_cone_match
+        elif t_ext_new < 0 and float(t_col[0]) >= 0.0:
             continue
-
-        matched_idx = _locate_retarded_index_soa(
-            t_col,
-            current_source_index,
-            t_ext_new,
-        )
+        else:
+            matched_idx = _locate_retarded_index_soa(
+                t_col,
+                current_source_index,
+                t_ext_new,
+                monotone=bool(monotone_columns[sample_index]),
+            )
         index_traj_new[sample_index] = matched_idx
 
         if interpolate:
@@ -654,7 +891,11 @@ def chrono_match_indices(
     adaptive_tolerance: bool = False,
     timestep_h: Optional[float] = None,
 ) -> np.ndarray | ChronoMatchResult:
-    """Find retarded indices for a particle using chrono-matching.
+    """Find retarded indices by matching the observer's light cone to history.
+
+    A bracketed crossing uses the stored piecewise-linear source positions.
+    With interpolation off, select the first knot at or after the crossing. The
+    FAST/AVERAGED delay estimates remain fallbacks for unbracketed histories.
 
     Parameters
     ----------
@@ -762,20 +1003,32 @@ def chrono_match_indices(
             )
 
         t_ext_new = current_source_state["t"][sample_index] - delta_t
+        light_cone_match = _sampled_light_cone_match(
+            lambda step, sample=sample_index: (
+                float(trajectory_ext[step]["t"][sample]),
+                np.array([trajectory_ext[step][a][sample] for a in ("x", "y", "z")]),
+            ),
+            current_source_index,
+            float(trajectory[index_traj]["t"][index_part]),
+            np.array([trajectory[index_traj][a][index_part] for a in ("x", "y", "z")]),
+            interpolate,
+        )
 
         index_traj_new[sample_index] = current_source_index
         if interpolate:
             index_traj_next[sample_index] = current_source_index
 
-        if t_ext_new < 0 and float(trajectory_ext[0]["t"][sample_index]) >= 0.0:
+        if light_cone_match is not None:
+            t_ext_new, matched_idx = light_cone_match
+        elif t_ext_new < 0 and float(trajectory_ext[0]["t"][sample_index]) >= 0.0:
             continue
-
-        matched_idx = _locate_retarded_index(
-            trajectory_ext,
-            current_source_index,
-            sample_index,
-            t_ext_new,
-        )
+        else:
+            matched_idx = _locate_retarded_index(
+                trajectory_ext,
+                current_source_index,
+                sample_index,
+                t_ext_new,
+            )
 
         index_traj_new[sample_index] = matched_idx
 

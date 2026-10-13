@@ -4,39 +4,9 @@ import numpy as np
 import pytest
 
 import core.distances as distances
-from core.constants import NUMERICAL_EPSILON
+from core.constants import C_MMNS, NUMERICAL_EPSILON
 from core.types import ChronoMatchingMode, TrajectoryBuilder
-
-
-def _make_state(
-    *,
-    x: list[float] | None = None,
-    y: list[float] | None = None,
-    z: list[float] | None = None,
-    t: list[float] | None = None,
-    bx: list[float] | None = None,
-    by: list[float] | None = None,
-    bz: list[float] | None = None,
-    char_time: list[float] | None = None,
-) -> dict[str, np.ndarray]:
-    x_vals = [0.0] if x is None else x
-    size = len(x_vals)
-
-    def _arr(values: list[float] | None, default: float = 0.0) -> np.ndarray:
-        if values is None:
-            values = [default] * size
-        return np.array(values, dtype=float)
-
-    return {
-        "x": _arr(x),
-        "y": _arr(y),
-        "z": _arr(z),
-        "t": _arr(t),
-        "bx": _arr(bx),
-        "by": _arr(by),
-        "bz": _arr(bz),
-        "char_time": _arr(char_time, 1e-3),
-    }
+from tests.particle_states import distance_state as _make_state
 
 
 def _make_soa(trajectory: list[dict[str, np.ndarray]]):
@@ -80,6 +50,30 @@ def test_locate_retarded_index_soa_matches_strict_chrono_bracket() -> None:
     assert distances._locate_retarded_index_soa(t_col, 3, 1.5) == 2
     assert distances._locate_retarded_index_soa(t_col, 3, 2.0) == 3
     assert distances._locate_retarded_index_soa(t_col, 3, 10.0) == 3
+    for times in (t_col, np.array([-2.0, -1.0, -1.0, 0.0, 1.0])):
+        for side in ("left", "right"):
+            for target in (-3.0, -2.0, -1.0, 0.0, 1.0, 1.5, 2.0, 10.0, np.nan):
+                assert distances._locate_retarded_index_soa(
+                    times, len(times) - 1, target, side=side, monotone=True
+                ) == distances._locate_retarded_index_soa(
+                    times, len(times) - 1, target, side=side
+                )
+
+    class CountedTimes(np.ndarray):
+        cells = 0
+
+        def __getitem__(self, index):
+            value = super().__getitem__(index)
+            if isinstance(index, tuple):
+                type(self).cells += np.size(value)
+            return value
+
+    times = np.broadcast_to(np.arange(4096)[:, None], (4096, 5)).view(CountedTimes)
+    targets = np.array([-1.0, 0.0, 2.0, 4094.0, 5000.0])
+    np.testing.assert_array_equal(
+        distances._batched_time_upper_bound(times, targets), [0, 1, 3, 4095, 4096]
+    )
+    assert CountedTimes.cells <= 5 * 13
 
 
 def test_compute_retarded_distance_uses_per_particle_retarded_indices() -> None:
@@ -156,13 +150,9 @@ def test_compute_instantaneous_distance_handles_overlap_and_normalization() -> N
     assert result["nz"][1] == pytest.approx(0.0)
 
 
-def test_chrono_match_indices_returns_linear_interpolation_metadata(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    trajectory = [_make_state(t=[float(step)], x=[10.0]) for step in range(4)]
+def test_chrono_match_indices_returns_linear_interpolation_metadata() -> None:
+    trajectory = [_make_state(t=[float(step)], x=[1.5 * C_MMNS]) for step in range(4)]
     trajectory_ext = [_make_state(t=[float(step)], x=[0.0]) for step in range(4)]
-
-    monkeypatch.setattr(distances, "_compute_delta_t", lambda **_: 1.5)
 
     result = distances.chrono_match_indices(
         trajectory,
@@ -182,13 +172,9 @@ def test_chrono_match_indices_returns_linear_interpolation_metadata(
     assert result.use_cubic is False
 
 
-def test_chrono_match_indices_high_precision_returns_cubic_bracketing(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    trajectory = [_make_state(t=[float(step)], x=[10.0]) for step in range(6)]
+def test_chrono_match_indices_high_precision_returns_cubic_bracketing() -> None:
+    trajectory = [_make_state(t=[float(step)], x=[2.5 * C_MMNS]) for step in range(6)]
     trajectory_ext = [_make_state(t=[float(step)], x=[0.0]) for step in range(6)]
-
-    monkeypatch.setattr(distances, "_compute_delta_t", lambda **_: 2.5)
 
     result = distances.chrono_match_indices(
         trajectory,
@@ -209,13 +195,9 @@ def test_chrono_match_indices_high_precision_returns_cubic_bracketing(
     assert result.use_cubic is True
 
 
-def test_chrono_match_indices_adaptive_tolerance_can_suppress_interpolation(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    trajectory = [_make_state(t=[float(step)], x=[10.0]) for step in range(4)]
+def test_chrono_match_indices_adaptive_tolerance_can_suppress_interpolation() -> None:
+    trajectory = [_make_state(t=[float(step)], x=[1.5 * C_MMNS]) for step in range(4)]
     trajectory_ext = [_make_state(t=[float(step)], x=[0.0]) for step in range(4)]
-
-    monkeypatch.setattr(distances, "_compute_delta_t", lambda **_: 1.5)
 
     result = distances.chrono_match_indices(
         trajectory,
@@ -252,7 +234,12 @@ def test_chrono_match_indices_handles_pruned_source_history_shorter_than_observe
     assert result.tolist() == [0]
 
 
-def test_chrono_match_indices_soa_fast_matches_legacy_path() -> None:
+@pytest.mark.parametrize("soa_cell_limit", [0, 1_000_000])
+def test_chrono_match_indices_soa_fast_matches_legacy_path(
+    soa_cell_limit,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(distances, "_MAX_VECTORIZED_CHRONO_MATCH_CELLS", soa_cell_limit)
     trajectory = [
         _make_state(t=[float(step), float(step)], x=[500.0, 700.0]) for step in range(6)
     ]
@@ -282,10 +269,86 @@ def test_chrono_match_indices_soa_fast_matches_legacy_path() -> None:
 
     np.testing.assert_array_equal(soa, legacy)
 
+    # Independent light-cone checks, including transverse motion and unequal
+    # source/observer clocks. Refining history must remove the sampled error.
+    from scipy.optimize import brentq
 
-def test_chrono_match_indices_soa_fast_matches_legacy_with_varied_time_columns() -> (
-    None
-):
+    from core.equations import _compute_full_retarded_distance
+
+    for acceleration in (0.0, 500.0):
+        for observer_time in (0.0, 0.002):
+
+            def position(t, a=acceleration):
+                return 0.6 * C_MMNS * t + 0.5 * a * t**2
+
+            root = brentq(
+                lambda t, t_o=observer_time, x=position: (
+                    C_MMNS * (t_o - t) - np.hypot(x(t), 10.0)
+                ),
+                -0.1,
+                0.0,
+                xtol=1e-16,
+            )
+            for count in (1001, 2001):
+                times = np.linspace(-0.1, 0.0, count)
+                source = [
+                    _make_state(
+                        t=[t], x=[position(t)], bx=[0.6 + acceleration * t / C_MMNS]
+                    )
+                    for t in times
+                ]
+                observer = [_make_state(t=[observer_time], y=[10.0])] * count
+                for use_soa in (False, True):
+                    kwargs = (
+                        {
+                            "traj_soa": _make_soa(observer),
+                            "traj_ext_soa": _make_soa(source),
+                        }
+                        if use_soa
+                        else {}
+                    )
+                    geometry, indices, _ = _compute_full_retarded_distance(
+                        observer,
+                        source,
+                        count - 1,
+                        0,
+                        ChronoMatchingMode.FAST,
+                        **kwargs,
+                    )
+                    selected_time = times[indices[0]]
+                    assert 0.0 <= selected_time - root <= times[1] - times[0]
+                    residual = (
+                        C_MMNS * (observer_time - selected_time) - geometry["R"][0]
+                    )
+                    assert abs(residual) <= 1.6 * C_MMNS * (times[1] - times[0])
+                    matcher = (
+                        distances.chrono_match_indices_soa
+                        if use_soa
+                        else distances.chrono_match_indices
+                    )
+                    args = (
+                        (_make_soa(observer), _make_soa(source))
+                        if use_soa
+                        else (observer, source)
+                    )
+                    match = matcher(
+                        *args, count - 1, 0, interpolate=True, tolerance=0.0
+                    )
+                    weight = match.weights[0]
+                    i, j = match.indices[0], match.indices_next[0]
+                    emitted = weight * times[i] + (1 - weight) * times[j]
+                    x = weight * position(times[i]) + (1 - weight) * position(times[j])
+                    assert (
+                        abs(C_MMNS * (observer_time - emitted) - np.hypot(x, 10))
+                        < 1e-11
+                    )
+
+
+@pytest.mark.parametrize("cell_limit", [0, 1_000_000])
+@pytest.mark.parametrize("time_mode", ["ordinary", "negative", "ties", "rewrite"])
+def test_chrono_match_indices_soa_fast_matches_legacy_with_varied_time_columns(
+    monkeypatch, cell_limit, time_mode
+) -> None:
     n_particles = 5
     trajectory = []
     trajectory_ext = []
@@ -314,22 +377,52 @@ def test_chrono_match_indices_soa_fast_matches_legacy_with_varied_time_columns()
             )
         )
 
-    legacy = distances.chrono_match_indices(
-        trajectory,
-        trajectory_ext,
-        index_traj=7,
-        index_part=4,
-        mode=ChronoMatchingMode.FAST,
-    )
-    soa = distances.chrono_match_indices_soa(
-        _make_soa(trajectory),
-        _make_soa(trajectory_ext),
-        index_traj=7,
-        index_part=4,
-        mode=ChronoMatchingMode.FAST,
-    )
-
-    np.testing.assert_array_equal(soa, legacy)
+    if time_mode == "ordinary" and cell_limit == 1_000_000:
+        legacy = distances.chrono_match_indices(
+            trajectory,
+            trajectory_ext,
+            index_traj=7,
+            index_part=4,
+            mode=ChronoMatchingMode.FAST,
+        )
+        soa = distances.chrono_match_indices_soa(
+            _make_soa(trajectory),
+            _make_soa(trajectory_ext),
+            index_traj=7,
+            index_part=4,
+            mode=ChronoMatchingMode.FAST,
+        )
+        np.testing.assert_array_equal(soa, legacy)
+    monkeypatch.setattr(distances, "_MAX_VECTORIZED_CHRONO_MATCH_CELLS", cell_limit)
+    distances._MONOTONE_TIME_CACHE.clear()
+    builder = TrajectoryBuilder(8, n_particles)
+    observer = _make_soa(trajectory)
+    for step, state in enumerate(trajectory_ext):
+        if time_mode == "negative":
+            state["t"] -= 4.0
+        elif time_mode == "ties":
+            state["t"][:] = float(step // 2)
+        builder.set_step(step, state)
+        source = builder.build_partial(step + 1)
+        args = dict(index_traj=step, index_part=4, mode=ChronoMatchingMode.FAST)
+        cached = distances.chrono_match_indices_soa(observer, source, **args)
+        with monkeypatch.context() as patch:
+            patch.setattr(
+                distances,
+                "_monotone_time_columns",
+                lambda history: np.zeros(n_particles, dtype=bool),
+            )
+            scanned = distances.chrono_match_indices_soa(observer, source, **args)
+        np.testing.assert_array_equal(cached, scanned)
+    stats = distances._MONOTONE_TIME_CACHE.stats()
+    assert stats.misses == 1
+    assert stats.appends == 7
+    if time_mode == "rewrite":
+        changed = dict(trajectory_ext[3])
+        changed["t"] = np.full(n_particles, -100.0)
+        builder.set_step(3, changed)
+        assert not np.any(distances._monotone_time_columns(builder.build_partial(8)))
+        assert distances._MONOTONE_TIME_CACHE.stats().rebuilds == 1
 
 
 def test_chrono_match_indices_soa_averaged_matches_legacy_path() -> None:
@@ -395,3 +488,50 @@ def test_chrono_match_indices_uses_char_time_fallback_when_denominator_is_singul
     )
 
     assert result.tolist() == [3]
+
+
+def test_cloud_children_match_their_own_translated_light_cone() -> None:
+    """No existing test covers per-child matching of smeared sampled sources.
+
+    A child is its parent's history translated by a constant offset, so its
+    index must equal the ordinary matcher run on that translated history.
+    The shared-event shortcut gives the wrong index when the offset is longitudinal.
+    """
+    steps = 40
+    observer = [_make_state(t=[0.1 * s], x=[400.0], y=[2.0]) for s in range(steps)]
+    base_x = np.array([0.0, 40.0])
+
+    def history(shift: np.ndarray) -> list[dict[str, np.ndarray]]:
+        return [
+            _make_state(
+                t=[0.1 * s, 0.1 * s],
+                x=list(base_x + shift[:, 0] + 5.0 * s),
+                y=list(shift[:, 1]),
+                z=list(shift[:, 2]),
+                bx=[0.5, 0.5],
+            )
+            for s in range(steps)
+        ]
+
+    offsets = np.zeros((2, 3, 3))
+    offsets[:, 1, 0] = 20.0
+    offsets[:, 2] = (-15.0, 4.0, 3.0)
+    parent = distances.chrono_match_indices(
+        observer, history(np.zeros((2, 3))), steps - 1, 0
+    )
+    for use_soa in (False, True):
+        pick = _make_soa if use_soa else (lambda traj: traj)
+        children = distances.match_cloud_child_indices(
+            pick(observer),
+            pick(history(np.zeros((2, 3)))),
+            steps - 1,
+            0,
+            parent,
+            offsets,
+        )
+        for k in range(3):
+            expected = distances.chrono_match_indices(
+                observer, history(offsets[:, k]), steps - 1, 0
+            )
+            np.testing.assert_array_equal(children[:, k], expected)
+    assert np.any(children[:, 1] != parent) and np.any(children[:, 2] != parent)

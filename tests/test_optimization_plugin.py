@@ -344,7 +344,6 @@ class TestOptimizationPluginIntegration:
             image_subcharge_count=24,
             use_image_weighting=False,
             self_consistency_enabled=False,
-            self_consistency_tolerance=2e-4,
             adaptive_timestep_enabled=False,
             adaptive_timestep_threshold=0.25,
             radiation_reaction_mode="medina_lad",
@@ -362,7 +361,7 @@ class TestOptimizationPluginIntegration:
         kwargs = harness._gather_stability_config_kwargs(existing_config)
 
         assert kwargs["image_subcharge_count"] == 16
-        assert kwargs["self_consistency_tolerance"] == pytest.approx(5e-4)
+        assert kwargs["self_consistency_target_ms_tolerance"] == pytest.approx(5e-4)
         assert kwargs["adaptive_timestep_enabled"] is True
         assert kwargs["use_image_weighting"] is False
         assert kwargs["self_consistency_enabled"] is False

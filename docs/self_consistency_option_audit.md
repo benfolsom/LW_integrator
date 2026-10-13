@@ -1,5 +1,9 @@
 # Self-consistency and related option audit
 
+**Superseded:** the inert-control rows below were superseded by `894fb4a`;
+`mass_shell_relaxation` and `SelfConsistencyConfig.chrono_matching_mode` remain
+inert compatibility fields for direct Python callers.
+
 **Status:** audit completed, and the user-approved decisions are now
 implemented (see "Implemented changes" and "Migration / effect on saved
 configs" at the end). The option-trace, default and issue sections describe

@@ -46,7 +46,6 @@
   "image_subcharge_count": 12,
   "use_image_weighting": true,
   "self_consistency_enabled": true,
-  "self_consistency_tolerance": 0.0001,
   "self_consistency_max_iterations": 5,
   "self_consistency_verbosity": 0,
   "energy_monitor_enabled": true,

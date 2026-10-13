@@ -58,12 +58,6 @@ class OptimizationPluginConfigMixin:
                 self.gui_controller.self_consistency_mass_shell_tolerance_var.set(
                     f"{config.self_consistency_mass_shell_tolerance:.1e}"
                 )
-            if hasattr(
-                self.gui_controller, "self_consistency_mass_shell_relaxation_var"
-            ):
-                self.gui_controller.self_consistency_mass_shell_relaxation_var.set(
-                    f"{config.self_consistency_mass_shell_relaxation:.2f}"
-                )
             if hasattr(self.gui_controller, "self_consistency_verbosity_var"):
                 self.gui_controller.self_consistency_verbosity_var.set(
                     str(config.self_consistency_verbosity)
@@ -293,7 +287,7 @@ class OptimizationPluginConfigMixin:
 
             self._log_result("[INFO] Stability options loaded from main config:")
             self._log_result(
-                f"  Self-consistency: {opt_config.self_consistency_enabled} (tol={opt_config.self_consistency_tolerance:.1e})"
+                f"  Self-consistency: {opt_config.self_consistency_enabled}"
             )
             self._log_result(
                 f"  Adaptive timestep: {opt_config.adaptive_timestep_enabled} (threshold={opt_config.adaptive_timestep_threshold * 100:.0f}%)"
@@ -621,9 +615,6 @@ class OptimizationPluginConfigMixin:
             self._log_result("=" * 60)
             self._log_result("[Self-Consistency]")
             self._log_result(f"  Enabled: {self.config.self_consistency_enabled}")
-            self._log_result(
-                f"  Tolerance: {self.config.self_consistency_tolerance:.1e}"
-            )
             self._log_result(
                 f"  Max iterations: {self.config.self_consistency_max_iterations}"
             )

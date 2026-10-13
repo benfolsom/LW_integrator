@@ -382,7 +382,7 @@ as a physical transient.
 
 This is an integrated :math:`\mu^2` dissipation check for the explicit neutral
 two-shell source.  The time-dependent field-energy curve is inferred from the
-balance above; it is not yet an independent near-field integral.  The oracle
+balance above; that pulse helper alone is not an independent near-field integral.  The oracle
 therefore does **not** provide a certified time-local intrinsic-dipole
 self-torque or a translational recoil law.
 Earlier point- and accelerated-dipole calculations also find magnetic
@@ -428,8 +428,10 @@ matches the analytic field energy inside the selected observation sphere to
 :math:`10^{-12}` relative and has exactly zero flux and balance residual.
 
 This establishes the energy ledger independently for the explicit finite
-source.  A corresponding pure-:math:`\mu^2` angular-momentum ledger,
-arbitrary-axis motion, and intrinsic-particle matching remain open.
+source. This fixed-axis energy helper does not establish an arbitrary-axis
+angular-momentum ledger. The distinct-shell vector construction below addresses
+that finite-source extension; intrinsic-particle matching and accelerated-motion
+limits remain separate validation boundaries.
 
 Distinct-shell angular-momentum ledger
 --------------------------------------
@@ -676,7 +678,10 @@ self-force diagnostic,
 the magnetic torque to the same leading RFS jet.  It performs no additional
 retarded root solve or potential evaluation.  This adapter is the intended
 entry point for sparse trajectory-event reporting while both self-reaction
-sectors remain passive.
+sectors remain passive in this oracle. The separate guarded
+``experimental_linear_spin`` route applies linear-spin feedback; see
+:doc:`spin_self_force_oracle`. It does not establish a general spin-radiation
+balance or enable pure intrinsic-dipole feedback.
 
 Required convergence checks
 ---------------------------

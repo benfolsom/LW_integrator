@@ -423,8 +423,10 @@ fixed-step charge driver trains are described in :doc:`exact_path`.
   ``BUNCH_TO_BUNCH`` RFS/retarded-dipole runs. Fixed-step charge driver trains
   are supported with ``INERTIAL_PREHISTORY``; intrinsic dipole-source trains
   remain unsupported.
-* Dynamic recoil is limited to ``medina_lad``.  It is an explicitly named
-  charge-only hybrid, not a complete RFS radiation-reaction theory.  ``off``
+* Charge recoil supports ``medina_lad`` and ``medina_lad_validity``. The
+  former caps impulses; the latter screens model validity and retains the
+  complete accepted impulse. See :doc:`radiation_reaction_plan`. Both are
+  charge-only hybrids, not complete RFS radiation-reaction theories.  ``off``
   and read-only ``diagnostic_only`` also remain available; other recoil modes
   are rejected.
 * Exact same-bunch charge fields require ``INERTIAL_PREHISTORY``, retarded

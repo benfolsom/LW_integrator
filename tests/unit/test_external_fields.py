@@ -16,6 +16,7 @@ from core.external_fields import (
 )
 from core.integration_runner import retarded_integrator
 from core.types import ExternalFieldConfig, SimulationType, StartupMode
+from tests.particle_states import empty_driver_state as _empty_driver_state
 
 
 def _char_time(charge: float, mass: float) -> float:
@@ -43,32 +44,6 @@ def _single_particle_state(gamma: float = 2.0) -> dict:
         "q": np.array([-ELEMENTARY_CHARGE]),
         "m": np.array([ELECTRON_MASS_AMU]),
         "char_time": np.array([_char_time(ELEMENTARY_CHARGE, ELECTRON_MASS_AMU)]),
-    }
-
-
-def _empty_driver_state() -> dict:
-    return {
-        key: np.array([], dtype=float)
-        for key in (
-            "x",
-            "y",
-            "z",
-            "t",
-            "Px",
-            "Py",
-            "Pz",
-            "Pt",
-            "gamma",
-            "bx",
-            "by",
-            "bz",
-            "bdotx",
-            "bdoty",
-            "bdotz",
-            "q",
-            "m",
-            "char_time",
-        )
     }
 
 

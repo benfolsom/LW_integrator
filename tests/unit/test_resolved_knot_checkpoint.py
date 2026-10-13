@@ -8,10 +8,11 @@ import pytest
 
 from core.integration_checkpoint import (
     AcceptedPairCheckpointStore,
+    CheckpointError,
     IntegrationCheckpointStore,
 )
 from core.resolved_knot import RESOLVED_KNOT_FIELDS
-from core.types import TrajectoryBuilder
+from core.types import EXACT_SOURCE_REDUCTION_FIELDS, TrajectoryBuilder
 from tests.unit.test_accepted_pair_checkpoint import _state
 
 pytestmark = pytest.mark.unit
@@ -19,10 +20,15 @@ pytestmark = pytest.mark.unit
 
 @pytest.mark.parametrize("pair", [False, True])
 @pytest.mark.parametrize("legacy", [False, True])
-def test_resolved_knots_checkpoint_round_trip(tmp_path, pair, legacy):
+@pytest.mark.parametrize(
+    "damage", [None, "boundary", "nan", "inf", "mass", "primed_time"]
+)
+def test_resolved_knots_checkpoint_round_trip(tmp_path, pair, legacy, damage):
     builder = TrajectoryBuilder(3, 1)
     for step in range(3):
         state = _state(step, offset=1.0)
+        state["exact_source_cell_sigma_mm"] = np.array([0.3])
+        state["exact_source_original_count"] = np.array([12.0])
         for index, name in enumerate(RESOLVED_KNOT_FIELDS):
             state[name] = np.array([float(index + step + 1) * 1e-30])
         builder.set_step(step, state)
@@ -45,7 +51,7 @@ def test_resolved_knots_checkpoint_round_trip(tmp_path, pair, legacy):
         store_class = IntegrationCheckpointStore
         arguments = dict(
             compatibility_payload=compatibility,
-            total_steps=3,
+            total_steps=4,
             requested_steps=3,
             active_start=0,
             interval_steps=1,
@@ -66,19 +72,68 @@ def test_resolved_knots_checkpoint_round_trip(tmp_path, pair, legacy):
                 }
             np.savez(path, **arrays)
             chunk["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+        # Older checkpoints have neither resolved knots nor reduction metadata.
+        constants = manifest["constants"]
+        path = directory / constants["file"]
+        with np.load(path) as archive:
+            arrays = {
+                name: archive[name]
+                for name in archive.files
+                if name.split("__")[-1] not in EXACT_SOURCE_REDUCTION_FIELDS
+            }
+        np.savez(path, **arrays)
+        constants["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+        store.manifest_path.write_text(json.dumps(manifest))
+    if damage is not None:
+        manifest = json.loads(store.manifest_path.read_text())
+        chunk = manifest["chunks"][0]
+        if damage == "boundary":
+            chunk["stop"] = 4
+            manifest["committed_knots" if pair else "committed_internal_step"] = (
+                4 if pair else 3
+            )
+        else:
+            metadata = manifest["constants"] if damage == "mass" else chunk
+            path = directory / metadata["file"]
+            with np.load(path) as archive:
+                arrays = {name: archive[name] for name in archive.files}
+            if damage == "mass":
+                arrays["rider__m"][0] = np.nan
+            elif damage == "primed_time":
+                arrays["rider__medina_force_derivative_ready"][0, 0] = True
+            else:
+                arrays["rider__x"][1, 0] = float(damage)
+            np.savez(path, **arrays)
+            metadata["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
         store.manifest_path.write_text(json.dumps(manifest))
     reopened = store_class(directory, **arguments, resume=True)
-    restored = TrajectoryBuilder(3, 1)
+    restored = TrajectoryBuilder(4, 1)
+    if damage is not None:
+        with pytest.raises(CheckpointError, match="row count|must be finite"):
+            if pair:
+                reopened.restore_pair(restored, TrajectoryBuilder(4, 1))
+            else:
+                reopened.restore_builder(restored, "rider")
+        assert restored._published_stop == 0
+        return
     if pair:
         reopened.restore_pair(restored, TrajectoryBuilder(3, 1))
     else:
         reopened.restore_builder(restored, "rider")
-    output = restored.build()
+    output = restored.build_partial(3)
     for name in RESOLVED_KNOT_FIELDS:
         np.testing.assert_array_equal(
             getattr(output, name), 0.0 if legacy else getattr(trajectory, name)
         )
     np.testing.assert_array_equal(output.x, trajectory.x)
+    for name in EXACT_SOURCE_REDUCTION_FIELDS:
+        np.testing.assert_array_equal(
+            getattr(output, name), 0.0 if legacy else getattr(trajectory, name)
+        )
+    np.testing.assert_array_equal(
+        output.medina_external_force_sample_time,
+        trajectory.medina_external_force_sample_time,
+    )
 
 
 def test_legacy_empty_channels_work_in_indexed_history():

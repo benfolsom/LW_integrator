@@ -8,11 +8,12 @@ of the LW Integrator.  Please keep the following ground rules in mind:
   coverage and, where relevant, CLI/GUI parity checks.  Historical notebooks can
   inform investigations, but they are not the active validation baseline.
 * **Document as you go.**  Extend the relevant page under ``docs/source/`` when
-  you add or change behaviour.  The documentation is built as part of CI and
-  warnings fail the build.
+  you add or change behaviour. The tracked docs workflow builds HTML without
+  warning-as-error. The local ``bash docs/build_docs.sh`` adds ``-W`` and
+  ``--keep-going``, so warnings fail that stricter build.
 * **Prefer type hints and small helpers.**  The modern ``core/`` modules are a
-  transcription of the archived reference code; helper functions exist to keep the flow
-  readable without altering the math.
+  descendants of the historical solver, with separate exact-history, PIC,
+  and boundary implementations. Keep their numerical contracts explicit.
 * **Use the project tooling.**  Formatting, linting, and tests are orchestrated
   via ``pre-commit`` hooks and ``pytest``.  Run ``pre-commit install`` once and
   ``pre-commit run --all-files`` before sending a PR.
@@ -20,8 +21,12 @@ of the LW Integrator.  Please keep the following ground rules in mind:
 Process
 -------
 
-1. Branch from ``development``; releases are merged into ``master``.
-2. Make changes with accompanying tests and documentation.
+1. Branch from ``development``. Release history uses ``master``, while the
+   tracked docs workflow builds on ``main`` and ``development`` and deploys
+   only from ``main``. This configuration does not establish the live deployment
+   state; release maintainers must reconcile that branch mismatch before relying
+   on automatic publication.
+2. Update documentation and adapt existing tests; add tests only when strongly justified.
 3. Run the pytest, CLI, plotting, or docs checks relevant to your change.
 4. Submit a pull request summarising the physics context and validation output.
 

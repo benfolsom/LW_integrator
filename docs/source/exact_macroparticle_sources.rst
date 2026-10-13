@@ -386,6 +386,116 @@ representative deposition rewrites historical source charge, as explained in
 "Pseudo-grid consistency boundary" above. The supported source sum retains
 every macro cloud; no reduced-source performance claim is made.
 
+Fixed-step audit counterparts (2026-10-06)
+------------------------------------------
+
+Persistent transverse charge clouds also support the fixed proper-step
+charge-only exact route with ``INERTIAL_PREHISTORY``. Initial canonical
+seeding, force histories, visibility event splitting, and accepted endpoint
+potentials use the same cloud wrapper. Many observers use the existing joint
+fixed-step gate splitter. Adaptive many-observer gate clocks remain rejected;
+no joint adaptive clock or reduced pseudo-grid source implementation is added.
+Intrinsic dipole-source clouds remain rejected.
+
+The historical local audit used explicit counterparts to the
+resolved mini-synchrotron and light/heavy configurations. It preserves the
+particle realization, species, population, timestep, visibility geometry,
+and Medina/LAD mode, selects zero intrinsic moments and inertial prehistory,
+and uses the existing analytical exact charge-response backend. The light/heavy
+counterpart disables pseudo-grid and retains all 48 histories per bunch.
+It therefore does not reproduce the audit's approximate passive updates or
+rotating reduced source deposition.
+
+The mapping is explicit rather than an automatic conversion. Sampled smearing
+uses a spacing-dependent, population-dependent, clipped random cloud and may
+also displace observers. The exact model keeps representative observers at
+their centres and translates persistent Gaussian quadrature sources in each
+initial transverse plane. It ignores sampled observer and centroid displacement
+flags. Source fractions sum to the macro source charge; observer charge,
+inertia, and diagnostic population remain unchanged. The harness records the
+sampled initial spacing and requested rms widths before choosing exact widths.
+Exact widths are uncapped, and their units are millimetres per transverse axis.
+
+The mini-synchrotron counterpart uses 0.05 mm and 0.1 mm widths, with 4 and
+16 children at each width. Both original bunches have one numerical particle,
+so the sampled automatic spacing rule realizes zero width. The finite model
+is an explicit new source-size assumption, not an equivalent version of that
+point-source rule. Its common configuration applies the width to both source
+roles, including the proton source. The light/heavy counterpart uses 0.1 mm
+and 0.2 mm with the same two quadrature counts. These are model-sensitivity
+controls, not fitted widths or a recovered physical bunch microstructure.
+
+With breathing disabled, a zero realized transverse width returns the original
+source history for any child count. A one-child transverse rule likewise returns the original
+history because its only node is the centre. These limits retain point-source
+arithmetic bit for bit. A one-child nonzero-width request is a degenerate
+point representation, not a resolved finite Gaussian.
+
+Fixed-step endpoint continuation retains all existing history and subluminal
+speed checks. Gated continuation beyond the latest supplied source knot is
+still rejected because it requires additional gate events. Short-window
+acceptance cannot certify a complete encounter or a timestep-converged
+reference, and changing width is a physical-model comparison rather than
+quadrature convergence. The current reduced-source and train harness is ``scripts/check_sources2.py``.
+Historical audit commands, run archives, and local reports are workspace
+artifacts outside the published documentation; the limits described here
+apply independently of access to those artifacts.
+
+Opt-in breathing widths
+~~~~~~~~~~~~~~~~~~~~~~~
+
+Set ``breathing_enabled: true`` in ``macroparticle_smearing`` (or the exact
+charge-cloud configuration). Breathing is disabled by default;
+``breathing_response_time_ns`` defaults to 0.01 ns and must be positive and
+finite when enabled. Set it explicitly for reproducible studies. A critically damped
+response smooths the covariance-derived target; its response time is a
+physical source-model parameter, in lab nanoseconds, and requires a
+timestep-sensitivity study. It is not inferred from the integration step.
+
+The integrator accepts breathing only for reduced cells with retained initial
+velocity covariance in both roles, including driver-train templates. A zero
+reduction count, a full-count identity request, or reduction of only one role
+does not enable unreduced breathing. Explicitly pre-reduced inputs with retained
+covariance are accepted. The unreduced prescribed-history provider is a local
+diagnostic: its parent-specific projection and pooling of multiple bunches
+have unresolved model defects and must not support physical conclusions.
+
+The scalar target uses half the population-weighted transverse covariance
+trace in each fixed initial cell plane, floored at the requested member width.
+Accepted appends retain the width-filter endpoint and stable child prefix;
+only new width knots and a short centre-acceleration suffix are prepared.
+Rejected trial tails do not publish width state or revise accepted widths.
+
+Reduced cells retain initial transverse position, position–velocity, and
+velocity covariance moments. Since their original members no longer have
+independent trajectories, their covariance follows a ballistic closure of
+the initial relative lab velocities around the accepted centre. It does not
+include unresolved internal forces, changing velocity spread, anisotropy,
+or cloud rotation. This is an explicit approximation for reduced sources.
+
+Each point subcharge has a continuously moving worldline with expansion
+velocity and acceleration. Exact fields, gradients, and endpoint potentials
+solve each child's own retarded event. The width starts with zero expansion
+velocity and acceleration; inertial prehistory keeps the initial width.
+Quintic child segments share position, velocity, and acceleration at their
+knots away from physical gate acceleration jumps. Requests that cannot certify
+subluminal child curves fail with a
+request to refine the timestep or increase the response time; velocities
+are never clipped. High-order Gaussian rules place outer nodes roughly
+3–4 RMS widths from the centre; their expansion speeds can trigger the guard
+even when every original member is subluminal. The child proper velocity is
+currently reconstructed from binary64 beta, so breathing does not preserve
+resolved centre-velocity precision above gamma of roughly 1,000. Such runs
+need an independently validated precision treatment. Proper-velocity source
+histories remain unsupported.
+
+The prescribed-field validation harness is
+``scripts/check_breathing_sources.py``. It compares an expanding Gaussian
+against analytic child worldlines with independently solved light cones,
+refines Gaussian quadrature, and optionally compares frozen widths. This is
+a prescribed-worldline control, not a coupled evolution or energy-balance
+validation. Local run reports and archives are not published with these docs.
+
 ``scripts/check_exact_macroparticle_startup.py --route adaptive`` repeats the
 Part 1 point probe, with a common lab-time target covering twice the initial
 inertial encounter time. ``scripts/check_exact_macroparticle_clouds.py`` uses
@@ -397,8 +507,7 @@ they are not an electron-only compensation map or an energy-conservation test.
 The requested 1,200 states determine the initial step guess; adaptive internal
 knots differ, and public output corresponds to a 100-step lab-time cadence.
 Wall times and accepted/rejected counts are recorded in the JSON evidence.
-Detailed validation outcomes and any subsequent stop decision are recorded in
-``codex_report_exact_macroparticles.md``, Part 2.
+The capability outcome and subsequent stop decision are described below.
 
 The prescribed-orbit convergence study holds physical width fixed while
 refining even-order tensor rules through 4, 16, 64, and 100 children. At a
@@ -456,3 +565,102 @@ zero error selects position and permits bounded growth. A Medina impulse cap
 can override the numerical estimator and is identified in the adaptive trace.
 Diagnostic values and signed energy increments are preserved in the ledger.
 The floor is a resolution allowance, not a proof of energy conservation.
+
+Fixed reduction for bounded exact references
+--------------------------------------------
+
+``ExactSourceReductionConfig`` is an opt-in initial discretization under
+``MagneticDipoleConfig.exact_source_reduction``. It supports charge-only,
+fixed-step ``BUNCH_TO_BUNCH`` runs with ``INERTIAL_PREHISTORY`` and zero
+intrinsic moments. Set ``enabled=True``, ``rider_count=8``, and
+``driver_count=8`` to replace a larger homogeneous initial ensemble with eight
+macros per role. A zero count keeps that role, and a count at or above the
+original count returns its original state without new arithmetic.
+
+This reduced source model uses deterministic farthest-point seeds and fixed
+nearest-seed cells in a gamma-scaled metric. Along the population-weighted
+mean proper-velocity direction, distances are stretched by the corresponding
+gamma; transverse distances retain laboratory units. This is a fixed
+rest-frame geometric proxy, rather than a boost to asynchronous events.
+Each new macro starts at its population-weighted cell
+centre, carries the cell's conserved source charge and diagnostic population,
+and retains physical species charge and inertia. Population-weighted spatial
+mechanical momentum is conserved by averaging momentum and reconstructing
+on-shell velocity. Internal velocity spread and cell self-fields are
+unresolved. The macro-count axis is citable only for cross-bunch observables,
+with independent convergence evidence. Same-bunch per-cell kicks do not
+converge reliably, and smooth self-expansion observables converge only slowly
+as the merged fraction shrinks: members within a cell no longer repel.
+Breathing's ballistic covariance does not restore those internal self-fields.
+Report same-bunch results as model-dependent; light/heavy observables sensitive
+to self-expansion require an independently validated internal-field correction
+before reduced runs can support a claim. Initial kinetic energy and current
+need not be conserved by this coarse model. The current (and magnetic source term) error is second order in
+the velocity spread inside a cell.
+
+For each cell, let $C$ be its population-weighted position covariance, and
+let $P=I-\hat{v}\hat{v}^{T}$ project perpendicular to its new velocity.
+The persistent isotropic transverse width is
+$\sigma_{cell}=\max(\sigma_{original},\sqrt{\mathrm{tr}(PCP)/2})$,
+where the original width includes ``sigma_multiplier``. A stationary cell uses
+the existing z-normal plane. The mapping records the covariance, cell size,
+original width, and realized width. This is a floored cell RMS; it does not
+add the original members' cloud variance in quadrature. Its width represents
+the cell-centre transverse second-moment trace when the floor is inactive,
+not the combined second moment of finite-width members. It does not retain
+anisotropy, longitudinal extent, or force-driven within-cell motion. Full count retains the
+original clouds bit for bit. Point sources and one-child rules remain point
+representations and cannot resolve cell extent.
+
+Deposition happens once, before inertial prehistory and train expansion.
+Every new centre and transverse child then has a persistent accepted history.
+Startup potentials, forces, gate events, and canonical endpoints use the same
+sources. There is no rotating selection, past charge override, or passive
+particle reconstruction. The returned trajectories contain the reduced macros;
+they do not contain trajectories for all original parents. The original
+rotating pseudo-grid guard remains in force.
+Reduced trajectory states and arrays carry ``exact_source_original_count``
+(per template for a train) and ``exact_source_cell_sigma_mm`` through prehistory,
+indexed views, and checkpoints. Unreduced states omit these keys.
+
+The testbed JSON surface exposes
+``magnetic_dipole_exact_source_reduction_enabled``,
+``magnetic_dipole_exact_source_reduction_rider_count``, and
+``magnetic_dipole_exact_source_reduction_driver_count``. They default to
+disabled and zero. The older unprefixed ``exact_source_reduction_*`` keys
+remain readable; namespaced keys take precedence and enabled configurations
+serialize with that prefix. The Python field remains under
+``MagneticDipoleConfig`` for compatibility with the existing exact-route
+container; reduction and breathing describe the charge-source model and
+do not introduce intrinsic magnetic moments. Breathing uses the existing
+nested ``macroparticle_smearing`` block or its prefixed flat aliases.
+``scripts/check_sources2.py`` saves the initial mapping and resolved inputs.
+Refine macro count to the original ensemble as well as transverse child count,
+explicit width, and proper timestep before treating this as a useful reference.
+An exact root of a reduced worldline is not an accuracy certificate for the
+unreduced physical ensemble.
+
+Macro-count comparisons project full-reference observer kicks onto each
+coarse run's own ``parent_cells`` using population-weighted cell means. The
+error is the population-weighted RMS of differences on those shared cells;
+RMS across differing observer populations is descriptive only. Population-
+weighted total kicks are also retained, since small totals can hide cancellation.
+The light/heavy default uses the input's 1,200 states. Train probes resolve
+$h_{lab}=\gamma_r h_{step} \leq \sigma/(\gamma_s |v_{rel}| S)$,
+where $S$ is the requested samples per characteristic pulse width. The default
+train window surrounds the first pulse and starts from explicitly prescribed
+inertial transport; it does not validate coupled evolution before that window.
+``--train-window full-train`` retains the original initial state and covers all
+centre crossings at the same resolution. ``--prepare-only`` writes the plan,
+resolution, and historical cost estimate without integration. Place ``--output``
+in external result storage outside the synchronized checkout.
+
+Driver trains now accept persistent transverse clouds on the fixed-step exact
+route. Reduction, when requested, applies to the template before each bunch
+is translated. Within-bunch fields exclude the entire own macro cloud and all
+other train bunches. Cross-bunch fields retain every driver bunch. Fixed-step
+train checkpoints require ``INERTIAL_PREHISTORY`` and preserve cloud parameters,
+parent histories, and gate inclusion metadata. Cavity-exit checkpoints and
+adaptive train checkpoints retain their restrictions. Fixed proper steps do
+not promise a shared laboratory time across accelerating particles; check
+source coverage and refine the timestep near encounters.
