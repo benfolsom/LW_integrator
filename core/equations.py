@@ -1186,7 +1186,7 @@ def _compute_full_retarded_distance(
     return nhat, indices_bounded, chrono_match_result
 
 
-COLD_START_FIRST_EVENT_KEY = "cold_start_first_event"
+COLD_START_FIRST_EVENT_KEY = "_cold_start_first_event"
 
 
 def snapshot_first_event(state: Optional[ParticleState]) -> Optional[dict]:
@@ -1197,6 +1197,27 @@ def snapshot_first_event(state: Optional[ParticleState]) -> Optional[dict]:
         axis: np.array(state[axis], dtype=float, copy=True)
         for axis in ("t", "x", "y", "z")
     }
+
+
+def known_first_event(history: Sequence[ParticleState], index: int) -> Optional[dict]:
+    """First events of a run's sources, surviving pruned history prefixes.
+
+    Stored steps are tagged with the first event (see :func:`tag_first_event`),
+    so the answer stays correct after causal-history pruning has emptied
+    ``history[0]``. Untagged early or seeded steps fall back to ``history[0]``.
+    """
+    if 0 <= index < len(history):
+        try:
+            return history[index][COLD_START_FIRST_EVENT_KEY]
+        except (KeyError, TypeError):
+            pass
+    return snapshot_first_event(history[0]) if len(history) else None
+
+
+def tag_first_event(state: ParticleState, first_event: Optional[dict]) -> None:
+    """Record the run's first source events on a freshly computed step."""
+    if first_event is not None and "x" in state:
+        state[COLD_START_FIRST_EVENT_KEY] = first_event
 
 
 def with_first_event(

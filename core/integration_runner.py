@@ -22,7 +22,8 @@ from .equations import (
     SelfConsistencyNonConvergenceError,
     _canonicalize_radiation_reaction_mode,
     retarded_equations_of_motion,
-    snapshot_first_event,
+    known_first_event,
+    tag_first_event,
     with_first_event,
 )
 from .exact_pair_endpoint import (
@@ -2622,7 +2623,7 @@ def _run_adaptive_step(
             source_active_indices=pseudo_grid_schedule.driver_field_indices,
             source_effective_charges=pseudo_grid_schedule.driver_field_source_charges,
             source_history_start_index=pseudo_grid_schedule.driver_history_start_index,
-            source_first_event=snapshot_first_event(trajectory_drv[0]),
+            source_first_event=known_first_event(trajectory_drv, i - 1),
             passive_map=pseudo_grid_schedule.rider_passive_map,
             observer_field_indices=pseudo_grid_schedule.rider_field_indices,
             observer_field_source_charges=pseudo_grid_schedule.rider_field_source_charges,
@@ -2832,7 +2833,7 @@ def _run_adaptive_step(
         # A wall's image history is one regenerated sample, so tag it with the
         # sources' true first events for COLD_START light-cone admission.
         temp_driver = list(
-            with_first_event(temp_driver, snapshot_first_event(trajectory_drv[0]))
+            with_first_event(temp_driver, known_first_event(trajectory_drv, i - 1))
         )
 
         _n_p_rider = len(temp_trajectory[0]["x"])
@@ -2878,7 +2879,7 @@ def _run_adaptive_step(
                         source_history_start_index=(
                             pseudo_grid_schedule.driver_history_start_index
                         ),
-                        source_first_event=snapshot_first_event(trajectory_drv[0]),
+                        source_first_event=known_first_event(trajectory_drv, i - 1),
                         passive_map=pseudo_grid_schedule.rider_passive_map,
                         observer_field_indices=pseudo_grid_schedule.rider_field_indices,
                         observer_field_source_charges=(
@@ -5262,6 +5263,7 @@ def retarded_integrator(
                 magnetic_dipole=magnetic_dipole,
             )
             _ensure_startup_metadata(trajectory[i])
+            tag_first_event(trajectory[i], known_first_event(trajectory, i - 1))
             _set_pseudo_grid_schedule_metadata(
                 trajectory[i], _current_pseudo_grid_schedule
             )
@@ -5429,7 +5431,7 @@ def retarded_integrator(
                             if _pseudo_grid_retention_active
                             else trajectory[:i]
                         ),
-                        source_first_event=snapshot_first_event(trajectory[0]),
+                        source_first_event=known_first_event(trajectory, i - 1),
                         observer_active_indices=_current_pseudo_grid_schedule.driver_active_indices,
                         source_active_indices=_current_pseudo_grid_schedule.rider_field_indices,
                         source_effective_charges=_current_pseudo_grid_schedule.rider_field_source_charges,
@@ -5549,6 +5551,7 @@ def retarded_integrator(
             _mark_post_step_gamma_blowups(trajectory_drv[i], step=i, logger=logger)
             validate_live_particle_fields(trajectory_drv[i], context=f"driver step {i}")
             _ensure_startup_metadata(trajectory_drv[i])
+            tag_first_event(trajectory_drv[i], known_first_event(trajectory_drv, i - 1))
             _set_pseudo_grid_schedule_metadata(trajectory_drv[i], None)
             if (
                 particle_loss.enabled
