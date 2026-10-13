@@ -13,6 +13,26 @@ claims describe their named revisions, not the current defaults. Use
 :doc:`self_consistency`, :doc:`exact_path`, and :doc:`native_pic` for maintained
 configuration guidance, and ``CHANGELOG.md`` for the consolidated release notes.
 
+.. _release_unreleased_coldstart_gate:
+
+Unreleased: COLD_START light-cone admission
+-------------------------------------------
+
+The ``COLD_START`` external-force gate is now a per-source light-cone admission
+mask: source ``j`` is admitted when ``c (t_obs - t_j0) >= |x_obs - x_j0|`` for
+its first stored sample. The old observer-level travel-distance threshold took
+the maximum over sources, opened before light had arrived, and could close again
+after a crossing. See :doc:`theory` for the rule and :doc:`startup_history` for
+its agreement with the preflight guard. Same-bunch space charge, the exact path
+and ``APPROXIMATE_BACK_HISTORY`` are unchanged bit for bit.
+
+**Results affected.** Earlier sampled ``COLD_START`` ``BUNCH_TO_BUNCH`` runs with
+extended source trains (span comparable to the distance to the nearest source;
+up to total loss of the impulse), and crossings with
+``beta_r (2 + beta_s) > 1`` (net-energy and longitudinal ledgers wrong, the sign
+of the net energy flipping in the stationary-driver case). Transverse kicks were
+barely affected. Re-run these before relying on them.
+
 .. _release_v0_12_0:
 
 v0.12.0: sampled-path repair, audit fixes, photon transport
@@ -29,8 +49,9 @@ where fields are negligible long enough to build history; prefer
 ``INERTIAL_PREHISTORY``. The guard measures the missing impulse against the full
 straight-line encounter, checks signed components as well as ``|F|``, accounts
 for driver-train prehistory, and exempts ``APPROXIMATE_BACK_HISTORY``, which has
-no missing-history window. Whether the integrator's own per-observer start-up
-gate is correct is still being investigated, and the guard does not model it.
+no missing-history window. The integrator's own start-up gate has since been replaced
+(see the Unreleased entry above); the guard's per-pair window now equals the
+integrator's admission time.
 
 **Audit fixes and the results they affect.** These change numbers; defaults and
 configuration keys are unchanged. Re-run anything in these classes before
