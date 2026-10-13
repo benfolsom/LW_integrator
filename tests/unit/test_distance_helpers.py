@@ -2,13 +2,11 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from tests.particle_states import distance_state as _make_state
 
 import core.distances as distances
 from core.constants import C_MMNS, NUMERICAL_EPSILON
 from core.types import ChronoMatchingMode, TrajectoryBuilder
-
-
+from tests.particle_states import distance_state as _make_state
 
 
 def _make_soa(trajectory: list[dict[str, np.ndarray]]):
