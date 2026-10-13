@@ -13,22 +13,21 @@ import pickle
 
 import numpy as np
 import pytest
-from tests.particle_states import distance_state as _make_state
 
 import core.distances as distances
 from core.constants import NUMERICAL_EPSILON
 from core.vectorized_interactions import NUMBA_AVAILABLE, _compute_forces_numba_kernel
-
+from tests.particle_states import distance_state as _make_state
 
 # ---------------------------------------------------------------------------
 # Shared helpers
 # ---------------------------------------------------------------------------
 
 
-
 # ---------------------------------------------------------------------------
 # compute_instantaneous_distance
 # ---------------------------------------------------------------------------
+
 
 class TestComputeInstantaneousDistance:
     def test_vectorized_distance_matches_scalar_loop_for_large_array(self) -> None:
@@ -67,7 +66,9 @@ class TestComputeInstantaneousDistance:
         np.testing.assert_allclose(result["ny"], expected_ny, atol=1e-12)
         np.testing.assert_allclose(result["nz"], expected_nz, atol=1e-12)
 
-    def test_vectorized_distance_epsilon_guard_on_multiple_coincident_particles(self) -> None:
+    def test_vectorized_distance_epsilon_guard_on_multiple_coincident_particles(
+        self,
+    ) -> None:
         vector = _make_state(x=[2.0], y=[3.0], z=[4.0])
         # Three coincident with reference particle, two offset
         vector_ext = {
@@ -101,6 +102,7 @@ class TestComputeInstantaneousDistance:
 # _locate_retarded_index
 # ---------------------------------------------------------------------------
 
+
 def _ref_locate_retarded_index(
     trajectory_ext: list, index_traj: int, sample_index: int, target_time: float
 ) -> int:
@@ -126,11 +128,13 @@ class TestLocateRetardedIndex:
         for target in targets:
             expected = _ref_locate_retarded_index(traj, index_traj, 0, target)
             got = distances._locate_retarded_index(traj, index_traj, 0, target)
-            assert got == expected, (
-                f"Mismatch for target_time={target}: expected {expected}, got {got}"
-            )
+            assert (
+                got == expected
+            ), f"Mismatch for target_time={target}: expected {expected}, got {got}"
 
-    def test_locate_retarded_index_returns_index_traj_for_nonpositive_target(self) -> None:
+    def test_locate_retarded_index_returns_index_traj_for_nonpositive_target(
+        self,
+    ) -> None:
         traj = self._build_trajectory(10)
         index_traj = 9
 
@@ -141,6 +145,7 @@ class TestLocateRetardedIndex:
 # ---------------------------------------------------------------------------
 # _compute_forces_numba_kernel
 # ---------------------------------------------------------------------------
+
 
 def _build_kernel_args(n_ext: int, seed: int = 99):
     from core.constants import C_MMNS, ELEMENTARY_CHARGE
@@ -158,15 +163,25 @@ def _build_kernel_args(n_ext: int, seed: int = 99):
     q_e = np.full(n_ext, -ELEMENTARY_CHARGE)
 
     return (
-        1e-4,           # h
+        1e-4,  # h
         -ELEMENTARY_CHARGE,  # charge_i
-        5.485799e-4,    # mass_i
-        3.0,            # gamma_i
-        0.0, 0.0, 0.85, # bx_i, by_i, bz_i
-        nx, ny, nz, R,
-        bx_e, by_e, bz_e,
-        bx_e * bdot, by_e * bdot, bz_e * bdot,
-        q_e, g_e,
+        5.485799e-4,  # mass_i
+        3.0,  # gamma_i
+        0.0,
+        0.0,
+        0.85,  # bx_i, by_i, bz_i
+        nx,
+        ny,
+        nz,
+        R,
+        bx_e,
+        by_e,
+        bz_e,
+        bx_e * bdot,
+        by_e * bdot,
+        bz_e * bdot,
+        q_e,
+        g_e,
         C_MMNS,
     )
 
@@ -181,9 +196,9 @@ class TestComputeForcesNumbaKernel:
 
             assert len(result_jit) == 8
             for i, (jit_val, py_val) in enumerate(zip(result_jit, result_py)):
-                assert jit_val == pytest.approx(py_val, rel=1e-6), (
-                    f"Output index {i} mismatch: jit={jit_val}, py={py_val}"
-                )
+                assert jit_val == pytest.approx(
+                    py_val, rel=1e-6
+                ), f"Output index {i} mismatch: jit={jit_val}, py={py_val}"
         else:
             result = _compute_forces_numba_kernel(*args)
             assert isinstance(result, tuple)
@@ -195,6 +210,7 @@ class TestComputeForcesNumbaKernel:
 # ---------------------------------------------------------------------------
 # _worker_run_combo picklability
 # ---------------------------------------------------------------------------
+
 
 class TestWorkerRunCombo:
     def test_worker_run_combo_is_picklable(self) -> None:

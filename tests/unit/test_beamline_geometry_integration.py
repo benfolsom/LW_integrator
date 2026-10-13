@@ -13,7 +13,6 @@ import copy
 
 import numpy as np
 from numpy.testing import assert_allclose, assert_array_equal
-from tests.particle_states import single_particle_state as _single_particle_state
 
 from core.beamline_geometry import compute_visibility_mask
 from core.equations import retarded_equations_of_motion
@@ -25,8 +24,7 @@ from core.types import (
     StartupMode,
 )
 from core.vectorized_interactions import ExternalSampleBatch
-
-
+from tests.particle_states import single_particle_state as _single_particle_state
 
 
 def _z_pipe(radius: float = 5.0, length: float = 100.0) -> Occluder:

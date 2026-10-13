@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from tests.particle_states import empty_driver_state as _empty_driver_state
 
 import core.equations as equations
 from core.constants import C_MMNS, ELECTRON_MASS_AMU, ELEMENTARY_CHARGE
@@ -17,6 +16,7 @@ from core.external_fields import (
 )
 from core.integration_runner import retarded_integrator
 from core.types import ExternalFieldConfig, SimulationType, StartupMode
+from tests.particle_states import empty_driver_state as _empty_driver_state
 
 
 def _char_time(charge: float, mass: float) -> float:
@@ -45,8 +45,6 @@ def _single_particle_state(gamma: float = 2.0) -> dict:
         "m": np.array([ELECTRON_MASS_AMU]),
         "char_time": np.array([_char_time(ELEMENTARY_CHARGE, ELECTRON_MASS_AMU)]),
     }
-
-
 
 
 def test_si_electric_field_converter_matches_native_force_units() -> None:
