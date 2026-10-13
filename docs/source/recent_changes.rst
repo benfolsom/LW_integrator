@@ -26,8 +26,11 @@ parent's retarded event. The sampled path is valid with complete source history
 and convergence checks, and is about ten times faster than the exact path. See
 :doc:`startup_history` for when to use each route. ``COLD_START`` is valid only
 where fields are negligible long enough to build history; prefer
-``INERTIAL_PREHISTORY``. The shipped proton/lead-ion example was rejected by
-the guard and now uses auto-duration.
+``INERTIAL_PREHISTORY``. The guard measures the missing impulse against the full
+straight-line encounter, checks signed components as well as ``|F|``, accounts
+for driver-train prehistory, and exempts ``APPROXIMATE_BACK_HISTORY``, which has
+no missing-history window. Whether the integrator's own per-observer start-up
+gate is correct is still being investigated, and the guard does not model it.
 
 **Audit fixes and the results they affect.** These change numbers; defaults and
 configuration keys are unchanged. Re-run anything in these classes before
