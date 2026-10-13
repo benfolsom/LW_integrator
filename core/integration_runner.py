@@ -2030,12 +2030,23 @@ def _run_pseudo_grid_reduced_step(
             and len(observer_history) > 1
             and not promoted[local_particle]
             and current.get("external", {}).get("gate_open", False)
-            and not old.get("external", {}).get("gate_open", False)
+            and not np.all(
+                np.isin(
+                    current["external"]["ids"], old.get("external", {}).get("ids", [])
+                )
+            )
         ):
+            # Sources admitted since the previous event: light-cone admission
+            # is per source, so only the new ones lack an ordinary difference.
             ext = current["external"]
-            ids = np.asarray(ext["ids"], dtype=int)
-            q = np.asarray(ext["charges"])
-            r = np.asarray(ext["radii"])
+            fresh = ~np.isin(ext["ids"], old.get("external", {}).get("ids", []))
+            ids = np.asarray(ext["ids"], dtype=int)[fresh]
+            q = np.asarray(ext["charges"])[fresh]
+            r = np.asarray(ext["radii"])[fresh]
+            visible = ext.get("visibility_mask")
+            if visible is not None:
+                visible = np.asarray(visible)[fresh]
+            held = {}
             now = potential_evaluator._event(
                 observer_history,
                 particle,
@@ -2045,8 +2056,11 @@ def _run_pseudo_grid_reduced_step(
                 "retarded",
                 r,
                 gate=False,
-                visibility_mask=ext.get("visibility_mask"),
+                visibility_mask=visible,
+                capture=held,
             )[0]
+            # The new sources had no retarded point at the preceding event, so
+            # hold their present points and move only the observer back.
             before = potential_evaluator._event(
                 observer_history[:-1],
                 particle,
@@ -2056,7 +2070,8 @@ def _run_pseudo_grid_reduced_step(
                 "retarded",
                 r,
                 gate=False,
-                visibility_mask=ext.get("visibility_mask"),
+                visibility_mask=visible,
+                hold=held["samples"],
             )[0]
             gate_change[:] = now[:3] - before[:3]
         return delta, encoded

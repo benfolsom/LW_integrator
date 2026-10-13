@@ -192,22 +192,12 @@ def sampled_inclusion_change(
         external_last -= 1
     if external_last >= 0 and len(trajectory_ext[external_last]["x"]):
         old = previous.get("external", {})
-        skip = False
-        if startup_mode is StartupMode.COLD_START:
-            latest = trajectory_ext[external_last]
-            max_R = float(
-                np.max(
-                    np.linalg.norm(
-                        np.stack([latest[a] for a in "xyz"], axis=-1) - position,
-                        axis=-1,
-                    )
-                )
-            )
-            beta_avg = np.linalg.norm([state["beta_avg_" + a][particle] for a in "xyz"])
-            travel = np.linalg.norm(
-                np.asarray(position) - [state["origin_" + a][particle] for a in "xyz"]
-            )
-            skip = travel < beta_avg * max_R / (1.0 + beta_avg)
+        # COLD_START admits each source when its first sample's light reaches
+        # the observer; with none admitted there is nothing to sample.
+        admitted = eq._cold_start_admission_mask(
+            startup_mode, trajectory_ext, state, particle
+        )
+        skip = admitted is not None and not admitted.any()
         # Closed gates with no previously included sources need no sampling.
         if skip and not np.any(old.get("charges", [])):
             # Even a closed gate uses the same source identities as its open
@@ -265,11 +255,10 @@ def sampled_inclusion_change(
             )
             if smeared:
                 nhat = smeared
-            gate_open = not skip and eq._should_apply_external_forces(
-                startup_mode, sim_type, nhat, state, particle
-            )
+            gate_open = not skip
             included = samples.valid_mask.copy()
-            included &= gate_open
+            if admitted is not None:
+                included &= np.repeat(admitted, len(included) // len(admitted))
             if beamline_geometry is not None and beamline_geometry.enabled:
                 included &= compute_directional_visibility_mask(
                     np.stack([samples.x, samples.y, samples.z], axis=-1),
@@ -284,18 +273,16 @@ def sampled_inclusion_change(
                     charges,
                     lambda model, q: _potential(samples, nhat, q),
                 )
-            elif gate_open and not old.get("gate_open", False):
-                # Image evolution is outside this task, but admitting the
-                # entire image class through COLD_START is the same gate event.
-                delta_A += _potential(samples, nhat, charges)
-            elif not gate_open and old.get("gate_open", False):
+            elif startup_mode is StartupMode.COLD_START:
+                # Image evolution is outside this task, but each image admitted
+                # through COLD_START is the same gate event. Admission is
+                # monotone, so no source leaves the set here.
                 old_charges = np.asarray(old.get("charges", []), dtype=float)
-                if old_charges.shape == samples.charge.shape:
-                    # Current image weights belong to ordinary evolution.
-                    # Remove only the currently represented, previously included
-                    # image set; never subtract yesterday's image potential.
-                    counterfactual = np.where(old_charges != 0, samples.charge, 0)
-                    delta_A -= _potential(samples, nhat, counterfactual)
+                if old_charges.shape != charges.shape:
+                    old_charges = np.zeros_like(charges)
+                newly = np.where((old_charges == 0) & (charges != 0), charges, 0.0)
+                if np.any(newly):
+                    delta_A += _potential(samples, nhat, newly)
             # Canonical P retains the preceding step's sampled vector
             # potential. Established sources therefore subtract its ordinary
             # event-to-event change during mechanical reconstruction. On the
@@ -311,50 +298,34 @@ def sampled_inclusion_change(
                 and startup_mode is StartupMode.COLD_START
                 and sim_type is SimulationType.BUNCH_TO_BUNCH
                 and gate_open
-                and not old.get("gate_open", False)
             ):
                 old_charges = np.asarray(old.get("charges", np.zeros_like(charges)))
-                admitted = np.where(old_charges == 0.0, charges, 0.0)
-                if np.any(admitted):
-                    prior_nhat, prior_indices, prior_chrono = (
-                        eq._compute_full_retarded_distance(
-                            trajectory,
-                            trajectory_ext,
-                            index - 1,
-                            particle,
-                            chrono_mode,
-                            self_consistency,
-                            timestep_h=h,
-                            traj_soa=traj_soa,
-                            traj_ext_soa=traj_ext_soa,
-                        )
+                newly_admitted = np.where(old_charges == 0.0, charges, 0.0)
+                if np.any(newly_admitted):
+                    # A source admitted now had no retarded point at the
+                    # preceding event: its light had not yet reached the
+                    # observer. Its ordinary change is that of the observer
+                    # alone, with the source's sampled retarded point held.
+                    prior = trajectory[index - 1]
+                    offset = np.stack(
+                        [
+                            float(prior[axis][particle])
+                            - np.asarray(getattr(samples, axis), dtype=float)
+                            for axis in "xyz"
+                        ],
+                        axis=-1,
                     )
-                    prior_samples = _gather(
-                        trajectory_ext,
-                        traj_ext_soa,
-                        prior_indices,
-                        prior_chrono,
-                        high_precision,
-                    )
-                    prior_position = (
-                        float(trajectory[index - 1]["x"][particle]),
-                        float(trajectory[index - 1]["y"][particle]),
-                        float(trajectory[index - 1]["z"][particle]),
-                    )
-                    prior_samples, prior_smeared = smear_source_samples(
-                        samples=prior_samples,
-                        observer_position=prior_position,
-                        config=macroparticle_smearing,
-                        step_index=index - 1,
-                        fixed_offsets=fixed_cloud_offsets(
-                            trajectory_ext, macroparticle_smearing
-                        ),
-                    )
-                    if prior_smeared:
-                        prior_nhat = prior_smeared
+                    distance = np.linalg.norm(offset, axis=-1)
+                    unit = offset / np.where(distance > 0.0, distance, 1.0)[:, None]
+                    prior_nhat = {
+                        "R": distance,
+                        "nx": unit[:, 0],
+                        "ny": unit[:, 1],
+                        "nz": unit[:, 2],
+                    }
                     ordinary_gate_vector_change[:] = (
-                        _potential(samples, nhat, admitted)[:3]
-                        - _potential(prior_samples, prior_nhat, admitted)[:3]
+                        _potential(samples, nhat, newly_admitted)[:3]
+                        - _potential(samples, prior_nhat, newly_admitted)[:3]
                     )
 
             next_sets["external"] = {
