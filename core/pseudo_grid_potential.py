@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from types import SimpleNamespace
 
 import numpy as np
@@ -109,7 +110,16 @@ class ReducedPotentialEvaluator:
         *,
         gate=True,
         visibility_mask=None,
+        capture=None,
+        hold=None,
     ):
+        """Potential of one source set at the last observer event.
+
+        ``capture`` receives the gathered source samples. A later call can pass
+        them as ``hold`` to evaluate the same retarded source points from
+        another observer event, as sources admitted by the COLD_START cone had
+        no retarded point at the preceding event.
+        """
         from . import equations as eq
         from .beamline_geometry import compute_directional_visibility_mask
 
@@ -150,19 +160,11 @@ class ReducedPotentialEvaluator:
                     for name in ("x", "y", "z", "t")
                 },
             )
-        skip = False
-        if sector == "external" and self.startup_mode is StartupMode.COLD_START:
-            latest = sources[source_index]
-            max_r = np.max(
-                np.linalg.norm(
-                    np.column_stack([latest[a] for a in "xyz"]) - position, axis=1
-                )
-            )
-            beta_avg = np.linalg.norm([state["beta_avg_" + a][particle] for a in "xyz"])
-            travel = np.linalg.norm(
-                position - [state["origin_" + a][particle] for a in "xyz"]
-            )
-            skip = travel < beta_avg * max_r / (1 + beta_avg)
+        admitted_sources = (
+            eq._cold_start_admission_mask(self.startup_mode, sources, state, particle)
+            if sector == "external"
+            else None
+        )
         chrono = None
         if model == "stationary":
             indices = np.full(len(ids), source_index, dtype=int)
@@ -201,12 +203,23 @@ class ReducedPotentialEvaluator:
             chrono,
             bool(self.self_consistency and self.self_consistency.chrono_high_precision),
         )
+        if hold is not None:
+            samples = copy.copy(hold)
+            offset = position - np.column_stack([getattr(samples, a) for a in "xyz"])
+            distance = np.linalg.norm(offset, axis=1)
+            unit = offset / np.where(distance > 0.0, distance, 1.0)[:, None]
+            nhat = {
+                "R": distance,
+                "nx": unit[:, 0],
+                "ny": unit[:, 1],
+                "nz": unit[:, 2],
+            }
+        if capture is not None:
+            capture["samples"] = copy.copy(samples)
         # Caller supplies effective charges; current deaths remain excluded.
         included = samples.valid_mask.copy() if gate else np.ones(len(ids), dtype=bool)
-        if sector == "external" and gate:
-            included &= not skip and eq._should_apply_external_forces(
-                self.startup_mode, self.sim_type, nhat, state, particle
-            )
+        if gate and admitted_sources is not None:
+            included &= admitted_sources
         admitted = np.where(included, charges, 0.0)
         samples.charge = admitted.copy()
         samples.valid_mask = admitted != 0
