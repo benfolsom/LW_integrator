@@ -262,7 +262,7 @@ def test_compute_full_retarded_distance_handles_interpolation_payload(
     assert nhat["R"].tolist() == pytest.approx([2.0])
 
 
-def test_b2b_cold_start_applies_external_force_without_observer_travel(
+def test_b2b_cold_start_applies_external_force_once_light_arrives(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     trajectory = [
@@ -278,7 +278,7 @@ def test_b2b_cold_start_applies_external_force_without_observer_travel(
         _make_state(
             x=[0.0],
             z=[0.0],
-            t=[0.0],
+            t=[0.05],  # light from the driver's first sample, 10 mm away, arrived
             gamma=[2.0],
             charge=[1.0],
             mass=[1.0],
@@ -337,6 +337,7 @@ def test_b2b_cold_start_applies_external_force_without_observer_travel(
             q=np.array([-1.0]),
             m=np.array([1.0]),
             char_time=np.array([1.0e-3]),
+            valid_mask=np.array([True]),
         ),
     )
 
@@ -629,86 +630,58 @@ def test_retarded_space_charge_uses_soa_helpers_when_available(
     assert soa_calls == {"chrono": 4, "distance": 4, "gather": 2}
 
 
-def test_gating_threshold_and_force_application_follow_travel_distance() -> None:
-    nhat = {
-        "R": np.array([10.0]),
-        "nx": np.array([-1.0]),
-        "ny": np.array([0.0]),
-        "nz": np.array([0.0]),
-    }
-    current_state = _make_state(
-        x=[3.0],
-        y=[0.0],
-        z=[0.0],
-        bx=[0.5],
-        by=[0.0],
-        bz=[0.0],
-    )
-    current_state["origin_x"] = np.array([0.0], dtype=float)
-    current_state["origin_y"] = np.array([0.0], dtype=float)
-    current_state["origin_z"] = np.array([0.0], dtype=float)
-    current_state["beta_avg_x"] = np.array([0.5], dtype=float)
-    current_state["beta_avg_y"] = np.array([0.0], dtype=float)
-    current_state["beta_avg_z"] = np.array([0.0], dtype=float)
-
-    threshold = equations._compute_gating_threshold(nhat, 0.5, 0.0, 0.0)
-
-    assert threshold == pytest.approx(10.0 / 3.0)
-    assert (
-        equations._should_apply_external_forces(
-            StartupMode.COLD_START,
-            SimulationType.CONDUCTING_WALL,
-            nhat,
-            current_state,
-            0,
+def _admission(source_x, observer, t, source_t=None):
+    """Admission mask of stationary-start sources for an observer at ``t``."""
+    sources = [
+        _make_state(
+            x=list(source_x),
+            t=[0.0 if source_t is None else source_t] * len(source_x),
         )
-        is False
-    )
-
-    current_state["x"][0] = 4.0
-    assert (
-        equations._should_apply_external_forces(
-            StartupMode.COLD_START,
-            SimulationType.CONDUCTING_WALL,
-            nhat,
-            current_state,
-            0,
-        )
-        is True
-    )
+    ]
+    obs = _make_state(x=[observer], t=[t])
+    return equations._cold_start_admission_mask(StartupMode.COLD_START, sources, obs, 0)
 
 
 def test_b2b_cold_start_force_gate_waits_for_observer_travel() -> None:
-    nhat = {
-        "R": np.array([10.0]),
-        "nx": np.array([1.0]),
-        "ny": np.array([0.0]),
-        "nz": np.array([0.0]),
-    }
-    current_state = _make_state(x=[0.0], bx=[0.5], by=[0.0], bz=[0.0])
+    # One head-on source 10 mm ahead of an observer at beta = 0.5: admitted
+    # when light from the source's first sample arrives, c t = 10 - beta c t.
+    t_arrival = 10.0 / ((1.0 + 0.5) * C_MMNS)
+    assert not _admission([10.0], 0.5 * C_MMNS * 0.9 * t_arrival, 0.9 * t_arrival)[0]
+    assert _admission([10.0], 0.5 * C_MMNS * 1.1 * t_arrival, 1.1 * t_arrival)[0]
 
-    assert (
-        equations._should_apply_external_forces(
-            StartupMode.COLD_START,
-            SimulationType.BUNCH_TO_BUNCH,
-            nhat,
-            current_state,
-            0,
-        )
-        is False
-    )
 
-    current_state["x"][0] = 10.0
-    assert (
-        equations._should_apply_external_forces(
-            StartupMode.COLD_START,
-            SimulationType.BUNCH_TO_BUNCH,
-            nhat,
-            current_state,
-            0,
-        )
-        is True
-    )
+def test_cold_start_admission_mask_is_per_source() -> None:
+    # Head-on observer at beta = 0.5 toward sources at x = 4 and 1000 mm: each
+    # source is admitted when light from its first sample arrives, so the near
+    # one is not held back by the far one and the far one is not admitted early.
+    beta = 0.5
+    for t, expected in (
+        (0.01, [True, False]),
+        (2.0, [True, False]),
+        (4.0, [True, True]),
+    ):
+        mask = _admission([4.0, 1000.0], beta * C_MMNS * t, t)
+        assert mask.tolist() == expected
+    # Nothing is admitted at the first event; light needs time to travel.
+    assert _admission([4.0, 1000.0], 0.0, 0.0).tolist() == [False, False]
+
+
+@pytest.mark.parametrize("beta", [0.3, 0.5, 0.7, 0.9, 0.99])
+@pytest.mark.parametrize("source_x", [50.0, -50.0, 1.0])
+def test_cold_start_admission_never_closes_again(beta: float, source_x: float) -> None:
+    # The old travel-distance gate reclosed after a pass once beta(2 + beta_s) > 1.
+    times = np.linspace(0.0, 20.0, 4001)
+    admitted = [_admission([source_x], beta * C_MMNS * t, t)[0] for t in times]
+    assert any(admitted)
+    first = admitted.index(True)
+    assert all(admitted[first:])
+
+
+def test_cold_start_admission_is_off_outside_cold_start() -> None:
+    sources = [_make_state(x=[5.0], t=[0.0])]
+    obs = _make_state(x=[0.0], t=[0.0])
+    for mode in (StartupMode.APPROXIMATE_BACK_HISTORY, StartupMode.INERTIAL_PREHISTORY):
+        assert equations._cold_start_admission_mask(mode, sources, obs, 0) is None
 
 
 def test_b2b_cold_start_early_skip_avoids_retarded_work_before_travel(
@@ -716,7 +689,7 @@ def test_b2b_cold_start_early_skip_avoids_retarded_work_before_travel(
 ) -> None:
     trajectory = [
         _make_state(x=[0.0], y=[0.0], z=[0.0], bx=[0.5], by=[0.0], bz=[0.0], t=[0.0]),
-        _make_state(x=[0.0], y=[0.0], z=[0.0], bx=[0.5], by=[0.0], bz=[0.0], t=[1.0]),
+        _make_state(x=[0.0], y=[0.0], z=[0.0], bx=[0.5], by=[0.0], bz=[0.0], t=[0.01]),
     ]
     driver = [
         _make_state(
@@ -735,7 +708,7 @@ def test_b2b_cold_start_early_skip_avoids_retarded_work_before_travel(
             bx=[-0.5],
             by=[0.0],
             bz=[0.0],
-            t=[1.0],
+            t=[0.01],
         ),
     ]
 
@@ -760,36 +733,6 @@ def test_b2b_cold_start_early_skip_avoids_retarded_work_before_travel(
 
     assert chrono_calls["count"] == 0
     assert result["Px"][0] == pytest.approx(trajectory[1]["Px"][0])
-
-
-def test_gating_threshold_handles_receding_case_with_large_threshold() -> None:
-    nhat = {
-        "R": np.array([5.0]),
-        "nx": np.array([1.0]),
-        "ny": np.array([0.0]),
-        "nz": np.array([0.0]),
-    }
-
-    threshold = equations._compute_gating_threshold(nhat, 1.0, 0.0, 0.0)
-
-    assert threshold == pytest.approx(1e12)
-
-
-def test_gating_threshold_small_array_matches_vector_path() -> None:
-    nhat_small = {
-        "R": np.array([2.0, 4.0, 8.0, 16.0]),
-        "nx": np.array([0.2, -0.3, 0.4, -0.5]),
-        "ny": np.array([0.1, 0.2, -0.1, -0.2]),
-        "nz": np.array([0.9, 0.8, -0.7, -0.6]),
-    }
-    nhat_large = {
-        key: np.concatenate([value, value, value]) for key, value in nhat_small.items()
-    }
-
-    small_threshold = equations._compute_gating_threshold(nhat_small, 0.25, -0.05, 0.35)
-    large_threshold = equations._compute_gating_threshold(nhat_large, 0.25, -0.05, 0.35)
-
-    assert small_threshold == pytest.approx(large_threshold)
 
 
 def test_beta_helpers_limit_and_recover_gamma() -> None:
@@ -1222,7 +1165,6 @@ def test_sc_projection_uses_mechanical_momentum(
             np.array([0]),
         ),
     )
-    monkeypatch.setattr(equations, "_should_apply_external_forces", lambda *args: True)
 
     def fake_contributions(**kwargs: object) -> tuple[float, ...]:
         del kwargs
@@ -1402,7 +1344,6 @@ def test_gamma_reconciliation_preserves_potential_bookkeeping(
             np.array([0]),
         ),
     )
-    monkeypatch.setattr(equations, "_should_apply_external_forces", lambda *args: True)
 
     scalar_potential = 5.0
     scalar_potential_momentum = equations._scalar_potential_momentum_contribution(
