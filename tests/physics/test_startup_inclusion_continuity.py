@@ -78,9 +78,19 @@ def test_cold_start_gate_opens_within_one_step_force_work(mode):
     data = gate_measurements(trajectory, driver)
     # The gate's canonical-energy offset is hundreds of times its force work.
     assert data["potential_offset_eV"] > 100 * abs(data["gate_step_eV"])
-    assert abs(data["gate_step_eV"]) <= 1.3 * data["following_step_work_eV"] + 2e-7
     assert 1 < data["gate_step"] < len(trajectory) - 2
-    assert abs(data["gate_step_eV"]) <= abs(data["force_work_eV"]) + 2e-7
+    # The reference is the ordinary force work evaluated at the admission step
+    # itself. The gate step reproduces it to about 9 % (measured 0.91), so the
+    # inclusion bookkeeping adds no work of its own.
+    force = abs(data["force_work_eV"])
+    assert 0.8 * force <= abs(data["gate_step_eV"]) <= force + 2e-7
+    # Against the following steps the gate step is still 20 % high (measured
+    # 1.197). The force work at the admission step is 1.31 times the following
+    # steps' own, so the excess is the ordinary force at the cone edge, where
+    # the source's retarded point is its first stored sample, not bookkeeping.
+    # The next steps then jitter by about 7 % as the sampled retarded index
+    # advances.
+    assert abs(data["gate_step_eV"]) <= 1.25 * data["following_step_work_eV"] + 2e-7
 
 
 def gate_measurements(trajectory, driver=None):
@@ -101,18 +111,18 @@ def gate_measurements(trajectory, driver=None):
     offset_eV = offset * C_MMNS * 931.49410242 / C_MMNS**2 * 1e6
     force_work = np.nan
     if driver is not None:
-        start = trajectory[first - 1]
+        start = trajectory[first]
         h = 1000 / (2 * trajectory[0]["gamma"][0] * 0.4 * C_MMNS * 800)
-        rider_builder = TrajectoryBuilder(first, 1)
-        driver_builder = TrajectoryBuilder(first, 1)
-        for index in range(first):
+        rider_builder = TrajectoryBuilder(first + 1, 1)
+        driver_builder = TrajectoryBuilder(first + 1, 1)
+        for index in range(first + 1):
             rider_builder.set_step(index, trajectory[index])
             driver_builder.set_step(index, driver[index])
         rider_soa, driver_soa = rider_builder.build(), driver_builder.build()
         nhat, indices, _ = equations._compute_full_retarded_distance(
-            trajectory[:first],
-            driver[:first],
-            first - 1,
+            trajectory[: first + 1],
+            driver[: first + 1],
+            first,
             0,
             equations.ChronoMatchingMode.FAST,
             timestep_h=h,

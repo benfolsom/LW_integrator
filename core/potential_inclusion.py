@@ -257,8 +257,15 @@ def sampled_inclusion_change(
                 nhat = smeared
             gate_open = not skip
             included = samples.valid_mask.copy()
+            flipped = None
             if admitted is not None:
-                included &= np.repeat(admitted, len(included) // len(admitted))
+                repeat = len(included) // len(admitted)
+                included &= np.repeat(admitted, repeat)
+                if index > 0:
+                    admitted_before = eq._cold_start_admission_mask(
+                        startup_mode, trajectory_ext, trajectory[index - 1], particle
+                    )
+                    flipped = np.repeat(admitted & ~admitted_before, repeat)
             if beamline_geometry is not None and beamline_geometry.enabled:
                 included &= compute_directional_visibility_mask(
                     np.stack([samples.x, samples.y, samples.z], axis=-1),
@@ -273,14 +280,11 @@ def sampled_inclusion_change(
                     charges,
                     lambda model, q: _potential(samples, nhat, q),
                 )
-            elif startup_mode is StartupMode.COLD_START:
-                # Image evolution is outside this task, but each image admitted
-                # through COLD_START is the same gate event. Admission is
-                # monotone, so no source leaves the set here.
-                old_charges = np.asarray(old.get("charges", []), dtype=float)
-                if old_charges.shape != charges.shape:
-                    old_charges = np.zeros_like(charges)
-                newly = np.where((old_charges == 0) & (charges != 0), charges, 0.0)
+            elif startup_mode is StartupMode.COLD_START and flipped is not None:
+                # Image evolution is outside this task, but each image whose
+                # COLD_START light-cone admission flipped at this event is the
+                # same gate event. Admission is monotone, so none leave the set.
+                newly = np.where(flipped & (charges != 0), charges, 0.0)
                 if np.any(newly):
                     delta_A += _potential(samples, nhat, newly)
             # Canonical P retains the preceding step's sampled vector
@@ -299,13 +303,17 @@ def sampled_inclusion_change(
                 and sim_type is SimulationType.BUNCH_TO_BUNCH
                 and gate_open
             ):
-                old_charges = np.asarray(old.get("charges", np.zeros_like(charges)))
-                newly_admitted = np.where(old_charges == 0.0, charges, 0.0)
+                newly_admitted = (
+                    np.zeros_like(charges)
+                    if flipped is None
+                    else np.where(flipped, charges, 0.0)
+                )
                 if np.any(newly_admitted):
-                    # A source admitted now had no retarded point at the
-                    # preceding event: its light had not yet reached the
-                    # observer. Its ordinary change is that of the observer
-                    # alone, with the source's sampled retarded point held.
+                    # A source whose light-cone admission flipped at this event
+                    # had no retarded point at the preceding one. Its ordinary
+                    # change is that of the observer alone, with the source's
+                    # sampled retarded point held. Sources that were admitted
+                    # before (rotation, visibility re-entry) are not primed.
                     prior = trajectory[index - 1]
                     offset = np.stack(
                         [

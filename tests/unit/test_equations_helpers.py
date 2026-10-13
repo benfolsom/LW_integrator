@@ -642,7 +642,7 @@ def _admission(source_x, observer, t, source_t=None):
     return equations._cold_start_admission_mask(StartupMode.COLD_START, sources, obs, 0)
 
 
-def test_b2b_cold_start_force_gate_waits_for_observer_travel() -> None:
+def test_b2b_cold_start_admission_waits_for_light_cone_arrival() -> None:
     # One head-on source 10 mm ahead of an observer at beta = 0.5: admitted
     # when light from the source's first sample arrives, c t = 10 - beta c t.
     t_arrival = 10.0 / ((1.0 + 0.5) * C_MMNS)
@@ -670,6 +670,8 @@ def test_cold_start_admission_mask_is_per_source() -> None:
 @pytest.mark.parametrize("source_x", [50.0, -50.0, 1.0])
 def test_cold_start_admission_never_closes_again(beta: float, source_x: float) -> None:
     # The old travel-distance gate reclosed after a pass once beta(2 + beta_s) > 1.
+    # The predicate never reads source motion, so only the observer's speed and
+    # the source's side are varied; source velocity is not part of the test.
     times = np.linspace(0.0, 20.0, 4001)
     admitted = [_admission([source_x], beta * C_MMNS * t, t)[0] for t in times]
     assert any(admitted)
@@ -1461,3 +1463,19 @@ def test_retarded_equations_of_motion_variable_geometry_uses_updated_observer_st
 
     assert recorded_x[0] == pytest.approx(1.0)
     assert recorded_x[1] > recorded_x[0]
+
+
+def test_cold_start_admission_uses_tagged_first_event_for_windowed_history() -> None:
+    # A windowed or regenerated history starts at the current time; the tagged
+    # first event, not the window's first sample, defines the elapsed time.
+    window = [_make_state(x=[10.0], t=[5.0])]
+    obs = _make_state(x=[0.0], t=[5.0])
+    mode = StartupMode.COLD_START
+    assert not equations._cold_start_admission_mask(mode, window, obs, 0)[0]
+    event = equations.snapshot_first_event(_make_state(x=[10.0], t=[0.0]))
+    tagged = equations.with_first_event(window, event)
+    assert equations._cold_start_admission_mask(mode, tagged, obs, 0)[0]
+    # Stored states are untouched, and a mismatched tag is ignored.
+    assert equations.COLD_START_FIRST_EVENT_KEY not in window[0]
+    wrong = equations.snapshot_first_event(_make_state(x=[1.0, 2.0], t=[0.0, 0.0]))
+    assert equations.with_first_event(window, wrong) is window

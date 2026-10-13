@@ -183,7 +183,9 @@ class TestTrajectoryIntegratorUnits:
 
         bunch = create_bunch_uniform_distribution(config, PROTON, "line")
         # A driver coincident with the rider is a zero-distance source that
-        # COLD_START admits at once; place it where its light has not arrived.
+        # COLD_START admits at once. This is a finiteness/free-flight check of
+        # the integrator loop: the driver is 1e5 mm away, so its light never
+        # arrives within these steps and no interaction is exercised.
         driver = bunch.copy()
         driver["z"] = driver["z"] + 1e5
         trajectory, _ = self.integrator.integrate_retarded_fields(  # type: ignore[attr-defined]
