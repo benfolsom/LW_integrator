@@ -39,7 +39,11 @@ NUMERICAL_EPSILON: float = 1e-12
 CONVERGENCE_TOLERANCE: float = 1e-10
 """Default convergence target for iterative self-consistency loops."""
 
+DEFAULT_STARTUP_HISTORY_TOLERANCE: float = 1e-3
+"""Default tolerated missing fraction in the startup-history preflight."""
+
 __all__ = [
+    "DEFAULT_STARTUP_HISTORY_TOLERANCE",
     "C_MMNS",
     "ELEMENTARY_CHARGE",
     "ELEMENTARY_CHARGE_STATC",
