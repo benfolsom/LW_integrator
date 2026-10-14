@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v0.12.1 — 2026-10-14 — COLD_START light-cone admission, smearing and pruning fix
+
 ### Documentation
 
 - Mark `SWITCHING_WALL` as a deprecated legacy mode, kept for compatibility, and
