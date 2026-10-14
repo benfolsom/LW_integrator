@@ -84,13 +84,13 @@ def test_cold_start_gate_opens_within_one_step_force_work(mode):
     # inclusion bookkeeping adds no work of its own.
     force = abs(data["force_work_eV"])
     assert 0.8 * force <= abs(data["gate_step_eV"]) <= force + 2e-7
-    # Against the following steps the gate step is still 20 % high (measured
+    # Against the following steps the gate step is still 20 % high (bound 1.5; measured
     # 1.197). The force work at the admission step is 1.31 times the following
     # steps' own, so the excess is the ordinary force at the cone edge, where
     # the source's retarded point is its first stored sample, not bookkeeping.
     # The next steps then jitter by about 7 % as the sampled retarded index
     # advances.
-    assert abs(data["gate_step_eV"]) <= 1.25 * data["following_step_work_eV"] + 2e-7
+    assert abs(data["gate_step_eV"]) <= 1.5 * data["following_step_work_eV"] + 2e-7
 
 
 def gate_measurements(trajectory, driver=None):

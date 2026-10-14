@@ -38,7 +38,9 @@
   - `CONDUCTING_WALL` and `SWITCHING_WALL` runs under `COLD_START`: a stationary
     or approaching observer is no longer admitted to its image at t0, so image
     forces start when light from the first image arrives (2d/((1+beta)c) for a
-    conducting wall). Late-time image forces match the earlier behaviour (a
+    conducting wall). A `SWITCHING_WALL` is gated only for its first wall: after
+    a switch the next wall's image is admitted at once, as before (the tag is the
+    image of the first state in the first wall). Late-time image forces match the earlier behaviour (a
     proton at 0.5 mm, wall 200 mm, beta 0.5: dPx -1.195e-7 against -1.197e-7).
   - Pseudo-grid `COLD_START` runs: reduced solves apply the same per-source
     admission, so a whole train that was previously held back now kicks.

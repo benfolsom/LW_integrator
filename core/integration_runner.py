@@ -32,7 +32,11 @@ from .exact_pair_endpoint import (
     evaluate_exact_endpoint_four_potential as _evaluate_exact_endpoint_four_potential,  # noqa: F401
     finalize_exact_source_canonical_pair_states,
 )
-from .images import generate_conducting_image, generate_switching_image
+from .images import (
+    generate_conducting_image,
+    generate_switching_image,
+    switching_image_first_event,
+)
 from .particle_status import (
     all_particles_dead,
     format_failure_summary,
@@ -5107,6 +5111,11 @@ def retarded_integrator(
                 trajectory_drv[i] = generate_switching_image(
                     trajectory[i], wall_z, aperture_radius, z_cutoff
                 )
+                if i == 0:
+                    tag_first_event(
+                        trajectory_drv[i],
+                        switching_image_first_event(trajectory[i], wall_z),
+                    )
             elif sim_type == SimulationType.BUNCH_TO_BUNCH:
                 if init_driver is None:
                     raise ValueError(
