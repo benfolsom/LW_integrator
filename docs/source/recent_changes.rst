@@ -24,7 +24,12 @@ history pruning moves that sample, so smeared pseudo-grid active-subset runs
 changed with pruning on (rider final ``Pz`` by up to 0.23). The cloud now reads
 its initial positions from the tagged first event, and pruning on and off give
 identical results. Smeared pseudo-grid runs with pruning made before this fix
-are suspect. Runs without smearing or pruning are unchanged bit for bit.
+are suspect, including full active sets. Runs without smearing are unchanged
+bit for bit. Smeared runs without pseudo-grid pruning are unchanged except
+conducting-wall runs, whose image cloud is now fixed at the first image
+(round-off level in tests). The legacy ``per_step`` and ``legacy_per_step``
+cloud refresh policies still depend on pruning; do not combine them with causal
+history pruning.
 
 .. _release_unreleased_coldstart_gate:
 
