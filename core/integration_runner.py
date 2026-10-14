@@ -22,13 +22,21 @@ from .equations import (
     SelfConsistencyNonConvergenceError,
     _canonicalize_radiation_reaction_mode,
     retarded_equations_of_motion,
+    known_first_event,
+    slice_first_event,
+    tag_first_event,
+    with_first_event,
 )
 from .exact_pair_endpoint import (
     discard_exact_source_endpoint_scratch as _discard_exact_source_endpoint_scratch,
     evaluate_exact_endpoint_four_potential as _evaluate_exact_endpoint_four_potential,  # noqa: F401
     finalize_exact_source_canonical_pair_states,
 )
-from .images import generate_conducting_image, generate_switching_image
+from .images import (
+    generate_conducting_image,
+    generate_switching_image,
+    switching_image_first_event,
+)
 from .particle_status import (
     all_particles_dead,
     format_failure_summary,
@@ -1740,6 +1748,7 @@ def _run_pseudo_grid_reduced_step(
     macroparticle_smearing: MacroparticleSmearingConfig | None = None,
     beamline_geometry: BeamlineGeometryConfig | None = None,
     magnetic_dipole: MagneticDipoleConfig | None = None,
+    source_first_event: dict | None = None,
 ) -> ParticleState:
     """Advance one pseudo-grid half-step via active-only observer/source solves."""
     if not observer_history:
@@ -1851,6 +1860,7 @@ def _run_pseudo_grid_reduced_step(
         space_charge=space_charge,
         macroparticle_smearing=macroparticle_smearing,
         beamline_geometry=beamline_geometry,
+        source_first_event=source_first_event,
     )
 
     source_local_start = _resolve_history_start_index(
@@ -1879,13 +1889,25 @@ def _run_pseudo_grid_reduced_step(
         start_step=observer_global_start,
     )
 
+    # The reduced source history may start at a pruned window head, so carry
+    # the explicit first events of the active sources into the force solve.
+    source_active_first_event = (
+        slice_first_event(source_first_event, source_active)
+        if source_first_event is not None
+        and source_active.size
+        and source_active.max() < len(source_first_event["x"])
+        else None
+    )
+
     if (
         observer_active_soa is not None
         and source_active_soa is not None
         and observer_sc_source_soa is not None
     ):
         observer_active_history = ActiveTrajectoryView(observer_active_soa)
-        source_active_history = ActiveTrajectoryView(source_active_soa)
+        source_active_history = ActiveTrajectoryView(
+            source_active_soa, first_event=source_active_first_event
+        )
         observer_sc_source_history = (
             ActiveTrajectoryView(observer_sc_source_soa)
             if observer_sc_source_soa is not None
@@ -1901,6 +1923,9 @@ def _run_pseudo_grid_reduced_step(
             source_active,
             start_index=source_local_start,
             q_override=source_effective_charges,
+        )
+        source_active_history = with_first_event(
+            source_active_history, source_active_first_event
         )
         observer_sc_source_history = slice_trajectory_particle_history(
             observer_history,
@@ -2019,23 +2044,31 @@ def _run_pseudo_grid_reduced_step(
         # first open-gate step. Match the established sampled startup treatment.
         from .potential_inclusion import decode_inclusion_state
 
-        old = decode_inclusion_state(
-            observer_history[-1].get(
-                "potential_inclusion_state", [""] * observer_count
-            )[particle]
-        )
         current = decode_inclusion_state(encoded)
         if (
             startup_mode is StartupMode.COLD_START
             and len(observer_history) > 1
             and not promoted[local_particle]
             and current.get("external", {}).get("gate_open", False)
-            and not old.get("external", {}).get("gate_open", False)
         ):
+            # Only sources whose light-cone admission flipped between the two
+            # events lack an ordinary difference. Rotation, reselection and
+            # visibility re-entry keep their retarded point and are untouched.
             ext = current["external"]
-            ids = np.asarray(ext["ids"], dtype=int)
-            q = np.asarray(ext["charges"])
-            r = np.asarray(ext["radii"])
+            ext_ids = np.asarray(ext["ids"], dtype=int)
+            fresh = potential_evaluator.newly_admitted(
+                observer_history, particle, ext_ids
+            )
+        else:
+            fresh = None
+        if fresh is not None and np.any(fresh):
+            ids = ext_ids[fresh]
+            q = np.asarray(ext["charges"])[fresh]
+            r = np.asarray(ext["radii"])[fresh]
+            visible = ext.get("visibility_mask")
+            if visible is not None:
+                visible = np.asarray(visible)[fresh]
+            held = {}
             now = potential_evaluator._event(
                 observer_history,
                 particle,
@@ -2045,8 +2078,11 @@ def _run_pseudo_grid_reduced_step(
                 "retarded",
                 r,
                 gate=False,
-                visibility_mask=ext.get("visibility_mask"),
+                visibility_mask=visible,
+                capture=held,
             )[0]
+            # The newly admitted sources had no retarded point at the preceding
+            # event, so hold their present points and move only the observer back.
             before = potential_evaluator._event(
                 observer_history[:-1],
                 particle,
@@ -2056,7 +2092,8 @@ def _run_pseudo_grid_reduced_step(
                 "retarded",
                 r,
                 gate=False,
-                visibility_mask=ext.get("visibility_mask"),
+                visibility_mask=visible,
+                hold=held["samples"],
             )[0]
             gate_change[:] = now[:3] - before[:3]
         return delta, encoded
@@ -2606,6 +2643,7 @@ def _run_adaptive_step(
             source_active_indices=pseudo_grid_schedule.driver_field_indices,
             source_effective_charges=pseudo_grid_schedule.driver_field_source_charges,
             source_history_start_index=pseudo_grid_schedule.driver_history_start_index,
+            source_first_event=known_first_event(trajectory_drv, i - 1),
             passive_map=pseudo_grid_schedule.rider_passive_map,
             observer_field_indices=pseudo_grid_schedule.rider_field_indices,
             observer_field_source_charges=pseudo_grid_schedule.rider_field_source_charges,
@@ -2812,6 +2850,11 @@ def _run_adaptive_step(
         temp_driver = (
             trajectory_drv[:i] if use_full_history else [trajectory_drv[i - 1]]
         )
+        # A wall's image history is one regenerated sample, so tag it with the
+        # sources' true first events for COLD_START light-cone admission.
+        temp_driver = list(
+            with_first_event(temp_driver, known_first_event(trajectory_drv, i - 1))
+        )
 
         _n_p_rider = len(temp_trajectory[0]["x"])
         _temp_traj_builder = TrajectoryBuilder(
@@ -2856,6 +2899,7 @@ def _run_adaptive_step(
                         source_history_start_index=(
                             pseudo_grid_schedule.driver_history_start_index
                         ),
+                        source_first_event=known_first_event(trajectory_drv, i - 1),
                         passive_map=pseudo_grid_schedule.rider_passive_map,
                         observer_field_indices=pseudo_grid_schedule.rider_field_indices,
                         observer_field_source_charges=(
@@ -5067,6 +5111,11 @@ def retarded_integrator(
                 trajectory_drv[i] = generate_switching_image(
                     trajectory[i], wall_z, aperture_radius, z_cutoff
                 )
+                if i == 0:
+                    tag_first_event(
+                        trajectory_drv[i],
+                        switching_image_first_event(trajectory[i], wall_z),
+                    )
             elif sim_type == SimulationType.BUNCH_TO_BUNCH:
                 if init_driver is None:
                     raise ValueError(
@@ -5239,6 +5288,7 @@ def retarded_integrator(
                 magnetic_dipole=magnetic_dipole,
             )
             _ensure_startup_metadata(trajectory[i])
+            tag_first_event(trajectory[i], known_first_event(trajectory, i - 1))
             _set_pseudo_grid_schedule_metadata(
                 trajectory[i], _current_pseudo_grid_schedule
             )
@@ -5406,6 +5456,7 @@ def retarded_integrator(
                             if _pseudo_grid_retention_active
                             else trajectory[:i]
                         ),
+                        source_first_event=known_first_event(trajectory, i - 1),
                         observer_active_indices=_current_pseudo_grid_schedule.driver_active_indices,
                         source_active_indices=_current_pseudo_grid_schedule.rider_field_indices,
                         source_effective_charges=_current_pseudo_grid_schedule.rider_field_source_charges,
@@ -5525,6 +5576,7 @@ def retarded_integrator(
             _mark_post_step_gamma_blowups(trajectory_drv[i], step=i, logger=logger)
             validate_live_particle_fields(trajectory_drv[i], context=f"driver step {i}")
             _ensure_startup_metadata(trajectory_drv[i])
+            tag_first_event(trajectory_drv[i], known_first_event(trajectory_drv, i - 1))
             _set_pseudo_grid_schedule_metadata(trajectory_drv[i], None)
             if (
                 particle_loss.enabled

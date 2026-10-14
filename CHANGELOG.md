@@ -2,6 +2,83 @@
 
 ## Unreleased
 
+## v0.12.1 — 2026-10-14 — COLD_START light-cone admission, smearing and pruning fix
+
+### Documentation
+
+- Mark `SWITCHING_WALL` as a deprecated legacy mode, kept for compatibility, and
+  document its `COLD_START` admission: only the first wall is gated; later irises
+  are treated as always present, so their images apply from the step after each
+  switch.
+
+### Fixed
+
+- Causal history pruning no longer changes results when macroparticle source
+  smearing is enabled. The fixed per-particle cloud was built from the first
+  retained history sample, which pruning moves, so pseudo-grid active-subset
+  runs with smearing drew a different cloud with pruning on (up to 0.23 in the
+  rider's final `Pz`, against 0.5 to 0.8). The cloud now takes its initial
+  positions from the tagged first event, so pruning on and off are
+  bit-identical. Runs without smearing are unchanged bit for bit. Smeared runs without
+  pseudo-grid pruning are unchanged except conducting-wall runs, whose image
+  cloud is now fixed at the first image (a round-off-level change in tests).
+  Known limitation: the legacy `per_step` and `legacy_per_step` cloud refresh
+  policies still depend on pruning (their draws are keyed on window-local step
+  indices); do not combine them with causal history pruning.
+
+### Sampled retarded path
+
+- Replace the `COLD_START` external-force gate by per-source light-cone
+  admission. A source is admitted at the observer's step-start event when
+  `c (t_obs - t_j0) >= |x_obs - x_j0|`, with `(t_j0, x_j0)` the source's first
+  stored sample. The old gate compared the observer's travel distance with the
+  maximum over sources of `beta_avg R / (1 - beta_avg . n)`, which (1) held the
+  nearest source back until the farthest one was reached, (2) opened before the
+  light from a source's initial position had arrived, and (3) closed again after
+  a crossing and never reopened. The new mask is per source, stateless and
+  monotone, applies to wall and image sources (each image's first event is the
+  image of the observer's first stored state, carried explicitly), and is the
+  same interval as the startup-history guard's per-pair `tau_c`. The two early skips no longer use
+  the farthest source. Same-bunch space charge, the exact path
+  (`INERTIAL_PREHISTORY`) and `APPROXIMATE_BACK_HISTORY` are bit-identical.
+  Sources admitted at an event take their ordinary vector-potential change from
+  the observer's motion alone, so the mechanical energy stays continuous there.
+- **Earlier `COLD_START` `BUNCH_TO_BUNCH` results that were affected:**
+  - Extended source trains whose span is comparable to the distance to the
+    nearest source. In the audit, an observer 1 mm off axis facing protons 50 mm
+    apart from 50 mm received no transverse impulse for 3 or more drivers,
+    against 3.8e-3 amu mm/ns for 41 on the exact path. Two drivers 100 mm apart
+    at 50 mm lost 100% of the impulse. Co-moving trains had the whole bunch
+    missing until the farthest source's threshold was met.
+  - Crossings with `beta_r (2 + beta_s) > 1` (rider as observer; swap roles for
+    the driver). The gate closed after the pass, so net-energy and longitudinal
+    ledgers were wrong; for a rider at beta 0.9 past a stationary driver the sign
+    of the net energy change flipped. Transverse kicks were barely affected.
+  - Single-source head-on runs: transverse kicks change little, but net-energy
+    ledgers can change by order 100%. The repo's `run_gate` regression (one
+    driver at 1000 mm, beta 0.4 head-on, 1200 steps) goes from a rider net
+    energy change of -0.192 eV to -0.0086 eV: the old gate opened 0.87 ns before
+    the light arrived and applied a clamped first-sample field.
+  - `CONDUCTING_WALL` and `SWITCHING_WALL` runs under `COLD_START`: a stationary
+    or approaching observer is no longer admitted to its image at t0, so image
+    forces start when light from the first image arrives (2d/((1+beta)c) for a
+    conducting wall). A `SWITCHING_WALL` is gated only for its first wall: after
+    a switch the next wall's image is admitted at once, as before (the tag is the
+    image of the first state in the first wall). Late-time image forces match the earlier behaviour (a
+    proton at 0.5 mm, wall 200 mm, beta 0.5: dPx -1.195e-7 against -1.197e-7).
+  - Pseudo-grid `COLD_START` runs: reduced solves apply the same per-source
+    admission, so a whole train that was previously held back now kicks.
+  - `COLD_START` runs with the RFS/dipole configuration are on the sampled path,
+    not the exact one (`INERTIAL_PREHISTORY` is required), and change; they are
+    not among the bit-identical cases.
+  A 5-driver train from 1000 mm passed the startup-history guard yet lost about
+  22% of its impulse relative to the exact path. Re-run affected sampled
+  `COLD_START` results; the October defaults audit is not among those re-run
+  here. The sampled path still differs from the exact path for a lone driver
+  (factor 2 at 1 mm in the audit); that is separate from the gate.
+- A stationary observer is no longer admitted instantly; it waits for the light
+  from each source's first sample (previously threshold zero for `beta = 0`).
+
 ## v0.12.0 — 2026-10-12 — sampled-path repair, audit fixes, photon transport
 
 Includes the v0.11.0 changes released on 2026-10-10 (exact histories, native PIC,
