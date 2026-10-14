@@ -233,9 +233,9 @@ class ChronoMatchingMode(Enum):
 class StartupMode(Enum):
     """Strategies for handling the lack of retarded history at early steps.
 
-    ``COLD_START`` suppresses external forces until the observer has travelled
-    far enough for the light-cone constraint to be satisfied using a running
-    average of the observer velocity. ``APPROXIMATE_BACK_HISTORY`` assumes the
+    ``COLD_START`` admits each external source once light from its first stored
+    sample has reached the observer, ``c (t_obs - t_j0) >= |x_obs - x_j0|``,
+    and suppresses that source until then. ``APPROXIMATE_BACK_HISTORY`` assumes the
     source velocity remains constant between steps, enabling an analytic
     back-fill of the retarded separation. ``INERTIAL_PREHISTORY`` supplies a
     finite, synthetic constant-velocity source history before active time zero,

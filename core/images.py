@@ -403,7 +403,25 @@ def generate_switching_image(
     return result
 
 
+def switching_image_first_event(vector: ParticleState, wall_z: float) -> dict:
+    """First event of a switching wall's image of the first state ``vector``.
+
+    ``generate_switching_image`` leaves the position of an observer already
+    beyond the cut at the origin, with zero charge. The image's first event is
+    the mirror position regardless, so a later nonzero image is not judged from
+    the origin.
+    """
+    z = np.asarray(vector["z"], dtype=float)
+    return {
+        "t": np.array(vector["t"], dtype=float, copy=True),
+        "x": np.array(vector["x"], dtype=float, copy=True),
+        "y": np.array(vector["y"], dtype=float, copy=True),
+        "z": wall_z + np.where(z <= wall_z, 1.0, -1.0) * np.abs(wall_z - z),
+    }
+
+
 __all__ = [
+    "switching_image_first_event",
     "generate_conducting_image",
     "generate_switching_image",
 ]

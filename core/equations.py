@@ -1186,133 +1186,127 @@ def _compute_full_retarded_distance(
     return nhat, indices_bounded, chrono_match_result
 
 
-def _calculate_travel_distance(
-    origin_position: tuple[float, float, float],
-    current_position: tuple[float, float, float],
-) -> float:
-    """Calculate Euclidean distance between origin and current position."""
-    dx = current_position[0] - origin_position[0]
-    dy = current_position[1] - origin_position[1]
-    dz = current_position[2] - origin_position[2]
-    return float(np.sqrt(dx**2 + dy**2 + dz**2))
+COLD_START_FIRST_EVENT_KEY = "_cold_start_first_event"
 
 
-def _compute_gating_threshold(
-    nhat: dict,
-    beta_avg_x: float,
-    beta_avg_y: float,
-    beta_avg_z: float,
-) -> float:
-    """Compute the minimum travel distance before external forces are applied.
+def snapshot_first_event(state: Optional[ParticleState]) -> Optional[dict]:
+    """Copy the ``(t, x, y, z)`` of each source in ``state`` (a first sample)."""
+    if state is None or "x" not in state or np.asarray(state["x"]).size == 0:
+        return None
+    return {
+        axis: np.array(state[axis], dtype=float, copy=True)
+        for axis in ("t", "x", "y", "z")
+    }
 
-    The threshold ensures the observer particle has traveled far enough that
-    light from the external source's initial position could have reached it.
 
-    Light propagates at speed c. For a particle moving at velocity β relative
-    to the source, the relative closing speed is c(1 - β·n̂), where n̂ points
-    from source to observer.
+def slice_first_event(first_event: Optional[dict], indices) -> Optional[dict]:
+    """First events of the sources ``indices`` of a full-population event."""
+    if first_event is None:
+        return None
+    selected = np.asarray(indices, dtype=int)
+    return {
+        axis: np.asarray(first_event[axis])[selected] for axis in ("t", "x", "y", "z")
+    }
 
-    Physical examples (for approaching particles, β·n̂ < 0):
-    - Stationary (β=0): threshold = 0 (forces apply immediately)
-    - Low velocity (β=0.1): threshold ≈ 0.091·R
-    - Moderate (β=0.5): threshold ≈ 0.33·R
-    - Relativistic (β=0.9): threshold ≈ 0.47·R
-    - Ultra-relativistic (β→1): threshold → R/2 (approaches limit, never exceeds)
 
-    Formula: threshold = β·R / (1 - β·n̂)
+def known_first_event(history: Sequence[ParticleState], index: int) -> Optional[dict]:
+    """First events of a run's sources, surviving pruned history prefixes.
 
-    Special handling for β·n̂ ≥ 1 (receding at or above light speed):
-    Return very large threshold (effectively infinite) to suppress forces.
+    Stored steps are tagged with the first event (see :func:`tag_first_event`),
+    so the answer stays correct after causal-history pruning has emptied
+    ``history[0]``. Untagged early or seeded steps fall back to ``history[0]``.
     """
-    # Handle edge case: particles receding at or faster than light speed
-    # For β·n̂ ≥ 1, light never catches the observer, so threshold = ∞
-    # Use a very large but finite value to avoid numerical issues
-    LARGE_THRESHOLD = 1e12  # effectively infinite for simulation purposes
-
-    # For denominators ≤ 0 or very small, use large threshold
-    # Also handle case where β·n̂ is very close to 1 (denominator near 0)
-    MIN_DENOMINATOR = 1e-6  # corresponds to β·n̂ = 0.999999
-
-    # Calculate particle speed magnitude
-    beta_magnitude = np.sqrt(beta_avg_x**2 + beta_avg_y**2 + beta_avg_z**2)
-
-    # Most sweep runs use only a few external particles. Avoid constructing
-    # several tiny NumPy temporaries in this per-particle, per-iteration gate.
-    R_values = nhat["R"]
-    if R_values.size <= 8:
-        max_threshold = 0.0
-        for R, nx, ny, nz in zip(R_values, nhat["nx"], nhat["ny"], nhat["nz"]):
-            beta_avg_dot_nhat = beta_avg_x * nx + beta_avg_y * ny + beta_avg_z * nz
-            denominator = 1.0 - beta_avg_dot_nhat
-            if denominator > MIN_DENOMINATOR:
-                threshold = beta_magnitude * R / denominator
-                if threshold > max_threshold:
-                    max_threshold = float(threshold)
-            elif LARGE_THRESHOLD > max_threshold:
-                max_threshold = LARGE_THRESHOLD
-        return max(max_threshold, 0.0)
-
-    beta_avg_dot_nhat = (
-        beta_avg_x * nhat["nx"] + beta_avg_y * nhat["ny"] + beta_avg_z * nhat["nz"]
-    )
-
-    # Compute denominator: (1 - β·n̂)
-    # β·n̂ < 0: approaching → denominator > 1 → small threshold (meet quickly)
-    # β·n̂ > 0: receding → denominator < 1 → large threshold (takes longer)
-    # β·n̂ → 1: receding at c → denominator → 0 → threshold → ∞ (never meet)
-    denominators = 1.0 - beta_avg_dot_nhat
-
-    thresholds = np.where(
-        denominators > MIN_DENOMINATOR,
-        beta_magnitude * R_values / denominators,
-        LARGE_THRESHOLD,
-    )
-
-    if thresholds.size > 0:
-        return float(np.max(np.maximum(thresholds, 0.0)))
-    return 0.0
+    if 0 <= index < len(history):
+        try:
+            return history[index][COLD_START_FIRST_EVENT_KEY]
+        except (KeyError, TypeError):
+            pass
+    return snapshot_first_event(history[0]) if len(history) else None
 
 
-def _should_apply_external_forces(
+def tag_first_event(state: ParticleState, first_event: Optional[dict]) -> None:
+    """Record the run's first source events on a freshly computed step."""
+    if first_event is not None and "x" in state:
+        state[COLD_START_FIRST_EVENT_KEY] = first_event
+
+
+def with_first_event(
+    history: Sequence[ParticleState], first_event: Optional[dict]
+) -> Sequence[ParticleState]:
+    """Return ``history`` with its first sample tagged with the true first event.
+
+    Windowed or regenerated histories (for example a wall's one-sample image
+    history) cannot otherwise tell the admission test where each source began.
+    The tagged sample is a shallow copy; stored trajectories are unchanged.
+    """
+    if first_event is None or len(history) == 0:
+        return history
+    head = history[0]
+    if "x" not in head or np.asarray(head["x"]).shape != first_event["x"].shape:
+        return history
+    tagged = dict(head)
+    tagged[COLD_START_FIRST_EVENT_KEY] = first_event
+    return [tagged, *history[1:]]
+
+
+def _cold_start_admission_mask(
     startup_mode: StartupMode,
-    sim_type: SimulationType,
-    nhat: dict,
-    current_state: ParticleState,
+    trajectory_ext: Sequence[ParticleState],
+    observer_state: ParticleState,
     particle_idx: int,
-) -> bool:
-    """Determine whether external forces should be applied to this particle.
+    first_event: Optional[dict] = None,
+) -> Optional[np.ndarray]:
+    """Per-source light-cone admission for ``COLD_START``, or ``None`` if ungated.
 
-    In COLD_START mode, wall/image-style startup suppresses external source
-    forces until the observer has traveled far enough from its origin for
-    retardation effects to be meaningful. BUNCH_TO_BUNCH cross-bunch sources
-    are gated by the same startup rule; intra-bunch space-charge calculations
-    are handled separately in the dedicated space-charge block below and are
-    not affected by this helper.
+    ``COLD_START`` has no source history before each source's first event
+    ``(t_j0, x_j0)``. Source ``j`` is admitted at the observer's step-start
+    event when light from that event has reached the observer:
+    ``c (t_obs - t_j0) >= |x_obs - x_j0|``. For a subluminal observer the
+    difference only grows, so an admitted source stays admitted. The mask is
+    stateless, depends on no velocity average or direction, and holds back no
+    source because of another.
+
+    The first event is ``first_event`` if given, else the one tagged on
+    ``trajectory_ext[0]`` (see :func:`with_first_event`), else that sample
+    itself, which is correct only for a full history. Wall images use the image
+    of the observer's first stored state, so the one-sample image history a
+    wall run passes does not reset the clock.
+
+    Returns a boolean array with one entry per source in ``trajectory_ext[0]``,
+    (empty when there are no sources), or ``None`` for every other startup mode
+    (all sources admitted).
     """
-    if startup_mode is not StartupMode.COLD_START or nhat["R"].size == 0:
-        return True
-
-    origin_position = (
-        current_state["origin_x"][particle_idx],
-        current_state["origin_y"][particle_idx],
-        current_state["origin_z"][particle_idx],
+    if startup_mode is not StartupMode.COLD_START:
+        return None
+    if len(trajectory_ext) == 0 or "x" not in trajectory_ext[0]:
+        return np.zeros(0, dtype=bool)
+    head = trajectory_ext[0]
+    count = np.asarray(head["x"]).size
+    if count == 0:
+        return np.zeros(0, dtype=bool)
+    if first_event is None:
+        try:
+            first_event = head[COLD_START_FIRST_EVENT_KEY]
+        except (KeyError, TypeError):
+            first_event = None
+    if first_event is None:
+        first_event = head
+    elif any(
+        np.asarray(first_event[axis]).size != count for axis in ("t", "x", "y", "z")
+    ):
+        raise ValueError(
+            "COLD_START first events do not match the source count "
+            f"({np.asarray(first_event['x']).size} != {count})"
+        )
+    separation = np.sqrt(
+        sum(
+            (float(observer_state[axis][particle_idx]) - np.asarray(first_event[axis]))
+            ** 2
+            for axis in "xyz"
+        )
     )
-
-    current_position = (
-        current_state["x"][particle_idx],
-        current_state["y"][particle_idx],
-        current_state["z"][particle_idx],
-    )
-
-    travel_distance = _calculate_travel_distance(origin_position, current_position)
-
-    beta_avg_x = current_state["beta_avg_x"][particle_idx]
-    beta_avg_y = current_state["beta_avg_y"][particle_idx]
-    beta_avg_z = current_state["beta_avg_z"][particle_idx]
-
-    threshold = _compute_gating_threshold(nhat, beta_avg_x, beta_avg_y, beta_avg_z)
-
-    return travel_distance >= threshold
+    elapsed = float(observer_state["t"][particle_idx]) - np.asarray(first_event["t"])
+    return np.asarray(C_MMNS * elapsed >= separation, dtype=bool)
 
 
 def _limit_beta_magnitude(
@@ -2551,6 +2545,15 @@ def retarded_equations_of_motion(
             result["potential_inclusion_state"][particle_idx] = inclusion_state
             result["sampled_source_canonical_ready"][particle_idx] = True
 
+        # COLD_START light-cone admission depends only on the accepted
+        # step-start event and each source's first event, so it needs no
+        # retarded solve and is the same for every self-consistency iteration.
+        # With nothing admitted, the retarded distances are skipped entirely.
+        admission = _cold_start_admission_mask(
+            startup_mode, trajectory_ext, current_state, particle_idx
+        )
+        skip_external_forces = admission is not None and not admission.any()
+
         # Self-consistency loop: iterate until gamma converges
         converged = False
         last_mass_shell_error = float("inf")
@@ -2617,83 +2620,6 @@ def retarded_equations_of_motion(
                 # Use current_state position (start of timestep)
                 observer_state = current_state
                 observer_particle_idx = particle_idx
-
-            # ================================================================
-            # STEP 2: Early check for COLD_START gating
-            # ================================================================
-            # For COLD_START, check if we should skip force computation entirely
-            # This avoids expensive retarded distance calculations during startup phase
-            skip_external_forces = False
-            if startup_mode is StartupMode.COLD_START:
-                # Check if particle has traveled far enough from origin
-                # This is the same check done in _should_apply_external_forces
-                # but done here to avoid computing retarded distances needlessly
-                origin_position = (
-                    current_state["origin_x"][particle_idx],
-                    current_state["origin_y"][particle_idx],
-                    current_state["origin_z"][particle_idx],
-                )
-                current_position = (
-                    current_state["x"][particle_idx],
-                    current_state["y"][particle_idx],
-                    current_state["z"][particle_idx],
-                )
-                travel_distance = _calculate_travel_distance(
-                    origin_position, current_position
-                )
-
-                # Estimate threshold without computing full retarded distances
-                # Use maximum possible R from trajectory_ext bounds
-                beta_avg_x = current_state["beta_avg_x"][particle_idx]
-                beta_avg_y = current_state["beta_avg_y"][particle_idx]
-                beta_avg_z = current_state["beta_avg_z"][particle_idx]
-                beta_avg_mag = np.sqrt(beta_avg_x**2 + beta_avg_y**2 + beta_avg_z**2)
-
-                # Estimate max R from external trajectory bounds.
-                # In pseudo-grid reduced solves the source history may be
-                # causally pruned, so its local current index need not match
-                # the observer-history index.
-                external_current_step_idx = (
-                    min(index_traj, len(trajectory_ext) - 1) if trajectory_ext else None
-                )
-                external_current_state = (
-                    trajectory_ext[external_current_step_idx]
-                    if external_current_step_idx is not None
-                    else None
-                )
-                if (
-                    external_current_state is not None
-                    and external_current_state["x"].size > 0
-                ):
-                    ext_x = external_current_state["x"]
-                    ext_y = external_current_state["y"]
-                    ext_z = external_current_state["z"]
-                    dx = current_position[0] - ext_x
-                    dy = current_position[1] - ext_y
-                    dz = current_position[2] - ext_z
-                    distances = np.sqrt(dx**2 + dy**2 + dz**2)
-                    estimated_max_R = (
-                        float(np.max(distances)) if distances.size > 0 else 1000.0
-                    )
-                else:
-                    # Fallback if no external particles
-                    estimated_max_R = 1000.0
-
-                # Correct formula: threshold = β·R / (1 - β·n̂)
-                # For early check, use conservative estimate assuming worst case
-                # (minimum threshold = particle approaching head-on)
-                # For β·n̂ = -1 (approaching): threshold = β·R/2
-                # For β·n̂ = 0 (perpendicular): threshold = β·R
-                # For β·n̂ = +1 (receding): threshold → ∞
-                # Use worst case (approaching) for conservative early gating
-                # Worst case: β·n̂ = -beta_avg_mag → denominator = 1 + beta_avg_mag
-                estimated_threshold = (
-                    beta_avg_mag * estimated_max_R / (1.0 + beta_avg_mag)
-                )
-
-                # Skip if travel distance is definitely below threshold
-                if travel_distance < estimated_threshold:
-                    skip_external_forces = True
 
             # ================================================================
             # STEP 3: Compute retarded distances to external sources
@@ -2830,10 +2756,7 @@ def retarded_equations_of_motion(
             elif skip_external_forces:
                 apply_forces = False
             elif nhat is not None:
-                # Do full gating check with actual retarded distances
-                apply_forces = _should_apply_external_forces(
-                    startup_mode, sim_type, nhat, current_state, particle_idx
-                )
+                apply_forces = True
             else:
                 # No nhat computed, no forces to apply
                 apply_forces = False
@@ -2898,6 +2821,17 @@ def retarded_equations_of_motion(
                         trajectory_ext,
                         indices_bounded,
                         include_positions=_external_include_positions,
+                    )
+
+                if admission is not None:
+                    if admission.shape != external_samples.valid_mask.shape:
+                        raise ValueError(
+                            "COLD_START admission mask must match the external sources"
+                        )
+                    # Sources whose first sample the light cone has not reached
+                    # contribute no charge; smearing repeats the mask per subcharge.
+                    external_samples.valid_mask = (
+                        external_samples.valid_mask & admission
                     )
 
                 # Children are matched to, and their fields evaluated for, the

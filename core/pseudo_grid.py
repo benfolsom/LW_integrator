@@ -21,6 +21,7 @@ import numpy as np
 from scipy.spatial import KDTree
 
 from .constants import C_MMNS
+from .equations import COLD_START_FIRST_EVENT_KEY, slice_first_event
 from .particle_status import get_alive_particle_indices
 from .types import IndexedTrajectoryArrays, ParticleState, PseudoGridConfig, Trajectory
 
@@ -119,8 +120,13 @@ class PseudoGridPlannerState:
 class ActiveTrajectoryView:
     """Lazy legacy-state adapter for an indexed SOA trajectory."""
 
-    def __init__(self, indexed_soa: IndexedTrajectoryArrays) -> None:
+    def __init__(
+        self,
+        indexed_soa: IndexedTrajectoryArrays,
+        first_event: dict | None = None,
+    ) -> None:
         self.indexed_soa = indexed_soa
+        self.first_event = first_event
         self._state_cache: dict[int, ParticleState] = {}
 
     def __len__(self) -> int:
@@ -149,6 +155,8 @@ class ActiveTrajectoryView:
         cached = self._state_cache.get(local_index)
         if cached is None:
             cached = self.indexed_soa.state_at(local_index)
+            if self.first_event is not None and "x" in cached:
+                cached[COLD_START_FIRST_EVENT_KEY] = self.first_event
             self._state_cache[local_index] = cached
         return cached
 
@@ -1091,6 +1099,10 @@ def slice_particle_state(
             continue
 
         if key == "_pseudo_grid_schedule":
+            continue
+
+        if key == COLD_START_FIRST_EVENT_KEY:
+            subset[key] = slice_first_event(value, indices)
             continue
 
         if isinstance(value, np.ndarray):
