@@ -105,6 +105,7 @@ from .self_consistency import (
     canonicalize_self_consistency_mode,
 )
 from .types import (
+    COLD_START_FIRST_EVENT_KEY,
     BeamlineGeometryConfig,
     ChronoMatchingMode,
     GammaReconciliationMethod,
@@ -1184,9 +1185,6 @@ def _compute_full_retarded_distance(
         )
 
     return nhat, indices_bounded, chrono_match_result
-
-
-COLD_START_FIRST_EVENT_KEY = "_cold_start_first_event"
 
 
 def snapshot_first_event(state: Optional[ParticleState]) -> Optional[dict]:

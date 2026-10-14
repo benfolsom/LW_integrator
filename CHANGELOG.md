@@ -9,6 +9,21 @@
   are treated as always present, so their images apply from the step after each
   switch.
 
+### Fixed
+
+- Causal history pruning no longer changes results when macroparticle source
+  smearing is enabled. The fixed per-particle cloud was built from the first
+  retained history sample, which pruning moves, so pseudo-grid active-subset
+  runs with smearing drew a different cloud with pruning on (up to 0.23 in the
+  rider's final `Pz`, against 0.5 to 0.8). The cloud now takes its initial
+  positions from the tagged first event, so pruning on and off are
+  bit-identical. Runs without smearing are unchanged bit for bit. Smeared runs without
+  pseudo-grid pruning are unchanged except conducting-wall runs, whose image
+  cloud is now fixed at the first image (a round-off-level change in tests).
+  Known limitation: the legacy `per_step` and `legacy_per_step` cloud refresh
+  policies still depend on pruning (their draws are keyed on window-local step
+  indices); do not combine them with causal history pruning.
+
 ### Sampled retarded path
 
 - Replace the `COLD_START` external-force gate by per-source light-cone

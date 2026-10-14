@@ -9,7 +9,11 @@ from typing import Any, Sequence, cast
 import numpy as np
 
 from .constants import C_MMNS, ELEMENTARY_CHARGE, NUMERICAL_EPSILON
-from .types import MacroparticleSmearingConfig, TrajectoryView
+from .types import (
+    COLD_START_FIRST_EVENT_KEY,
+    MacroparticleSmearingConfig,
+    TrajectoryView,
+)
 from .vectorized_interactions import ExternalSampleBatch
 
 _HASH_MASK = (1 << 64) - 1
@@ -439,7 +443,13 @@ def fixed_cloud_offsets(
     initial = history[0]
     if not len(initial["x"]):
         return None
-    positions = np.column_stack([initial[a] for a in "xyz"]).astype(float)
+    # A pruned window starts after the run did: take the initial positions from
+    # the tagged first event so pruning cannot move the cloud.
+    first_event = initial.get(COLD_START_FIRST_EVENT_KEY)
+    if first_event is not None and np.shape(first_event["x"]) == np.shape(initial["x"]):
+        positions = np.column_stack([first_event[a] for a in "xyz"]).astype(float)
+    else:
+        positions = np.column_stack([initial[a] for a in "xyz"]).astype(float)
     charges = np.asarray(initial.get("q_source", initial["q"]), dtype=float)
     populations = np.asarray(
         initial.get("macro_population", [_macro_population(q) for q in charges]),
