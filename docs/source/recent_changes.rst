@@ -1225,7 +1225,7 @@ Behavior by Simulation Type
    * - SWITCHING_WALL
      - Enabled
      - **Disabled**
-     - Two bunches, no transverse offset
+     - Deprecated legacy mode (chain of cavity irises); kept for compatibility
    * - BUNCH_TO_BUNCH
      - Enabled
      - **Enabled**

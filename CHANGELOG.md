@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Documentation
+
+- Mark `SWITCHING_WALL` as a deprecated legacy mode, kept for compatibility, and
+  document its `COLD_START` admission: only the first wall is gated; later irises
+  are treated as always present, so their images apply from the step after each
+  switch.
+
 ### Sampled retarded path
 
 - Replace the `COLD_START` external-force gate by per-source light-cone

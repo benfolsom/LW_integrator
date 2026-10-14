@@ -192,7 +192,7 @@ class SimulationType(IntEnum):
     """
 
     CONDUCTING_WALL = 0
-    SWITCHING_WALL = 1
+    SWITCHING_WALL = 1  # deprecated legacy mode (chain of cavity irises)
     BUNCH_TO_BUNCH = 2
 
 
