@@ -283,7 +283,9 @@ def test_image_class_cold_start_gate_gets_one_rebase(mode):
 
     closed = image_step([initial], [source])
     np.testing.assert_array_equal(ledger(closed), 0)
-    closed["z"][:] = 15.0  # Accepted event beyond the COLD_START threshold.
+    # Accepted event after the source's light has reached the observer.
+    closed["z"][:] = 15.0
+    closed["t"][:] = 0.05
     opened = image_step([initial, closed], [source, copy.deepcopy(source)])
     assert ledger(opened)[0, 3] > 0
     assert ledger(opened)[0, 2] < 0
@@ -321,8 +323,9 @@ def test_cold_start_smeared_gate_keeps_subcharge_identities_when_opened():
     closed = decode_inclusion_state(first["potential_inclusion_state"][0])["external"]
     assert not closed["gate_open"]
     assert closed["charges"] == [0.0] * 4
-    # Admit sources by moving the observer past the initial light-cone gate.
+    # Admit sources: their first-sample light reaches the observer by then.
     first["z"][:] = 15
+    first["t"][:] = 0.05
     second = cold_step([initial, first])
     opened = decode_inclusion_state(second["potential_inclusion_state"][0])["external"]
     assert opened["gate_open"]

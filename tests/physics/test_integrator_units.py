@@ -182,6 +182,12 @@ class TestTrajectoryIntegratorUnits:
         )
 
         bunch = create_bunch_uniform_distribution(config, PROTON, "line")
+        # A driver coincident with the rider is a zero-distance source that
+        # COLD_START admits at once. This is a finiteness/free-flight check of
+        # the integrator loop: the driver is 1e5 mm away, so its light never
+        # arrives within these steps and no interaction is exercised.
+        driver = bunch.copy()
+        driver["z"] = driver["z"] + 1e5
         trajectory, _ = self.integrator.integrate_retarded_fields(  # type: ignore[attr-defined]
             static_steps=3,
             ret_steps=config.total_steps - 3,
@@ -190,7 +196,7 @@ class TestTrajectoryIntegratorUnits:
             apt_R=config.aperture_r,
             sim_type=config.sim_type,
             init_rider=bunch,
-            init_driver=bunch.copy(),
+            init_driver=driver,
             bunch_dist=1e5,
             z_cutoff=config.z_cutoff,
         )

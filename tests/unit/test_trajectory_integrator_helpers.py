@@ -117,7 +117,10 @@ def test_self_consistency_factory_methods_use_canonical_mode_names():
     assert SelfConsistencyConfig.standard().convergence_mode == "fixed_geometry"
     assert SelfConsistencyConfig.disabled().enabled is False
     assert SelfConsistencyConfig.aggressive().convergence_mode == "variable_geometry"
-    assert SelfConsistencyConfig.variable_geometry().convergence_mode == "variable_geometry"
+    assert (
+        SelfConsistencyConfig.variable_geometry().convergence_mode
+        == "variable_geometry"
+    )
 
 
 def test_compute_delta_t_averaged_blends_stationary_and_relativistic_samples():
@@ -158,20 +161,18 @@ def test_compute_delta_t_averaged_blends_stationary_and_relativistic_samples():
         trajectory_ext=trajectory_ext,
     )
 
-    expected_fast = distance * (1.0 + b_nhat_current) / (
-        C_MMNS * (1.0 - b_nhat_current**2)
+    expected_fast = (
+        distance * (1.0 + b_nhat_current) / (C_MMNS * (1.0 - b_nhat_current**2))
     )
     averaged_b = (b_nhat_current + ultrarelativistic_beta) / 2.0
-    expected_avg = distance * (1.0 + averaged_b) / (
-        C_MMNS * (1.0 - averaged_b**2)
-    )
+    expected_avg = distance * (1.0 + averaged_b) / (C_MMNS * (1.0 - averaged_b**2))
 
     assert fast_delta == pytest.approx(expected_fast)
     assert averaged_delta == pytest.approx(expected_avg)
     assert averaged_delta > fast_delta
 
 
-def test_startup_modes_agree_for_single_sample_history():
+def test_cold_start_admits_nothing_at_the_first_event_of_a_single_sample_history():
     trajectory = [_make_single_particle_state(t=0.0, z=0.0, charge=1.0)]
     trajectory_ext = [_make_single_particle_state(t=0.0, z=1.0, x=0.5, charge=1.0)]
 
@@ -197,9 +198,11 @@ def test_startup_modes_agree_for_single_sample_history():
         startup_mode=StartupMode.APPROXIMATE_BACK_HISTORY,
     )
 
-    np.testing.assert_allclose(cold_result["Px"], approx_result["Px"])
+    # Light from the source's first sample has not reached the observer yet, so
+    # COLD_START applies no external force; the approximate mode does.
+    np.testing.assert_allclose(cold_result["Px"], trajectory[0]["Px"])
+    assert abs(approx_result["Px"][0] - trajectory[0]["Px"][0]) > 0
     np.testing.assert_allclose(cold_result["t"], approx_result["t"])
-    np.testing.assert_allclose(cold_result["z"], approx_result["z"])
     assert np.all(np.isfinite(cold_result["Px"]))
 
 
@@ -479,7 +482,9 @@ def test_run_integrator_matches_direct_invocation_for_simple_case():
         use_numba=False,
     )
 
-    wrapped_traj, wrapped_drv, *_soa_out = run_integrator(config, copy.deepcopy(rider), None)
+    wrapped_traj, wrapped_drv, *_soa_out = run_integrator(
+        config, copy.deepcopy(rider), None
+    )
 
     assert len(direct_traj) == config.steps
     assert len(wrapped_traj) == config.steps

@@ -78,10 +78,12 @@ Integration-time effects such as adaptive stepping, early exits, particle loss
 and radiation reaction are not modelled; an early exit shortens the run, so the
 estimate is a screen, not a correction. **A pass is not an energy-accuracy
 certificate**: it says that little of the encounter impulse is missing, not that
-the energy ledger is converged. The check also does not model the integrator's
-own per-observer start-up gate, which opens for all sources at once from the
-farthest one; an extended source bunch can therefore lose more interaction than
-the per-pair estimate shows (this is under investigation).
+the energy ledger is converged. The integrator's ``COLD_START``
+admission is per source and opens for source ``j`` at the observer's first step
+event with ``c (t - t_j0) >= |x - x_j0|``, which is the pair's ``tau_c`` for a
+straight-line observer, so the guard's missing window and the integrator's
+admission time coincide. Within one time step, a source is still admitted at
+the first step boundary after ``tau_c``. See :doc:`theory` for the rule.
 
 Failure and override
 --------------------
