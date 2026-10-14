@@ -34,7 +34,8 @@ of the net energy flipping in the stationary-driver case). Transverse kicks were
 barely affected. Single-source head-on net-energy ledgers can change by order
 100% (``run_gate``: -0.192 eV to -0.0086 eV). ``CONDUCTING_WALL`` and
 ``SWITCHING_WALL`` runs now receive image forces only after light from the
-first image arrives, pseudo-grid ``COLD_START`` runs use the same per-source
+first wall's first image arrives (later walls are admitted when the wall
+switches, as before), pseudo-grid ``COLD_START`` runs use the same per-source
 admission, and RFS/dipole configurations under ``COLD_START`` are on the sampled
 path, not the exact one, so they change too. Re-run these before relying on
 them.

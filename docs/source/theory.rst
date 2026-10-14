@@ -353,7 +353,11 @@ first event of each image is that of the image of the observer's first stored
 state. A conducting-wall image at distance :math:`2d` is therefore admitted at
 :math:`t = 2d / ((1 + \beta) c)` for an observer moving toward it, and an
 observer at rest next to an image is admitted when light from that first image
-arrives, not at once.
+arrives, not at once. A switching wall is gated only for its first wall: the
+first event stays the image of the first state in the first wall, so after each
+switch the next wall's image is applied from the next step, as in earlier
+versions. Whether a new wall should wait for its own light cone depends on what
+the switching sequence models and is not decided here.
 
 Sources whose admission flipped between the previous and the current event had
 no retarded point at the preceding event. The canonical bookkeeping takes their

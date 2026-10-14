@@ -80,3 +80,24 @@ def test_switching_wall_image_force_not_applied_before_light_arrival():
     kicked = np.flatnonzero(np.abs(np.diff(result["Pz"])) > 0)
     assert kicked.size > 0
     assert result["t"][kicked[0]] >= t_arrival - 2 * DT_LAB
+
+
+def test_switching_image_first_event_mirrors_observers_beyond_the_cut():
+    from core.images import generate_switching_image, switching_image_first_event
+
+    rider = state(x=0.5, z=0.0, beta=0.5)
+    rider["z"] = np.array([0.0, 160.0])
+    for key in ("x", "y", "t", "Px", "Py", "Pz", "Pt", "gamma", "bx", "by", "bz"):
+        rider[key] = np.repeat(np.asarray(rider[key], dtype=float)[:1], 2)
+    for key in ("bdotx", "bdoty", "bdotz", "q", "m", "char_time"):
+        rider[key] = np.repeat(np.asarray(rider[key], dtype=float)[:1], 2)
+
+    image = generate_switching_image(rider, WALL_Z, 1.0, 150.0)
+    event = switching_image_first_event(rider, WALL_Z)
+
+    # The image generator leaves the position of an observer beyond the cut at
+    # the origin; the first event is still the mirror position.
+    assert image["z"][1] == 0.0
+    np.testing.assert_allclose(event["z"], [2 * WALL_Z, 2 * WALL_Z - 160.0])
+    np.testing.assert_array_equal(event["x"], rider["x"])
+    np.testing.assert_array_equal(event["t"], rider["t"])
