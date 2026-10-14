@@ -304,127 +304,83 @@ turn-on transient.
 COLD_START gating mechanism
 ---------------------------
 
-``COLD_START`` suppresses early retarded forces until accumulated observer
-travel exceeds a geometry-dependent threshold. This maintained startup gate
-models a turn-on approximation, chiefly for the legacy source/image geometry.
-It is not a proof of a causal interacting history, and it is valid only where
-the fields are negligible for long enough to build a source history; a preflight
-check rejects other runs (:doc:`startup_history`). Prefer ``INERTIAL_PREHISTORY``. Exact source evaluation
-separately solves light cones and requires explicit history coverage.
+``COLD_START`` has no source history before each source's first stored sample.
+It therefore admits a source only once light from that sample has reached the
+observer. This maintained startup rule models a turn-on approximation. It is not
+a proof of a causal interacting history, and it is valid only where the fields
+are negligible for long enough to build a source history; a preflight check
+rejects other runs (:doc:`startup_history`). Prefer ``INERTIAL_PREHISTORY``.
+Exact source evaluation separately solves light cones and requires explicit
+history coverage.
 
-Gating threshold formula
-~~~~~~~~~~~~~~~~~~~~~~~~
+Light-cone admission
+~~~~~~~~~~~~~~~~~~~~
 
-The threshold distance a particle must travel before forces are applied is:
+Let source :math:`j` have first stored sample :math:`(t_{j0}, \mathbf{x}_{j0})`.
+At the observer's step-start event :math:`(t, \mathbf{x})` the source is
+admitted when
 
 .. math::
 
-   d_{\text{threshold}} = \frac{\beta \cdot R}{1 - \boldsymbol{\beta} \cdot \mathbf{n}},
+   c\,(t - t_{j0}) \;\ge\; \left|\mathbf{x} - \mathbf{x}_{j0}\right| .
 
-where:
+Properties:
 
-- :math:`\beta = |\boldsymbol{\beta}|` is the particle speed (in units of c)
-- :math:`R` is the current distance from particle to external source
-- :math:`\mathbf{n}` is the unit vector pointing from source to particle
-- :math:`\boldsymbol{\beta} \cdot \mathbf{n}` is the velocity component along the separation
+- **Per source.** Each source is judged on its own sample. A distant source
+  never holds back a near one, and a near one never admits a distant one.
+- **Stateless and monotone.** The mask depends only on the current event and
+  the first sample, with no averaged velocity or direction. For a subluminal
+  observer, :math:`c(t - t_{j0}) - |\mathbf{x} - \mathbf{x}_{j0}|` grows at
+  least as fast as :math:`c(1 - \beta)`, so an admitted source stays admitted.
+  The earlier travel-distance gate could close again after a crossing.
+- **The physical statement of the startup rule.** For one head-on source at
+  distance :math:`R_0` the observer, at speed :math:`\beta c`, is admitted at
+  :math:`t = R_0 / ((1 + \beta) c)`. A source at rest is admitted at
+  :math:`t = R_0 / c` for an observer that stays near its start.
+- **The same interval as the preflight check.** The per-pair time
+  :math:`\tau_c` in :doc:`startup_history` is exactly this admission time for a
+  straight-line observer, so the guard and the integrator agree.
 
-Physical interpretation
-~~~~~~~~~~~~~~~~~~~~~~~~
+Admission is applied to the gathered external samples: a source that is not
+admitted contributes no charge to the force, the radiation fields or the
+canonical potential ledger. With smearing, each subcharge inherits its parent's
+admission. When no source is admitted the retarded solve is skipped.
 
-The threshold represents the distance the **particle** must travel before light
-from the source's initial position could reach it. The formula accounts for the
-relative closing speed between light and particle:
+The first event :math:`(t_{j0}, \mathbf{x}_{j0})` is carried explicitly with the
+source history, so a windowed history does not change the test. Wall runs
+regenerate the image every step and pass it as a one-sample history; there the
+first event of each image is that of the image of the observer's first stored
+state. A conducting-wall image at distance :math:`2d` is therefore admitted at
+:math:`t = 2d / ((1 + \beta) c)` for an observer moving toward it, and an
+observer at rest next to an image is admitted when light from that first image
+arrives, not at once. A switching wall is gated only for its first wall: the
+first event stays the image of the first state in the first wall, so after each
+switch the next wall's image is applied from the next step, as in earlier
+versions. Whether a new wall should wait for its own light cone depends on what
+the switching sequence models and is not decided here.
 
-- **Approaching** (:math:`\boldsymbol{\beta} \cdot \mathbf{n} < 0`): particles
-  and light meet quickly, threshold < :math:`\beta R`
+Sources whose admission flipped between the previous and the current event had
+no retarded point at the preceding event. The canonical bookkeeping takes their
+ordinary change of vector potential over that step from the observer's motion
+alone, with the source's sampled retarded point held, so the mechanical energy
+stays continuous across admission. Sources that merely change membership of the
+active set (pseudo-grid rotation, field-source reselection, visibility
+re-entry) were admitted earlier and are handled as before.
 
-  Example: :math:`\boldsymbol{\beta} \cdot \mathbf{n} = -\beta` (head-on) →
-  threshold = :math:`\beta R / (1 + \beta)`
+``COLD_START`` runs with the RFS/dipole configuration are on the sampled path,
+not the exact one (that needs ``INERTIAL_PREHISTORY``), so they change with the
+admission rule.
 
-- **Perpendicular** (:math:`\boldsymbol{\beta} \cdot \mathbf{n} = 0`): light
-  travels full distance, threshold = :math:`\beta R`
-
-- **Receding** (:math:`\boldsymbol{\beta} \cdot \mathbf{n} > 0`): light takes
-  longer to catch up, threshold > :math:`\beta R`
-
-- **Receding at c** (:math:`\boldsymbol{\beta} \cdot \mathbf{n} \rightarrow 1`):
-  light never catches particle, threshold → ∞ (forces never applied)
-
-Dynamic threshold calculation
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-The threshold is **recalculated every integration step** using current values of
-:math:`R` and :math:`\boldsymbol{\beta}`. This updates the startup approximation
-as geometry evolves:
-
-1. Distance :math:`R` changes as particles move and images reposition
-2. Velocity :math:`\boldsymbol{\beta}` updates as particles accelerate
-3. Threshold automatically decreases as particle approaches sources
-4. Forces "turn on" dynamically when travel distance exceeds threshold
-
-Two-stage implementation
-~~~~~~~~~~~~~~~~~~~~~~~~~
-
-For computational efficiency, the code uses a two-stage check:
-
-**Stage 1: Early conservative check** (performance optimization)
-
-- Uses estimated maximum :math:`R` from external particle bounds
-- Conservative threshold: :math:`\beta R_{\max} / (1 + \beta)` (assumes head-on approach)
-- If travel distance < estimated threshold, skip expensive retarded distance calculations
-
-**Stage 2: Precise check** (accurate gating)
-
-- Uses actual retarded distance :math:`R` to each external source
-- Per-source thresholds: :math:`\beta R / (1 - \boldsymbol{\beta} \cdot \mathbf{n})`
-- Forces applied when travel distance ≥ threshold
-
-Velocity regime behavior
-~~~~~~~~~~~~~~~~~~~~~~~~
-
-The :math:`\beta` factor in the numerator is critical for non-relativistic particles:
-
-.. list-table::
-   :header-rows: 1
-   :widths: 20 15 30 35
-
-   * - Regime
-     - :math:`\beta`
-     - Threshold (approaching)
-     - Physical meaning
-   * - Non-relativistic
-     - 0.01
-     - :math:`0.01 R / 1.01 \approx 0.01 R`
-     - Forces apply almost immediately
-   * - Low velocity
-     - 0.1
-     - :math:`0.1 R / 1.1 \approx 0.09 R`
-     - Early force application
-   * - Moderate
-     - 0.5
-     - :math:`0.5 R / 1.5 \approx 0.33 R`
-     - Forces apply at 1/3 distance
-   * - Relativistic
-     - 0.9
-     - :math:`0.9 R / 1.9 \approx 0.47 R`
-     - Near half-distance
-   * - Ultra-relativistic
-     - → 1
-     - → :math:`R / 2`
-     - Approach halfway limit (never exceed)
-
-Without the :math:`\beta` factor, low-velocity particles would have forces
-suppressed for distances far exceeding physical interaction regions, producing
-incorrect physics.
+Same-bunch space charge has its own startup rule and is not gated by this
+mask. The exact path (``INERTIAL_PREHISTORY``) does not use it.
 
 Implementation
 ~~~~~~~~~~~~~~
 
-The gating mechanism is implemented in ``core/equations.py``:
-
-- ``_compute_gating_threshold`` computes per-source thresholds
-- ``_should_apply_external_forces`` performs the Stage 2 check
-- Early conservative check embedded in :func:`core.equations.retarded_equations_of_motion`
+The mask is ``_cold_start_admission_mask`` in ``core/equations.py``. It is used
+by :func:`core.equations.retarded_equations_of_motion` for the force, by
+``core/potential_inclusion.py`` for the sampled canonical ledger, and by
+``core/pseudo_grid_potential.py`` for reduced pseudo-grid solves.
 
 For conducting walls, the distance :math:`R` is computed to image charges (not
 the wall itself), ensuring correct handling of virtual source positions.

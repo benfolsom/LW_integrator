@@ -1043,6 +1043,53 @@ def test_retarded_integrator_matches_full_solver_when_pseudo_grid_prunes_causall
     assert schedule.rider_dropped_history_samples == 1
 
 
+def test_cold_start_admission_survives_pruning_with_pseudo_grid_active_subsets() -> (
+    None
+):
+    """A pruned window head must not reset a source's COLD_START first event.
+
+    With fewer active sources than the population, the reduced-step force solve
+    reads its own sliced history. Pruning on and off must give the same result.
+    """
+
+    def run_case(prune: bool):
+        return retarded_integrator(
+            # Close COLD_START geometry; the interaction history is not asserted.
+            allow_incomplete_startup_history=True,
+            steps=40,
+            h_step=0.05,
+            wall_z=0.0,
+            aperture_radius=0.5,
+            sim_type=SimulationType.BUNCH_TO_BUNCH,
+            init_rider=_make_bunch_state(
+                x=[10.0 * i for i in range(4)], z=-1.0, charge=1.0
+            ),
+            init_driver=_make_bunch_state(
+                x=[1.0 + 10.0 * i for i in range(6)], z=1.0, charge=2.0
+            ),
+            mean=0.0,
+            cav_spacing=0.0,
+            z_cutoff=0.0,
+            pseudo_grid=PseudoGridConfig(
+                enabled=True,
+                active_rider_count=2,
+                active_driver_count=3,
+                passive_neighbor_count=2,
+                causal_history_pruning_enabled=prune,
+                causal_history_safety_margin_steps=0,
+            ),
+            use_numba=False,
+        )
+
+    kept = run_case(False)
+    pruned = run_case(True)
+
+    schedule = pruned[0][-1]["_pseudo_grid_schedule"]
+    assert schedule.driver_dropped_history_samples > 0
+    _assert_trajectory_arrays_match(pruned[2], kept[2])
+    _assert_trajectory_arrays_match(pruned[3], kept[3])
+
+
 def test_retarded_integrator_pseudo_grid_active_subset_tracks_full_solver_for_asymmetric_bunches() -> (
     None
 ):
