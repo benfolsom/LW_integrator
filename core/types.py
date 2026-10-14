@@ -49,6 +49,9 @@ ParticleState = Dict[str, np.ndarray]
 Trajectory = List[ParticleState]
 TrajectoryView = Sequence[ParticleState]
 
+# Per-step tag holding each source's first event; survives history pruning.
+COLD_START_FIRST_EVENT_KEY = "_cold_start_first_event"
+
 
 def validate_live_particle_fields(
     state: Mapping[str, np.ndarray], *, context: str
