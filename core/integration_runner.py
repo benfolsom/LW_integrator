@@ -23,6 +23,7 @@ from .equations import (
     _canonicalize_radiation_reaction_mode,
     retarded_equations_of_motion,
     known_first_event,
+    slice_first_event,
     tag_first_event,
     with_first_event,
 )
@@ -1884,13 +1885,25 @@ def _run_pseudo_grid_reduced_step(
         start_step=observer_global_start,
     )
 
+    # The reduced source history may start at a pruned window head, so carry
+    # the explicit first events of the active sources into the force solve.
+    source_active_first_event = (
+        slice_first_event(source_first_event, source_active)
+        if source_first_event is not None
+        and source_active.size
+        and source_active.max() < len(source_first_event["x"])
+        else None
+    )
+
     if (
         observer_active_soa is not None
         and source_active_soa is not None
         and observer_sc_source_soa is not None
     ):
         observer_active_history = ActiveTrajectoryView(observer_active_soa)
-        source_active_history = ActiveTrajectoryView(source_active_soa)
+        source_active_history = ActiveTrajectoryView(
+            source_active_soa, first_event=source_active_first_event
+        )
         observer_sc_source_history = (
             ActiveTrajectoryView(observer_sc_source_soa)
             if observer_sc_source_soa is not None
@@ -1906,6 +1919,9 @@ def _run_pseudo_grid_reduced_step(
             source_active,
             start_index=source_local_start,
             q_override=source_effective_charges,
+        )
+        source_active_history = with_first_event(
+            source_active_history, source_active_first_event
         )
         observer_sc_source_history = slice_trajectory_particle_history(
             observer_history,
