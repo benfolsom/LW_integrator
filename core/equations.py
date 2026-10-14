@@ -1199,6 +1199,16 @@ def snapshot_first_event(state: Optional[ParticleState]) -> Optional[dict]:
     }
 
 
+def slice_first_event(first_event: Optional[dict], indices) -> Optional[dict]:
+    """First events of the sources ``indices`` of a full-population event."""
+    if first_event is None:
+        return None
+    selected = np.asarray(indices, dtype=int)
+    return {
+        axis: np.asarray(first_event[axis])[selected] for axis in ("t", "x", "y", "z")
+    }
+
+
 def known_first_event(history: Sequence[ParticleState], index: int) -> Optional[dict]:
     """First events of a run's sources, surviving pruned history prefixes.
 
@@ -1279,10 +1289,15 @@ def _cold_start_admission_mask(
             first_event = head[COLD_START_FIRST_EVENT_KEY]
         except (KeyError, TypeError):
             first_event = None
-    if first_event is None or any(
+    if first_event is None:
+        first_event = head
+    elif any(
         np.asarray(first_event[axis]).size != count for axis in ("t", "x", "y", "z")
     ):
-        first_event = head
+        raise ValueError(
+            "COLD_START first events do not match the source count "
+            f"({np.asarray(first_event['x']).size} != {count})"
+        )
     separation = np.sqrt(
         sum(
             (float(observer_state[axis][particle_idx]) - np.asarray(first_event[axis]))
