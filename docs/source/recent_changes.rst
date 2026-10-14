@@ -13,6 +13,19 @@ claims describe their named revisions, not the current defaults. Use
 :doc:`self_consistency`, :doc:`exact_path`, and :doc:`native_pic` for maintained
 configuration guidance, and ``CHANGELOG.md`` for the consolidated release notes.
 
+.. _release_unreleased_smearing_pruning:
+
+Unreleased: smearing cloud under causal pruning
+-----------------------------------------------
+
+The fixed per-particle smearing cloud is defined by the initial source
+geometry, but it was built from the first retained history sample. Causal
+history pruning moves that sample, so smeared pseudo-grid active-subset runs
+changed with pruning on (rider final ``Pz`` by up to 0.23). The cloud now reads
+its initial positions from the tagged first event, and pruning on and off give
+identical results. Smeared pseudo-grid runs with pruning made before this fix
+are suspect. Runs without smearing or pruning are unchanged bit for bit.
+
 .. _release_unreleased_coldstart_gate:
 
 Unreleased: COLD_START light-cone admission
