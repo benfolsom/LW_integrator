@@ -584,3 +584,111 @@ def test_cloud_preserves_resolved_translated_segments_and_knots(gamma):
                         )
                     )
                     assert abs(actual - expected) <= Decimal("1e-45")
+
+
+def _circular_state(r0, beta0, omega, t):
+    """Position, beta and dbeta/dt of a charge on a circle in the x-z plane."""
+    v = beta0 * 299.792458
+    phase = omega * t
+    a, c = np.sin(phase) / omega, (np.cos(phase) - 1) / omega
+    position = np.array(
+        [r0[0] + v[0] * a + v[2] * c, r0[1] + v[1] * t, r0[2] + v[2] * a - v[0] * c]
+    )
+    bx = beta0[0] * np.cos(phase) - beta0[2] * np.sin(phase)
+    bz = beta0[2] * np.cos(phase) + beta0[0] * np.sin(phase)
+    return (
+        position,
+        np.array([bx, beta0[1], bz]),
+        np.array([-omega * bz, 0, omega * bx]),
+    )
+
+
+def _independent_cloud_field(observer, r0, beta0, omega, offsets, fractions, charge):
+    """Retarded field of rigidly translated circular worldlines (bisection)."""
+    field = np.zeros(3)
+    for offset, fraction in zip(offsets, fractions):
+        lo, hi = -5.0, 0.0
+        for _ in range(200):
+            mid = 0.5 * (lo + hi)
+            gap = -299.792458 * mid - np.linalg.norm(
+                observer - _circular_state(r0, beta0, omega, mid)[0] - offset
+            )
+            lo, hi = (mid, hi) if gap > 0 else (lo, mid)
+        position, beta, beta_dot = _circular_state(r0, beta0, omega, 0.5 * (lo + hi))
+        sep = observer - position - offset
+        dist = np.linalg.norm(sep)
+        n = sep / dist
+        kappa = 1 - n @ beta
+        field += (
+            charge
+            * fraction
+            * (
+                (n - beta) * (1 - beta @ beta) / (kappa**3 * dist**2)
+                + np.cross(n, np.cross(n - beta, beta_dot))
+                / (299.792458 * kappa**3 * dist)
+            )
+        )
+    return field
+
+
+@pytest.mark.parametrize("beta", [0.3, 0.9])
+def test_exact_cloud_on_circular_history_is_rigid_translation(beta):
+    """Children keep the parent's beta and beta-dot at their own retarded time.
+
+    The cloud plane is normal to the velocity of the first stored knot (the
+    cloud's initial state), so a history built backwards from a snapshot is
+    oriented there and not at the snapshot.
+    """
+    omega = beta * 299.792458 / 900.0
+    beta0 = np.array([0.0, 0.0, beta])
+    r0 = np.zeros(3)
+    knots, span = 64, 0.3
+    times = np.linspace(-span, 0.0, knots)
+    states = [_circular_state(r0, beta0, omega, t) for t in times]
+    q = 1.0
+    hist = [
+        {
+            "t": np.array([t]),
+            **{a: np.array([s[0][i]]) for i, a in enumerate("xyz")},
+            **{f"b{a}": np.array([s[1][i]]) for i, a in enumerate("xyz")},
+            **{
+                f"bdot{a}": np.array([s[2][i] / 299.792458])
+                for i, a in enumerate("xyz")
+            },
+            "q": np.array([q]),
+            "q_source": np.array([q]),
+            "_dead_particles": np.zeros(1, dtype=bool),
+        }
+        for t, s in zip(times, states)
+    ]
+    config = cloud_config(count=4, width=0.5)
+    observer = np.array([3.0, 0.5, 2.0])
+    lw = np.array(
+        evaluate_retarded_charge_field_native(
+            exact_cloud_history(hist, config),
+            ObserverEvent(0.0, tuple(observer)),
+            backend="numba_full_strict_serial",
+        ).electric_field_native
+    )
+    fractions = transverse_offsets(states[0][1], config)[1]
+    expected = _independent_cloud_field(
+        observer,
+        r0,
+        beta0,
+        omega,
+        transverse_offsets(states[0][1], config)[0],
+        fractions,
+        q,
+    )
+    assert np.linalg.norm(lw - expected) <= 1e-7 * np.linalg.norm(expected)
+    # The snapshot-oriented cloud is a different (also rigid) cloud.
+    snapshot = _independent_cloud_field(
+        observer,
+        r0,
+        beta0,
+        omega,
+        transverse_offsets(states[-1][1], config)[0],
+        fractions,
+        q,
+    )
+    assert np.linalg.norm(lw - snapshot) > 1e-4 * np.linalg.norm(expected)

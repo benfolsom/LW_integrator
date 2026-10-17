@@ -337,6 +337,19 @@ or impose Born rigidity during acceleration. A zero-velocity macro uses the
 laboratory x–y plane. This is a specified source quadrature model, rather than
 a claim of resolved internal plasma dynamics.
 
+"Initial" means the macro's **first stored history knot**, not the observation
+or snapshot time. For a prescribed history on a curved (accelerating) orbit that
+is built backwards from a snapshot, the first knot is the oldest one, so the
+cloud plane is normal to the velocity there. An independent evaluation that
+orients the offsets with the snapshot velocity describes a different rigid cloud,
+rotated by the orbit angle accumulated over the history span (``Omega * span``),
+and differs by a size that grows with that angle and with how close the nearest
+neighbours are to the observer. To compare against such a reference, orient its
+offsets with the first-knot velocity (or build the history so the snapshot is its
+first knot). Children keep the centre's velocity and acceleration at their own
+retarded time; this agrees with an independent numpy rigid-translation evaluation
+to the history interpolation error on circular orbits.
+
 Square counts use tensor Gauss–Hermite quadrature for a transverse Gaussian,
 with positive charge fractions whose sum is one. For example, counts 4, 16,
 and 64 use 2 × 2, 4 × 4, and 8 × 8 nodes. Other configurable counts use fixed
