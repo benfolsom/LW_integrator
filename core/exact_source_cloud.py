@@ -88,7 +88,8 @@ class ExactCloudHistory:
     """A macro history plus deterministic offsets, not sampled retarded events.
 
     Offsets remain fixed in the laboratory plane normal to each macro's
-    initial velocity, that of its first stored knot (not a later snapshot). Subcharges follow all subsequent centre translations,
+    initial velocity, that of its first stored knot (not a later snapshot).
+    Subcharges follow all subsequent centre translations,
     with the centre's velocity and acceleration. No cloud rotation or
     longitudinal contraction is applied to these transverse initial offsets.
     With breathing enabled, only the scalar width evolves; the fixed nodes

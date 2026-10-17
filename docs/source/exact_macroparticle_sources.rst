@@ -346,7 +346,10 @@ rotated by the orbit angle accumulated over the history span (``Omega * span``),
 and differs by a size that grows with that angle and with how close the nearest
 neighbours are to the observer. To compare against such a reference, orient its
 offsets with the first-knot velocity (or build the history so the snapshot is its
-first knot). Children keep the centre's velocity and acceleration at their own
+first knot). For such backwards-built histories the first knot is a numerical
+choice, so smeared results then depend on the history span chosen; few-node
+clouds with close neighbours are also sensitive to node placement and need the
+usual convergence checks over subcharge count and width. Children keep the centre's velocity and acceleration at their own
 retarded time; this agrees with an independent numpy rigid-translation evaluation
 to the history interpolation error on circular orbits.
 
