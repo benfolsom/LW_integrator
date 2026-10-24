@@ -1,9 +1,9 @@
-LW Integrator Guide
-===================
+LW Integrator (LWI) Guide
+=========================
 
 Documentation for release |release|.
 
-LW Integrator tracks relativistic charged particles using retarded
+The LW Integrator (LWI) tracks relativistic charged particles using retarded
 Liénard–Wiechert fields. It includes image-source models, bunch-to-bunch
 interactions, experimental intrinsic magnetic moments, and a separate native
 particle-in-cell (PIC) solver. Each route has its own numerical and physical

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v0.12.3 — 2026-10-24 — smeared sources on curved histories (no defect)
+
 ### Documentation
 
 - Report of smeared sources on curved histories disagreeing with an independent
@@ -16,6 +18,13 @@
   at its own light-cone index with its own velocity and acceleration. No earlier
   results are affected. Added a circular-history regression test and clarified
   the definition of "initial velocity" in the docs.
+
+## v0.12.2 — 2026-10-24 — LWI abbreviation
+
+### Documentation
+
+- Introduce the abbreviation LWI (LW Integrator) in the README and in the
+  headings of the documentation guide and overview.
 
 ## v0.12.1 — 2026-10-14 — COLD_START light-cone admission, smearing and pruning fix
 
