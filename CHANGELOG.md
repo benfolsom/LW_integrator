@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+## v0.12.3 — 2026-10-24 — smeared sources on curved histories (no defect)
+
+### Documentation
+
+- Report of smeared sources on curved histories disagreeing with an independent
+  evaluation (about 25 % of the force) investigated: no defect in the code.
+  Exact smeared children follow the parent's worldline translated by a fixed
+  laboratory offset, with the parent's velocity and acceleration at the child's
+  own retarded time. This agrees with an independent numpy evaluation to the
+  history interpolation error (1e-11 relative for a fine history, β = 0.3 and
+  0.9). The cloud plane is normal to the velocity of the first stored knot, as
+  documented; a reference that orients the offsets with a later snapshot
+  velocity is a different (rotated) cloud. The sampled path matches each child
+  at its own light-cone index with its own velocity and acceleration. No earlier
+  results are affected. Added a circular-history regression test and clarified
+  the definition of "initial velocity" in the docs.
+
 ## v0.12.2 — 2026-10-24 — LWI abbreviation
 
 ### Documentation

@@ -13,6 +13,21 @@ claims describe their named revisions, not the current defaults. Use
 :doc:`self_consistency`, :doc:`exact_path`, and :doc:`native_pic` for maintained
 configuration guidance, and ``CHANGELOG.md`` for the consolidated release notes.
 
+.. _release_0_12_3:
+
+v0.12.3: smeared sources on curved histories (no defect)
+--------------------------------------------------------
+
+A reported 25 % force difference for smeared sources on accelerating histories
+was traced to a definition mismatch, not a code defect. The exact rigid cloud is
+oriented by the velocity of the first stored history knot; an independent
+evaluation using the snapshot velocity builds a rotated cloud. With the same
+orientation the two agree to the history interpolation error (about 1e-11
+relative on fine circular histories). Child matching on the sampled path was
+also checked. No earlier results are affected, including smeared sources on
+accelerating histories. A regression test pins the circular-history behaviour,
+and :doc:`exact_macroparticle_sources` now defines "initial velocity".
+
 .. _release_0_12_2:
 
 v0.12.2: LWI abbreviation
