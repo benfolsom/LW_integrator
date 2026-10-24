@@ -1,8 +1,8 @@
 Overview
 ========
 
-The LW Integrator is a covariant electromagnetic particle tracking code tuned for
-accelerator physics studies.  The maintained implementation lives in ``core/``,
+The LW Integrator (LWI) is a covariant electromagnetic particle tracking code
+tuned for accelerator physics studies.  The maintained implementation lives in ``core/``,
 with CLI and GUI workflows layered on top through ``lw_integrator/`` and
 ``optimization/``.  The method is
 described in *Relativistic beam loading, recoil-reduction, and residual-wake

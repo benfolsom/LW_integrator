@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## v0.12.2 — 2026-10-24 — LWI abbreviation
+
+### Documentation
+
+- Introduce the abbreviation LWI (LW Integrator) in the README and in the
+  headings of the documentation guide and overview.
+
 ## v0.12.1 — 2026-10-14 — COLD_START light-cone admission, smearing and pruning fix
 
 ### Documentation

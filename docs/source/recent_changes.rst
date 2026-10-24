@@ -13,6 +13,14 @@ claims describe their named revisions, not the current defaults. Use
 :doc:`self_consistency`, :doc:`exact_path`, and :doc:`native_pic` for maintained
 configuration guidance, and ``CHANGELOG.md`` for the consolidated release notes.
 
+.. _release_0_12_2:
+
+v0.12.2: LWI abbreviation
+-------------------------
+
+The code is now abbreviated LWI (LW Integrator) in the README and in the
+headings of this guide and the overview. No code or results change.
+
 .. _release_unreleased_smearing_pruning:
 
 Unreleased: smearing cloud under causal pruning

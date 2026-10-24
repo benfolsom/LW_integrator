@@ -1,4 +1,7 @@
-# LW Integrator
+# LW Integrator (LWI)
+
+The Liénard–Wiechert Integrator (LWI) tracks relativistic charged particles
+with retarded Liénard–Wiechert fields.
 
 Version **0.11.0** adds exact visibility gates and charge driver trains,
 NumPy/MLX/CuPy native PIC, and opt-in K-cloud corrections. Experimental boundary
