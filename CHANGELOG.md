@@ -7,6 +7,9 @@
 - README restructured as a stable overview; dated update notes moved to the
   changelog.
 - Python 3.10 or later required; overview and quickstart pages updated.
+- Removed the conducting-wall aperture plots (overstated by at least 3e5 in a
+  closed-form check); the README no longer cites the conducting-wall aperture
+  and linked B2B sweeps as examples (configs kept).
 
 ## v0.12.3 — 2026-10-24 — smeared sources on curved histories (no defect)
 
