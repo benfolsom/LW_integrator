@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Documentation
+
+- README restructured as a stable overview; dated update notes moved to the
+  changelog.
+
 ## v0.12.3 — 2026-10-24 — smeared sources on curved histories (no defect)
 
 ### Documentation
