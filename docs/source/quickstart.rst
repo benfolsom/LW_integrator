@@ -1,8 +1,10 @@
 Quick start
 ===========
 
-Follow the steps below to prepare a development environment, run a minimal
-simulation, and confirm that the regression tooling works on your machine.
+Follow the steps below to prepare an environment, make a first run, and
+confirm that the regression tooling works on your machine. The README has the
+short installation and command summary; this page goes through first runs in
+more detail. Python 3.10 or later is required.
 
 1. Use a compatible existing environment if one is available. For a shared
    Pixi workspace, select its compatible environment and run from this checkout;
@@ -21,15 +23,16 @@ simulation, and confirm that the regression tooling works on your machine.
    Keep environments and package caches outside synchronized source directories.
    The ``dev`` extra supplies testing and development tools; ``docs`` supplies
    Sphinx and notebook rendering dependencies. Interactive notebooks also need
-   the ``examples`` extra. Existing project-specific environments can be reused.
+   the ``examples`` extra. The GUI needs Tkinter, which is installed at system
+   level (see the README).
 
-2. Launch the GUI application:
+2. Launch the GUI:
 
    .. code-block:: bash
 
       python -m lw_integrator.gui
 
-   The GUI provides three operational modes:
+   The GUI has three modes:
 
    * **Single Run Mode** (Main tab): Configure and execute individual simulations
      with real-time progress tracking, trajectory visualization, and interactive
@@ -113,7 +116,7 @@ simulation, and confirm that the regression tooling works on your machine.
    :doc:`startup_history`. Keep ``medina_lad`` unless explicitly running an RR-off
    diagnostic. The LW step is proper time; native PIC uses lab time.
 
-   Missing self-consistency keys now select enabled ``fixed_geometry`` with
+   Missing self-consistency keys select enabled ``fixed_geometry`` with
    two trials, gamma reconciliation ``DISABLED``, and chrono interpolation
    off. See :doc:`self_consistency` for the full defaults and migration effects.
 
@@ -163,10 +166,8 @@ simulation, and confirm that the regression tooling works on your machine.
    root batches, but only as float32 bracket proposals certified against the
    original float64 data; the strict CPU root and fields remain authoritative.
    Small calls stay on the CPU and there is no automatic platform dispatch.
-   The October 2026 strict CPU helpers speed up the maintained compiled path
-   by about 1.6–1.7× in the reported warm runs, preserving each backend's
-   baseline bytes. This does not change the full-strict versus Python
-   tolerance contract. See :doc:`validation` for the measured scope.
+   The full-strict versus Python tolerance contract is unchanged by these
+   backends. See :doc:`validation` for the measured scope.
    ``--exact-retarded-update second_order_start_taylor_endpoint`` opts the
    ordinary exact-source Lorentz translation into the experimental
    accepted-start second-order Taylor update; ``first_order_endpoint`` remains
@@ -243,9 +244,9 @@ simulation, and confirm that the regression tooling works on your machine.
 
    .. note::
 
-      As of v0.6.0 the CLI sweep runner calls the **same** ``run_testbed()`` /
-      ``SimulationOptions`` code paths as the GUI, so results are identical
-      between the two interfaces.
+      The CLI sweep runner calls the same ``run_testbed()`` /
+      ``SimulationOptions`` code paths as the GUI for matching settings, so the
+      two interfaces use identical physics and metric code.
 
    You can replicate the same behaviour programmatically by calling
    ``lw_integrator.cli.main`` with a list of CLI-style arguments; see
@@ -259,7 +260,7 @@ simulation, and confirm that the regression tooling works on your machine.
 
    Open ``docs/build/html/index.html`` in a browser to browse the rendered pages.
 
-8. Run the integration and CLI/GUI parity checks relevant to your change:
+5. Run the integration and CLI/GUI parity checks relevant to your change:
 
    .. code-block:: bash
 
@@ -269,7 +270,7 @@ simulation, and confirm that the regression tooling works on your machine.
    These tests exercise maintained end-to-end solver paths and the intended
    headless baseline for sweep behavior.
 
-9. Run a macroparticle simulation (conducting-wall mode):
+6. Run a macroparticle simulation (conducting-wall mode):
 
    .. code-block:: python
 
@@ -302,7 +303,7 @@ simulation, and confirm that the regression tooling works on your machine.
    prescription. It does not establish emittance evolution. Its manual proper
    timestep is illustrative; choose and refine it for the intended geometry.
 
-10. Run a full 3D off-axis beam simulation:
+7. Run a full 3D off-axis beam simulation:
 
    .. code-block:: python
 
@@ -349,7 +350,7 @@ Next steps
   used as the current regression baseline.
 * :doc:`notebooks` provides guidance on using the interactive assets efficiently
   (plot styling, DPI control, output directories, etc.).
-* :doc:`recent_changes` describes the macroparticle simulation feature and other
-  recent enhancements including optimization convergence and physics corrections.
+* :doc:`recent_changes` and ``CHANGELOG.md`` list release notes and dated
+  implementation history.
 * :doc:`development/index` is the entry point for coding conventions, testing
   expectations, and contribution guidelines.

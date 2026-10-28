@@ -21,6 +21,8 @@ Unreleased: README restructure
 README restructured as a stable overview; dated update notes moved to the
 changelog. Documentation only; no code or results change.
 
+Python 3.10 or later required; overview and quickstart pages updated.
+
 .. _release_0_12_3:
 
 v0.12.3: smeared sources on curved histories (no defect)

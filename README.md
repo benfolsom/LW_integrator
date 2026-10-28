@@ -92,9 +92,8 @@ brew install python-tk@3.11                      # macOS with Homebrew Python
 
 The Python.org installers for macOS and Windows include Tkinter.
 
-Python 3.11 and 3.12 are exercised by the documentation checks; the source
-uses annotation syntax that is incompatible with Python 3.8 and 3.9. Create a
-project-specific environment and install from a checkout:
+Python 3.10 or later is required (the documentation checks run on 3.11).
+Create a project-specific environment and install from a checkout:
 
 ```bash
 git clone https://github.com/benfolsom/LW_integrator

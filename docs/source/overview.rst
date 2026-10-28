@@ -60,31 +60,27 @@ High-level anatomy
 ``lw_integrator/``
     CLI entry point (``cli.py``), GUI application (``gui.py``), headless sweep
     runner (``sweep_runner.py``), testbed runner (``testbed_runner.py``), and the
-    optimization GUI plugin (``optimization_plugin.py``).  As of v0.6.0 the CLI
-    sweep runner calls the **same** ``run_testbed()`` / ``SimulationOptions``
-    code paths as the GUI for matching settings, seeds, and supported routes.  Launch
-    the GUI with ``python -m lw_integrator.gui`` to access three operational
-    modes: Single Run (Main tab) for individual simulations with real-time
-    visualization, Blind Sweep for parameter space exploration, and Optimization
-    for global search using Genetic Algorithm, Differential Evolution,
-    Nelder-Mead, or Multi-start methods.  Includes convergence detection, top-N
-    result saving, and comprehensive trajectory export options.
+    optimization GUI plugin (``optimization_plugin.py``).  The CLI sweep runner
+    and the GUI call the same ``run_testbed()`` / ``SimulationOptions`` code
+    paths.  The GUI (``python -m lw_integrator.gui``) offers single runs, blind
+    sweeps and optimization; :doc:`quickstart` walks through them.
 
 ``optimization/``
     Sweep and optimization engine shared by CLI and GUI.  Contains the parameter
     grid builder (``parameter_sweep.py``), metrics extraction (``metrics.py``),
     result I/O (``result_io.py``), and UI/run/results mixins that the GUI plugin
-    composes.  ``result_io.relocate_incomplete_sweep()`` automatically moves
-    sweep directories with fewer than 100 completed runs to
+    composes.  ``result_io.relocate_incomplete_sweep()`` moves sweep
+    directories with fewer than 100 completed runs to
     ``results/archive/incomplete/``.
 
 ``results/``
     Output location for sweep and optimization runs (git-ignored).  Completed
-    sweeps land in ``results/sweeps/``; incomplete or cancelled sweeps are
-    relocated to ``results/archive/incomplete/`` automatically.
+    sweeps land in ``results/sweeps/``; incomplete or cancelled sweeps (fewer
+    than 100 completed runs, including a ``KeyboardInterrupt`` in the CLI
+    runner) are relocated to ``results/archive/incomplete/`` on save.
 
 ``docs/``
-    The refreshed documentation that you are currently reading.  Sphinx builds
+    The documentation you are reading.  Sphinx builds
     use the configuration in ``docs/source/conf.py`` and the helper script
     ``docs/build_docs.sh``.
 
@@ -210,7 +206,7 @@ Key ideas to keep in mind
   CPU. The opt-in K-cloud LW correction requires CPU float64; near-field
   pairs, midpoint prediction, and restricted Medina/LAD remain experimental.
   See :doc:`native_pic` for defaults and limits.
-* **Experimental pseudo-grid mode is now active for B2B studies.**
+* **The pseudo-grid reduced solve is experimental and opt-in.**
   ``PseudoGridConfig`` exposes an opt-in reduced active/passive solve path for
   ``SimulationType.BUNCH_TO_BUNCH`` runs.  The reduced path supports adaptive
   timestep retries and reduced same-bunch space charge when each bunch keeps at
@@ -224,16 +220,11 @@ Key ideas to keep in mind
   compact live causal histories while preserving full-state SoA/legacy outputs
   and retained-history diagnostics.  Unsupported configurations fall back to the
   canonical full solve.
-* **CLI/GUI parity.**  As of v0.6.0 the CLI sweep runner
-  (``lw-simulate --sweep-config``) and the GUI's Blind Sweep mode invoke the
-  same ``run_testbed()`` function with the same ``SimulationOptions`` dataclass.
-  This eliminates subtle differences in particle initialisation, metric
-  extraction, or physics option handling between the two interfaces.
-* **Incomplete-sweep archiving.**  Sweeps that finish with fewer than 100
-  completed runs are automatically relocated to
-  ``results/archive/incomplete/<sweep_dir_name>`` on save.  This applies to all
-  save paths (CLI, GUI mixin, GUI plugin, library API) and also fires on
-  ``KeyboardInterrupt`` in the CLI runner.
+* **CLI/GUI parity.**  The CLI sweep runner (``lw-simulate --sweep-config``)
+  and the GUI's Blind Sweep mode invoke the same ``run_testbed()`` function with
+  the same ``SimulationOptions`` dataclass, so particle initialisation, metric
+  extraction and physics options do not differ between the two interfaces.
+  Native PIC is a separate path with no such parity claim.
 * **Self-consistency is enabled by default.** The maintained settings use two
   ``fixed_geometry`` trials, gamma reconciliation disabled, and chrono
   interpolation off. Mass-shell relaxation is unused on the corrected path.
@@ -259,34 +250,19 @@ Key ideas to keep in mind
 * **Full 3D bunch initialization is the preferred path for new work.**  Use
   ``momentum_axis``, ``starting_position_mm``, ``transverse_distance_mm``, and
   ``longitudinal_span_mm`` when defining new bunches. The CLI accepts these
-  fields directly in rider/driver JSON, and the main GUI now exposes them
+  fields directly in rider/driver JSON, and the main GUI exposes them
   through a ``Manual Particle Config`` tab with rider/driver JSON editors.
   Legacy off-axis fields such as ``transv_offset_x``, ``transv_offset_y``, and
   ``transv_dist`` remain available for compatibility and older studies,
   including optimization-plugin offset fractions converted to absolute
   positions (offset = fraction × aperture_radius).
-* **GUI application for single runs and sweeps.**  The Tkinter-based GUI (``python -m
-  lw_integrator.gui``) supports single runs, parameter sweeps, and optimization
-  with real-time progress tracking and trajectory visualization. It provides
-  controls for particle properties and supported solver settings. Native PIC
-  and the experimental boundary module use separate entry points. Results can be exported in CSV, JSON, or NPZ formats.
-  The GUI is the recommended interface for interactive work, with the CLI
-  (``lw-simulate``) available for scripting and batch processing.
-* **Heatmap and contour tools.**  ``lw-generate-sweep-heatmap`` is the
-  maintained command for producing
-  publication-quality heatmaps from sweep results. Contour lines use a low
-  alpha (0.18), labels are clamped to stay inside the axes after the final
-  layout pass, and overlapping labels are culled automatically. Use
-  ``--color-min`` / ``--color-max`` for comparable signed color scales across
-  related plots, and ``--axis-param1-max`` when a displayed x-axis crop should
-  preserve neighboring data columns for interpolation.
-* **Live sweep plotting.**  ``lw-plot-latest-live`` follows the newest sweep
-  log automatically, while ``lw-plot-from-logcache-live`` can watch a specific
-  log file or render a one-shot static plot from it.
-* **Saved trajectory plotting.**  ``lw-plot-trajectory`` turns saved single-run
-  JSON or NPZ trajectory files into publication-ready PNG summaries, including
-  rider/driver views for JSON payloads and compact momentum/gamma panels for
-  NPZ payloads.
+* **GUI and plotting tools.**  The Tkinter GUI is the usual interface for
+  interactive work and ``lw-simulate`` suits scripting and batch runs.  Native
+  PIC and the experimental boundary module use separate entry points.
+  ``lw-generate-sweep-heatmap``, ``lw-plot-latest-live``,
+  ``lw-plot-from-logcache-live`` and ``lw-plot-trajectory`` plot sweep results,
+  live sweep logs and saved trajectories; see :doc:`quickstart` and
+  ``--help`` for their options.
 * **Reference notebooks remain available.**  Historical validation notebooks are
   retained for context, while maintained CLI and GUI workflows should be the
   baseline for new scripted sweeps.
