@@ -92,9 +92,8 @@ brew install python-tk@3.11                      # macOS with Homebrew Python
 
 The Python.org installers for macOS and Windows include Tkinter.
 
-Python 3.11 and 3.12 are exercised by the documentation checks; the source
-uses annotation syntax that is incompatible with Python 3.8 and 3.9. Create a
-project-specific environment and install from a checkout:
+Python 3.10 or later is required (the documentation checks run on 3.11).
+Create a project-specific environment and install from a checkout:
 
 ```bash
 git clone https://github.com/benfolsom/LW_integrator
@@ -139,7 +138,7 @@ and debug logs to `logcache/`; sweeps with fewer than 100 completed runs are
 moved to `results/archive/incomplete/`:
 
 ```bash
-lw-simulate --sweep-config configs/sweep_configs/example_b2b_linked_energy_vs_driver_distance.json -j 4
+lw-simulate --sweep-config configs/sweep_configs/<sweep>.json -j 4
 ```
 
 `--config PATH` loads the separate native direct-integrator schema. Run
@@ -169,7 +168,7 @@ Example JSON files live under `configs/`; load them from the GUI
 | Directory | Contents |
 | --- | --- |
 | `configs/run_configs/` | Single runs, e.g. `example_b2b_counter_propagating_proton_bunches.json` (proton/H⁻ bunches at non-relativistic energy), `example_b2b_relativistic_proton_stationary_lead_ion.json` (diagnostic legacy-history example), `example_native_pic.json`, `full_spin_three_particles.json`, and the `two_particle_demo*.json` set |
-| `configs/sweep_configs/` | Parameter sweeps, e.g. `example_b2b_linked_energy_vs_driver_distance.json` (proton rider and H⁻ driver with linked kinetic energies) and `example_conducting_wall_electron_aperture_sweep.json` |
+| `configs/sweep_configs/` | Parameter-sweep and optimisation definitions for `lw-simulate --sweep-config` |
 
 Some saved configs and figures are historical illustrations from earlier
 revisions and are not validation claims; the documentation states what each

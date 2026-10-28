@@ -21,6 +21,12 @@ Unreleased: README restructure
 README restructured as a stable overview; dated update notes moved to the
 changelog. Documentation only; no code or results change.
 
+Python 3.10 or later required; overview and quickstart pages updated.
+
+Removed the conducting-wall aperture plots (overstated by at least 3e5 in a
+closed-form check); the README no longer cites the conducting-wall aperture
+and linked B2B sweeps as examples (the configs are kept).
+
 .. _release_0_12_3:
 
 v0.12.3: smeared sources on curved histories (no defect)
