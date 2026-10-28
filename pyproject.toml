@@ -62,10 +62,10 @@ lw-plot-latest-live = "lw_integrator.plot_latest_live:main"
 lw-plot-trajectory = "lw_integrator.trajectory_plotter:main"
 
 [project.urls]
-Homepage = "https://github.com/username/LW_integrator"
+Homepage = "https://github.com/benfolsom/LW_integrator"
 Documentation = "https://lw-integrator.readthedocs.io/"
-Repository = "https://github.com/username/LW_integrator"
-"Bug Reports" = "https://github.com/username/LW_integrator/issues"
+Repository = "https://github.com/benfolsom/LW_integrator"
+"Bug Reports" = "https://github.com/benfolsom/LW_integrator/issues"
 
 [tool.setuptools]
 packages = {find = {}}

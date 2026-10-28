@@ -13,6 +13,14 @@ claims describe their named revisions, not the current defaults. Use
 :doc:`self_consistency`, :doc:`exact_path`, and :doc:`native_pic` for maintained
 configuration guidance, and ``CHANGELOG.md`` for the consolidated release notes.
 
+.. _release_unreleased_readme:
+
+Unreleased: README restructure
+------------------------------
+
+README restructured as a stable overview; dated update notes moved to the
+changelog. Documentation only; no code or results change.
+
 .. _release_0_12_3:
 
 v0.12.3: smeared sources on curved histories (no defect)
