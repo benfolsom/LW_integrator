@@ -2,11 +2,18 @@
 
 ## Unreleased
 
+## v0.12.4 — 2026-10-28 — README restructure, Python 3.10
+
+### Packaging
+
+- Python 3.10 or later required (`requires-python`, classifiers and tool
+  targets); project URLs point at the GitHub repository.
+
 ### Documentation
 
 - README restructured as a stable overview; dated update notes moved to the
   changelog.
-- Python 3.10 or later required; overview and quickstart pages updated.
+- Overview and quickstart pages updated to match the README.
 - Removed the conducting-wall aperture plots (overstated by at least 3e5 in a
   closed-form check); the README no longer cites the conducting-wall aperture
   and linked B2B sweeps as examples (configs kept).

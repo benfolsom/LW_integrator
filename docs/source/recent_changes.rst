@@ -13,10 +13,10 @@ claims describe their named revisions, not the current defaults. Use
 :doc:`self_consistency`, :doc:`exact_path`, and :doc:`native_pic` for maintained
 configuration guidance, and ``CHANGELOG.md`` for the consolidated release notes.
 
-.. _release_unreleased_readme:
+.. _release_0_12_4:
 
-Unreleased: README restructure
-------------------------------
+v0.12.4: README restructure, Python 3.10
+----------------------------------------
 
 README restructured as a stable overview; dated update notes moved to the
 changelog. Documentation only; no code or results change.
